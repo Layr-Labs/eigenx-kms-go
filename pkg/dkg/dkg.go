@@ -1,0 +1,118 @@
+package dkg
+
+import (
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
+)
+
+// Protocol represents the DKG protocol interface
+type Protocol interface {
+	GenerateShares() (map[int]*fr.Element, []types.G2Point, error)
+	VerifyShare(fromID int, share *fr.Element, commitments []types.G2Point) bool
+	FinalizeKeyShare(shares map[int]*fr.Element, allCommitments [][]types.G2Point, participantIDs []int) *types.KeyShareVersion
+}
+
+// DKG implements the distributed key generation protocol
+type DKG struct {
+	nodeID    int
+	threshold int
+	operators []types.OperatorInfo
+	poly      polynomial.Polynomial
+}
+
+// NewDKG creates a new DKG instance
+func NewDKG(nodeID int, threshold int, operators []types.OperatorInfo) *DKG {
+	return &DKG{
+		nodeID:    nodeID,
+		threshold: threshold,
+		operators: operators,
+	}
+}
+
+// GenerateShares generates polynomial coefficients, shares, and commitments
+func (d *DKG) GenerateShares() (map[int]*fr.Element, []types.G2Point, error) {
+	// Generate random polynomial of degree t-1
+	coeffs := make([]fr.Element, d.threshold)
+	for i := 0; i < d.threshold; i++ {
+		if _, err := coeffs[i].SetRandom(); err != nil {
+			return nil, nil, err
+		}
+	}
+	d.poly = coeffs
+
+	// Compute shares for all operators
+	shares := make(map[int]*fr.Element)
+	for _, op := range d.operators {
+		share := crypto.EvaluatePolynomial(d.poly, op.ID)
+		shares[op.ID] = share
+	}
+
+	// Create commitments in G2
+	commitments := make([]types.G2Point, d.threshold)
+	for k := 0; k < d.threshold; k++ {
+		commitments[k] = crypto.ScalarMulG2(crypto.G2Generator, &coeffs[k])
+	}
+
+	return shares, commitments, nil
+}
+
+// VerifyShare verifies a share against commitments using polynomial commitment verification
+func (d *DKG) VerifyShare(fromID int, share *fr.Element, commitments []types.G2Point) bool {
+	// Verify: share * G2 == Σ(commitment_k * nodeID^k)
+	leftSide := crypto.ScalarMulG2(crypto.G2Generator, share)
+
+	jFr := new(fr.Element).SetInt64(int64(d.nodeID))
+	jPower := new(fr.Element).SetOne()
+	rightSide := commitments[0]
+
+	for k := 1; k < len(commitments); k++ {
+		jPower.Mul(jPower, jFr)
+		term := crypto.ScalarMulG2(commitments[k], jPower)
+		rightSide = crypto.AddG2(rightSide, term)
+	}
+
+	return crypto.PointsEqualG2(leftSide, rightSide)
+}
+
+// FinalizeKeyShare computes the final key share from all received shares
+func (d *DKG) FinalizeKeyShare(shares map[int]*fr.Element, allCommitments [][]types.G2Point, participantIDs []int) *types.KeyShareVersion {
+	// Sum all received shares
+	privateShare := new(fr.Element).SetZero()
+	for _, share := range shares {
+		privateShare.Add(privateShare, share)
+	}
+
+	return &types.KeyShareVersion{
+		Version:        GetReshareEpoch(),
+		PrivateShare:   privateShare,
+		Commitments:    allCommitments[0],
+		IsActive:       true,
+		ParticipantIDs: participantIDs,
+	}
+}
+
+// GetReshareEpoch calculates the current reshare epoch
+func GetReshareEpoch() int64 {
+	return 0 // Placeholder - should use time.Now().Unix() / RESHARE_FREQUENCY
+}
+
+// CreateAcknowledgement creates an acknowledgement for received shares
+func CreateAcknowledgement(nodeID, dealerID int, commitments []types.G2Point, signer func(int, [32]byte) []byte) *types.Acknowledgement {
+	commitmentHash := crypto.HashCommitment(commitments)
+	signature := signer(dealerID, commitmentHash)
+
+	return &types.Acknowledgement{
+		DealerID:       dealerID,
+		PlayerID:       nodeID,
+		CommitmentHash: commitmentHash,
+		Signature:      signature,
+	}
+}
+
+// CalculateThreshold calculates the threshold for a given number of nodes
+func CalculateThreshold(n int) int {
+	// ⌈2n/3⌉
+	return (2*n + 2) / 3
+}
