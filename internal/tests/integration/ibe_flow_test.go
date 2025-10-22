@@ -20,9 +20,28 @@ func generateAppID() string {
 	return hex.EncodeToString(bytes)
 }
 
-// Test_CompleteIBEFlow demonstrates the complete Identity-Based Encryption flow
+// Test_IBEIntegration contains all IBE-related integration tests
+func Test_IBEIntegration(t *testing.T) {
+	t.Run("CompleteIBEFlow", func(t *testing.T) {
+		testCompleteIBEFlow(t)
+	})
+	
+	t.Run("IBEWithOperatorChanges", func(t *testing.T) {
+		testIBEWithOperatorChanges(t)
+	})
+	
+	t.Run("RealisticAppIDs", func(t *testing.T) {
+		testRealisticAppIDs(t)
+	})
+	
+	t.Run("ThresholdVariations", func(t *testing.T) {
+		testThresholdVariations(t)
+	})
+}
+
+// testCompleteIBEFlow demonstrates the complete Identity-Based Encryption flow
 // from public key derivation through encryption/decryption using partial signatures
-func Test_CompleteIBEFlow(t *testing.T) {
+func testCompleteIBEFlow(t *testing.T) {
 	// Generate a realistic 32-byte hex app ID
 	appID := generateAppID()
 	fmt.Printf("Testing IBE flow for app ID: %s\n", appID)
@@ -119,9 +138,6 @@ func Test_CompleteIBEFlow(t *testing.T) {
 
 	fmt.Printf("Message encrypted for app %s\n", appID[:16]+"...")
 	fmt.Printf("Ciphertext length: %d bytes\n", len(ciphertext))
-
-	// Note: In a real IBE scheme, encryption might differ due to randomness
-	// Our simplified version should be deterministic
 	fmt.Printf("✓ Encryption completed\n")
 
 	// === Phase 4: Partial Signature Generation (Simulates KMS Nodes) ===
@@ -253,8 +269,8 @@ func Test_CompleteIBEFlow(t *testing.T) {
 	fmt.Printf("✅ Flexibility: Any threshold subset works for decryption\n")
 }
 
-// Test_IBEWithOperatorChanges tests that IBE works across operator set changes (reshares)
-func Test_IBEWithOperatorChanges(t *testing.T) {
+// testIBEWithOperatorChanges tests that IBE works across operator set changes (reshares)
+func testIBEWithOperatorChanges(t *testing.T) {
 	appID := generateAppID()
 	secretData := []byte("Critical application secrets that must survive operator changes")
 	
@@ -383,23 +399,6 @@ func Test_IBEWithOperatorChanges(t *testing.T) {
 	fmt.Printf("✓ Data encrypted before reshare successfully decrypted after reshare!\n")
 	fmt.Printf("✓ Secret preservation verified across operator set changes\n")
 
-	// === Verify Mathematical Properties ===
-	fmt.Println("\n--- Mathematical Verification ---")
-
-	// The recovered private keys should be equivalent (represent same mathematical value)
-	// Even if representation differs, they should decrypt the same ciphertext
-	
-	// Test that both can decrypt the same ciphertext correctly
-	fmt.Printf("Testing mathematical equivalence...\n")
-	
-	// Both should decrypt to the same plaintext
-	if string(initialDecrypted) != string(postReshareDecrypted) {
-		t.Fatal("Pre and post-reshare keys should decrypt to same plaintext")
-	}
-	
-	fmt.Printf("✓ Both pre-reshare and post-reshare keys decrypt correctly\n")
-	fmt.Printf("✓ Mathematical equivalence verified\n")
-
 	// === Final Summary ===
 	fmt.Println("\n=== Final Verification Summary ===")
 	fmt.Printf("🎯 App ID: %s\n", appID[:32]+"...")
@@ -414,8 +413,8 @@ func Test_IBEWithOperatorChanges(t *testing.T) {
 	fmt.Printf("\n🚀 Complete IBE flow verified for production KMS system!\n")
 }
 
-// Test_RealisticAppIDs tests with various realistic app ID formats
-func Test_RealisticAppIDs(t *testing.T) {
+// testRealisticAppIDs tests with various realistic app ID formats
+func testRealisticAppIDs(t *testing.T) {
 	// Test different app ID formats that might be used in production
 	testAppIDs := []string{
 		// 32-byte hex strings (256 bits)
@@ -424,7 +423,6 @@ func Test_RealisticAppIDs(t *testing.T) {
 		"ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
 		"0000000000000000000000000000000000000000000000000000000000000001",
 	}
-	
 
 	for i, appID := range testAppIDs {
 		t.Run(fmt.Sprintf("AppID_%d", i+1), func(t *testing.T) {
@@ -447,8 +445,8 @@ func Test_RealisticAppIDs(t *testing.T) {
 	}
 }
 
-// Test_ThresholdVariations tests IBE with different operator counts and thresholds
-func Test_ThresholdVariations(t *testing.T) {
+// testThresholdVariations tests IBE with different operator counts and thresholds
+func testThresholdVariations(t *testing.T) {
 	appID := generateAppID()
 
 	// Test different network sizes

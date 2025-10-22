@@ -9,8 +9,23 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
 )
 
-// TestScalarMulG1 tests scalar multiplication on G1
-func Test_ScalarMulG1(t *testing.T) {
+// Test_CryptoOperations is the top-level test function that runs all crypto operation tests
+func Test_CryptoOperations(t *testing.T) {
+	t.Run("ScalarMulG1", func(t *testing.T) { testScalarMulG1(t) })
+	t.Run("ScalarMulG2", func(t *testing.T) { testScalarMulG2(t) })
+	t.Run("AddG1", func(t *testing.T) { testAddG1(t) })
+	t.Run("AddG2", func(t *testing.T) { testAddG2(t) })
+	t.Run("HashToG1", func(t *testing.T) { testHashToG1(t) })
+	t.Run("EvaluatePolynomial", func(t *testing.T) { testEvaluatePolynomial(t) })
+	t.Run("ComputeLagrangeCoefficient", func(t *testing.T) { testComputeLagrangeCoefficient(t) })
+	t.Run("RecoverSecret", func(t *testing.T) { testRecoverSecret(t) })
+	t.Run("HashCommitment", func(t *testing.T) { testHashCommitment(t) })
+	t.Run("RecoverAppPrivateKey", func(t *testing.T) { testRecoverAppPrivateKey(t) })
+	t.Run("ComputeMasterPublicKey", func(t *testing.T) { testComputeMasterPublicKey(t) })
+}
+
+// testScalarMulG1 tests scalar multiplication on G1
+func testScalarMulG1(t *testing.T) {
 	tests := []struct {
 		name   string
 		scalar *fr.Element
@@ -48,8 +63,8 @@ func Test_ScalarMulG1(t *testing.T) {
 	}
 }
 
-// TestScalarMulG2 tests scalar multiplication on G2
-func Test_ScalarMulG2(t *testing.T) {
+// testScalarMulG2 tests scalar multiplication on G2
+func testScalarMulG2(t *testing.T) {
 	scalar := new(fr.Element).SetInt64(42)
 	
 	result := ScalarMulG2(G2Generator, scalar)
@@ -67,8 +82,8 @@ func Test_ScalarMulG2(t *testing.T) {
 	}
 }
 
-// TestAddG1 tests point addition on G1
-func Test_AddG1(t *testing.T) {
+// testAddG1 tests point addition on G1
+func testAddG1(t *testing.T) {
 	// Create two points
 	scalar1 := new(fr.Element).SetInt64(1)
 	scalar2 := new(fr.Element).SetInt64(2)
@@ -93,8 +108,8 @@ func Test_AddG1(t *testing.T) {
 	}
 }
 
-// TestAddG2 tests point addition on G2
-func Test_AddG2(t *testing.T) {
+// testAddG2 tests point addition on G2
+func testAddG2(t *testing.T) {
 	scalar1 := new(fr.Element).SetInt64(3)
 	scalar2 := new(fr.Element).SetInt64(5)
 	
@@ -110,8 +125,8 @@ func Test_AddG2(t *testing.T) {
 	}
 }
 
-// TestHashToG1 tests hashing to G1
-func Test_HashToG1(t *testing.T) {
+// testHashToG1 tests hashing to G1
+func testHashToG1(t *testing.T) {
 	tests := []struct {
 		appID string
 	}{
@@ -142,8 +157,8 @@ func Test_HashToG1(t *testing.T) {
 	}
 }
 
-// TestEvaluatePolynomial tests polynomial evaluation
-func Test_EvaluatePolynomial(t *testing.T) {
+// testEvaluatePolynomial tests polynomial evaluation
+func testEvaluatePolynomial(t *testing.T) {
 	// Create polynomial: f(x) = 1 + 2x + 3x^2
 	poly := make(polynomial.Polynomial, 3)
 	poly[0].SetInt64(1) // constant term
@@ -171,8 +186,8 @@ func Test_EvaluatePolynomial(t *testing.T) {
 	}
 }
 
-// TestComputeLagrangeCoefficient tests Lagrange coefficient computation
-func Test_ComputeLagrangeCoefficient(t *testing.T) {
+// testComputeLagrangeCoefficient tests Lagrange coefficient computation
+func testComputeLagrangeCoefficient(t *testing.T) {
 	participants := []int{1, 2, 3}
 	
 	// Test that sum of Lagrange coefficients at x=0 equals 1
@@ -189,8 +204,8 @@ func Test_ComputeLagrangeCoefficient(t *testing.T) {
 	}
 }
 
-// TestRecoverSecret tests secret recovery using Lagrange interpolation
-func Test_RecoverSecret(t *testing.T) {
+// testRecoverSecret tests secret recovery using Lagrange interpolation
+func testRecoverSecret(t *testing.T) {
 	// Create a polynomial with known secret
 	secret := new(fr.Element).SetInt64(42)
 	degree := 2
@@ -227,8 +242,8 @@ func Test_RecoverSecret(t *testing.T) {
 	}
 }
 
-// TestHashCommitment tests commitment hashing
-func Test_HashCommitment(t *testing.T) {
+// testHashCommitment tests commitment hashing
+func testHashCommitment(t *testing.T) {
 	// Create some test commitments
 	commitments := []types.G2Point{
 		{X: big.NewInt(1), Y: big.NewInt(2)},
@@ -254,8 +269,8 @@ func Test_HashCommitment(t *testing.T) {
 	}
 }
 
-// TestRecoverAppPrivateKey tests application private key recovery
-func Test_RecoverAppPrivateKey(t *testing.T) {
+// testRecoverAppPrivateKey tests application private key recovery
+func testRecoverAppPrivateKey(t *testing.T) {
 	appID := "test-app"
 	threshold := 3
 	degree := threshold - 1
@@ -300,8 +315,8 @@ func Test_RecoverAppPrivateKey(t *testing.T) {
 	}
 }
 
-// TestComputeMasterPublicKey tests master public key computation
-func Test_ComputeMasterPublicKey(t *testing.T) {
+// testComputeMasterPublicKey tests master public key computation
+func testComputeMasterPublicKey(t *testing.T) {
 	// Create test commitments using valid points (scalar multiples of generator)
 	scalar1 := new(fr.Element).SetInt64(10)
 	scalar2 := new(fr.Element).SetInt64(20)

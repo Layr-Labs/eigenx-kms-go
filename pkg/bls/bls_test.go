@@ -7,7 +7,18 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
 )
 
-func Test_PointOperations(t *testing.T) {
+func Test_BLSOperations(t *testing.T) {
+	t.Run("PointOperations", func(t *testing.T) { testPointOperations(t) })
+	t.Run("HashToPoint", func(t *testing.T) { testHashToPoint(t) })
+	t.Run("SignatureScheme", func(t *testing.T) { testSignatureScheme(t) })
+	t.Run("PolynomialSecretSharing", func(t *testing.T) { testPolynomialSecretSharing(t) })
+	t.Run("ShareVerification", func(t *testing.T) { testShareVerification(t) })
+	t.Run("LagrangeInterpolation", func(t *testing.T) { testLagrangeInterpolation(t) })
+	t.Run("BigIntConversion", func(t *testing.T) { testBigIntConversion(t) })
+	t.Run("PolynomialCommitments", func(t *testing.T) { testPolynomialCommitments(t) })
+}
+
+func testPointOperations(t *testing.T) {
 	// Test scalar multiplication
 	scalar := new(fr.Element).SetInt64(42)
 	
@@ -37,7 +48,7 @@ func Test_PointOperations(t *testing.T) {
 	}
 }
 
-func Test_HashToPoint(t *testing.T) {
+func testHashToPoint(t *testing.T) {
 	msg := []byte("test message")
 	
 	g1Point := HashToG1(msg)
@@ -59,7 +70,7 @@ func Test_HashToPoint(t *testing.T) {
 	}
 }
 
-func Test_SignatureScheme(t *testing.T) {
+func testSignatureScheme(t *testing.T) {
 	// Generate key pair
 	sk, err := GeneratePrivateKey()
 	if err != nil {
@@ -93,7 +104,7 @@ func Test_SignatureScheme(t *testing.T) {
 	}
 }
 
-func Test_PolynomialSecretSharing(t *testing.T) {
+func testPolynomialSecretSharing(t *testing.T) {
 	// Create a secret
 	secret := new(fr.Element).SetInt64(12345)
 	degree := 2 // threshold = degree + 1 = 3
@@ -137,7 +148,7 @@ func Test_PolynomialSecretSharing(t *testing.T) {
 	}
 }
 
-func Test_ShareVerification(t *testing.T) {
+func testShareVerification(t *testing.T) {
 	// Create polynomial
 	secret := new(fr.Element).SetInt64(42)
 	poly := GeneratePolynomial(secret, 2)
@@ -164,7 +175,7 @@ func Test_ShareVerification(t *testing.T) {
 	}
 }
 
-func Test_LagrangeInterpolation(t *testing.T) {
+func testLagrangeInterpolation(t *testing.T) {
 	participants := []int{1, 3, 5}
 	
 	// Test that Lagrange coefficients sum to 1 at x=0
@@ -180,7 +191,7 @@ func Test_LagrangeInterpolation(t *testing.T) {
 	}
 }
 
-func Test_BigIntConversion(t *testing.T) {
+func testBigIntConversion(t *testing.T) {
 	// Test G1 conversion
 	scalar := new(fr.Element).SetInt64(123)
 	g1Point := ScalarMulG1(G1Generator, scalar)
@@ -212,7 +223,7 @@ func Test_BigIntConversion(t *testing.T) {
 	}
 }
 
-func Test_PolynomialCommitments(t *testing.T) {
+func testPolynomialCommitments(t *testing.T) {
 	// Create two different polynomials with same degree
 	poly1 := make(polynomial.Polynomial, 3)
 	poly1[0].SetInt64(10)

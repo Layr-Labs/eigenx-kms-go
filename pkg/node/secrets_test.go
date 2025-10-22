@@ -15,8 +15,14 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
 
-// TestSecretsEndpointFlow tests the complete application secrets retrieval flow
-func Test_SecretsEndpointFlow(t *testing.T) {
+func Test_SecretsEndpoint(t *testing.T) {
+	t.Run("Flow", func(t *testing.T) { testSecretsEndpointFlow(t) })
+	t.Run("Validation", func(t *testing.T) { testSecretsEndpointValidation(t) })
+	t.Run("ImageDigestMismatch", func(t *testing.T) { testSecretsEndpointImageDigestMismatch(t) })
+}
+
+// testSecretsEndpointFlow tests the complete application secrets retrieval flow
+func testSecretsEndpointFlow(t *testing.T) {
 	// Setup test node with a mock key share
 	operators := []types.OperatorInfo{
 		{ID: 1, P2PPubKey: []byte("key1"), P2PNodeURL: "http://node1", KMSServerURL: "http://kms1"},
@@ -136,8 +142,8 @@ func Test_SecretsEndpointFlow(t *testing.T) {
 	fmt.Printf("Test passed: Successfully retrieved and decrypted secrets for test-app\n")
 }
 
-// TestSecretsEndpointValidation tests various validation scenarios
-func Test_SecretsEndpointValidation(t *testing.T) {
+// testSecretsEndpointValidation tests various validation scenarios
+func testSecretsEndpointValidation(t *testing.T) {
 	// Setup test node
 	operators := []types.OperatorInfo{
 		{ID: 1, P2PPubKey: []byte("key1"), P2PNodeURL: "http://node1", KMSServerURL: "http://kms1"},
@@ -211,8 +217,8 @@ func Test_SecretsEndpointValidation(t *testing.T) {
 	}
 }
 
-// TestSecretsEndpointImageDigestMismatch tests image digest validation
-func Test_SecretsEndpointImageDigestMismatch(t *testing.T) {
+// testSecretsEndpointImageDigestMismatch tests image digest validation
+func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 	// Setup test node
 	operators := []types.OperatorInfo{
 		{ID: 1, P2PPubKey: []byte("key1"), P2PNodeURL: "http://node1", KMSServerURL: "http://kms1"},

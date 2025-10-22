@@ -10,8 +10,20 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
 )
 
-// TestNewReshare tests reshare instance creation
-func Test_NewReshare(t *testing.T) {
+func Test_ReshareProtocol(t *testing.T) {
+	t.Run("NewReshare", func(t *testing.T) { testNewReshare(t) })
+	t.Run("GenerateNewShares", func(t *testing.T) { testGenerateNewShares(t) })
+	t.Run("GenerateNewSharesNilCurrentShare", func(t *testing.T) { testGenerateNewSharesNilCurrentShare(t) })
+	t.Run("VerifyNewShare", func(t *testing.T) { testVerifyNewShare(t) })
+	t.Run("ComputeNewKeyShare", func(t *testing.T) { testComputeNewKeyShare(t) })
+	t.Run("CreateCompletionSignature", func(t *testing.T) { testCreateCompletionSignature(t) })
+	t.Run("ReshareProtocolIntegration", func(t *testing.T) { testReshareProtocolIntegration(t) })
+	t.Run("ReshareWithThresholdChange", func(t *testing.T) { testReshareWithThresholdChange(t) })
+	t.Run("ReshareSecretConsistency", func(t *testing.T) { testReshareSecretConsistency(t) })
+}
+
+// testNewReshare tests reshare instance creation
+func testNewReshare(t *testing.T) {
 	operators := createTestOperators(5)
 	nodeID := 1
 
@@ -28,8 +40,8 @@ func Test_NewReshare(t *testing.T) {
 	}
 }
 
-// TestGenerateNewShares tests new share generation with current share as constant
-func Test_GenerateNewShares(t *testing.T) {
+// testGenerateNewShares tests new share generation with current share as constant
+func testGenerateNewShares(t *testing.T) {
 	operators := createTestOperators(5)
 	nodeID := 1
 	newThreshold := 3
@@ -71,8 +83,8 @@ func Test_GenerateNewShares(t *testing.T) {
 	}
 }
 
-// TestGenerateNewSharesNilCurrentShare tests error handling for nil current share
-func Test_GenerateNewSharesNilCurrentShare(t *testing.T) {
+// testGenerateNewSharesNilCurrentShare tests error handling for nil current share
+func testGenerateNewSharesNilCurrentShare(t *testing.T) {
 	operators := createTestOperators(3)
 	r := NewReshare(1, operators)
 	
@@ -82,8 +94,8 @@ func Test_GenerateNewSharesNilCurrentShare(t *testing.T) {
 	}
 }
 
-// TestVerifyNewShare tests new share verification
-func Test_VerifyNewShare(t *testing.T) {
+// testVerifyNewShare tests new share verification
+func testVerifyNewShare(t *testing.T) {
 	operators := createTestOperators(5)
 	newThreshold := 3
 	
@@ -115,8 +127,8 @@ func Test_VerifyNewShare(t *testing.T) {
 	}
 }
 
-// TestComputeNewKeyShare tests new key share computation using Lagrange
-func Test_ComputeNewKeyShare(t *testing.T) {
+// testComputeNewKeyShare tests new key share computation using Lagrange
+func testComputeNewKeyShare(t *testing.T) {
 	operators := createTestOperators(5)
 	newThreshold := 3
 	epoch := int64(12345)
@@ -175,8 +187,8 @@ func Test_ComputeNewKeyShare(t *testing.T) {
 	}
 }
 
-// TestCreateCompletionSignature tests completion signature creation
-func Test_CreateCompletionSignature(t *testing.T) {
+// testCreateCompletionSignature tests completion signature creation
+func testCreateCompletionSignature(t *testing.T) {
 	nodeID := 1
 	epoch := int64(54321)
 	commitmentHash := [32]byte{1, 2, 3, 4}
@@ -209,8 +221,8 @@ func Test_CreateCompletionSignature(t *testing.T) {
 	}
 }
 
-// TestReshareProtocolIntegration tests a full reshare protocol
-func Test_ReshareProtocolIntegration(t *testing.T) {
+// testReshareProtocolIntegration tests a full reshare protocol
+func testReshareProtocolIntegration(t *testing.T) {
 	// Initial setup: 5 nodes with existing shares
 	initialNodes := 5
 	initialThreshold := dkg.CalculateThreshold(initialNodes)
@@ -323,8 +335,8 @@ func Test_ReshareProtocolIntegration(t *testing.T) {
 	// The sum of all dealer's constant terms (with Lagrange coefficients) equals the original secret
 }
 
-// TestReshareWithThresholdChange tests resharing with threshold modification
-func Test_ReshareWithThresholdChange(t *testing.T) {
+// testReshareWithThresholdChange tests resharing with threshold modification
+func testReshareWithThresholdChange(t *testing.T) {
 	// Start with 3-of-5 threshold, change to 4-of-7 threshold
 	_ = createTestOperators(5)
 	
@@ -357,8 +369,8 @@ func Test_ReshareWithThresholdChange(t *testing.T) {
 	}
 }
 
-// TestReshareSecretConsistency tests that the shared secret remains consistent
-func Test_ReshareSecretConsistency(t *testing.T) {
+// testReshareSecretConsistency tests that the shared secret remains consistent
+func testReshareSecretConsistency(t *testing.T) {
 	operators := createTestOperators(5)
 	threshold := 3
 	

@@ -9,8 +9,19 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
 
-// TestCalculateThreshold tests threshold calculation
-func Test_CalculateThreshold(t *testing.T) {
+// Test_DKGProtocol runs all DKG protocol tests
+func Test_DKGProtocol(t *testing.T) {
+	t.Run("CalculateThreshold", func(t *testing.T) { testCalculateThreshold(t) })
+	t.Run("NewDKG", func(t *testing.T) { testNewDKG(t) })
+	t.Run("GenerateShares", func(t *testing.T) { testGenerateShares(t) })
+	t.Run("VerifyShare", func(t *testing.T) { testVerifyShare(t) })
+	t.Run("FinalizeKeyShare", func(t *testing.T) { testFinalizeKeyShare(t) })
+	t.Run("CreateAcknowledgement", func(t *testing.T) { testCreateAcknowledgement(t) })
+	t.Run("DKGProtocolIntegration", func(t *testing.T) { testDKGProtocolIntegration(t) })
+}
+
+// testCalculateThreshold tests threshold calculation
+func testCalculateThreshold(t *testing.T) {
 	tests := []struct {
 		n         int
 		expected  int
@@ -37,8 +48,8 @@ func Test_CalculateThreshold(t *testing.T) {
 	}
 }
 
-// TestNewDKG tests DKG instance creation
-func Test_NewDKG(t *testing.T) {
+// testNewDKG tests DKG instance creation
+func testNewDKG(t *testing.T) {
 	operators := createTestOperators(5)
 	nodeID := 1
 	threshold := CalculateThreshold(len(operators))
@@ -59,8 +70,8 @@ func Test_NewDKG(t *testing.T) {
 	}
 }
 
-// TestGenerateShares tests share generation
-func Test_GenerateShares(t *testing.T) {
+// testGenerateShares tests share generation
+func testGenerateShares(t *testing.T) {
 	operators := createTestOperators(5)
 	nodeID := 1
 	threshold := CalculateThreshold(len(operators))
@@ -102,8 +113,8 @@ func Test_GenerateShares(t *testing.T) {
 	}
 }
 
-// TestVerifyShare tests share verification
-func Test_VerifyShare(t *testing.T) {
+// testVerifyShare tests share verification
+func testVerifyShare(t *testing.T) {
 	operators := createTestOperators(5)
 	
 	// Create two DKG instances
@@ -125,8 +136,8 @@ func Test_VerifyShare(t *testing.T) {
 	}
 }
 
-// TestFinalizeKeyShare tests key share finalization
-func Test_FinalizeKeyShare(t *testing.T) {
+// testFinalizeKeyShare tests key share finalization
+func testFinalizeKeyShare(t *testing.T) {
 	operators := createTestOperators(3)
 	participantIDs := []int{1, 2, 3}
 	
@@ -181,8 +192,8 @@ func Test_FinalizeKeyShare(t *testing.T) {
 	}
 }
 
-// TestCreateAcknowledgement tests acknowledgement creation
-func Test_CreateAcknowledgement(t *testing.T) {
+// testCreateAcknowledgement tests acknowledgement creation
+func testCreateAcknowledgement(t *testing.T) {
 	nodeID := 1
 	dealerID := 2
 	commitments := []types.G2Point{
@@ -220,8 +231,8 @@ func Test_CreateAcknowledgement(t *testing.T) {
 	}
 }
 
-// TestDKGProtocolIntegration tests a full DKG protocol run
-func Test_DKGProtocolIntegration(t *testing.T) {
+// testDKGProtocolIntegration tests a full DKG protocol run
+func testDKGProtocolIntegration(t *testing.T) {
 	
 	numNodes := 5
 	threshold := CalculateThreshold(numNodes)

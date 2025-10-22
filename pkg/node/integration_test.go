@@ -19,8 +19,12 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
 )
 
-// TestApplicationSecretsFlow tests the complete end-to-end flow as specified in the design docs
-func Test_ApplicationSecretsFlow(t *testing.T) {
+func Test_ApplicationSecrets(t *testing.T) {
+	t.Run("Flow", func(t *testing.T) { testApplicationSecretsFlow(t) })
+}
+
+// testApplicationSecretsFlow tests the complete end-to-end flow as specified in the design docs
+func testApplicationSecretsFlow(t *testing.T) {
 	// Setup: Create 3 KMS nodes with DKG key shares
 	numNodes := 3
 	threshold := dkg.CalculateThreshold(numNodes)
