@@ -9,7 +9,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
 
-// Test_DKGProtocol runs all DKG protocol tests
+// Test_DKGProtocol runs all DKG protocol unit tests
 func Test_DKGProtocol(t *testing.T) {
 	t.Run("CalculateThreshold", func(t *testing.T) { testCalculateThreshold(t) })
 	t.Run("NewDKG", func(t *testing.T) { testNewDKG(t) })
@@ -17,7 +17,6 @@ func Test_DKGProtocol(t *testing.T) {
 	t.Run("VerifyShare", func(t *testing.T) { testVerifyShare(t) })
 	t.Run("FinalizeKeyShare", func(t *testing.T) { testFinalizeKeyShare(t) })
 	t.Run("CreateAcknowledgement", func(t *testing.T) { testCreateAcknowledgement(t) })
-	t.Run("DKGProtocolIntegration", func(t *testing.T) { testDKGProtocolIntegration(t) })
 }
 
 // testCalculateThreshold tests threshold calculation
@@ -231,86 +230,6 @@ func testCreateAcknowledgement(t *testing.T) {
 	}
 }
 
-// testDKGProtocolIntegration tests a full DKG protocol run
-func testDKGProtocolIntegration(t *testing.T) {
-	
-	numNodes := 5
-	threshold := CalculateThreshold(numNodes)
-	operators := createTestOperators(numNodes)
-	
-	// Each node runs DKG
-	nodes := make([]*DKG, numNodes)
-	allShares := make([]map[int]*fr.Element, numNodes)
-	allCommitments := make([][][]types.G2Point, numNodes)
-	
-	// Phase 1: Generate shares and commitments
-	for i := 0; i < numNodes; i++ {
-		nodes[i] = NewDKG(i+1, threshold, operators)
-		shares, commitments, err := nodes[i].GenerateShares()
-		if err != nil {
-			t.Fatalf("Node %d failed to generate shares: %v", i+1, err)
-		}
-		allShares[i] = shares
-		allCommitments[i] = [][]types.G2Point{commitments}
-	}
-	
-	// Phase 2: Verify shares
-	for verifierIdx := 0; verifierIdx < numNodes; verifierIdx++ {
-		for dealerIdx := 0; dealerIdx < numNodes; dealerIdx++ {
-			share := allShares[dealerIdx][verifierIdx+1]
-			commitments := allCommitments[dealerIdx][0]
-			
-			valid := nodes[verifierIdx].VerifyShare(dealerIdx+1, share, commitments)
-			if !valid {
-				t.Errorf("Node %d failed to verify share from dealer %d", verifierIdx+1, dealerIdx+1)
-			}
-		}
-	}
-	
-	// Phase 3: Finalize key shares
-	finalShares := make([]*fr.Element, numNodes)
-	for i := 0; i < numNodes; i++ {
-		// Collect shares for this node from all dealers
-		nodeShares := make(map[int]*fr.Element)
-		nodeCommitments := make([][]types.G2Point, 0)
-		
-		for j := 0; j < numNodes; j++ {
-			nodeShares[j+1] = allShares[j][i+1]
-			nodeCommitments = append(nodeCommitments, allCommitments[j][0])
-		}
-		
-		participantIDs := make([]int, numNodes)
-		for k := 0; k < numNodes; k++ {
-			participantIDs[k] = k + 1
-		}
-		
-		keyVersion := nodes[i].FinalizeKeyShare(nodeShares, nodeCommitments, participantIDs)
-		if keyVersion == nil || keyVersion.PrivateShare == nil {
-			t.Fatalf("Node %d failed to finalize key share", i+1)
-		}
-		finalShares[i] = keyVersion.PrivateShare
-	}
-	
-	// Verify that we can recover the secret
-	// The secret is the sum of all constant terms
-	expectedSecret := new(fr.Element).SetZero()
-	for i := 0; i < numNodes; i++ {
-		if nodes[i].poly != nil && len(nodes[i].poly) > 0 {
-			expectedSecret.Add(expectedSecret, &nodes[i].poly[0])
-		}
-	}
-	
-	// Use threshold shares to recover
-	thresholdShares := make(map[int]*fr.Element)
-	for i := 0; i < threshold; i++ {
-		thresholdShares[i+1] = finalShares[i]
-	}
-	
-	recovered := crypto.RecoverSecret(thresholdShares)
-	if !recovered.Equal(expectedSecret) {
-		t.Error("Failed to recover correct secret from threshold shares")
-	}
-}
 
 // Helper function to create test operators
 func createTestOperators(n int) []types.OperatorInfo {

@@ -422,6 +422,11 @@ func (n *Node) GetReleaseRegistry() registry.Client {
 	return n.releaseRegistry
 }
 
+// GetKeyStore returns the keystore (for testing)
+func (n *Node) GetKeyStore() *keystore.KeyStore {
+	return n.keyStore
+}
+
 // RunDKGPhase1 runs only phase 1 of DKG (for testing)
 func (n *Node) RunDKGPhase1() (map[int]*fr.Element, []types.G2Point, error) {
 	return n.dkg.GenerateShares()
