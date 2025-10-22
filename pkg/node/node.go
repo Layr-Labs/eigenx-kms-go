@@ -13,6 +13,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/keystore"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/registry"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/reshare"
@@ -78,9 +79,9 @@ func NewNode(cfg Config, pdf peering.IPeeringDataFetcher) *Node {
 	threshold := dkg.CalculateThreshold(len(cfg.Operators))
 	
 	// Create logger if not provided
-	logger := cfg.Logger
-	if logger == nil {
-		logger, _ = zap.NewProduction()
+	nodeLogger := cfg.Logger
+	if nodeLogger == nil {
+		nodeLogger, _ = logger.NewLogger(&logger.LoggerConfig{Debug: false})
 	}
 
 	n := &Node{
@@ -101,7 +102,7 @@ func NewNode(cfg Config, pdf peering.IPeeringDataFetcher) *Node {
 		receivedAcks:        make(map[int]map[int]*types.Acknowledgement),
 		reshareComplete:     make(map[int]*types.CompletionSignature),
 		peeringDataFetcher:  pdf,
-		logger:              logger,
+		logger:              nodeLogger,
 	}
 
 	n.dkg = dkg.NewDKG(cfg.ID, threshold, cfg.Operators)

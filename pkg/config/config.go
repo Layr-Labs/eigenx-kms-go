@@ -51,6 +51,33 @@ const (
 	ChainId_EthereumAnvil   ChainId = 31337
 )
 
+type ChainName string
+
+const (
+	ChainName_EthereumMainnet ChainName = "mainnet"
+	ChainName_EthereumSepolia ChainName = "sepolia"
+	ChainName_EthereumAnvil   ChainName = "devnet"
+)
+
+var ChainIdToName = map[ChainId]ChainName{
+	ChainId_EthereumMainnet: ChainName_EthereumMainnet,
+	ChainId_EthereumSepolia: ChainName_EthereumSepolia,
+	ChainId_EthereumAnvil:   ChainName_EthereumAnvil,
+}
+var ChainNameToId = map[ChainName]ChainId{
+	ChainName_EthereumMainnet: ChainId_EthereumMainnet,
+	ChainName_EthereumSepolia: ChainId_EthereumSepolia,
+	ChainName_EthereumAnvil:   ChainId_EthereumAnvil,
+}
+
+func GetChainIdFromName(name ChainName) (ChainId, error) {
+	chainId, ok := ChainNameToId[name]
+	if !ok {
+		return 0, fmt.Errorf("unsupported chain name: %s", name)
+	}
+	return chainId, nil
+}
+
 type CoreContractAddresses struct {
 	AllocationManager string
 	DelegationManager string

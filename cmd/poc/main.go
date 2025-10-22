@@ -9,10 +9,9 @@ import (
 	"sync"
 	"time"
 
-	"go.uber.org/zap"
-
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/node"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
@@ -52,14 +51,14 @@ func main() {
 	// Create nodes using the new modular architecture
 	nodes := make([]*node.Node, totalNodes)
 	for i := 0; i < totalNodes; i++ {
-		logger, _ := zap.NewDevelopment()
+		nodeLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 		cfg := node.Config{
 			ID:         i + 1,
 			Port:       basePort + i + 1,
 			P2PPrivKey: generateStubPrivKey(i + 1),
 			P2PPubKey:  generateStubPubKey(i + 1),
 			Operators:  operators,
-			Logger:     logger,
+			Logger:     nodeLogger,
 		}
 		// Create stub peering data fetcher for POC
 		peeringDataFetcher := peering.NewStubPeeringDataFetcher(nil)

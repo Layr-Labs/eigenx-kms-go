@@ -9,9 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"go.uber.org/zap"
-
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/registry"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
@@ -37,14 +36,14 @@ func testSecretsEndpointFlow(t *testing.T) {
 		{ID: 1, P2PPubKey: []byte("key1"), P2PNodeURL: "http://node1", KMSServerURL: "http://kms1"},
 	}
 	
-	logger, _ := zap.NewDevelopment()
+	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 	cfg := Config{
 		ID:         1,
 		Port:       0, // Use random port
 		P2PPrivKey: []byte("test-priv-key"),
 		P2PPubKey:  []byte("test-pub-key"),
 		Operators:  operators,
-		Logger:     logger,
+		Logger:     testLogger,
 	}
 	
 	peeringDataFetcher := createTestPeeringDataFetcher(operators)
@@ -161,7 +160,7 @@ func testSecretsEndpointValidation(t *testing.T) {
 		{ID: 1, P2PPubKey: []byte("key1"), P2PNodeURL: "http://node1", KMSServerURL: "http://kms1"},
 	}
 	
-	logger, _ := zap.NewDevelopment()
+	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 	peeringDataFetcher := createTestPeeringDataFetcher(operators)
 	node := NewNode(Config{
 		ID:         1,
@@ -169,7 +168,7 @@ func testSecretsEndpointValidation(t *testing.T) {
 		P2PPrivKey: []byte("test-priv-key"),
 		P2PPubKey:  []byte("test-pub-key"),
 		Operators:  operators,
-		Logger:     logger,
+		Logger:     testLogger,
 	}, peeringDataFetcher)
 	
 	server := NewServer(node, 0)
@@ -239,7 +238,7 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 		{ID: 1, P2PPubKey: []byte("key1"), P2PNodeURL: "http://node1", KMSServerURL: "http://kms1"},
 	}
 	
-	logger, _ := zap.NewDevelopment()
+	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 	peeringDataFetcher := createTestPeeringDataFetcher(operators)
 	node := NewNode(Config{
 		ID:         1,
@@ -247,7 +246,7 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 		P2PPrivKey: []byte("test-priv-key"),
 		P2PPubKey:  []byte("test-pub-key"),
 		Operators:  operators,
-		Logger:     logger,
+		Logger:     testLogger,
 	}, peeringDataFetcher)
 	
 	// Create attestation with wrong image digest

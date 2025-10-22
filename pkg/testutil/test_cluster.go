@@ -10,6 +10,7 @@ import (
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/node"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/registry"
@@ -26,6 +27,7 @@ type TestCluster struct {
 	NumNodes    int
 	Threshold   int
 	MasterPubKey types.G2Point
+	logger      *zap.Logger
 }
 
 // NewTestCluster creates a test cluster of KMS nodes with completed DKG
@@ -44,8 +46,8 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 	}
 
 	// Create peering data fetcher for testing
-	logger, _ := zap.NewDevelopment()
-	peeringDataFetcher := createTestPeeringDataFetcher(operators, logger)
+	clusterLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
+	peeringDataFetcher := createTestPeeringDataFetcher(operators, clusterLogger)
 
 	// Create nodes
 	nodes := make([]*node.Node, numNodes)
@@ -56,7 +58,7 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 			P2PPrivKey: []byte(fmt.Sprintf("privkey-%d", i+1)),
 			P2PPubKey:  []byte(fmt.Sprintf("pubkey-%d", i+1)),
 			Operators:  operators,
-			Logger:     logger,
+			Logger:     clusterLogger,
 		}
 
 		nodes[i] = node.NewNode(cfg, peeringDataFetcher)
@@ -68,6 +70,7 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 		Operators: operators,
 		NumNodes:  numNodes,
 		Threshold: threshold,
+		logger:    clusterLogger,
 	}
 
 	if err := cluster.RunDKG(); err != nil {
@@ -83,10 +86,9 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 	return cluster
 }
 
-// RunDKG executes the DKG protocol across all nodes
+// RunDKG executes the DKG protocol across all nodes  
 func (tc *TestCluster) RunDKG() error {
-	logger, _ := zap.NewDevelopment()
-	sugar := logger.Sugar()
+	sugar := tc.logger.Sugar()
 	sugar.Infow("Running DKG", "nodes", tc.NumNodes, "threshold", tc.Threshold)
 
 	// Each node runs DKG
@@ -163,8 +165,7 @@ func (tc *TestCluster) startServers() {
 		tc.Servers[i] = testServer
 		tc.ServerURLs[i] = testServer.URL
 		
-		serverLogger, _ := zap.NewDevelopment()
-		serverLogger.Sugar().Debugw("Started server", "node", i+1, "url", testServer.URL)
+		tc.logger.Sugar().Debugw("Started server", "node", i+1, "url", testServer.URL)
 	}
 }
 
@@ -199,8 +200,7 @@ func (tc *TestCluster) addTestReleases() {
 		}
 	}
 
-	releaseLogger, _ := zap.NewDevelopment()
-	releaseLogger.Sugar().Debugw("Added test releases", "applications", len(testApps))
+	tc.logger.Sugar().Debugw("Added test releases", "applications", len(testApps))
 }
 
 // GetServerURLs returns the HTTP server URLs for the test cluster
@@ -218,15 +218,14 @@ func (tc *TestCluster) Close() {
 	for i, server := range tc.Servers {
 		if server != nil {
 			server.Close()
-			closeLogger, _ := zap.NewDevelopment()
-			closeLogger.Sugar().Debugw("Closed server", "node", i+1)
+			tc.logger.Sugar().Debugw("Closed server", "node", i+1)
 		}
 	}
 }
 
 // SimulateReshare simulates a reshare operation changing the operator set
 func (tc *TestCluster) SimulateReshare(newOperatorIDs []int) error {
-	reshareLogger, _ := zap.NewDevelopment()
+	reshareLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 	reshareLogger.Sugar().Infow("Simulating reshare", "new_operator_set", newOperatorIDs)
 
 	// Update operator set for all participating nodes
@@ -284,7 +283,7 @@ func (tc *TestCluster) SimulateReshare(newOperatorIDs []int) error {
 }
 
 // createTestPeeringDataFetcher creates a local peering data fetcher for testing
-func createTestPeeringDataFetcher(operators []types.OperatorInfo, logger *zap.Logger) peering.IPeeringDataFetcher {
+func createTestPeeringDataFetcher(operators []types.OperatorInfo, clusterLogger *zap.Logger) peering.IPeeringDataFetcher {
 	// Use the stub for testing since we don't need real peering functionality in tests
 	return peering.NewStubPeeringDataFetcher(nil)
 }
