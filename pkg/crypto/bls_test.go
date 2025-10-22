@@ -10,7 +10,7 @@ import (
 )
 
 // TestScalarMulG1 tests scalar multiplication on G1
-func TestScalarMulG1(t *testing.T) {
+func Test_ScalarMulG1(t *testing.T) {
 	tests := []struct {
 		name   string
 		scalar *fr.Element
@@ -49,7 +49,7 @@ func TestScalarMulG1(t *testing.T) {
 }
 
 // TestScalarMulG2 tests scalar multiplication on G2
-func TestScalarMulG2(t *testing.T) {
+func Test_ScalarMulG2(t *testing.T) {
 	scalar := new(fr.Element).SetInt64(42)
 	
 	result := ScalarMulG2(G2Generator, scalar)
@@ -68,7 +68,7 @@ func TestScalarMulG2(t *testing.T) {
 }
 
 // TestAddG1 tests point addition on G1
-func TestAddG1(t *testing.T) {
+func Test_AddG1(t *testing.T) {
 	// Create two points
 	scalar1 := new(fr.Element).SetInt64(1)
 	scalar2 := new(fr.Element).SetInt64(2)
@@ -94,7 +94,7 @@ func TestAddG1(t *testing.T) {
 }
 
 // TestAddG2 tests point addition on G2
-func TestAddG2(t *testing.T) {
+func Test_AddG2(t *testing.T) {
 	scalar1 := new(fr.Element).SetInt64(3)
 	scalar2 := new(fr.Element).SetInt64(5)
 	
@@ -111,7 +111,7 @@ func TestAddG2(t *testing.T) {
 }
 
 // TestHashToG1 tests hashing to G1
-func TestHashToG1(t *testing.T) {
+func Test_HashToG1(t *testing.T) {
 	tests := []struct {
 		appID string
 	}{
@@ -143,7 +143,7 @@ func TestHashToG1(t *testing.T) {
 }
 
 // TestEvaluatePolynomial tests polynomial evaluation
-func TestEvaluatePolynomial(t *testing.T) {
+func Test_EvaluatePolynomial(t *testing.T) {
 	// Create polynomial: f(x) = 1 + 2x + 3x^2
 	poly := make(polynomial.Polynomial, 3)
 	poly[0].SetInt64(1) // constant term
@@ -172,7 +172,7 @@ func TestEvaluatePolynomial(t *testing.T) {
 }
 
 // TestComputeLagrangeCoefficient tests Lagrange coefficient computation
-func TestComputeLagrangeCoefficient(t *testing.T) {
+func Test_ComputeLagrangeCoefficient(t *testing.T) {
 	participants := []int{1, 2, 3}
 	
 	// Test that sum of Lagrange coefficients at x=0 equals 1
@@ -190,7 +190,7 @@ func TestComputeLagrangeCoefficient(t *testing.T) {
 }
 
 // TestRecoverSecret tests secret recovery using Lagrange interpolation
-func TestRecoverSecret(t *testing.T) {
+func Test_RecoverSecret(t *testing.T) {
 	// Create a polynomial with known secret
 	secret := new(fr.Element).SetInt64(42)
 	degree := 2
@@ -228,7 +228,7 @@ func TestRecoverSecret(t *testing.T) {
 }
 
 // TestHashCommitment tests commitment hashing
-func TestHashCommitment(t *testing.T) {
+func Test_HashCommitment(t *testing.T) {
 	// Create some test commitments
 	commitments := []types.G2Point{
 		{X: big.NewInt(1), Y: big.NewInt(2)},
@@ -255,7 +255,7 @@ func TestHashCommitment(t *testing.T) {
 }
 
 // TestRecoverAppPrivateKey tests application private key recovery
-func TestRecoverAppPrivateKey(t *testing.T) {
+func Test_RecoverAppPrivateKey(t *testing.T) {
 	appID := "test-app"
 	threshold := 3
 	degree := threshold - 1
@@ -301,7 +301,7 @@ func TestRecoverAppPrivateKey(t *testing.T) {
 }
 
 // TestComputeMasterPublicKey tests master public key computation
-func TestComputeMasterPublicKey(t *testing.T) {
+func Test_ComputeMasterPublicKey(t *testing.T) {
 	// Create test commitments using valid points (scalar multiples of generator)
 	scalar1 := new(fr.Element).SetInt64(10)
 	scalar2 := new(fr.Element).SetInt64(20)

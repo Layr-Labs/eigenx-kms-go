@@ -16,7 +16,7 @@ import (
 )
 
 // TestSecretsEndpointFlow tests the complete application secrets retrieval flow
-func TestSecretsEndpointFlow(t *testing.T) {
+func Test_SecretsEndpointFlow(t *testing.T) {
 	// Setup test node with a mock key share
 	operators := []types.OperatorInfo{
 		{ID: 1, P2PPubKey: []byte("key1"), P2PNodeURL: "http://node1", KMSServerURL: "http://kms1"},
@@ -137,7 +137,7 @@ func TestSecretsEndpointFlow(t *testing.T) {
 }
 
 // TestSecretsEndpointValidation tests various validation scenarios
-func TestSecretsEndpointValidation(t *testing.T) {
+func Test_SecretsEndpointValidation(t *testing.T) {
 	// Setup test node
 	operators := []types.OperatorInfo{
 		{ID: 1, P2PPubKey: []byte("key1"), P2PNodeURL: "http://node1", KMSServerURL: "http://kms1"},
@@ -212,7 +212,7 @@ func TestSecretsEndpointValidation(t *testing.T) {
 }
 
 // TestSecretsEndpointImageDigestMismatch tests image digest validation
-func TestSecretsEndpointImageDigestMismatch(t *testing.T) {
+func Test_SecretsEndpointImageDigestMismatch(t *testing.T) {
 	// Setup test node
 	operators := []types.OperatorInfo{
 		{ID: 1, P2PPubKey: []byte("key1"), P2PNodeURL: "http://node1", KMSServerURL: "http://kms1"},

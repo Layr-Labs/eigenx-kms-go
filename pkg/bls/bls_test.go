@@ -7,7 +7,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
 )
 
-func TestPointOperations(t *testing.T) {
+func Test_PointOperations(t *testing.T) {
 	// Test scalar multiplication
 	scalar := new(fr.Element).SetInt64(42)
 	
@@ -37,7 +37,7 @@ func TestPointOperations(t *testing.T) {
 	}
 }
 
-func TestHashToPoint(t *testing.T) {
+func Test_HashToPoint(t *testing.T) {
 	msg := []byte("test message")
 	
 	g1Point := HashToG1(msg)
@@ -59,7 +59,7 @@ func TestHashToPoint(t *testing.T) {
 	}
 }
 
-func TestSignatureScheme(t *testing.T) {
+func Test_SignatureScheme(t *testing.T) {
 	// Generate key pair
 	sk, err := GeneratePrivateKey()
 	if err != nil {
@@ -93,7 +93,7 @@ func TestSignatureScheme(t *testing.T) {
 	}
 }
 
-func TestPolynomialSecretSharing(t *testing.T) {
+func Test_PolynomialSecretSharing(t *testing.T) {
 	// Create a secret
 	secret := new(fr.Element).SetInt64(12345)
 	degree := 2 // threshold = degree + 1 = 3
@@ -137,7 +137,7 @@ func TestPolynomialSecretSharing(t *testing.T) {
 	}
 }
 
-func TestShareVerification(t *testing.T) {
+func Test_ShareVerification(t *testing.T) {
 	// Create polynomial
 	secret := new(fr.Element).SetInt64(42)
 	poly := GeneratePolynomial(secret, 2)
@@ -164,7 +164,7 @@ func TestShareVerification(t *testing.T) {
 	}
 }
 
-func TestLagrangeInterpolation(t *testing.T) {
+func Test_LagrangeInterpolation(t *testing.T) {
 	participants := []int{1, 3, 5}
 	
 	// Test that Lagrange coefficients sum to 1 at x=0
@@ -180,7 +180,7 @@ func TestLagrangeInterpolation(t *testing.T) {
 	}
 }
 
-func TestBigIntConversion(t *testing.T) {
+func Test_BigIntConversion(t *testing.T) {
 	// Test G1 conversion
 	scalar := new(fr.Element).SetInt64(123)
 	g1Point := ScalarMulG1(G1Generator, scalar)
@@ -212,7 +212,7 @@ func TestBigIntConversion(t *testing.T) {
 	}
 }
 
-func TestPolynomialCommitments(t *testing.T) {
+func Test_PolynomialCommitments(t *testing.T) {
 	// Create two different polynomials with same degree
 	poly1 := make(polynomial.Polynomial, 3)
 	poly1[0].SetInt64(10)

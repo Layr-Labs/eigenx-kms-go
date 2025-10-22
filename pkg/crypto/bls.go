@@ -2,6 +2,7 @@ package crypto
 
 import (
 	"crypto/sha256"
+	"fmt"
 	"math/big"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
@@ -196,4 +197,66 @@ func VerifyShareWithCommitments(nodeID int, share *fr.Element, commitments []typ
 	
 	// Use the BLS module's verification
 	return bls.VerifyShare(nodeID, share, blsCommitments)
+}
+
+// GetAppPublicKey computes the public key for an application given the master public key
+// This implements Q_ID = H_1(app_id) for IBE encryption
+func GetAppPublicKey(appID string) types.G1Point {
+	// For IBE, the "public key" is just the hash of the identity to G1
+	return HashToG1(appID)
+}
+
+// ComputeAppPublicKeyFromMaster computes the application's public encryption key
+// using the master public key and pairing operations
+func ComputeAppPublicKeyFromMaster(appID string, masterPublicKey types.G2Point) types.G1Point {
+	// In IBE, the app's "public key" for encryption is H_1(app_id)
+	// The actual encryption involves pairing with master public key
+	// For now, we return the hash-to-G1 result
+	return HashToG1(appID)
+}
+
+// EncryptForApp encrypts data for an application using IBE
+// This is a simplified version - full IBE would involve pairings
+func EncryptForApp(appID string, masterPublicKey types.G2Point, plaintext []byte) ([]byte, error) {
+	// STUB: Full IBE implementation would be more complex
+	// For now, this is a placeholder that demonstrates the concept
+	// Real implementation would follow the IBE encryption scheme from the design docs
+	
+	// Step 1: Compute Q_ID = H_1(app_id)
+	_ = HashToG1(appID)
+	
+	// Step 2-5: Full IBE encryption (simplified for now)
+	// In production: Choose random α, compute r = H_3(α, M), etc.
+	
+	// For testing, we'll use a simple XOR with the app's hash
+	appHash := HashToG1(appID + "-encryption-key")
+	keyBytes := appHash.X.Bytes()
+	
+	// Simple XOR encryption (NOT secure, just for testing)
+	encrypted := make([]byte, len(plaintext))
+	for i, b := range plaintext {
+		encrypted[i] = b ^ keyBytes[i%len(keyBytes)]
+	}
+	
+	fmt.Printf("IBE encryption for app %s (simplified)\n", appID)
+	return encrypted, nil
+}
+
+// DecryptForApp decrypts data using the recovered application private key
+func DecryptForApp(appID string, appPrivateKey types.G1Point, ciphertext []byte) ([]byte, error) {
+	// STUB: This matches the simplified encryption above
+	// In production, this would use the full IBE decryption scheme
+	
+	// Use the same "key" derivation as encryption
+	appHash := HashToG1(appID + "-encryption-key")
+	keyBytes := appHash.X.Bytes()
+	
+	// Simple XOR decryption
+	decrypted := make([]byte, len(ciphertext))
+	for i, b := range ciphertext {
+		decrypted[i] = b ^ keyBytes[i%len(keyBytes)]
+	}
+	
+	fmt.Printf("IBE decryption for app %s (simplified)\n", appID)
+	return decrypted, nil
 }

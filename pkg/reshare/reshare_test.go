@@ -11,7 +11,7 @@ import (
 )
 
 // TestNewReshare tests reshare instance creation
-func TestNewReshare(t *testing.T) {
+func Test_NewReshare(t *testing.T) {
 	operators := createTestOperators(5)
 	nodeID := 1
 
@@ -29,7 +29,7 @@ func TestNewReshare(t *testing.T) {
 }
 
 // TestGenerateNewShares tests new share generation with current share as constant
-func TestGenerateNewShares(t *testing.T) {
+func Test_GenerateNewShares(t *testing.T) {
 	operators := createTestOperators(5)
 	nodeID := 1
 	newThreshold := 3
@@ -72,7 +72,7 @@ func TestGenerateNewShares(t *testing.T) {
 }
 
 // TestGenerateNewSharesNilCurrentShare tests error handling for nil current share
-func TestGenerateNewSharesNilCurrentShare(t *testing.T) {
+func Test_GenerateNewSharesNilCurrentShare(t *testing.T) {
 	operators := createTestOperators(3)
 	r := NewReshare(1, operators)
 	
@@ -83,7 +83,7 @@ func TestGenerateNewSharesNilCurrentShare(t *testing.T) {
 }
 
 // TestVerifyNewShare tests new share verification
-func TestVerifyNewShare(t *testing.T) {
+func Test_VerifyNewShare(t *testing.T) {
 	operators := createTestOperators(5)
 	newThreshold := 3
 	
@@ -116,7 +116,7 @@ func TestVerifyNewShare(t *testing.T) {
 }
 
 // TestComputeNewKeyShare tests new key share computation using Lagrange
-func TestComputeNewKeyShare(t *testing.T) {
+func Test_ComputeNewKeyShare(t *testing.T) {
 	operators := createTestOperators(5)
 	newThreshold := 3
 	epoch := int64(12345)
@@ -176,7 +176,7 @@ func TestComputeNewKeyShare(t *testing.T) {
 }
 
 // TestCreateCompletionSignature tests completion signature creation
-func TestCreateCompletionSignature(t *testing.T) {
+func Test_CreateCompletionSignature(t *testing.T) {
 	nodeID := 1
 	epoch := int64(54321)
 	commitmentHash := [32]byte{1, 2, 3, 4}
@@ -210,7 +210,7 @@ func TestCreateCompletionSignature(t *testing.T) {
 }
 
 // TestReshareProtocolIntegration tests a full reshare protocol
-func TestReshareProtocolIntegration(t *testing.T) {
+func Test_ReshareProtocolIntegration(t *testing.T) {
 	// Initial setup: 5 nodes with existing shares
 	initialNodes := 5
 	initialThreshold := dkg.CalculateThreshold(initialNodes)
@@ -324,7 +324,7 @@ func TestReshareProtocolIntegration(t *testing.T) {
 }
 
 // TestReshareWithThresholdChange tests resharing with threshold modification
-func TestReshareWithThresholdChange(t *testing.T) {
+func Test_ReshareWithThresholdChange(t *testing.T) {
 	// Start with 3-of-5 threshold, change to 4-of-7 threshold
 	_ = createTestOperators(5)
 	
@@ -358,7 +358,7 @@ func TestReshareWithThresholdChange(t *testing.T) {
 }
 
 // TestReshareSecretConsistency tests that the shared secret remains consistent
-func TestReshareSecretConsistency(t *testing.T) {
+func Test_ReshareSecretConsistency(t *testing.T) {
 	operators := createTestOperators(5)
 	threshold := 3
 	

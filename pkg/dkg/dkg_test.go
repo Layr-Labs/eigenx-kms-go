@@ -10,7 +10,7 @@ import (
 )
 
 // TestCalculateThreshold tests threshold calculation
-func TestCalculateThreshold(t *testing.T) {
+func Test_CalculateThreshold(t *testing.T) {
 	tests := []struct {
 		n         int
 		expected  int
@@ -38,7 +38,7 @@ func TestCalculateThreshold(t *testing.T) {
 }
 
 // TestNewDKG tests DKG instance creation
-func TestNewDKG(t *testing.T) {
+func Test_NewDKG(t *testing.T) {
 	operators := createTestOperators(5)
 	nodeID := 1
 	threshold := CalculateThreshold(len(operators))
@@ -60,7 +60,7 @@ func TestNewDKG(t *testing.T) {
 }
 
 // TestGenerateShares tests share generation
-func TestGenerateShares(t *testing.T) {
+func Test_GenerateShares(t *testing.T) {
 	operators := createTestOperators(5)
 	nodeID := 1
 	threshold := CalculateThreshold(len(operators))
@@ -103,7 +103,7 @@ func TestGenerateShares(t *testing.T) {
 }
 
 // TestVerifyShare tests share verification
-func TestVerifyShare(t *testing.T) {
+func Test_VerifyShare(t *testing.T) {
 	operators := createTestOperators(5)
 	
 	// Create two DKG instances
@@ -126,7 +126,7 @@ func TestVerifyShare(t *testing.T) {
 }
 
 // TestFinalizeKeyShare tests key share finalization
-func TestFinalizeKeyShare(t *testing.T) {
+func Test_FinalizeKeyShare(t *testing.T) {
 	operators := createTestOperators(3)
 	participantIDs := []int{1, 2, 3}
 	
@@ -182,7 +182,7 @@ func TestFinalizeKeyShare(t *testing.T) {
 }
 
 // TestCreateAcknowledgement tests acknowledgement creation
-func TestCreateAcknowledgement(t *testing.T) {
+func Test_CreateAcknowledgement(t *testing.T) {
 	nodeID := 1
 	dealerID := 2
 	commitments := []types.G2Point{
@@ -221,7 +221,7 @@ func TestCreateAcknowledgement(t *testing.T) {
 }
 
 // TestDKGProtocolIntegration tests a full DKG protocol run
-func TestDKGProtocolIntegration(t *testing.T) {
+func Test_DKGProtocolIntegration(t *testing.T) {
 	
 	numNodes := 5
 	threshold := CalculateThreshold(numNodes)

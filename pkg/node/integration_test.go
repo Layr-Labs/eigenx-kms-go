@@ -20,7 +20,7 @@ import (
 )
 
 // TestApplicationSecretsFlow tests the complete end-to-end flow as specified in the design docs
-func TestApplicationSecretsFlow(t *testing.T) {
+func Test_ApplicationSecretsFlow(t *testing.T) {
 	// Setup: Create 3 KMS nodes with DKG key shares
 	numNodes := 3
 	threshold := dkg.CalculateThreshold(numNodes)
