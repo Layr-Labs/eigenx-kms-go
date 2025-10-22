@@ -60,4 +60,9 @@ func (s *Server) Stop() error {
 	return s.httpServer.Close()
 }
 
+// GetHandler returns the HTTP handler (for testing)
+func (s *Server) GetHandler() http.Handler {
+	return s.httpServer.Handler
+}
+
 // Note: Handler implementations moved to handlers.go

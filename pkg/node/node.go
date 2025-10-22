@@ -409,3 +409,64 @@ func (n *Node) waitForAcknowledgements(threshold int, timeout time.Duration) err
 
 	return fmt.Errorf("timeout: got %d acks, expected %d", count, threshold)
 }
+
+// Helper methods for testing
+
+// GetID returns the node's ID
+func (n *Node) GetID() int {
+	return n.ID
+}
+
+// GetReleaseRegistry returns the release registry client (for testing)
+func (n *Node) GetReleaseRegistry() registry.Client {
+	return n.releaseRegistry
+}
+
+// RunDKGPhase1 runs only phase 1 of DKG (for testing)
+func (n *Node) RunDKGPhase1() (map[int]*fr.Element, []types.G2Point, error) {
+	return n.dkg.GenerateShares()
+}
+
+// ReceiveShare receives a share from another node (for testing)
+func (n *Node) ReceiveShare(fromID int, share *fr.Element, commitments []types.G2Point) error {
+	n.mu.Lock()
+	n.receivedShares[fromID] = share
+	n.receivedCommitments[fromID] = commitments
+	n.mu.Unlock()
+
+	// Verify the share
+	if n.dkg.VerifyShare(fromID, share, commitments) {
+		fmt.Printf("Node %d: ✓ Verified share from Node %d\n", n.ID, fromID)
+		return nil
+	} else {
+		return fmt.Errorf("node %d: invalid share from node %d", n.ID, fromID)
+	}
+}
+
+// UpdateOperatorSet updates the node's operator set (for testing reshares)
+func (n *Node) UpdateOperatorSet(newOperators []types.OperatorInfo) {
+	n.mu.Lock()
+	n.Operators = newOperators
+	n.Threshold = dkg.CalculateThreshold(len(newOperators))
+	n.TotalNodes = len(newOperators)
+	n.resharer = reshare.NewReshare(n.ID, newOperators)
+	n.mu.Unlock()
+
+	fmt.Printf("Node %d: Updated operator set (threshold: %d)\n", n.ID, n.Threshold)
+}
+
+// FinalizeDKG finalizes the DKG process and creates active key version (for testing)
+func (n *Node) FinalizeDKG(allCommitments [][]types.G2Point, participantIDs []int) error {
+	n.mu.RLock()
+	receivedShares := make(map[int]*fr.Element)
+	for k, v := range n.receivedShares {
+		receivedShares[k] = v
+	}
+	n.mu.RUnlock()
+
+	keyVersion := n.dkg.FinalizeKeyShare(receivedShares, allCommitments, participantIDs)
+	n.keyStore.AddVersion(keyVersion)
+
+	fmt.Printf("Node %d: ✓ DKG finalized with key version %d\n", n.ID, keyVersion.Version)
+	return nil
+}
