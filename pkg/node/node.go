@@ -11,6 +11,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/keystore"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/registry"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/reshare"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transport"
@@ -34,6 +35,8 @@ type Node struct {
 	P2PPubKey  []byte // ed25519 public key
 	Threshold  int
 	TotalNodes int
+
+	peeringDataFetcher peering.IPeeringDataFetcher
 
 	// Dependencies
 	keyStore            *keystore.KeyStore
@@ -67,7 +70,7 @@ type Config struct {
 }
 
 // NewNode creates a new node instance with dependency injection
-func NewNode(cfg Config) *Node {
+func NewNode(cfg Config, pdf peering.IPeeringDataFetcher) *Node {
 	threshold := dkg.CalculateThreshold(len(cfg.Operators))
 
 	n := &Node{
@@ -87,6 +90,7 @@ func NewNode(cfg Config) *Node {
 		receivedCommitments: make(map[int][]types.G2Point),
 		receivedAcks:        make(map[int]map[int]*types.Acknowledgement),
 		reshareComplete:     make(map[int]*types.CompletionSignature),
+		peeringDataFetcher:  pdf,
 	}
 
 	n.dkg = dkg.NewDKG(cfg.ID, threshold, cfg.Operators)

@@ -1,0 +1,3 @@
+[submodule "modules/eigenlayer-middleware"]
+	path = modules/eigenlayer-middleware
+	url = https://github.com/Layr-Labs/eigenlayer-middleware.git

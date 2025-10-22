@@ -20,6 +20,7 @@ deps: deps/go
 .PHONY: deps/go
 deps/go:
 	${GO} mod tidy
+	$(GO) install github.com/vektra/mockery/v3@v3.5.5
 
 
 # -----------------------------------------------------------------------------
@@ -54,3 +55,8 @@ fmtcheck:
 		echo "Please run 'gofmt -w .' to format them."; \
 		exit 1; \
 	fi
+
+.PHONY: mocks
+mocks:
+	@echo "Generating mocks..."
+	mockery
