@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
@@ -47,6 +49,7 @@ type Node struct {
 	attestationVerifier attestation.Verifier
 	releaseRegistry     registry.Client
 	rsaEncryption       *encryption.RSAEncryption
+	logger              *zap.Logger
 
 	// Operators
 	Operators []types.OperatorInfo
@@ -67,11 +70,18 @@ type Config struct {
 	P2PPrivKey []byte
 	P2PPubKey  []byte
 	Operators  []types.OperatorInfo
+	Logger     *zap.Logger // Optional logger, will create default if nil
 }
 
 // NewNode creates a new node instance with dependency injection
 func NewNode(cfg Config, pdf peering.IPeeringDataFetcher) *Node {
 	threshold := dkg.CalculateThreshold(len(cfg.Operators))
+	
+	// Create logger if not provided
+	logger := cfg.Logger
+	if logger == nil {
+		logger, _ = zap.NewProduction()
+	}
 
 	n := &Node{
 		ID:                  cfg.ID,
@@ -91,6 +101,7 @@ func NewNode(cfg Config, pdf peering.IPeeringDataFetcher) *Node {
 		receivedAcks:        make(map[int]map[int]*types.Acknowledgement),
 		reshareComplete:     make(map[int]*types.CompletionSignature),
 		peeringDataFetcher:  pdf,
+		logger:              logger,
 	}
 
 	n.dkg = dkg.NewDKG(cfg.ID, threshold, cfg.Operators)
@@ -112,7 +123,7 @@ func (n *Node) Stop() error {
 
 // RunDKG executes the DKG protocol
 func (n *Node) RunDKG() error {
-	fmt.Printf("Node %d: Starting DKG Phase 1 (generate shares)\n", n.ID)
+	n.logger.Sugar().Infow("Starting DKG Phase 1", "node_id", n.ID, "phase", "generate_shares")
 
 	// Phase 1: Generate shares and commitments
 	shares, commitments, err := n.dkg.GenerateShares()
@@ -144,7 +155,7 @@ func (n *Node) RunDKG() error {
 	}
 
 	// Phase 2: Verify and send acknowledgements
-	fmt.Printf("Node %d: Starting DKG Phase 2 (verify and ack)\n", n.ID)
+	n.logger.Sugar().Infow("Starting DKG Phase 2", "node_id", n.ID, "phase", "verify_and_ack")
 
 	n.mu.RLock()
 	receivedShares := make(map[int]*fr.Element)
@@ -170,9 +181,9 @@ func (n *Node) RunDKG() error {
 				_ = n.transport.SendAcknowledgement(ack, *dealer, "/dkg/ack")
 			}
 
-			fmt.Printf("Node %d: ✓ Verified and acked share from Node %d\n", n.ID, dealerID)
+			n.logger.Sugar().Infow("Verified and acked share", "node_id", n.ID, "dealer_id", dealerID)
 		} else {
-			fmt.Printf("Node %d: ✗ Invalid share from Node %d\n", n.ID, dealerID)
+			n.logger.Sugar().Warnw("Invalid share received", "node_id", n.ID, "dealer_id", dealerID)
 		}
 	}
 
@@ -186,7 +197,7 @@ func (n *Node) RunDKG() error {
 	}
 
 	// Phase 3: Finalize
-	fmt.Printf("Node %d: Starting DKG Phase 3 (finalization)\n", n.ID)
+	n.logger.Sugar().Infow("Starting DKG Phase 3", "node_id", n.ID, "phase", "finalization")
 
 	allCommitments := make([][]types.G2Point, 0, len(receivedCommitments))
 	participantIDs := make([]int, 0, len(receivedCommitments))
@@ -201,7 +212,7 @@ func (n *Node) RunDKG() error {
 	keyVersion := n.dkg.FinalizeKeyShare(n.receivedShares, allCommitments, participantIDs)
 	n.keyStore.AddVersion(keyVersion)
 
-	fmt.Printf("Node %d: ✓ DKG complete\n", n.ID)
+	n.logger.Sugar().Infow("DKG complete", "node_id", n.ID)
 	return nil
 }
 
@@ -219,13 +230,13 @@ func (n *Node) RunReshareWithTimeout() error {
 	select {
 	case err := <-done:
 		if err != nil {
-			fmt.Printf("Node %d: Reshare failed: %v\n", n.ID, err)
+			n.logger.Sugar().Errorw("Reshare failed", "node_id", n.ID, "error", err)
 			n.abandonReshare()
 			return err
 		}
 		return nil
 	case <-ctx.Done():
-		fmt.Printf("Node %d: Reshare timeout, abandoning\n", n.ID)
+		n.logger.Sugar().Warnw("Reshare timeout, abandoning", "node_id", n.ID)
 		n.abandonReshare()
 		return fmt.Errorf("reshare timeout")
 	}
@@ -239,8 +250,7 @@ func (n *Node) RunReshare() error {
 	// Recalculate threshold
 	newThreshold := dkg.CalculateThreshold(len(n.Operators))
 
-	fmt.Printf("Node %d: Starting reshare (threshold: %d, operators: %d)\n",
-		n.ID, newThreshold, len(n.Operators))
+	n.logger.Sugar().Infow("Starting reshare", "node_id", n.ID, "threshold", newThreshold, "operators", len(n.Operators))
 
 	// Get current share
 	currentShare, err := n.keyStore.GetActivePrivateShare()
@@ -278,7 +288,7 @@ func (n *Node) RunReshare() error {
 	}
 
 	// TODO: Complete reshare implementation
-	fmt.Printf("Node %d: Reshare protocol initiated\n", n.ID)
+	n.logger.Sugar().Infow("Reshare protocol initiated", "node_id", n.ID)
 
 	return nil
 }
@@ -313,8 +323,7 @@ func (n *Node) getOperatorByID(id int) *types.OperatorInfo {
 
 func (n *Node) refreshOperatorSet() {
 	// STUB: In production, query IKmsAvsRegistry.getNodeInfos() from chain
-	fmt.Printf("Node %d: Refreshed operator set from chain (%d operators)\n",
-		n.ID, len(n.Operators))
+	n.logger.Sugar().Infow("Refreshed operator set from chain", "node_id", n.ID, "operators", len(n.Operators))
 }
 
 func (n *Node) abandonReshare() {
@@ -327,7 +336,7 @@ func (n *Node) abandonReshare() {
 	n.receivedAcks = make(map[int]map[int]*types.Acknowledgement)
 	n.reshareComplete = make(map[int]*types.CompletionSignature)
 
-	fmt.Printf("Node %d: Reshare abandoned, keeping active version\n", n.ID)
+	n.logger.Sugar().Warnw("Reshare abandoned, keeping active version", "node_id", n.ID)
 }
 
 func (n *Node) signAcknowledgement(dealerID int, commitmentHash [32]byte) []byte {
@@ -445,7 +454,7 @@ func (n *Node) ReceiveShare(fromID int, share *fr.Element, commitments []types.G
 
 	// Verify the share
 	if n.dkg.VerifyShare(fromID, share, commitments) {
-		fmt.Printf("Node %d: ✓ Verified share from Node %d\n", n.ID, fromID)
+		n.logger.Sugar().Infow("Verified share", "node_id", n.ID, "from_id", fromID)
 		return nil
 	} else {
 		return fmt.Errorf("node %d: invalid share from node %d", n.ID, fromID)
@@ -461,7 +470,7 @@ func (n *Node) UpdateOperatorSet(newOperators []types.OperatorInfo) {
 	n.resharer = reshare.NewReshare(n.ID, newOperators)
 	n.mu.Unlock()
 
-	fmt.Printf("Node %d: Updated operator set (threshold: %d)\n", n.ID, n.Threshold)
+	n.logger.Sugar().Infow("Updated operator set", "node_id", n.ID, "threshold", n.Threshold)
 }
 
 // FinalizeDKG finalizes the DKG process and creates active key version (for testing)
@@ -476,6 +485,6 @@ func (n *Node) FinalizeDKG(allCommitments [][]types.G2Point, participantIDs []in
 	keyVersion := n.dkg.FinalizeKeyShare(receivedShares, allCommitments, participantIDs)
 	n.keyStore.AddVersion(keyVersion)
 
-	fmt.Printf("Node %d: ✓ DKG finalized with key version %d\n", n.ID, keyVersion.Version)
+	n.logger.Sugar().Infow("DKG finalized", "node_id", n.ID, "version", keyVersion.Version)
 	return nil
 }

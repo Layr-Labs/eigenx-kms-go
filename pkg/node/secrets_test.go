@@ -9,7 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/registry"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
@@ -21,6 +24,12 @@ func Test_SecretsEndpoint(t *testing.T) {
 	t.Run("ImageDigestMismatch", func(t *testing.T) { testSecretsEndpointImageDigestMismatch(t) })
 }
 
+// createTestPeeringDataFetcher creates a test peering data fetcher
+func createTestPeeringDataFetcher(operators []types.OperatorInfo) peering.IPeeringDataFetcher {
+	// Use the stub for testing
+	return peering.NewStubPeeringDataFetcher(nil)
+}
+
 // testSecretsEndpointFlow tests the complete application secrets retrieval flow
 func testSecretsEndpointFlow(t *testing.T) {
 	// Setup test node with a mock key share
@@ -28,15 +37,18 @@ func testSecretsEndpointFlow(t *testing.T) {
 		{ID: 1, P2PPubKey: []byte("key1"), P2PNodeURL: "http://node1", KMSServerURL: "http://kms1"},
 	}
 	
+	logger, _ := zap.NewDevelopment()
 	cfg := Config{
 		ID:         1,
 		Port:       0, // Use random port
 		P2PPrivKey: []byte("test-priv-key"),
 		P2PPubKey:  []byte("test-pub-key"),
 		Operators:  operators,
+		Logger:     logger,
 	}
 	
-	node := NewNode(cfg)
+	peeringDataFetcher := createTestPeeringDataFetcher(operators)
+	node := NewNode(cfg, peeringDataFetcher)
 	
 	// Add a test key share
 	testShare := new(fr.Element).SetInt64(42)
@@ -149,13 +161,16 @@ func testSecretsEndpointValidation(t *testing.T) {
 		{ID: 1, P2PPubKey: []byte("key1"), P2PNodeURL: "http://node1", KMSServerURL: "http://kms1"},
 	}
 	
+	logger, _ := zap.NewDevelopment()
+	peeringDataFetcher := createTestPeeringDataFetcher(operators)
 	node := NewNode(Config{
 		ID:         1,
 		Port:       0,
 		P2PPrivKey: []byte("test-priv-key"),
 		P2PPubKey:  []byte("test-pub-key"),
 		Operators:  operators,
-	})
+		Logger:     logger,
+	}, peeringDataFetcher)
 	
 	server := NewServer(node, 0)
 	
@@ -224,13 +239,16 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 		{ID: 1, P2PPubKey: []byte("key1"), P2PNodeURL: "http://node1", KMSServerURL: "http://kms1"},
 	}
 	
+	logger, _ := zap.NewDevelopment()
+	peeringDataFetcher := createTestPeeringDataFetcher(operators)
 	node := NewNode(Config{
 		ID:         1,
 		Port:       0,
 		P2PPrivKey: []byte("test-priv-key"),
 		P2PPubKey:  []byte("test-pub-key"),
 		Operators:  operators,
-	})
+		Logger:     logger,
+	}, peeringDataFetcher)
 	
 	// Create attestation with wrong image digest
 	testClaims := types.AttestationClaims{

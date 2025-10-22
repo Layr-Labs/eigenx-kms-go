@@ -11,7 +11,7 @@ import (
 	"github.com/Layr-Labs/eigenlayer-contracts/pkg/bindings/IReleaseManager"
 	ethereum "github.com/Layr-Labs/eigenx-kms-go/pkg/clients"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/middleware-bindings/ISocketRegistryV2"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/middleware-bindings/IEigenKMSRegistrar"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
@@ -133,7 +133,7 @@ func (cc *ContractCaller) GetOperatorSetDetailsForOperator(
 
 	// Create new registrar caller
 	// TODO(seanmcgary): this will be more specific later rather than just the socket registry
-	caller, err := ISocketRegistryV2.NewISocketRegistryV2Caller(avsRegistrarAddress, cc.ethclient)
+	caller, err := IEigenKMSRegistrar.NewIEigenKMSRegistrarCaller(avsRegistrarAddress, cc.ethclient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create AVS registrar caller: %w", err)
 	}

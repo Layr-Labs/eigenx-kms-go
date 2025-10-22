@@ -6,9 +6,12 @@ import (
 	"testing"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/node"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/registry"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
@@ -40,6 +43,10 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 		}
 	}
 
+	// Create peering data fetcher for testing
+	logger, _ := zap.NewDevelopment()
+	peeringDataFetcher := createTestPeeringDataFetcher(operators, logger)
+
 	// Create nodes
 	nodes := make([]*node.Node, numNodes)
 	for i := 0; i < numNodes; i++ {
@@ -49,9 +56,10 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 			P2PPrivKey: []byte(fmt.Sprintf("privkey-%d", i+1)),
 			P2PPubKey:  []byte(fmt.Sprintf("pubkey-%d", i+1)),
 			Operators:  operators,
+			Logger:     logger,
 		}
 
-		nodes[i] = node.NewNode(cfg)
+		nodes[i] = node.NewNode(cfg, peeringDataFetcher)
 	}
 
 	// Run DKG to establish shared keys
@@ -77,7 +85,9 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 
 // RunDKG executes the DKG protocol across all nodes
 func (tc *TestCluster) RunDKG() error {
-	fmt.Printf("Test Cluster: Running DKG with %d nodes (threshold: %d)\n", tc.NumNodes, tc.Threshold)
+	logger, _ := zap.NewDevelopment()
+	sugar := logger.Sugar()
+	sugar.Infow("Running DKG", "nodes", tc.NumNodes, "threshold", tc.Threshold)
 
 	// Each node runs DKG
 	allShares := make([]map[int]*fr.Element, tc.NumNodes)
@@ -136,8 +146,7 @@ func (tc *TestCluster) RunDKG() error {
 		}
 	}
 	
-	fmt.Printf("Test Cluster: ✓ DKG completed, master public key: %x...\n", 
-		tc.MasterPubKey.X.Bytes()[:8])
+	sugar.Infow("DKG completed", "master_public_key", fmt.Sprintf("%x", tc.MasterPubKey.X.Bytes()[:8]))
 
 	return nil
 }
@@ -154,7 +163,8 @@ func (tc *TestCluster) startServers() {
 		tc.Servers[i] = testServer
 		tc.ServerURLs[i] = testServer.URL
 		
-		fmt.Printf("Test Cluster: Started server for node %d at %s\n", i+1, testServer.URL)
+		serverLogger, _ := zap.NewDevelopment()
+		serverLogger.Sugar().Debugw("Started server", "node", i+1, "url", testServer.URL)
 	}
 }
 
@@ -189,7 +199,8 @@ func (tc *TestCluster) addTestReleases() {
 		}
 	}
 
-	fmt.Printf("Test Cluster: Added test releases for %d applications\n", len(testApps))
+	releaseLogger, _ := zap.NewDevelopment()
+	releaseLogger.Sugar().Debugw("Added test releases", "applications", len(testApps))
 }
 
 // GetServerURLs returns the HTTP server URLs for the test cluster
@@ -207,14 +218,16 @@ func (tc *TestCluster) Close() {
 	for i, server := range tc.Servers {
 		if server != nil {
 			server.Close()
-			fmt.Printf("Test Cluster: Closed server for node %d\n", i+1)
+			closeLogger, _ := zap.NewDevelopment()
+			closeLogger.Sugar().Debugw("Closed server", "node", i+1)
 		}
 	}
 }
 
 // SimulateReshare simulates a reshare operation changing the operator set
 func (tc *TestCluster) SimulateReshare(newOperatorIDs []int) error {
-	fmt.Printf("Test Cluster: Simulating reshare to operator set %v\n", newOperatorIDs)
+	reshareLogger, _ := zap.NewDevelopment()
+	reshareLogger.Sugar().Infow("Simulating reshare", "new_operator_set", newOperatorIDs)
 
 	// Update operator set for all participating nodes
 	newOperators := make([]types.OperatorInfo, len(newOperatorIDs))
@@ -265,7 +278,13 @@ func (tc *TestCluster) SimulateReshare(newOperatorIDs []int) error {
 	}
 
 	tc.Threshold = newThreshold
-	fmt.Printf("Test Cluster: ✓ Reshare completed, new threshold: %d\n", newThreshold)
+	reshareLogger.Sugar().Infow("Reshare completed", "new_threshold", newThreshold)
 	
 	return nil
+}
+
+// createTestPeeringDataFetcher creates a local peering data fetcher for testing
+func createTestPeeringDataFetcher(operators []types.OperatorInfo, logger *zap.Logger) peering.IPeeringDataFetcher {
+	// Use the stub for testing since we don't need real peering functionality in tests
+	return peering.NewStubPeeringDataFetcher(nil)
 }

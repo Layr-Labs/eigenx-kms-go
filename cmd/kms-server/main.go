@@ -6,7 +6,11 @@ import (
 	"os"
 
 	"github.com/urfave/cli/v2"
+	"go.uber.org/zap"
+	
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/node"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 )
 
@@ -78,26 +82,38 @@ This server implements:
 }
 
 func runKMSServer(c *cli.Context) error {
+	// Create logger
+	loggerConfig := &logger.LoggerConfig{
+		Debug: c.Bool("verbose"),
+	}
+	appLogger, err := logger.NewLogger(loggerConfig)
+	if err != nil {
+		return fmt.Errorf("failed to create logger: %w", err)
+	}
+	defer appLogger.Sync()
+
 	// Parse configuration from flags/environment
-	config, err := parseConfig(c)
+	config, err := parseConfig(c, appLogger)
 	if err != nil {
 		return fmt.Errorf("configuration error: %w", err)
 	}
 
+	// Create peering data fetcher
+	peeringDataFetcher := createPeeringDataFetcher(config.Operators, appLogger)
+	
 	// Create and configure the node
-	n := node.NewNode(config)
+	n := node.NewNode(config, peeringDataFetcher)
 
 	if c.Bool("verbose") {
-		fmt.Printf("KMS Server Configuration:\n")
-		fmt.Printf("  Node ID: %d\n", config.ID)
-		fmt.Printf("  Port: %d\n", config.Port)
-		fmt.Printf("  Operators: %d\n", len(config.Operators))
-		fmt.Printf("  Auto DKG: %v\n", c.Bool("auto-dkg"))
-		fmt.Printf("\n")
+		appLogger.Sugar().Infow("KMS Server Configuration", 
+			"node_id", config.ID,
+			"port", config.Port,
+			"operators", len(config.Operators),
+			"auto_dkg", c.Bool("auto-dkg"))
 	}
 
 	// Start the node server
-	fmt.Printf("Starting KMS Server (Node %d) on port %d...\n", config.ID, config.Port)
+	appLogger.Sugar().Infow("Starting KMS Server", "node_id", config.ID, "port", config.Port)
 	
 	if err := n.Start(); err != nil {
 		return fmt.Errorf("failed to start node: %w", err)
@@ -105,27 +121,27 @@ func runKMSServer(c *cli.Context) error {
 
 	// Optionally run DKG automatically
 	if c.Bool("auto-dkg") {
-		fmt.Printf("Node %d: Running DKG automatically...\n", config.ID)
+		appLogger.Sugar().Infow("Running DKG automatically", "node_id", config.ID)
 		if err := n.RunDKG(); err != nil {
-			fmt.Printf("Node %d: DKG failed: %v\n", config.ID, err)
+			appLogger.Sugar().Errorw("DKG failed", "node_id", config.ID, "error", err)
 		} else {
-			fmt.Printf("Node %d: DKG completed successfully\n", config.ID)
+			appLogger.Sugar().Infow("DKG completed successfully", "node_id", config.ID)
 		}
 	}
 
-	fmt.Printf("Node %d: KMS Server running on port %d\n", config.ID, config.Port)
-	fmt.Printf("Endpoints:\n")
-	fmt.Printf("  POST /secrets - Application secret retrieval\n")
-	fmt.Printf("  POST /app/sign - Application signing\n") 
-	fmt.Printf("  POST /dkg/* - DKG protocol endpoints\n")
-	fmt.Printf("  POST /reshare/* - Reshare protocol endpoints\n")
-	fmt.Printf("\nPress Ctrl+C to stop\n")
+	appLogger.Sugar().Infow("KMS Server running", "node_id", config.ID, "port", config.Port)
+	appLogger.Sugar().Infow("Available endpoints", 
+		"secrets", "POST /secrets",
+		"app_sign", "POST /app/sign",
+		"dkg", "POST /dkg/*",
+		"reshare", "POST /reshare/*")
+	appLogger.Sugar().Info("Press Ctrl+C to stop")
 
 	// Keep the server running
 	select {}
 }
 
-func parseConfig(c *cli.Context) (node.Config, error) {
+func parseConfig(c *cli.Context, logger *zap.Logger) (node.Config, error) {
 	nodeID := c.Int("node-id")
 	port := c.Int("port")
 	chainID := c.Uint64("chain-id")
@@ -142,9 +158,7 @@ func parseConfig(c *cli.Context) (node.Config, error) {
 		return node.Config{}, fmt.Errorf("invalid chain ID %d. Supported: 1 (mainnet), 11155111 (sepolia), 31337 (anvil)", chainID)
 	}
 	
-	if c.Bool("verbose") {
-		fmt.Printf("Using chain: %s (ID: %d)\n", chainName, chainID)
-	}
+	logger.Sugar().Infow("Using chain", "name", chainName, "chain_id", chainID)
 	
 	// Get operators from on-chain registry (stubbed for now)
 	operators, err := getOperatorsFromChain(chainID, nodeID)
@@ -162,6 +176,7 @@ func parseConfig(c *cli.Context) (node.Config, error) {
 		P2PPrivKey: p2pPrivKey,
 		P2PPubKey:  p2pPubKey,
 		Operators:  operators,
+		Logger:     logger,
 	}, nil
 }
 
@@ -237,4 +252,17 @@ func createTestOperatorSet(nodeID int, totalNodes int) []types.OperatorInfo {
 	}
 	
 	return operators
+}
+
+// createPeeringDataFetcher creates a peering data fetcher
+func createPeeringDataFetcher(operators []types.OperatorInfo, logger *zap.Logger) peering.IPeeringDataFetcher {
+	// For now, use stub for testing. In production, this would use the real peeringDataFetcher
+	// that queries the on-chain contract based on chainID
+	
+	// TODO: Implement real on-chain peering data fetcher that calls:
+	// - IKmsAvsRegistry.getNodeInfos() for operator set
+	// - Parses operator addresses, socket addresses, and public keys
+	// - Returns properly formatted OperatorSetPeers
+	
+	return peering.NewStubPeeringDataFetcher(nil)
 }

@@ -34,16 +34,20 @@ function create_binding {
     rm $binding_out_dir/tmp.bin
 }
 
-cd ./modules/eigenlayer-middleware
+cd ./contracts/lib/eigenlayer-middleware
 
 echo "Running forge build..."
 forge build
 
-contracts=$(find src -type f -name "*.sol" )
-IFS=$'\n'
-
-
 create_binding "ISocketRegistryV2"
+
+cd -
+
+cd ./contracts
+
+forge build
+
+create_binding "IEigenKMSRegistrar"
 
 # echo "Generating bindings for contracts..."
 # for contract_name in $contracts; do

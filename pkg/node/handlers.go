@@ -32,12 +32,12 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Printf("Node %d: Processing secrets request for app_id: %s\n", s.node.ID, req.AppID)
+	s.node.logger.Sugar().Infow("Processing secrets request", "node_id", s.node.ID, "app_id", req.AppID)
 
 	// Step 1: Verify attestation
 	claims, err := s.node.attestationVerifier.VerifyAttestation(req.Attestation)
 	if err != nil {
-		fmt.Printf("Node %d: Attestation verification failed: %v\n", s.node.ID, err)
+		s.node.logger.Sugar().Warnw("Attestation verification failed", "node_id", s.node.ID, "error", err)
 		http.Error(w, "Invalid attestation", http.StatusUnauthorized)
 		return
 	}
@@ -45,15 +45,14 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	// Step 2: Query latest release from on-chain registry
 	release, err := s.node.releaseRegistry.GetLatestRelease(req.AppID)
 	if err != nil {
-		fmt.Printf("Node %d: Failed to get release for %s: %v\n", s.node.ID, req.AppID, err)
+		s.node.logger.Sugar().Warnw("Failed to get release", "node_id", s.node.ID, "app_id", req.AppID, "error", err)
 		http.Error(w, "Release not found", http.StatusNotFound)
 		return
 	}
 
 	// Step 3: Verify image digest matches
 	if claims.ImageDigest != release.ImageDigest {
-		fmt.Printf("Node %d: Image digest mismatch for %s. Expected: %s, Got: %s\n",
-			s.node.ID, req.AppID, release.ImageDigest, claims.ImageDigest)
+		s.node.logger.Sugar().Warnw("Image digest mismatch", "node_id", s.node.ID, "app_id", req.AppID, "expected", release.ImageDigest, "got", claims.ImageDigest)
 		http.Error(w, "Image digest mismatch - unauthorized image", http.StatusForbidden)
 		return
 	}
@@ -70,7 +69,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if keyVersion == nil || keyVersion.PrivateShare == nil {
-		fmt.Printf("Node %d: No valid key share available\n", s.node.ID)
+		s.node.logger.Sugar().Errorw("No valid key share available", "node_id", s.node.ID)
 		http.Error(w, "No valid key share", http.StatusServiceUnavailable)
 		return
 	}
@@ -79,12 +78,12 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	// partial_sig = H(app_id)^{key_share}
 	partialSig := s.node.SignAppID(req.AppID, req.AttestTime)
 
-	fmt.Printf("Node %d: Generated partial signature for %s\n", s.node.ID, req.AppID)
+	s.node.logger.Sugar().Infow("Generated partial signature", "node_id", s.node.ID, "app_id", req.AppID)
 
 	// Step 6: Serialize partial signature for encryption
 	partialSigBytes, err := json.Marshal(partialSig)
 	if err != nil {
-		fmt.Printf("Node %d: Failed to serialize partial signature: %v\n", s.node.ID, err)
+		s.node.logger.Sugar().Errorw("Failed to serialize partial signature", "node_id", s.node.ID, "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
@@ -92,7 +91,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	// Step 7: Encrypt partial signature with ephemeral RSA public key
 	encryptedPartialSig, err := s.node.rsaEncryption.Encrypt(partialSigBytes, req.RSAPubKeyTmp)
 	if err != nil {
-		fmt.Printf("Node %d: Failed to encrypt partial signature: %v\n", s.node.ID, err)
+		s.node.logger.Sugar().Errorw("Failed to encrypt partial signature", "node_id", s.node.ID, "error", err)
 		http.Error(w, "Encryption failed", http.StatusInternalServerError)
 		return
 	}
@@ -107,12 +106,12 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	// Return JSON response
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		fmt.Printf("Node %d: Failed to encode response: %v\n", s.node.ID, err)
+		s.node.logger.Sugar().Errorw("Failed to encode response", "node_id", s.node.ID, "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
 
-	fmt.Printf("Node %d: Successfully served secrets for app_id: %s\n", s.node.ID, req.AppID)
+	s.node.logger.Sugar().Infow("Successfully served secrets", "node_id", s.node.ID, "app_id", req.AppID)
 }
 
 // handleDKGCommitment handles DKG commitment messages
@@ -130,7 +129,7 @@ func (s *Server) handleDKGCommitment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// TODO: Store received commitments
-	fmt.Printf("Node %d: Received DKG commitments (count: %d)\n", s.node.ID, len(commitments))
+	s.node.logger.Sugar().Debugw("Received DKG commitments", "node_id", s.node.ID, "count", len(commitments))
 	
 	w.WriteHeader(http.StatusOK)
 }
@@ -143,7 +142,7 @@ func (s *Server) handleDKGShare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// TODO: Parse and store received share
-	fmt.Printf("Node %d: Received DKG share\n", s.node.ID)
+	s.node.logger.Sugar().Debugw("Received DKG share", "node_id", s.node.ID)
 	
 	w.WriteHeader(http.StatusOK)
 }
@@ -163,8 +162,7 @@ func (s *Server) handleDKGAck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// TODO: Store received acknowledgement
-	fmt.Printf("Node %d: Received acknowledgement from node %d for dealer %d\n", 
-		s.node.ID, ack.PlayerID, ack.DealerID)
+	s.node.logger.Sugar().Debugw("Received acknowledgement", "node_id", s.node.ID, "from_player", ack.PlayerID, "for_dealer", ack.DealerID)
 	
 	w.WriteHeader(http.StatusOK)
 }
@@ -184,7 +182,7 @@ func (s *Server) handleReshareCommitment(w http.ResponseWriter, r *http.Request)
 	}
 
 	// TODO: Store received commitments
-	fmt.Printf("Node %d: Received reshare commitments (count: %d)\n", s.node.ID, len(commitments))
+	s.node.logger.Sugar().Debugw("Received reshare commitments", "node_id", s.node.ID, "count", len(commitments))
 	
 	w.WriteHeader(http.StatusOK)
 }
@@ -197,7 +195,7 @@ func (s *Server) handleReshareShare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// TODO: Parse and store received share
-	fmt.Printf("Node %d: Received reshare share\n", s.node.ID)
+	s.node.logger.Sugar().Debugw("Received reshare share", "node_id", s.node.ID)
 	
 	w.WriteHeader(http.StatusOK)
 }
@@ -216,7 +214,7 @@ func (s *Server) handleReshareAck(w http.ResponseWriter, r *http.Request) {
 	s.node.receivedAcks[msg.Ack.DealerID][msg.Ack.PlayerID] = msg.Ack
 	s.node.mu.Unlock()
 
-	fmt.Printf("Node %d: Received reshare ack from Node %d\n", s.node.ID, msg.Ack.PlayerID)
+	s.node.logger.Sugar().Debugw("Received reshare ack", "node_id", s.node.ID, "from_player", msg.Ack.PlayerID)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -227,7 +225,7 @@ func (s *Server) handleReshareComplete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	fmt.Printf("Node %d: Received reshare completion from Node %d\n", s.node.ID, msg.Completion.NodeID)
+	s.node.logger.Sugar().Infow("Received reshare completion", "node_id", s.node.ID, "from_node", msg.Completion.NodeID)
 	w.WriteHeader(http.StatusOK)
 }
 
