@@ -10,6 +10,7 @@ import {Allowlist} from "@eigenlayer-middleware/src/middlewareV2/registrar/modul
 import { IEigenKMSRegistrarTypes } from "./interfaces/IEigenKMSRegistrar.sol";
 import {EigenKMSRegistrarStorage} from "./EigenKMSRegistrarStorage.sol";
 
+
 contract EigenKMSRegistrar is AVSRegistrar, SocketRegistry, Allowlist, EigenKMSRegistrarStorage {
     /**
       * @dev Constructor that passes parameters to parent
@@ -66,5 +67,41 @@ contract EigenKMSRegistrar is AVSRegistrar, SocketRegistry, Allowlist, EigenKMSR
      */
     function _setAvsConfig(IEigenKMSRegistrarTypes.AvsConfig memory config) internal {
         avsConfig = config;
+    }
+
+    /**
+     * @notice Before registering operator, check if the operator is in the allowlist for the aggregator operator set
+     * @dev Only the aggregator operator set requires allowlist validation. Executor operator sets do not require allowlist checks.
+     * @param operator The address of the operator
+     * @param operatorSetIds The IDs of the operator sets
+     * @param data The data passed to the operator
+     */
+    function _beforeRegisterOperator(
+        address operator,
+        uint32[] calldata operatorSetIds,
+        bytes calldata data
+    ) internal override {
+        super._beforeRegisterOperator(operator, operatorSetIds, data);
+        // TODO(seanmcgary) probably need some additional logic
+    }
+
+    /**
+     * @notice Set the socket for the operator
+     * @dev This function sets the socket even if the operator is already registered
+     * @dev Operators should make sure to always provide the socket when registering
+     * @param operator The address of the operator
+     * @param operatorSetIds The IDs of the operator sets
+     * @param data The data passed to the operator
+     */
+    function _afterRegisterOperator(
+        address operator,
+        uint32[] calldata operatorSetIds,
+        bytes calldata data
+    ) internal override {
+        super._afterRegisterOperator(operator, operatorSetIds, data);
+
+        // Set operator socket
+        string memory socket = abi.decode(data, (string));
+        _setOperatorSocket(operator, socket);
     }
 }

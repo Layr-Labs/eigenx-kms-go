@@ -158,6 +158,7 @@ func (cc *ContractCaller) GetOperatorSetDetailsForOperator(
 	if err != nil {
 		return nil, fmt.Errorf("failed to get operator socket: %w", err)
 	}
+	fmt.Printf("Got socket: '%s'\n", socket)
 
 	curveTypeSolidity, err := cc.keyRegistrar.GetOperatorSetCurveType(&bind.CallOpts{}, opset)
 	if err != nil {
@@ -353,7 +354,7 @@ func (cc *ContractCaller) RegisterKeyWithKeyRegistrar(
 		"avsAddress:", avsAddress.String(),
 		"operatorSetId:", operatorSetId,
 		"keyData", hexutil.Encode(keyData),
-		"sigButes:", hexutil.Encode(sigBytes),
+		"sigBytes:", hexutil.Encode(sigBytes),
 	)
 
 	tx, err := cc.keyRegistrar.RegisterKey(
