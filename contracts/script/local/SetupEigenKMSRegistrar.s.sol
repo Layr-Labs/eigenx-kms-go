@@ -58,7 +58,7 @@ contract SetupEigenKMSRegistrar is Script {
         OperatorSet memory operatorSet0 = OperatorSet({ avs: avs, id: 0 });
 
         console.log("Configuring operator set 0 for ECDSA...");
-        KEY_REGISTRAR.configureOperatorSet(operatorSet0, IKeyRegistrarTypes.CurveType.ECDSA);
+        KEY_REGISTRAR.configureOperatorSet(operatorSet0, IKeyRegistrarTypes.CurveType.BN254);
 
         string memory opset0Uri = "http://eigenkms-operator-set-0.com";
         RELEASE_MANAGER.publishMetadataURI(operatorSet0, opset0Uri);

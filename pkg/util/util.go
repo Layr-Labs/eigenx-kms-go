@@ -1,5 +1,14 @@
 package util
 
+import (
+	"crypto/ecdsa"
+	"fmt"
+	"strings"
+
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
+)
+
 // Map applies a transformation function to each element of a slice and returns a new slice
 // with the transformed values. This is a generic implementation of the map higher-order function.
 //
@@ -102,4 +111,36 @@ func Flatten[A any](coll [][]A) []A {
 		out = append(out, arr...)
 	}
 	return out
+}
+
+func StringToECDSAPrivateKey(pk string) (*ecdsa.PrivateKey, error) {
+	if len(pk) == 0 {
+		return nil, fmt.Errorf("private key is empty")
+	}
+	pk = strings.TrimPrefix(pk, "0x")
+
+	privateKey, err := crypto.HexToECDSA(pk)
+	if err != nil {
+		return nil, fmt.Errorf("failed to convert hex string to ECDSA private key: %v", err)
+	}
+	return privateKey, nil
+}
+
+func DeriveAddress(pk ecdsa.PublicKey) common.Address {
+	return crypto.PubkeyToAddress(pk)
+}
+
+func DeriveAddressFromECDSAPrivateKeyString(key string) (common.Address, error) {
+	pk, err := StringToECDSAPrivateKey(key)
+	if err != nil {
+		return common.Address{0}, fmt.Errorf("failed to convert operator private key: %v", err)
+	}
+	return DeriveAddressFromECDSAPrivateKey(pk)
+}
+
+func DeriveAddressFromECDSAPrivateKey(pk *ecdsa.PrivateKey) (common.Address, error) {
+	if pk == nil {
+		return common.Address{0}, fmt.Errorf("private key is nil")
+	}
+	return DeriveAddress(pk.PublicKey), nil
 }

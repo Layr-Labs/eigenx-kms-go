@@ -1,8 +1,13 @@
 package contractCaller
 
 import (
+	"context"
+
+	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/ethereum/go-ethereum/common"
+	ethereumTypes "github.com/ethereum/go-ethereum/core/types"
 )
 
 type IContractCaller interface {
@@ -18,4 +23,44 @@ type IContractCaller interface {
 	) (*peering.OperatorSetPeer, error)
 
 	GetOperatorSetMembers(avsAddress string, operatorSetId uint32) ([]string, error)
+
+	// Helper functions for operator registration
+	EncodeBN254KeyData(pubKey *bn254.PublicKey) ([]byte, error)
+
+	GetOperatorSetCurveType(avsAddress string, operatorSetId uint32, blockNumber uint64) (config.CurveType, error)
+
+	GetOperatorECDSAKeyRegistrationMessageHash(
+		ctx context.Context,
+		operatorAddress common.Address,
+		avsAddress common.Address,
+		operatorSetId uint32,
+		signingKeyAddress common.Address,
+	) ([32]byte, error)
+
+	GetOperatorBN254KeyRegistrationMessageHash(
+		ctx context.Context,
+		operatorAddress common.Address,
+		avsAddress common.Address,
+		operatorSetId uint32,
+		keyData []byte,
+	) ([32]byte, error)
+
+	RegisterKeyWithKeyRegistrar(
+		ctx context.Context,
+		operatorAddress common.Address,
+		avsAddress common.Address,
+		operatorSetId uint32,
+		sigBytes []byte,
+		keyData []byte,
+	) (*ethereumTypes.Receipt, error)
+
+	CreateOperatorAndRegisterWithAvs(
+		ctx context.Context,
+		avsAddress common.Address,
+		operatorAddress common.Address,
+		operatorSetIds []uint32,
+		socket string,
+		allocationDelay uint32,
+		metadataUri string,
+	) (*ethereumTypes.Receipt, error)
 }

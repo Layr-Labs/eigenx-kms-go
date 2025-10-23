@@ -34,6 +34,10 @@ build/cmd/poc:
 build/cmd/kmsServer:
 	go build $(GO_FLAGS) -o ${BIN}/kms-server ./cmd/kmsServer
 
+.PHONY: cmd/registerOperator
+build/cmd/registerOperator:
+	go build $(GO_FLAGS) -o ${BIN}/register-operator ./cmd/registerOperator
+
 
 # -----------------------------------------------------------------------------
 # Tests and linting
