@@ -8,11 +8,12 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 	"go.uber.org/zap"
 
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
+	eigenxcrypto "github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/keystore"
@@ -24,6 +25,15 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
+
+// addressToNodeID converts an Ethereum address to a node ID using keccak256 hash
+// Equivalent to: uint64(uint256(keccak256(abi.encodePacked(address))))
+func addressToNodeID(address common.Address) int {
+	hash := crypto.Keccak256(address.Bytes())
+	// Take first 8 bytes of hash as uint64, then convert to int
+	nodeID := int(common.BytesToHash(hash).Big().Uint64())
+	return nodeID
+}
 
 const (
 	// ReshareFrequency is the frequency of resharing in seconds
@@ -66,9 +76,9 @@ type Node struct {
 
 // Config holds node configuration
 type Config struct {
-	OperatorAddress string    // Ethereum address of the operator (hex string)
+	OperatorAddress string // Ethereum address of the operator (hex string)
 	Port            int
-	BN254PrivateKey string    // BN254 private key (hex string)
+	BN254PrivateKey string      // BN254 private key (hex string)
 	Logger          *zap.Logger // Optional logger, will create default if nil
 }
 
@@ -82,15 +92,15 @@ func NewNode(cfg Config, pdf peering.IPeeringDataFetcher) *Node {
 
 	// Parse operator address
 	operatorAddress := common.HexToAddress(cfg.OperatorAddress)
-	
+
 	// Parse BN254 private key
 	bn254PrivKey, err := bn254.NewPrivateKeyFromHexString(cfg.BN254PrivateKey)
 	if err != nil {
 		nodeLogger.Sugar().Fatalw("Invalid BN254 private key", "error", err)
 	}
 
-	// Use operator address hash as transport client ID (for now)
-	transportClientID := int(operatorAddress.Big().Int64() % 1000000) // Simple conversion
+	// Use operator address hash as transport client ID (for consistency)
+	transportClientID := addressToNodeID(operatorAddress)
 
 	n := &Node{
 		OperatorAddress:     operatorAddress,
@@ -127,41 +137,40 @@ func (n *Node) Stop() error {
 }
 
 // fetchCurrentOperators fetches the current operator set from the peering system
-func (n *Node) fetchCurrentOperators(ctx context.Context) ([]types.OperatorInfo, map[common.Address]int, error) {
+func (n *Node) fetchCurrentOperators(ctx context.Context) ([]types.OperatorInfo, error) {
 	// TODO: Use actual AVS address and operator set ID from chain
 	// For now, using placeholder values
 	avsAddress := "0x1234567890123456789012345678901234567890"
 	operatorSetId := uint32(1)
-	
+
 	operatorSetPeers, err := n.peeringDataFetcher.ListKMSOperators(ctx, avsAddress, operatorSetId)
 	if err != nil {
-		return nil, nil, fmt.Errorf("failed to fetch operators from peering system: %w", err)
+		return nil, fmt.Errorf("failed to fetch operators from peering system: %w", err)
 	}
-	
+
 	// Sort peers by address for consistent ordering
 	sortedPeers := make([]*peering.OperatorSetPeer, len(operatorSetPeers.Peers))
 	copy(sortedPeers, operatorSetPeers.Peers)
 	sort.Slice(sortedPeers, func(i, j int) bool {
 		return sortedPeers[i].OperatorAddress.Hex() < sortedPeers[j].OperatorAddress.Hex()
 	})
-	
-	// Convert to OperatorInfo with consistent ID assignment
+
+	// Convert to OperatorInfo with address-based ID assignment
 	operators := make([]types.OperatorInfo, len(sortedPeers))
-	addressToID := make(map[common.Address]int)
-	
+
 	for i, peer := range sortedPeers {
-		nodeID := i + 1 // 1-based indexing
+		// Use keccak256 hash of address as node ID for better distribution
+		nodeID := addressToNodeID(peer.OperatorAddress)
 		operators[i] = types.OperatorInfo{
 			ID:           nodeID,
 			P2PPubKey:    []byte(peer.OperatorAddress.Hex()), // TODO: Use actual BN254 public key
 			P2PNodeURL:   peer.SocketAddress,
 			KMSServerURL: peer.SocketAddress,
 		}
-		addressToID[peer.OperatorAddress] = nodeID
 	}
-	
+
 	n.logger.Sugar().Infow("Fetched operators from chain", "operator_address", n.OperatorAddress.Hex(), "count", len(operators))
-	return operators, addressToID, nil
+	return operators, nil
 }
 
 // RunDKG executes the DKG protocol
@@ -170,18 +179,27 @@ func (n *Node) RunDKG() error {
 	n.logger.Sugar().Infow("Starting DKG", "operator_address", n.OperatorAddress.Hex())
 
 	// Fetch current operators from peering system
-	operators, addressToID, err := n.fetchCurrentOperators(ctx)
+	operators, err := n.fetchCurrentOperators(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to fetch operators: %w", err)
 	}
 
-	// Find this node's ID in the operator set
-	thisNodeID, exists := addressToID[n.OperatorAddress]
-	if !exists {
-		return fmt.Errorf("this operator %s not found in operator set", n.OperatorAddress.Hex())
+	// Use keccak256 hash of operator address as node ID
+	thisNodeID := addressToNodeID(n.OperatorAddress)
+
+	// Verify this operator is in the fetched operator set
+	operatorFound := false
+	for _, op := range operators {
+		if op.ID == thisNodeID {
+			operatorFound = true
+			break
+		}
+	}
+	if !operatorFound {
+		return fmt.Errorf("this operator %s (ID: %d) not found in operator set", n.OperatorAddress.Hex(), thisNodeID)
 	}
 
-	// Create DKG instance using this node's ID in the sorted set
+	// Create DKG instance using address-derived ID
 	threshold := dkg.CalculateThreshold(len(operators))
 	n.dkg = dkg.NewDKG(thisNodeID, threshold, operators)
 	n.Threshold = threshold
@@ -306,17 +324,26 @@ func (n *Node) RunReshareWithTimeout() error {
 // RunReshare executes the reshare protocol
 func (n *Node) RunReshare() error {
 	ctx := context.Background()
-	
+
 	// Fetch current operators from peering system
-	operators, addressToID, err := n.fetchCurrentOperators(ctx)
+	operators, err := n.fetchCurrentOperators(ctx)
 	if err != nil {
 		return fmt.Errorf("failed to fetch operators for reshare: %w", err)
 	}
 
-	// Find this node's ID in the operator set
-	thisNodeID, exists := addressToID[n.OperatorAddress]
-	if !exists {
-		return fmt.Errorf("this operator %s not found in reshare operator set", n.OperatorAddress.Hex())
+	// Use keccak256 hash of operator address as node ID (same as DKG)
+	thisNodeID := addressToNodeID(n.OperatorAddress)
+
+	// Verify this operator is in the fetched operator set
+	operatorFound := false
+	for _, op := range operators {
+		if op.ID == thisNodeID {
+			operatorFound = true
+			break
+		}
+	}
+	if !operatorFound {
+		return fmt.Errorf("this operator %s (ID: %d) not found in reshare operator set", n.OperatorAddress.Hex(), thisNodeID)
 	}
 
 	// Calculate new threshold
@@ -381,16 +408,10 @@ func (n *Node) SignAppID(appID string, attestationTime int64) types.G1Point {
 	}
 
 	privateShare := new(fr.Element).Set(keyVersion.PrivateShare)
-	qID := crypto.HashToG1(appID)
-	partialSig := crypto.ScalarMulG1(qID, privateShare)
+	qID := eigenxcrypto.HashToG1(appID)
+	partialSig := eigenxcrypto.ScalarMulG1(qID, privateShare)
 	return partialSig
 }
-
-// Helper methods
-
-// getOperatorByID is no longer needed - operators are fetched dynamically when needed
-
-// refreshOperatorSet is no longer needed - operators fetched dynamically during operations
 
 func (n *Node) abandonReshare() {
 	n.mu.Lock()
