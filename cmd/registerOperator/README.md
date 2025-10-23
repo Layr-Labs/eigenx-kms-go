@@ -26,6 +26,7 @@ export EIGENKMS_AVS_PRIVATE_KEY=47e179ec197488593b187f80a00eb0da91f1b9d0b13f8733
 export EIGENKMS_BN254_PRIVATE_KEY=59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d
 export EIGENKMS_SOCKET=http://operator.example.com:8001
 export EIGENKMS_OPERATOR_SET_ID=1
+export EIGENKMS_RPC_URL=http://localhost:8545
 export EIGENKMS_CHAIN_ID=31337
 
 go run cmd/registerOperator/main.go
@@ -55,6 +56,7 @@ go run cmd/registerOperator/main.go \
 | `--bn254-private-key` | string | Yes | BN254 private key for threshold crypto (hex) |
 | `--socket` | string | Yes | P2P socket address (http/https URL) |
 | `--operator-set-id` | uint32 | Yes | Operator set ID to join (must be > 0) |
+| `--rpc-url` | string | Yes | Ethereum RPC URL (http/https/ws/wss) |
 | `--chain-id` | uint64 | No | Ethereum chain ID (default: 31337 for anvil) |
 | `--verbose` | bool | No | Enable verbose logging |
 | `--dry-run` | bool | No | Validate only, don't execute |

@@ -82,6 +82,13 @@ This command handles:
 				EnvVars:  []string{"EIGENKMS_OPERATOR_SET_ID"},
 				Required: true,
 			},
+			&cli.StringFlag{
+				Name:     "rpc-url",
+				Aliases:  []string{"rpc"},
+				Usage:    "Ethereum RPC URL (e.g., http://localhost:8545, https://mainnet.infura.io/v3/...)",
+				EnvVars:  []string{"EIGENKMS_RPC_URL"},
+				Required: true,
+			},
 			&cli.Uint64Flag{
 				Name:    "chain-id",
 				Aliases: []string{"chain"},
@@ -161,6 +168,7 @@ type OperatorConfig struct {
 	BN254PrivateKey    string
 	Socket             string
 	OperatorSetID      uint32
+	RPCUrl             string
 	ChainID            config.ChainId
 	DryRun             bool
 }
@@ -207,6 +215,14 @@ func (c *OperatorConfig) Validate() error {
 		return fmt.Errorf("socket address must start with http:// or https://")
 	}
 
+	// Validate RPC URL format
+	if c.RPCUrl == "" {
+		return fmt.Errorf("RPC URL cannot be empty")
+	}
+	if !strings.HasPrefix(c.RPCUrl, "http://") && !strings.HasPrefix(c.RPCUrl, "https://") && !strings.HasPrefix(c.RPCUrl, "ws://") && !strings.HasPrefix(c.RPCUrl, "wss://") {
+		return fmt.Errorf("RPC URL must start with http://, https://, ws://, or wss://")
+	}
+
 	// Validate operator set ID
 	if c.OperatorSetID == 0 {
 		return fmt.Errorf("operator set ID must be greater than 0")
@@ -241,14 +257,16 @@ func parseOperatorConfig(c *cli.Context) (*OperatorConfig, error) {
 		BN254PrivateKey:    c.String("bn254-private-key"),
 		Socket:             c.String("socket"),
 		OperatorSetID:      uint32(c.Uint64("operator-set-id")),
+		RPCUrl:             c.String("rpc-url"),
 		ChainID:            config.ChainId(c.Uint64("chain-id")),
 		DryRun:             c.Bool("dry-run"),
 	}, nil
 }
 
 func executeRegistration(cfg *OperatorConfig, l *zap.Logger) error {
+	sugar := l.Sugar()
 
-	l.Sugar().Infow("Starting operator registration",
+	sugar.Infow("Starting operator registration",
 		"avs_address", cfg.AVSAddress.Hex(),
 		"operator_address", cfg.OperatorAddress.Hex(),
 		"operator_set_id", cfg.OperatorSetID,
@@ -261,7 +279,7 @@ func executeRegistration(cfg *OperatorConfig, l *zap.Logger) error {
 
 	l1EthClient, err := l1EthereumClient.GetEthereumContractCaller()
 	if err != nil {
-		t.Fatalf("Failed to get Ethereum contract caller: %v", err)
+		return fmt.Errorf("failed to get Ethereum contract caller: %v", err)
 	}
 
 	avsSigner, err := transactionSigner.NewPrivateKeySigner(cfg.AVSPrivateKey, l1EthClient, l)
