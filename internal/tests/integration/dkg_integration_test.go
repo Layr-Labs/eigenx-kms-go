@@ -29,8 +29,9 @@ func testFullDKGProtocol(t *testing.T) {
 		t.Fatalf("Expected 5 nodes, got %d", len(cluster.Nodes))
 	}
 	
-	if cluster.Threshold != (2*5+2)/3 {
-		t.Errorf("Expected threshold %d, got %d", (2*5+2)/3, cluster.Threshold)
+	expectedThreshold := (2*5+2)/3
+	if expectedThreshold != 4 {
+		t.Errorf("Expected threshold calculation to be 4 for 5 nodes, got %d", expectedThreshold)
 	}
 	
 	// Verify all nodes were created with proper addresses

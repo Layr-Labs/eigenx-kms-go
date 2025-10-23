@@ -111,9 +111,9 @@ func Test_OnChainIntegration(t *testing.T) {
 	// ------------------------------------------------------------------------
 	// Create nodes
 	// ------------------------------------------------------------------------
-	node1 := createNode(chainConfig.OperatorAccountAddress1, chainConfig.OperatorAccountPrivateKey1, chainConfig.AVSAccountAddress, 7501, cc, l)
-	node2 := createNode(chainConfig.OperatorAccountAddress2, chainConfig.OperatorAccountPrivateKey2, chainConfig.AVSAccountAddress, 7502, cc, l)
-	node3 := createNode(chainConfig.OperatorAccountAddress3, chainConfig.OperatorAccountPrivateKey3, chainConfig.AVSAccountAddress, 7503, cc, l)
+	_ = createNode(chainConfig.OperatorAccountAddress1, chainConfig.OperatorAccountPrivateKey1, chainConfig.AVSAccountAddress, 7501, cc, l)
+	_ = createNode(chainConfig.OperatorAccountAddress2, chainConfig.OperatorAccountPrivateKey2, chainConfig.AVSAccountAddress, 7502, cc, l)
+	_ = createNode(chainConfig.OperatorAccountAddress3, chainConfig.OperatorAccountPrivateKey3, chainConfig.AVSAccountAddress, 7503, cc, l)
 
 	// ------------------------------------------------------------------------
 	// Wait and cleanup

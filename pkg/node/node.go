@@ -53,8 +53,6 @@ type Node struct {
 	BN254PrivateKey *bn254.PrivateKey // BN254 private key for threshold crypto and P2P
 	AVSAddress      string            // AVS contract address
 	OperatorSetId   uint32            // Operator set ID
-	Threshold       int
-	TotalNodes      int
 
 	// Dependencies
 	keyStore            *keystore.KeyStore
@@ -194,8 +192,6 @@ func (n *Node) RunDKG() error {
 	// Create DKG instance using address-derived ID
 	threshold := dkg.CalculateThreshold(len(operators))
 	n.dkg = dkg.NewDKG(thisNodeID, threshold, operators)
-	n.Threshold = threshold
-	n.TotalNodes = len(operators)
 
 	n.logger.Sugar().Infow("Starting DKG Phase 1", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "threshold", threshold, "total_operators", len(operators))
 
@@ -222,10 +218,10 @@ func (n *Node) RunDKG() error {
 	}
 
 	// Wait for all shares and commitments
-	if err := n.waitForSharesWithRetry(n.TotalNodes, 30*time.Second); err != nil {
+	if err := n.waitForSharesWithRetry(len(operators), 30*time.Second); err != nil {
 		return err
 	}
-	if err := n.waitForCommitmentsWithRetry(n.TotalNodes, 30*time.Second); err != nil {
+	if err := n.waitForCommitmentsWithRetry(len(operators), 30*time.Second); err != nil {
 		return err
 	}
 
@@ -288,7 +284,7 @@ func (n *Node) RunDKG() error {
 	n.mu.Unlock()
 
 	// Wait for acknowledgements (as a dealer)
-	if err := n.waitForAcknowledgements(n.Threshold, 30*time.Second); err != nil {
+	if err := n.waitForAcknowledgements(threshold, 30*time.Second); err != nil {
 		return fmt.Errorf("insufficient acknowledgements: %v", err)
 	}
 
@@ -313,31 +309,6 @@ func (n *Node) RunDKG() error {
 	return nil
 }
 
-// RunReshareWithTimeout runs reshare with a timeout
-func (n *Node) RunReshareWithTimeout() error {
-	ctx, cancel := context.WithTimeout(context.Background(), ReshareTimeout*time.Second)
-	defer cancel()
-
-	done := make(chan error, 1)
-
-	go func() {
-		done <- n.RunReshare()
-	}()
-
-	select {
-	case err := <-done:
-		if err != nil {
-			n.logger.Sugar().Errorw("Reshare failed", "node_id", n.OperatorAddress.Hex(), "error", err)
-			n.abandonReshare()
-			return err
-		}
-		return nil
-	case <-ctx.Done():
-		n.logger.Sugar().Warnw("Reshare timeout, abandoning", "node_id", n.OperatorAddress.Hex())
-		n.abandonReshare()
-		return fmt.Errorf("reshare timeout")
-	}
-}
 
 // RunReshare executes the reshare protocol
 func (n *Node) RunReshare() error {
@@ -370,8 +341,6 @@ func (n *Node) RunReshare() error {
 
 	// Create reshare instance with current operators
 	n.resharer = reshare.NewReshare(thisNodeID, operators)
-	n.Threshold = newThreshold
-	n.TotalNodes = len(operators)
 
 	// Get current share
 	currentShare, err := n.keyStore.GetActivePrivateShare()
@@ -409,8 +378,37 @@ func (n *Node) RunReshare() error {
 		return err
 	}
 
-	// TODO: Complete reshare implementation
-	n.logger.Sugar().Infow("Reshare protocol initiated", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID)
+	// Phase 2: Finalize reshare
+	n.logger.Sugar().Infow("Starting Reshare Finalization", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID)
+
+	// Collect all commitments and participant IDs
+	n.mu.RLock()
+	allCommitments := make([][]types.G2Point, 0, len(n.receivedCommitments))
+	participantIDs := make([]int, 0, len(n.receivedCommitments))
+	
+	for _, op := range operators {
+		opNodeID := addressToNodeID(op.OperatorAddress)
+		if comm, ok := n.receivedCommitments[opNodeID]; ok {
+			allCommitments = append(allCommitments, comm)
+			participantIDs = append(participantIDs, opNodeID)
+		}
+	}
+	
+	receivedShares := make(map[int]*fr.Element)
+	for k, v := range n.receivedShares {
+		receivedShares[k] = v
+	}
+	n.mu.RUnlock()
+
+	// Compute new key share using Lagrange interpolation
+	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDs, receivedShares, allCommitments)
+	newKeyVersion.Version = time.Now().Unix() // Set proper epoch
+	newKeyVersion.IsActive = false // Mark as pending until activation
+
+	// Add new version to keystore (will become active after validation)
+	n.keyStore.AddVersion(newKeyVersion)
+
+	n.logger.Sugar().Infow("Reshare completed", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "new_version", newKeyVersion.Version)
 
 	return nil
 }

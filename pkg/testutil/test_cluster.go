@@ -22,7 +22,6 @@ type TestCluster struct {
 	Servers     []*httptest.Server  
 	ServerURLs  []string
 	NumNodes    int
-	Threshold   int
 	MasterPubKey types.G2Point
 }
 
@@ -60,7 +59,6 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 		Servers:    make([]*httptest.Server, numNodes),
 		ServerURLs: make([]string, numNodes),
 		NumNodes:   numNodes,
-		Threshold:  calculateThreshold(numNodes),
 	}
 
 	// Create nodes with real addresses and keys
