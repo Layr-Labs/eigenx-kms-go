@@ -57,7 +57,6 @@ func main() {
 			Port:       basePort + i + 1,
 			P2PPrivKey: generateStubPrivKey(i + 1),
 			P2PPubKey:  generateStubPubKey(i + 1),
-			Operators:  operators,
 			Logger:     nodeLogger,
 		}
 		// Create stub peering data fetcher for POC

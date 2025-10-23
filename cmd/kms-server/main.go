@@ -4,14 +4,16 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/urfave/cli/v2"
 	"go.uber.org/zap"
 	
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/node"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 )
 
 func main() {
@@ -44,7 +46,7 @@ This server implements:
 			&cli.Uint64Flag{
 				Name:     "chain-id",
 				Aliases:  []string{"chain"},
-				Usage:    "Ethereum chain ID: 1 (mainnet), 11155111 (sepolia), 31337 (anvil)",
+				Usage:    fmt.Sprintf("Ethereum chain ID: %s", config.GetSupportedChainIDsString()),
 				EnvVars:  []string{"KMS_CHAIN_ID"},
 				Required: true,
 			},
@@ -62,10 +64,10 @@ This server implements:
 				EnvVars: []string{"KMS_P2P_PUBLIC_KEY"},
 				Value:   "dGVzdC1wdWJsaWMta2V5", // "test-public-key" in base64
 			},
-			&cli.BoolFlag{
-				Name:    "auto-dkg",
-				Usage:   "Automatically run DKG on startup (for testing)",
-				EnvVars: []string{"KMS_AUTO_DKG"},
+			&cli.Int64Flag{
+				Name:    "dkg-at",
+				Usage:   "Unix timestamp to run DKG at (for coordinated testing). Use 0 for immediate execution.",
+				EnvVars: []string{"KMS_DKG_AT"},
 			},
 			&cli.BoolFlag{
 				Name:    "verbose",
@@ -93,43 +95,64 @@ func runKMSServer(c *cli.Context) error {
 	defer appLogger.Sync()
 
 	// Parse configuration from flags/environment
-	config, err := parseConfig(c, appLogger)
+	kmsConfig, err := parseKMSConfig(c)
 	if err != nil {
 		return fmt.Errorf("configuration error: %w", err)
 	}
 
-	// Create peering data fetcher
-	peeringDataFetcher := createPeeringDataFetcher(config.Operators, appLogger)
+	// Validate configuration
+	if err := kmsConfig.Validate(); err != nil {
+		return fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	appLogger.Sugar().Infow("Using chain", "name", kmsConfig.ChainName, "chain_id", kmsConfig.ChainID)
+
+	// Create node config from KMS config (operators fetched dynamically when needed)
+	nodeConfig := node.Config{
+		ID:         kmsConfig.NodeID,
+		Port:       kmsConfig.Port,
+		P2PPrivKey: kmsConfig.P2PPrivateKey,
+		P2PPubKey:  kmsConfig.P2PPublicKey,
+		Logger:     appLogger,
+	}
+
+	// Create peering data fetcher for dynamic operator fetching
+	peeringDataFetcher := createPeeringDataFetcher(kmsConfig.ChainID, appLogger)
 	
 	// Create and configure the node
-	n := node.NewNode(config, peeringDataFetcher)
+	n := node.NewNode(nodeConfig, peeringDataFetcher)
 
 	if c.Bool("verbose") {
 		appLogger.Sugar().Infow("KMS Server Configuration", 
-			"node_id", config.ID,
-			"port", config.Port,
-			"operators", len(config.Operators),
-			"auto_dkg", c.Bool("auto-dkg"))
+			"node_id", kmsConfig.NodeID,
+			"port", kmsConfig.Port,
+			"dkg_at", kmsConfig.DKGAt,
+			"chain", kmsConfig.ChainName)
 	}
 
 	// Start the node server
-	appLogger.Sugar().Infow("Starting KMS Server", "node_id", config.ID, "port", config.Port)
+	appLogger.Sugar().Infow("Starting KMS Server", "node_id", kmsConfig.NodeID, "port", kmsConfig.Port)
 	
 	if err := n.Start(); err != nil {
 		return fmt.Errorf("failed to start node: %w", err)
 	}
 
-	// Optionally run DKG automatically
-	if c.Bool("auto-dkg") {
-		appLogger.Sugar().Infow("Running DKG automatically", "node_id", config.ID)
-		if err := n.RunDKG(); err != nil {
-			appLogger.Sugar().Errorw("DKG failed", "node_id", config.ID, "error", err)
-		} else {
-			appLogger.Sugar().Infow("DKG completed successfully", "node_id", config.ID)
-		}
+	// Schedule DKG execution if timestamp provided
+	if kmsConfig.DKGAt > 0 {
+		scheduleDKG(n, kmsConfig.DKGAt, appLogger)
+	} else if kmsConfig.DKGAt == 0 && c.IsSet("dkg-at") {
+		// Immediate execution if explicitly set to 0
+		appLogger.Sugar().Infow("Running DKG immediately", "node_id", kmsConfig.NodeID)
+		go func() {
+			if err := n.RunDKG(); err != nil {
+				appLogger.Sugar().Errorw("DKG failed", "node_id", kmsConfig.NodeID, "error", err)
+			} else {
+				appLogger.Sugar().Infow("DKG completed successfully", "node_id", kmsConfig.NodeID)
+			}
+		}()
 	}
 
-	appLogger.Sugar().Infow("KMS Server running", "node_id", config.ID, "port", config.Port)
+	appLogger.Sugar().Infow("KMS Server running", "node_id", kmsConfig.NodeID, "port", kmsConfig.Port)
 	appLogger.Sugar().Infow("Available endpoints", 
 		"secrets", "POST /secrets",
 		"app_sign", "POST /app/sign",
@@ -141,128 +164,99 @@ func runKMSServer(c *cli.Context) error {
 	select {}
 }
 
-func parseConfig(c *cli.Context, logger *zap.Logger) (node.Config, error) {
-	nodeID := c.Int("node-id")
-	port := c.Int("port")
-	chainID := c.Uint64("chain-id")
-	
-	// Validate chain ID
-	validChainIDs := map[uint64]string{
-		1:        "mainnet",
-		11155111: "sepolia", 
-		31337:    "anvil",
-	}
-	
-	chainName, valid := validChainIDs[chainID]
-	if !valid {
-		return node.Config{}, fmt.Errorf("invalid chain ID %d. Supported: 1 (mainnet), 11155111 (sepolia), 31337 (anvil)", chainID)
-	}
-	
-	logger.Sugar().Infow("Using chain", "name", chainName, "chain_id", chainID)
-	
-	// Get operators from on-chain registry (stubbed for now)
-	operators, err := getOperatorsFromChain(chainID, nodeID)
-	if err != nil {
-		return node.Config{}, fmt.Errorf("failed to get operators from chain: %w", err)
-	}
-
-	// Decode keys (for now, using base64 - in production would be more secure)
-	p2pPrivKey := []byte(c.String("p2p-private-key"))
-	p2pPubKey := []byte(c.String("p2p-public-key"))
-
-	return node.Config{
-		ID:         nodeID,
-		Port:       port,
-		P2PPrivKey: p2pPrivKey,
-		P2PPubKey:  p2pPubKey,
-		Operators:  operators,
-		Logger:     logger,
+func parseKMSConfig(c *cli.Context) (*config.KMSServerConfig, error) {
+	return &config.KMSServerConfig{
+		NodeID:        c.Int("node-id"),
+		Port:          c.Int("port"),
+		ChainID:       config.ChainId(c.Uint64("chain-id")),
+		P2PPrivateKey: []byte(c.String("p2p-private-key")),
+		P2PPublicKey:  []byte(c.String("p2p-public-key")),
+		DKGAt:         c.Int64("dkg-at"),
+		Debug:         c.Bool("verbose"),
+		Verbose:       c.Bool("verbose"),
 	}, nil
 }
 
-// getOperatorsFromChain retrieves operator set from on-chain AVS registry
-func getOperatorsFromChain(chainID uint64, nodeID int) ([]types.OperatorInfo, error) {
-	// STUB: In production, this would:
-	// 1. Connect to Ethereum RPC for the specified chain
-	// 2. Call IKmsAvsRegistry.getNodeInfos() 
-	// 3. Parse the returned OperatorInfo[] array
-	// 4. Verify this node is in the operator set
+// Note: Operator fetching now handled dynamically by peering data fetcher
+
+// createPeeringDataFetcher creates a peering data fetcher for the specified chain
+func createPeeringDataFetcher(chainID config.ChainId, logger *zap.Logger) peering.IPeeringDataFetcher {
+	// For now, use stub for testing. In production, this would create the appropriate
+	// peering data fetcher based on the chain ID that queries the real on-chain contracts
+	
+	logger.Sugar().Debugw("Creating peering data fetcher", "chain_id", chainID)
+	
+	// TODO: Implement real chain-specific peering data fetcher that:
+	// 1. Uses the chain ID to determine which contracts to query
+	// 2. Calls IKmsAvsRegistry.getNodeInfos() for current operator set
+	// 3. Parses operator addresses, socket addresses, and public keys
+	// 4. Returns properly formatted OperatorSetPeers
 	
 	switch chainID {
-	case 1: // mainnet
-		return getMainnetOperators(nodeID)
-	case 11155111: // sepolia
-		return getSepoliaOperators(nodeID) 
-	case 31337: // anvil
-		return getAnvilOperators(nodeID)
+	case config.ChainId_EthereumMainnet:
+		// TODO: Return mainnet peering data fetcher
+		return peering.NewStubPeeringDataFetcher(createStubOperatorSetPeers(20))
+	case config.ChainId_EthereumSepolia:
+		// TODO: Return sepolia peering data fetcher  
+		return peering.NewStubPeeringDataFetcher(createStubOperatorSetPeers(5))
+	case config.ChainId_EthereumAnvil:
+		// TODO: Return anvil peering data fetcher
+		return peering.NewStubPeeringDataFetcher(createStubOperatorSetPeers(3))
 	default:
-		return nil, fmt.Errorf("unsupported chain ID: %d", chainID)
+		logger.Sugar().Warnw("Unknown chain ID, using default stub", "chain_id", chainID)
+		return peering.NewStubPeeringDataFetcher(createStubOperatorSetPeers(3))
 	}
 }
 
-// getMainnetOperators returns mainnet operator set (stub)
-func getMainnetOperators(nodeID int) ([]types.OperatorInfo, error) {
-	// STUB: Query mainnet contract
-	return createTestOperatorSet(nodeID, 20), nil // 20 mainnet operators
-}
-
-// getSepoliaOperators returns sepolia testnet operator set (stub) 
-func getSepoliaOperators(nodeID int) ([]types.OperatorInfo, error) {
-	// STUB: Query sepolia contract
-	return createTestOperatorSet(nodeID, 5), nil // 5 sepolia test operators
-}
-
-// getAnvilOperators returns local anvil operator set (stub)
-func getAnvilOperators(nodeID int) ([]types.OperatorInfo, error) {
-	// STUB: Query local anvil contract  
-	return createTestOperatorSet(nodeID, 3), nil // 3 local operators
-}
-
-// createTestOperatorSet creates a test operator set including the specified node
-func createTestOperatorSet(nodeID int, totalNodes int) []types.OperatorInfo {
-	operators := make([]types.OperatorInfo, totalNodes)
+// createStubOperatorSetPeers creates stub operator set peers for testing
+func createStubOperatorSetPeers(numOperators int) *peering.OperatorSetPeers {
+	peers := make([]*peering.OperatorSetPeer, numOperators)
 	
-	for i := 0; i < totalNodes; i++ {
-		id := i + 1
-		operators[i] = types.OperatorInfo{
-			ID:           id,
-			P2PPubKey:    []byte(fmt.Sprintf("pubkey-%d", id)),
-			P2PNodeURL:   fmt.Sprintf("http://localhost:%d", 8000+id),
-			KMSServerURL: fmt.Sprintf("http://localhost:%d", 8000+id),
+	for i := 0; i < numOperators; i++ {
+		peers[i] = &peering.OperatorSetPeer{
+			OperatorAddress: common.HexToAddress(fmt.Sprintf("0x%040d", i+1)),
+			SocketAddress:   fmt.Sprintf("http://localhost:%d", 8000+i+1),
 		}
 	}
 	
-	// Verify the requested nodeID is in the set
-	found := false
-	for _, op := range operators {
-		if op.ID == nodeID {
-			found = true
-			break
-		}
+	return &peering.OperatorSetPeers{
+		OperatorSetId: 1,
+		AVSAddress:    common.HexToAddress("0x1234567890123456789012345678901234567890"),
+		Peers:         peers,
 	}
-	
-	if !found {
-		// Add the node to the operator set if not found (for testing)
-		operators = append(operators, types.OperatorInfo{
-			ID:           nodeID,
-			P2PPubKey:    []byte(fmt.Sprintf("pubkey-%d", nodeID)),
-			P2PNodeURL:   fmt.Sprintf("http://localhost:%d", 8000+nodeID),
-			KMSServerURL: fmt.Sprintf("http://localhost:%d", 8000+nodeID),
-		})
-	}
-	
-	return operators
 }
 
-// createPeeringDataFetcher creates a peering data fetcher
-func createPeeringDataFetcher(operators []types.OperatorInfo, logger *zap.Logger) peering.IPeeringDataFetcher {
-	// For now, use stub for testing. In production, this would use the real peeringDataFetcher
-	// that queries the on-chain contract based on chainID
+// scheduleDKG schedules DKG execution at a specific timestamp
+func scheduleDKG(n *node.Node, dkgTimestamp int64, logger *zap.Logger) {
+	targetTime := time.Unix(dkgTimestamp, 0)
+	now := time.Now()
 	
-	// TODO: Implement real on-chain peering data fetcher that calls:
-	// - IKmsAvsRegistry.getNodeInfos() for operator set
-	// - Parses operator addresses, socket addresses, and public keys
-	// - Returns properly formatted OperatorSetPeers
+	if targetTime.Before(now) {
+		logger.Sugar().Warnw("DKG timestamp is in the past, running immediately", "target", targetTime, "now", now)
+		go runDKGAsync(n, logger)
+		return
+	}
 	
-	return peering.NewStubPeeringDataFetcher(nil)
+	delay := targetTime.Sub(now)
+	logger.Sugar().Infow("DKG scheduled", "target_time", targetTime, "delay", delay)
+	
+	go func() {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		
+		select {
+		case <-timer.C:
+			logger.Sugar().Infow("Starting scheduled DKG", "target_time", targetTime)
+			runDKGAsync(n, logger)
+		}
+	}()
+}
+
+// runDKGAsync runs DKG in a goroutine with proper error handling
+func runDKGAsync(n *node.Node, logger *zap.Logger) {
+	if err := n.RunDKG(); err != nil {
+		logger.Sugar().Errorw("Scheduled DKG failed", "error", err)
+	} else {
+		logger.Sugar().Infow("Scheduled DKG completed successfully")
+	}
 }

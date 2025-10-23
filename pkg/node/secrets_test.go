@@ -42,7 +42,6 @@ func testSecretsEndpointFlow(t *testing.T) {
 		Port:       0, // Use random port
 		P2PPrivKey: []byte("test-priv-key"),
 		P2PPubKey:  []byte("test-pub-key"),
-		Operators:  operators,
 		Logger:     testLogger,
 	}
 	
@@ -167,7 +166,6 @@ func testSecretsEndpointValidation(t *testing.T) {
 		Port:       0,
 		P2PPrivKey: []byte("test-priv-key"),
 		P2PPubKey:  []byte("test-pub-key"),
-		Operators:  operators,
 		Logger:     testLogger,
 	}, peeringDataFetcher)
 	
@@ -245,7 +243,6 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 		Port:       0,
 		P2PPrivKey: []byte("test-priv-key"),
 		P2PPubKey:  []byte("test-pub-key"),
-		Operators:  operators,
 		Logger:     testLogger,
 	}, peeringDataFetcher)
 	

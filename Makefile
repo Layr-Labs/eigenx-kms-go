@@ -60,3 +60,16 @@ fmtcheck:
 mocks:
 	@echo "Generating mocks..."
 	mockery
+
+# -----------------------------------------------------------------------------
+# Contract targets
+# -----------------------------------------------------------------------------
+
+.PHONY: build/contracts
+build/contracts:
+	@echo "Building smart contract artifacts..."
+	forge build
+
+test/contracts:
+	@echo "Running smart contract tests..."
+	forge test

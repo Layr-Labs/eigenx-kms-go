@@ -16,12 +16,19 @@ export KMS_PORT=8001
 export KMS_CHAIN_ID=11155111  # Sepolia testnet
 export KMS_P2P_PRIVATE_KEY="your-base64-private-key"
 export KMS_P2P_PUBLIC_KEY="your-base64-public-key"
-export KMS_AUTO_DKG=true
+export KMS_DKG_AT=1640995260  # Unix timestamp for coordinated DKG
 
 go run cmd/kms-server/main.go
 ```
 
-### Production Example (3-node cluster on anvil)
+### Coordinated DKG Example (3-node cluster)
+
+First, calculate a future timestamp for coordinated DKG:
+```bash
+# DKG in 30 seconds from now
+DKG_TIME=$(($(date +%s) + 30))
+echo "DKG scheduled for: $(date -d @$DKG_TIME)"
+```
 
 **Terminal 1 (Node 1):**
 ```bash
@@ -29,6 +36,7 @@ go run cmd/kms-server/main.go \
   --node-id 1 \
   --port 8001 \
   --chain-id 31337 \
+  --dkg-at $DKG_TIME \
   --verbose
 ```
 
@@ -38,6 +46,7 @@ go run cmd/kms-server/main.go \
   --node-id 2 \
   --port 8002 \
   --chain-id 31337 \
+  --dkg-at $DKG_TIME \
   --verbose
 ```
 
@@ -47,9 +56,11 @@ go run cmd/kms-server/main.go \
   --node-id 3 \
   --port 8003 \
   --chain-id 31337 \
-  --auto-dkg \
+  --dkg-at $DKG_TIME \
   --verbose
 ```
+
+All nodes will wait and start DKG at exactly the same time!
 
 ## Configuration
 
@@ -60,7 +71,7 @@ go run cmd/kms-server/main.go \
 | `--chain-id` | `KMS_CHAIN_ID` | *required* | Ethereum chain ID (1=mainnet, 11155111=sepolia, 31337=anvil) |
 | `--p2p-private-key` | `KMS_P2P_PRIVATE_KEY` | test key | ed25519 private key (base64) |
 | `--p2p-public-key` | `KMS_P2P_PUBLIC_KEY` | test key | ed25519 public key (base64) |
-| `--auto-dkg` | `KMS_AUTO_DKG` | false | Run DKG automatically on startup |
+| `--dkg-at` | `KMS_DKG_AT` | none | Unix timestamp to run DKG (0 for immediate, blank for no DKG) |
 | `--verbose` | `KMS_VERBOSE` | false | Enable verbose logging |
 
 ## Chain Integration
@@ -72,6 +83,33 @@ The server automatically retrieves the operator set from the on-chain AVS regist
 - **Anvil (31337)**: Uses local development operator set
 
 In production, this calls `IKmsAvsRegistry.getNodeInfos()` to get the current operator set.
+
+## DKG Coordination
+
+The `--dkg-at` flag enables coordinated DKG execution across multiple nodes:
+
+### Immediate DKG
+```bash
+go run cmd/kms-server/main.go --node-id 1 --chain-id 31337 --dkg-at 0
+```
+
+### Scheduled DKG
+```bash
+# Calculate timestamp for 60 seconds from now
+FUTURE_TIME=$(($(date +%s) + 60))
+
+# All nodes use the same timestamp
+go run cmd/kms-server/main.go --node-id 1 --chain-id 31337 --dkg-at $FUTURE_TIME
+go run cmd/kms-server/main.go --node-id 2 --chain-id 31337 --dkg-at $FUTURE_TIME
+go run cmd/kms-server/main.go --node-id 3 --chain-id 31337 --dkg-at $FUTURE_TIME
+```
+
+### Production DKG Schedule
+In production, DKG should be coordinated across all operators:
+- Use the same `--dkg-at` timestamp across all nodes
+- Allows time for all operators to start their nodes
+- Ensures synchronized DKG execution
+- Prevents timing-based DKG failures
 
 ## API Endpoints
 

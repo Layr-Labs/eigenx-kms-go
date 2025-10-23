@@ -110,3 +110,70 @@ func GetCoreContractsForChainId(chainId ChainId) (*CoreContractAddresses, error)
 	}
 	return contracts, nil
 }
+
+// KMSServerConfig represents the complete configuration for a KMS server
+type KMSServerConfig struct {
+	// Node identity
+	NodeID int    `json:"node_id"`
+	Port   int    `json:"port"`
+	
+	// Chain configuration
+	ChainID   ChainId   `json:"chain_id"`
+	ChainName ChainName `json:"chain_name"`
+	
+	// Cryptographic keys
+	P2PPrivateKey []byte `json:"p2p_private_key"`
+	P2PPublicKey  []byte `json:"p2p_public_key"`
+	
+	// Operational settings
+	DKGAt   int64 `json:"dkg_at"`   // Unix timestamp to run DKG, 0 for immediate
+	Debug   bool  `json:"debug"`
+	Verbose bool  `json:"verbose"`
+	
+	// Contract addresses (populated from chain)
+	CoreContracts *CoreContractAddresses `json:"core_contracts,omitempty"`
+}
+
+// Validate validates the KMS server configuration
+func (c *KMSServerConfig) Validate() error {
+	if c.NodeID < 1 {
+		return fmt.Errorf("node ID must be positive, got %d", c.NodeID)
+	}
+	
+	if c.Port < 1 || c.Port > 65535 {
+		return fmt.Errorf("port must be between 1-65535, got %d", c.Port)
+	}
+	
+	// Validate chain ID
+	chainName, exists := ChainIdToName[c.ChainID]
+	if !exists {
+		return fmt.Errorf("unsupported chain ID %d. Supported: %d (mainnet), %d (sepolia), %d (anvil)", 
+			c.ChainID, ChainId_EthereumMainnet, ChainId_EthereumSepolia, ChainId_EthereumAnvil)
+	}
+	
+	c.ChainName = chainName
+	
+	// Get core contracts for this chain
+	coreContracts, err := GetCoreContractsForChainId(c.ChainID)
+	if err != nil {
+		return fmt.Errorf("failed to get core contracts: %w", err)
+	}
+	c.CoreContracts = coreContracts
+	
+	return nil
+}
+
+// GetSupportedChainIDs returns all supported chain IDs
+func GetSupportedChainIDs() []ChainId {
+	return []ChainId{
+		ChainId_EthereumMainnet,
+		ChainId_EthereumSepolia,
+		ChainId_EthereumAnvil,
+	}
+}
+
+// GetSupportedChainIDsString returns supported chain IDs as strings for CLI help
+func GetSupportedChainIDsString() string {
+	return fmt.Sprintf("%d (mainnet), %d (sepolia), %d (anvil)", 
+		ChainId_EthereumMainnet, ChainId_EthereumSepolia, ChainId_EthereumAnvil)
+}
