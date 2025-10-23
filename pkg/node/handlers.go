@@ -1,12 +1,59 @@
 package node
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/ethereum/go-ethereum/common"
 )
+
+
+// validateAuthenticatedMessage validates an incoming authenticated message
+func (s *Server) validateAuthenticatedMessage(r *http.Request, expectedRecipient common.Address) (*types.AuthenticatedMessage, *peering.OperatorSetPeer, interface{}, error) {
+	// Parse authenticated message wrapper
+	var authMsg types.AuthenticatedMessage
+	if err := json.NewDecoder(r.Body).Decode(&authMsg); err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to parse authenticated message: %w", err)
+	}
+
+	// First decode payload to get sender address
+	var baseMsg struct {
+		FromOperatorAddress common.Address `json:"fromOperatorAddress"`
+		ToOperatorAddress   common.Address `json:"toOperatorAddress"`
+	}
+	if err := json.Unmarshal(authMsg.Payload, &baseMsg); err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to parse message addresses: %w", err)
+	}
+
+	// Verify message is intended for this node (unless broadcast)
+	if baseMsg.ToOperatorAddress != (common.Address{}) && baseMsg.ToOperatorAddress != expectedRecipient {
+		return nil, nil, nil, fmt.Errorf("message not intended for this operator")
+	}
+
+	// Fetch current operators to find sender
+	ctx := context.Background()
+	operators, err := s.node.fetchCurrentOperators(ctx)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to fetch operators for validation: %w", err)
+	}
+
+	// Find sender peer
+	senderPeer := s.node.findPeerByAddress(baseMsg.FromOperatorAddress, operators)
+	if senderPeer == nil {
+		return nil, nil, nil, fmt.Errorf("unknown sender: %s", baseMsg.FromOperatorAddress.Hex())
+	}
+
+	// Verify authentication
+	if err := s.node.verifyMessage(&authMsg, senderPeer); err != nil {
+		return nil, nil, nil, fmt.Errorf("authentication failed: %w", err)
+	}
+
+	return &authMsg, senderPeer, nil, nil
+}
 
 // handleSecretsRequest handles the /secrets endpoint for application secret retrieval
 func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
@@ -121,15 +168,32 @@ func (s *Server) handleDKGCommitment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse commitment message
-	var commitments []types.G2Point
-	if err := json.NewDecoder(r.Body).Decode(&commitments); err != nil {
-		http.Error(w, "Failed to parse commitments", http.StatusBadRequest)
+	// Validate authenticated message (accepts broadcast messages)
+	authMsg, senderPeer, _, err := s.validateAuthenticatedMessage(r, s.node.OperatorAddress)
+	if err != nil {
+		s.node.logger.Sugar().Warnw("DKG commitment authentication failed", "error", err)
+		http.Error(w, "Authentication failed", http.StatusUnauthorized)
 		return
 	}
 
-	// TODO: Store received commitments
-	s.node.logger.Sugar().Debugw("Received DKG commitments", "node_id", s.node.OperatorAddress.Hex(), "count", len(commitments))
+	// Decode commitment message
+	var commitMsg types.CommitmentMessage
+	if err := json.Unmarshal(authMsg.Payload, &commitMsg); err != nil {
+		http.Error(w, "Failed to parse commitment message", http.StatusBadRequest)
+		return
+	}
+
+	// Convert sender address to node ID and store commitments
+	senderNodeID := addressToNodeID(senderPeer.OperatorAddress)
+	s.node.mu.Lock()
+	s.node.receivedCommitments[senderNodeID] = commitMsg.Commitments
+	s.node.mu.Unlock()
+
+	s.node.logger.Sugar().Debugw("Received authenticated DKG commitments", 
+		"node_id", s.node.OperatorAddress.Hex(), 
+		"from_address", senderPeer.OperatorAddress.Hex(),
+		"sender_node_id", senderNodeID,
+		"count", len(commitMsg.Commitments))
 	
 	w.WriteHeader(http.StatusOK)
 }
@@ -141,8 +205,34 @@ func (s *Server) handleDKGShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Parse and store received share
-	s.node.logger.Sugar().Debugw("Received DKG share", "node_id", s.node.OperatorAddress.Hex())
+	// Validate authenticated message
+	authMsg, senderPeer, _, err := s.validateAuthenticatedMessage(r, s.node.OperatorAddress)
+	if err != nil {
+		s.node.logger.Sugar().Warnw("DKG share authentication failed", "error", err)
+		http.Error(w, "Authentication failed", http.StatusUnauthorized)
+		return
+	}
+
+	// Decode share message
+	var shareMsg types.ShareMessage
+	if err := json.Unmarshal(authMsg.Payload, &shareMsg); err != nil {
+		http.Error(w, "Failed to parse share message", http.StatusBadRequest)
+		return
+	}
+
+	// Convert addresses to node IDs
+	senderNodeID := addressToNodeID(senderPeer.OperatorAddress)
+	share := types.DeserializeFr(shareMsg.Share)
+
+	// Store received share
+	s.node.mu.Lock()
+	s.node.receivedShares[senderNodeID] = share
+	s.node.mu.Unlock()
+
+	s.node.logger.Sugar().Debugw("Received authenticated DKG share", 
+		"node_id", s.node.OperatorAddress.Hex(), 
+		"from_address", senderPeer.OperatorAddress.Hex(),
+		"sender_node_id", senderNodeID)
 	
 	w.WriteHeader(http.StatusOK)
 }
@@ -154,15 +244,37 @@ func (s *Server) handleDKGAck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Parse acknowledgement
-	var ack types.Acknowledgement
-	if err := json.NewDecoder(r.Body).Decode(&ack); err != nil {
-		http.Error(w, "Failed to parse acknowledgement", http.StatusBadRequest)
+	// Validate authenticated message
+	authMsg, senderPeer, _, err := s.validateAuthenticatedMessage(r, s.node.OperatorAddress)
+	if err != nil {
+		s.node.logger.Sugar().Warnw("DKG acknowledgement authentication failed", "error", err)
+		http.Error(w, "Authentication failed", http.StatusUnauthorized)
 		return
 	}
 
-	// TODO: Store received acknowledgement
-	s.node.logger.Sugar().Debugw("Received acknowledgement", "node_id", s.node.OperatorAddress.Hex(), "from_player", ack.PlayerID, "for_dealer", ack.DealerID)
+	// Decode acknowledgement message
+	var ackMsg types.AcknowledgementMessage
+	if err := json.Unmarshal(authMsg.Payload, &ackMsg); err != nil {
+		http.Error(w, "Failed to parse acknowledgement message", http.StatusBadRequest)
+		return
+	}
+
+	// Convert sender address to node ID and store acknowledgement
+	senderNodeID := addressToNodeID(senderPeer.OperatorAddress)
+	thisNodeID := addressToNodeID(s.node.OperatorAddress)
+	
+	s.node.mu.Lock()
+	if s.node.receivedAcks[thisNodeID] == nil {
+		s.node.receivedAcks[thisNodeID] = make(map[int]*types.Acknowledgement)
+	}
+	s.node.receivedAcks[thisNodeID][senderNodeID] = ackMsg.Ack
+	s.node.mu.Unlock()
+
+	s.node.logger.Sugar().Debugw("Received authenticated acknowledgement", 
+		"node_id", s.node.OperatorAddress.Hex(), 
+		"from_address", senderPeer.OperatorAddress.Hex(),
+		"from_player", senderNodeID, 
+		"for_dealer", thisNodeID)
 	
 	w.WriteHeader(http.StatusOK)
 }

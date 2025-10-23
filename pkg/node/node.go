@@ -1,7 +1,10 @@
 package node
 
 import (
+	"bytes"
 	"context"
+	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
@@ -107,7 +110,6 @@ func NewNode(cfg Config, pdf peering.IPeeringDataFetcher) *Node {
 		Port:                cfg.Port,
 		BN254PrivateKey:     bn254PrivKey,
 		keyStore:            keystore.NewKeyStore(),
-		transport:           transport.NewClient(transportClientID),
 		server:              NewServer(nil, cfg.Port), // Will set node reference later
 		attestationVerifier: attestation.NewStubVerifier(),
 		releaseRegistry:     registry.NewStubClient(),
@@ -123,6 +125,9 @@ func NewNode(cfg Config, pdf peering.IPeeringDataFetcher) *Node {
 	// Set node reference in server
 	n.server.node = n
 
+	// Initialize transport with authenticated messaging
+	n.transport = transport.NewClient(transportClientID, operatorAddress, n)
+
 	return n
 }
 
@@ -137,7 +142,7 @@ func (n *Node) Stop() error {
 }
 
 // fetchCurrentOperators fetches the current operator set from the peering system
-func (n *Node) fetchCurrentOperators(ctx context.Context) ([]types.OperatorInfo, error) {
+func (n *Node) fetchCurrentOperators(ctx context.Context) ([]*peering.OperatorSetPeer, error) {
 	// TODO: Use actual AVS address and operator set ID from chain
 	// For now, using placeholder values
 	avsAddress := "0x1234567890123456789012345678901234567890"
@@ -155,22 +160,8 @@ func (n *Node) fetchCurrentOperators(ctx context.Context) ([]types.OperatorInfo,
 		return sortedPeers[i].OperatorAddress.Hex() < sortedPeers[j].OperatorAddress.Hex()
 	})
 
-	// Convert to OperatorInfo with address-based ID assignment
-	operators := make([]types.OperatorInfo, len(sortedPeers))
-
-	for i, peer := range sortedPeers {
-		// Use keccak256 hash of address as node ID for better distribution
-		nodeID := addressToNodeID(peer.OperatorAddress)
-		operators[i] = types.OperatorInfo{
-			ID:           nodeID,
-			P2PPubKey:    []byte(peer.OperatorAddress.Hex()), // TODO: Use actual BN254 public key
-			P2PNodeURL:   peer.SocketAddress,
-			KMSServerURL: peer.SocketAddress,
-		}
-	}
-
-	n.logger.Sugar().Infow("Fetched operators from chain", "operator_address", n.OperatorAddress.Hex(), "count", len(operators))
-	return operators, nil
+	n.logger.Sugar().Infow("Fetched operators from chain", "operator_address", n.OperatorAddress.Hex(), "count", len(sortedPeers))
+	return sortedPeers, nil
 }
 
 // RunDKG executes the DKG protocol
@@ -190,7 +181,7 @@ func (n *Node) RunDKG() error {
 	// Verify this operator is in the fetched operator set
 	operatorFound := false
 	for _, op := range operators {
-		if op.ID == thisNodeID {
+		if op.OperatorAddress == n.OperatorAddress {
 			operatorFound = true
 			break
 		}
@@ -218,14 +209,15 @@ func (n *Node) RunDKG() error {
 
 	// Send shares to each participant
 	for _, op := range operators {
-		if op.ID == thisNodeID {
+		opNodeID := addressToNodeID(op.OperatorAddress)
+		if opNodeID == thisNodeID {
 			n.mu.Lock()
 			n.receivedShares[thisNodeID] = shares[thisNodeID]
 			n.receivedCommitments[thisNodeID] = commitments
 			n.mu.Unlock()
 			continue
 		}
-		_ = n.transport.SendShareWithRetry(op, shares[op.ID], "/dkg/share")
+		_ = n.transport.SendShareWithRetry(op, shares[opNodeID], "/dkg/share")
 	}
 
 	// Wait for all shares and commitments
@@ -256,9 +248,33 @@ func (n *Node) RunDKG() error {
 		if n.dkg.VerifyShare(dealerID, share, commitments) {
 			validShares[dealerID] = share
 
-			// TODO: Create and send acknowledgement (need operator info for transport)
-			// ack := dkg.CreateAcknowledgement(thisNodeID, dealerID, commitments, n.signAcknowledgement)
-			// TODO: Send acknowledgement using transport
+			// Create acknowledgement for verified share
+			ack := dkg.CreateAcknowledgement(thisNodeID, dealerID, commitments, n.signAcknowledgement)
+			
+			// Find dealer's peer info for transport
+			var dealerPeer *peering.OperatorSetPeer
+			for _, op := range operators {
+				if addressToNodeID(op.OperatorAddress) == dealerID {
+					dealerPeer = op
+					break
+				}
+			}
+			
+			if dealerPeer != nil {
+				// Send acknowledgement to dealer
+				err := n.transport.SendAcknowledgement(ack, dealerPeer, "/dkg/ack")
+				if err != nil {
+					n.logger.Sugar().Warnw("Failed to send acknowledgement", 
+						"operator_address", n.OperatorAddress.Hex(), 
+						"dealer_address", dealerPeer.OperatorAddress.Hex(), 
+						"error", err)
+				} else {
+					n.logger.Sugar().Debugw("Sent acknowledgement", 
+						"operator_address", n.OperatorAddress.Hex(), 
+						"dealer_address", dealerPeer.OperatorAddress.Hex(),
+						"dealer_id", dealerID)
+				}
+			}
 
 			n.logger.Sugar().Infow("Verified and acked share", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "dealer_id", dealerID)
 		} else {
@@ -282,9 +298,10 @@ func (n *Node) RunDKG() error {
 	participantIDs := make([]int, 0, len(receivedCommitments))
 
 	for _, op := range operators {
-		if comm, ok := receivedCommitments[op.ID]; ok {
+		opNodeID := addressToNodeID(op.OperatorAddress)
+		if comm, ok := receivedCommitments[opNodeID]; ok {
 			allCommitments = append(allCommitments, comm)
-			participantIDs = append(participantIDs, op.ID)
+			participantIDs = append(participantIDs, opNodeID)
 		}
 	}
 
@@ -337,7 +354,7 @@ func (n *Node) RunReshare() error {
 	// Verify this operator is in the fetched operator set
 	operatorFound := false
 	for _, op := range operators {
-		if op.ID == thisNodeID {
+		if op.OperatorAddress == n.OperatorAddress {
 			operatorFound = true
 			break
 		}
@@ -372,14 +389,15 @@ func (n *Node) RunReshare() error {
 
 	// Send shares to all operators
 	for _, op := range operators {
-		if op.ID == thisNodeID {
+		opNodeID := addressToNodeID(op.OperatorAddress)
+		if opNodeID == thisNodeID {
 			n.mu.Lock()
-			n.receivedShares[thisNodeID] = shares[op.ID]
+			n.receivedShares[thisNodeID] = shares[opNodeID]
 			n.receivedCommitments[thisNodeID] = commitments
 			n.mu.Unlock()
 			continue
 		}
-		_ = n.transport.SendShareWithRetry(op, shares[op.ID], "/reshare/share")
+		_ = n.transport.SendShareWithRetry(op, shares[opNodeID], "/reshare/share")
 	}
 
 	// Wait for shares and commitments
@@ -425,8 +443,6 @@ func (n *Node) abandonReshare() {
 
 	n.logger.Sugar().Warnw("Reshare abandoned, keeping active version", "node_id", n.OperatorAddress.Hex())
 }
-
-// Note: signAcknowledgement removed - will be implemented when acknowledgement system is added
 
 // Wait functions
 
@@ -479,12 +495,12 @@ func (n *Node) waitForCommitmentsWithRetry(expectedCount int, timeout time.Durat
 func (n *Node) waitForAcknowledgements(threshold int, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	checkInterval := 200 * time.Millisecond
+	thisNodeID := addressToNodeID(n.OperatorAddress)
 
 	for time.Now().Before(deadline) {
 		n.mu.RLock()
-		// Note: receivedAcks is keyed by dealer ID (int), not operator address
-		// This needs to be updated to work with the new system
-		acks := n.receivedAcks[1] // TODO: Fix acknowledgement system
+		// receivedAcks is keyed by dealer ID, we are the dealer waiting for acks
+		acks := n.receivedAcks[thisNodeID]
 		count := 0
 		if acks != nil {
 			count = len(acks)
@@ -492,6 +508,10 @@ func (n *Node) waitForAcknowledgements(threshold int, timeout time.Duration) err
 		n.mu.RUnlock()
 
 		if count >= threshold {
+			n.logger.Sugar().Infow("Received sufficient acknowledgements", 
+				"operator_address", n.OperatorAddress.Hex(), 
+				"received", count, 
+				"threshold", threshold)
 			return nil
 		}
 
@@ -499,14 +519,14 @@ func (n *Node) waitForAcknowledgements(threshold int, timeout time.Duration) err
 	}
 
 	n.mu.RLock()
-	acks := n.receivedAcks[1] // TODO: Fix acknowledgement system
+	acks := n.receivedAcks[thisNodeID]
 	count := 0
 	if acks != nil {
 		count = len(acks)
 	}
 	n.mu.RUnlock()
 
-	return fmt.Errorf("timeout: got %d acks, expected %d", count, threshold)
+	return fmt.Errorf("timeout waiting for acknowledgements: got %d acks, expected %d", count, threshold)
 }
 
 // Helper methods for testing
@@ -563,4 +583,91 @@ func (n *Node) FinalizeDKG(allCommitments [][]types.G2Point, participantIDs []in
 
 	n.logger.Sugar().Infow("DKG finalized", "node_id", n.OperatorAddress.Hex(), "version", keyVersion.Version)
 	return nil
+}
+
+// signMessage signs a message payload using the node's BN254 private key
+func (n *Node) signMessage(payloadBytes []byte) ([]byte, error) {
+	payloadHash := crypto.Keccak256(payloadBytes)
+	var hash32 [32]byte
+	copy(hash32[:], payloadHash)
+	signature, err := n.BN254PrivateKey.SignSolidityCompatible(hash32)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign message: %w", err)
+	}
+	return signature.Bytes(), nil
+}
+
+// verifyMessage verifies an authenticated message using the sender's BN254 public key
+func (n *Node) verifyMessage(authMsg *types.AuthenticatedMessage, senderPeer *peering.OperatorSetPeer) error {
+	// Verify payload hash
+	actualHash := crypto.Keccak256(authMsg.Payload)
+	if !bytes.Equal(actualHash, authMsg.Hash[:]) {
+		return fmt.Errorf("payload digest mismatch")
+	}
+	
+	// Create BN254 scheme to verify signature
+	scheme := bn254.NewScheme()
+	sig, err := scheme.NewSignatureFromBytes(authMsg.Signature)
+	if err != nil {
+		return fmt.Errorf("invalid signature format: %w", err)
+	}
+	
+	// Verify signature using sender's public key
+	isValid, err := sig.Verify(senderPeer.WrappedPublicKey.PublicKey, authMsg.Hash[:])
+	if err != nil {
+		return fmt.Errorf("signature verification error: %w", err)
+	}
+	if !isValid {
+		return fmt.Errorf("signature verification failed")
+	}
+	
+	return nil
+}
+
+// CreateAuthenticatedMessage creates an authenticated message wrapper for any payload
+func (n *Node) CreateAuthenticatedMessage(payload interface{}) (*types.AuthenticatedMessage, error) {
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	}
+	
+	payloadHash := crypto.Keccak256(payloadBytes)
+	signature, err := n.signMessage(payloadBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign message: %w", err)
+	}
+	
+	return &types.AuthenticatedMessage{
+		Payload:   payloadBytes,
+		Hash:      [32]byte(payloadHash),
+		Signature: signature,
+	}, nil
+}
+
+// findPeerByAddress finds a peer by their operator address
+func (n *Node) findPeerByAddress(address common.Address, peers []*peering.OperatorSetPeer) *peering.OperatorSetPeer {
+	for _, peer := range peers {
+		if peer.OperatorAddress == address {
+			return peer
+		}
+	}
+	return nil
+}
+
+// signAcknowledgement signs an acknowledgement using BN254 private key
+func (n *Node) signAcknowledgement(dealerID int, commitmentHash [32]byte) []byte {
+	// Create message: dealerID || commitmentHash 
+	dealerBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(dealerBytes, uint32(dealerID))
+	message := append(dealerBytes, commitmentHash[:]...)
+	messageHash := crypto.Keccak256(message)
+	
+	var hash32 [32]byte
+	copy(hash32[:], messageHash)
+	signature, err := n.BN254PrivateKey.SignSolidityCompatible(hash32)
+	if err != nil {
+		n.logger.Sugar().Errorw("Failed to sign acknowledgement", "error", err)
+		return nil
+	}
+	return signature.Bytes()
 }

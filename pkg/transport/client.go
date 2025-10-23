@@ -7,8 +7,10 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/ethereum/go-ethereum/common"
 )
 
 // RetryConfig configures retry behavior
@@ -27,33 +29,51 @@ var DefaultRetryConfig = RetryConfig{
 	BackoffMultiple: 2.0,
 }
 
+// MessageSigner interface for signing messages
+type MessageSigner interface {
+	CreateAuthenticatedMessage(payload interface{}) (*types.AuthenticatedMessage, error)
+}
+
 // Client handles network communication
 type Client struct {
-	nodeID      int
-	retryConfig RetryConfig
+	nodeID       int
+	operatorAddr common.Address
+	signer       MessageSigner
+	retryConfig  RetryConfig
 }
 
 // NewClient creates a new transport client
-func NewClient(nodeID int) *Client {
+func NewClient(nodeID int, operatorAddr common.Address, signer MessageSigner) *Client {
 	return &Client{
-		nodeID:      nodeID,
-		retryConfig: DefaultRetryConfig,
+		nodeID:       nodeID,
+		operatorAddr: operatorAddr,
+		signer:       signer,
+		retryConfig:  DefaultRetryConfig,
 	}
 }
 
-// SendShareWithRetry sends a share to another node with retries
-func (c *Client) SendShareWithRetry(toOperator types.OperatorInfo, share *fr.Element, endpoint string) error {
+// SendShareWithRetry sends an authenticated share to another node with retries
+func (c *Client) SendShareWithRetry(toOperator *peering.OperatorSetPeer, share *fr.Element, endpoint string) error {
 	msg := types.ShareMessage{
-		FromID: c.nodeID,
-		ToID:   toOperator.ID,
-		Share:  types.SerializeFr(share),
+		FromOperatorAddress: c.operatorAddr,
+		ToOperatorAddress:   toOperator.OperatorAddress,
+		Share:              types.SerializeFr(share),
 	}
 
-	data, _ := json.Marshal(msg)
-	backoff := c.retryConfig.InitialBackoff
+	// Create authenticated message
+	authMsg, err := c.signer.CreateAuthenticatedMessage(msg)
+	if err != nil {
+		return fmt.Errorf("failed to create authenticated message: %w", err)
+	}
 
+	data, err := json.Marshal(authMsg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal authenticated message: %w", err)
+	}
+
+	backoff := c.retryConfig.InitialBackoff
 	for attempt := 0; attempt < c.retryConfig.MaxAttempts; attempt++ {
-		resp, err := http.Post(toOperator.P2PNodeURL+endpoint, "application/json", bytes.NewReader(data))
+		resp, err := http.Post(toOperator.SocketAddress+endpoint, "application/json", bytes.NewReader(data))
 		if err == nil {
 			_ = resp.Body.Close()
 			return nil
@@ -71,30 +91,56 @@ func (c *Client) SendShareWithRetry(toOperator types.OperatorInfo, share *fr.Ele
 	return fmt.Errorf("failed to send share after %d attempts", c.retryConfig.MaxAttempts)
 }
 
-// BroadcastCommitments broadcasts commitments to all operators
-func (c *Client) BroadcastCommitments(operators []types.OperatorInfo, commitments []types.G2Point, endpoint string) error {
+// BroadcastCommitments broadcasts authenticated commitments to all operators
+func (c *Client) BroadcastCommitments(operators []*peering.OperatorSetPeer, commitments []types.G2Point, endpoint string) error {
+	// Create broadcast message (ToOperatorAddress is zero for broadcast)
 	msg := types.CommitmentMessage{
-		FromID:      c.nodeID,
-		Commitments: commitments,
+		FromOperatorAddress: c.operatorAddr,
+		ToOperatorAddress:   common.Address{}, // Zero address for broadcast
+		Commitments:        commitments,
 	}
 
-	data, _ := json.Marshal(msg)
+	// Create authenticated message
+	authMsg, err := c.signer.CreateAuthenticatedMessage(msg)
+	if err != nil {
+		return fmt.Errorf("failed to create authenticated message: %w", err)
+	}
 
+	data, err := json.Marshal(authMsg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal authenticated message: %w", err)
+	}
+
+	// Send to all other operators
 	for _, op := range operators {
-		if op.ID == c.nodeID {
-			continue
+		if op.OperatorAddress == c.operatorAddr {
+			continue // Skip self
 		}
-		_, _ = http.Post(op.P2PNodeURL+endpoint, "application/json", bytes.NewReader(data))
+		_, _ = http.Post(op.SocketAddress+endpoint, "application/json", bytes.NewReader(data))
 	}
 	return nil
 }
 
-// SendAcknowledgement sends an acknowledgement to a specific operator
-func (c *Client) SendAcknowledgement(ack *types.Acknowledgement, toOperator types.OperatorInfo, endpoint string) error {
-	msg := types.AcknowledgementMessage{Ack: ack}
-	data, _ := json.Marshal(msg)
+// SendAcknowledgement sends an authenticated acknowledgement to a specific operator
+func (c *Client) SendAcknowledgement(ack *types.Acknowledgement, toOperator *peering.OperatorSetPeer, endpoint string) error {
+	msg := types.AcknowledgementMessage{
+		FromOperatorAddress: c.operatorAddr,
+		ToOperatorAddress:   toOperator.OperatorAddress,
+		Ack:                ack,
+	}
 
-	resp, err := http.Post(toOperator.P2PNodeURL+endpoint, "application/json", bytes.NewReader(data))
+	// Create authenticated message
+	authMsg, err := c.signer.CreateAuthenticatedMessage(msg)
+	if err != nil {
+		return fmt.Errorf("failed to create authenticated message: %w", err)
+	}
+
+	data, err := json.Marshal(authMsg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal authenticated message: %w", err)
+	}
+
+	resp, err := http.Post(toOperator.SocketAddress+endpoint, "application/json", bytes.NewReader(data))
 	if err != nil {
 		return err
 	}
@@ -102,16 +148,30 @@ func (c *Client) SendAcknowledgement(ack *types.Acknowledgement, toOperator type
 	return nil
 }
 
-// BroadcastCompletionSignature broadcasts a completion signature
-func (c *Client) BroadcastCompletionSignature(operators []types.OperatorInfo, completion *types.CompletionSignature) error {
-	msg := types.CompletionMessage{Completion: completion}
-	data, _ := json.Marshal(msg)
+// BroadcastCompletionSignature broadcasts an authenticated completion signature
+func (c *Client) BroadcastCompletionSignature(operators []*peering.OperatorSetPeer, completion *types.CompletionSignature) error {
+	msg := types.CompletionMessage{
+		FromOperatorAddress: c.operatorAddr,
+		ToOperatorAddress:   common.Address{}, // Zero address for broadcast
+		Completion:         completion,
+	}
+
+	// Create authenticated message
+	authMsg, err := c.signer.CreateAuthenticatedMessage(msg)
+	if err != nil {
+		return fmt.Errorf("failed to create authenticated message: %w", err)
+	}
+
+	data, err := json.Marshal(authMsg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal authenticated message: %w", err)
+	}
 
 	for _, op := range operators {
-		if op.ID == c.nodeID {
-			continue
+		if op.OperatorAddress == c.operatorAddr {
+			continue // Skip self
 		}
-		_, _ = http.Post(op.P2PNodeURL+"/reshare/complete", "application/json", bytes.NewReader(data))
+		_, _ = http.Post(op.SocketAddress+"/reshare/complete", "application/json", bytes.NewReader(data))
 	}
 	return nil
 }

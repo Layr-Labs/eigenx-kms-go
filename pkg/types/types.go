@@ -6,13 +6,6 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
 
-// OperatorInfo represents on-chain operator registration data
-type OperatorInfo struct {
-	ID           int
-	P2PPubKey    []byte // ed25519 public key for signing acknowledgements
-	P2PNodeURL   string
-	KMSServerURL string
-}
 
 // KeyShareVersion represents a versioned set of key shares
 type KeyShareVersion struct {

@@ -4,9 +4,12 @@ import (
 	"fmt"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
+	"github.com/ethereum/go-ethereum/common"
+	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 )
 
 // Protocol represents the reshare protocol interface
@@ -16,15 +19,22 @@ type Protocol interface {
 	ComputeNewKeyShare(dealerIDs []int, shares map[int]*fr.Element, allCommitments [][]types.G2Point) *types.KeyShareVersion
 }
 
+// addressToNodeID converts an Ethereum address to a node ID using keccak256 hash
+func addressToNodeID(address common.Address) int {
+	hash := ethcrypto.Keccak256(address.Bytes())
+	nodeID := int(common.BytesToHash(hash).Big().Uint64())
+	return nodeID
+}
+
 // Reshare implements the reshare protocol
 type Reshare struct {
 	nodeID    int
-	operators []types.OperatorInfo
+	operators []*peering.OperatorSetPeer
 	poly      polynomial.Polynomial
 }
 
 // NewReshare creates a new reshare instance
-func NewReshare(nodeID int, operators []types.OperatorInfo) *Reshare {
+func NewReshare(nodeID int, operators []*peering.OperatorSetPeer) *Reshare {
 	return &Reshare{
 		nodeID:    nodeID,
 		operators: operators,
@@ -51,8 +61,9 @@ func (r *Reshare) GenerateNewShares(currentShare *fr.Element, newThreshold int) 
 	// Compute shares for all operators
 	newShares := make(map[int]*fr.Element)
 	for _, op := range r.operators {
-		share := crypto.EvaluatePolynomial(r.poly, op.ID)
-		newShares[op.ID] = share
+		opNodeID := addressToNodeID(op.OperatorAddress)
+		share := crypto.EvaluatePolynomial(r.poly, opNodeID)
+		newShares[opNodeID] = share
 	}
 
 	// Create commitments in G2
@@ -83,7 +94,7 @@ func (r *Reshare) VerifyNewShare(fromID int, share *fr.Element, commitments []ty
 }
 
 // ComputeNewKeyShare computes the new key share using Lagrange interpolation
-func (r *Reshare) ComputeNewKeyShare(dealerIDs []int, shares map[int]*fr.Element, allCommitments [][]types.G2Point, epoch int64) *types.KeyShareVersion {
+func (r *Reshare) ComputeNewKeyShare(dealerIDs []int, shares map[int]*fr.Element, allCommitments [][]types.G2Point) *types.KeyShareVersion {
 	// Compute x'_j = Σ_{i∈dealers} λ_i * s'_{ij}
 	newShare := new(fr.Element).SetZero()
 
@@ -99,7 +110,7 @@ func (r *Reshare) ComputeNewKeyShare(dealerIDs []int, shares map[int]*fr.Element
 	}
 
 	return &types.KeyShareVersion{
-		Version:        epoch,
+		Version:        0, // TODO: Use proper epoch calculation
 		PrivateShare:   newShare,
 		Commitments:    allCommitments[0],
 		IsActive:       false,

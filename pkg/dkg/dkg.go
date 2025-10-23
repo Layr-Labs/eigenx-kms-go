@@ -2,10 +2,20 @@ package dkg
 
 import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
+	"github.com/ethereum/go-ethereum/common"
+	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 )
+
+// addressToNodeID converts an Ethereum address to a node ID using keccak256 hash
+func addressToNodeID(address common.Address) int {
+	hash := ethcrypto.Keccak256(address.Bytes())
+	nodeID := int(common.BytesToHash(hash).Big().Uint64())
+	return nodeID
+}
 
 // Protocol represents the DKG protocol interface
 type Protocol interface {
@@ -18,12 +28,12 @@ type Protocol interface {
 type DKG struct {
 	nodeID    int
 	threshold int
-	operators []types.OperatorInfo
+	operators []*peering.OperatorSetPeer
 	poly      polynomial.Polynomial
 }
 
 // NewDKG creates a new DKG instance
-func NewDKG(nodeID int, threshold int, operators []types.OperatorInfo) *DKG {
+func NewDKG(nodeID int, threshold int, operators []*peering.OperatorSetPeer) *DKG {
 	return &DKG{
 		nodeID:    nodeID,
 		threshold: threshold,
@@ -45,8 +55,9 @@ func (d *DKG) GenerateShares() (map[int]*fr.Element, []types.G2Point, error) {
 	// Compute shares for all operators
 	shares := make(map[int]*fr.Element)
 	for _, op := range d.operators {
-		share := crypto.EvaluatePolynomial(d.poly, op.ID)
-		shares[op.ID] = share
+		opNodeID := addressToNodeID(op.OperatorAddress)
+		share := crypto.EvaluatePolynomial(d.poly, opNodeID)
+		shares[opNodeID] = share
 	}
 
 	// Create commitments in G2
