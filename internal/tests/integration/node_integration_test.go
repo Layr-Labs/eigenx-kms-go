@@ -2,9 +2,26 @@ package integration
 
 import (
 	"testing"
+	
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/testutil"
 )
 
 func Test_NodeIntegration(t *testing.T) {
-	// TODO: Update integration tests to work with new authenticated system
-	t.Skip("Integration tests disabled pending update to new authenticated message system")
+	// Basic node integration test
+	cluster := testutil.NewTestCluster(t, 3)
+	defer cluster.Close()
+	
+	// Verify cluster creation
+	if len(cluster.Nodes) != 3 {
+		t.Fatalf("Expected 3 nodes, got %d", len(cluster.Nodes))
+	}
+	
+	// Verify all nodes are properly initialized
+	for i, node := range cluster.Nodes {
+		if node == nil {
+			t.Errorf("Node %d is nil", i)
+		}
+	}
+	
+	t.Logf("✓ Node integration test passed with %d nodes", len(cluster.Nodes))
 }

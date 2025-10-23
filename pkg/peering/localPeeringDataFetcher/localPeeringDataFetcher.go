@@ -1,6 +1,7 @@
 package localPeeringDataFetcher
 
 import (
+	"context"
 	"errors"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
@@ -22,7 +23,7 @@ func NewLocalPeeringDataFetcher(
 	}
 }
 
-func (lpdf *LocalPeeringDataFetcher) ListKMSOperators(avsAddress string, operatorSetId uint32) (*peering.OperatorSetPeers, error) {
+func (lpdf *LocalPeeringDataFetcher) ListKMSOperators(ctx context.Context, avsAddress string, operatorSetId uint32) (*peering.OperatorSetPeers, error) {
 	for _, ops := range lpdf.operatorPeers {
 		if ops.AVSAddress.Hex() == avsAddress && ops.OperatorSetId == operatorSetId {
 			return ops, nil
