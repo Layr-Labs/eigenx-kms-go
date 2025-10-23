@@ -18,7 +18,7 @@ import (
 // generateHexAppID creates a 32-byte hex string app ID as used in production
 func generateHexAppID() string {
 	bytes := make([]byte, 32)
-	rand.Read(bytes)
+	_, _ = rand.Read(bytes)
 	return hex.EncodeToString(bytes)
 }
 

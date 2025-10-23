@@ -75,7 +75,7 @@ func GeneratePolynomial(secret *fr.Element, degree int) polynomial.Polynomial {
 	
 	// Generate random coefficients for higher degree terms
 	for i := 1; i <= degree; i++ {
-		poly[i].SetRandom()
+		_, _ = poly[i].SetRandom()
 	}
 	
 	return poly

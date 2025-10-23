@@ -124,7 +124,7 @@ func registerOperator(c *cli.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to create logger: %w", err)
 	}
-	defer appLogger.Sync()
+	defer func() { _ = appLogger.Sync() }()
 
 	// Parse and validate configuration
 	operatorConfig, err := parseOperatorConfig(c)

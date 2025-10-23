@@ -13,7 +13,6 @@ all: deps/go build/cmd/poc
 # -----------------------------------------------------------------------------
 deps: deps/go
 	./scripts/installDeps.sh
-	$(GO) install github.com/golangci/golangci-lint/cmd/golangci-lint@v1.61.0
 	cd protos && buf dep update
 
 
@@ -21,6 +20,7 @@ deps: deps/go
 deps/go:
 	${GO} mod tidy
 	$(GO) install github.com/vektra/mockery/v3@v3.5.5
+	$(GO) install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.5.0
 
 
 # -----------------------------------------------------------------------------

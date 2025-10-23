@@ -47,9 +47,9 @@ func NewServer(node *Node, port int) *Server {
 // Start starts the HTTP server
 func (s *Server) Start() error {
 	go func() {
-		s.node.logger.Sugar().Infow("Starting HTTP server", "node_id", s.node.ID, "port", s.httpServer.Addr)
+		s.node.logger.Sugar().Infow("Starting HTTP server", "operator_address", s.node.OperatorAddress.Hex(), "port", s.httpServer.Addr)
 		if err := s.httpServer.ListenAndServe(); err != http.ErrServerClosed {
-			s.node.logger.Sugar().Errorw("HTTP server error", "node_id", s.node.ID, "error", err)
+			s.node.logger.Sugar().Errorw("HTTP server error", "operator_address", s.node.OperatorAddress.Hex(), "error", err)
 		}
 	}()
 	return nil

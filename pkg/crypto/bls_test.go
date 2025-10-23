@@ -40,7 +40,7 @@ func testScalarMulG1(t *testing.T) {
 		},
 		{
 			name:   "multiply by random",
-			scalar: func() *fr.Element { e := new(fr.Element); e.SetRandom(); return e }(),
+			scalar: func() *fr.Element { e := new(fr.Element); _, _ = e.SetRandom(); return e }(),
 		},
 	}
 
@@ -214,7 +214,7 @@ func testRecoverSecret(t *testing.T) {
 	poly := make(polynomial.Polynomial, degree+1)
 	poly[0].Set(secret)
 	for i := 1; i <= degree; i++ {
-		poly[i].SetRandom()
+		_, _ = poly[i].SetRandom()
 	}
 	
 	// Generate shares
@@ -280,7 +280,7 @@ func testRecoverAppPrivateKey(t *testing.T) {
 	poly := make(polynomial.Polynomial, threshold)
 	poly[0].Set(secret)
 	for i := 1; i <= degree; i++ {
-		poly[i].SetRandom()
+		_, _ = poly[i].SetRandom()
 	}
 	
 	// Create shares by evaluating polynomial

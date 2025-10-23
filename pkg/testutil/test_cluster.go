@@ -54,11 +54,10 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 	nodes := make([]*node.Node, numNodes)
 	for i := 0; i < numNodes; i++ {
 		cfg := node.Config{
-			ID:         i + 1,
-			Port:       8000 + i + 1,
-			P2PPrivKey: []byte(fmt.Sprintf("privkey-%d", i+1)),
-			P2PPubKey:  []byte(fmt.Sprintf("pubkey-%d", i+1)),
-			Logger:     clusterLogger,
+			OperatorAddress: fmt.Sprintf("0x%040d", i+1), // Mock addresses
+			Port:            8000 + i + 1,
+			BN254PrivateKey: fmt.Sprintf("%064d", i+1), // Simple test keys
+			Logger:          clusterLogger,
 		}
 
 		nodes[i] = node.NewNode(cfg, peeringDataFetcher)

@@ -1,6 +1,11 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+	"strings"
+	
+	"github.com/ethereum/go-ethereum/common"
+)
 
 type CurveType string
 
@@ -114,16 +119,15 @@ func GetCoreContractsForChainId(chainId ChainId) (*CoreContractAddresses, error)
 // KMSServerConfig represents the complete configuration for a KMS server
 type KMSServerConfig struct {
 	// Node identity
-	NodeID int    `json:"node_id"`
-	Port   int    `json:"port"`
+	OperatorAddress string `json:"operator_address"` // Ethereum address of the operator
+	Port            int    `json:"port"`
 	
 	// Chain configuration
 	ChainID   ChainId   `json:"chain_id"`
 	ChainName ChainName `json:"chain_name"`
 	
 	// Cryptographic keys
-	P2PPrivateKey []byte `json:"p2p_private_key"`
-	P2PPublicKey  []byte `json:"p2p_public_key"`
+	BN254PrivateKey string `json:"bn254_private_key"` // BN254 private key for threshold crypto and P2P
 	
 	// Operational settings
 	DKGAt   int64 `json:"dkg_at"`   // Unix timestamp to run DKG, 0 for immediate
@@ -136,8 +140,24 @@ type KMSServerConfig struct {
 
 // Validate validates the KMS server configuration
 func (c *KMSServerConfig) Validate() error {
-	if c.NodeID < 1 {
-		return fmt.Errorf("node ID must be positive, got %d", c.NodeID)
+	// Validate operator address
+	if c.OperatorAddress == "" {
+		return fmt.Errorf("operator address cannot be empty")
+	}
+	if !common.IsHexAddress(c.OperatorAddress) {
+		return fmt.Errorf("invalid operator address format: %s", c.OperatorAddress)
+	}
+
+	// Validate BN254 private key format
+	if c.BN254PrivateKey == "" {
+		return fmt.Errorf("BN254 private key cannot be empty")
+	}
+	bn254Key := c.BN254PrivateKey
+	if !strings.HasPrefix(bn254Key, "0x") {
+		bn254Key = "0x" + bn254Key
+	}
+	if len(bn254Key) != 66 { // 0x + 64 hex chars
+		return fmt.Errorf("BN254 private key must be 32 bytes (64 hex chars), got %d chars", len(bn254Key)-2)
 	}
 	
 	if c.Port < 1 || c.Port > 65535 {

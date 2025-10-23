@@ -57,7 +57,7 @@ type AppSignRequest struct {
 
 // AppSignResponse contains a partial signature from a node
 type AppSignResponse struct {
-	NodeID           int
+	OperatorAddress  string  // Operator address instead of NodeID
 	PartialSignature G1Point
 }
 

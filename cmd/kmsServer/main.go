@@ -29,12 +29,12 @@ This server implements:
 - Identity-Based Encryption (IBE) for application secrets`,
 		Version: "1.0.0",
 		Flags: []cli.Flag{
-			&cli.IntFlag{
-				Name:    "node-id",
-				Aliases: []string{"id"},
-				Value:   1,
-				Usage:   "Unique node ID (1-based)",
-				EnvVars: []string{"KMS_NODE_ID"},
+			&cli.StringFlag{
+				Name:     "operator-address",
+				Aliases:  []string{"addr"},
+				Usage:    "Ethereum address of the operator",
+				EnvVars:  []string{"KMS_OPERATOR_ADDRESS"},
+				Required: true,
 			},
 			&cli.IntFlag{
 				Name:    "port",
@@ -51,18 +51,11 @@ This server implements:
 				Required: true,
 			},
 			&cli.StringFlag{
-				Name:    "p2p-private-key",
-				Aliases: []string{"p2p-priv"},
-				Usage:   "Base64-encoded ed25519 private key for P2P authentication",
-				EnvVars: []string{"KMS_P2P_PRIVATE_KEY"},
-				Value:   "dGVzdC1wcml2YXRlLWtleQ==", // "test-private-key" in base64
-			},
-			&cli.StringFlag{
-				Name:    "p2p-public-key",
-				Aliases: []string{"p2p-pub"},
-				Usage:   "Base64-encoded ed25519 public key for P2P authentication",
-				EnvVars: []string{"KMS_P2P_PUBLIC_KEY"},
-				Value:   "dGVzdC1wdWJsaWMta2V5", // "test-public-key" in base64
+				Name:     "bn254-private-key",
+				Aliases:  []string{"bn254"},
+				Usage:    "BN254 private key (hex string) for threshold cryptography and P2P authentication",
+				EnvVars:  []string{"KMS_BN254_PRIVATE_KEY"},
+				Required: true,
 			},
 			&cli.Int64Flag{
 				Name:    "dkg-at",
@@ -92,7 +85,7 @@ func runKMSServer(c *cli.Context) error {
 	if err != nil {
 		return fmt.Errorf("failed to create logger: %w", err)
 	}
-	defer appLogger.Sync()
+	defer func() { _ = appLogger.Sync() }()
 
 	// Parse configuration from flags/environment
 	kmsConfig, err := parseKMSConfig(c)
@@ -109,11 +102,10 @@ func runKMSServer(c *cli.Context) error {
 
 	// Create node config from KMS config (operators fetched dynamically when needed)
 	nodeConfig := node.Config{
-		ID:         kmsConfig.NodeID,
-		Port:       kmsConfig.Port,
-		P2PPrivKey: kmsConfig.P2PPrivateKey,
-		P2PPubKey:  kmsConfig.P2PPublicKey,
-		Logger:     appLogger,
+		OperatorAddress: kmsConfig.OperatorAddress,
+		Port:            kmsConfig.Port,
+		BN254PrivateKey: kmsConfig.BN254PrivateKey,
+		Logger:          appLogger,
 	}
 
 	// Create peering data fetcher for dynamic operator fetching
@@ -124,14 +116,14 @@ func runKMSServer(c *cli.Context) error {
 
 	if c.Bool("verbose") {
 		appLogger.Sugar().Infow("KMS Server Configuration", 
-			"node_id", kmsConfig.NodeID,
+			"operator_address", kmsConfig.OperatorAddress,
 			"port", kmsConfig.Port,
 			"dkg_at", kmsConfig.DKGAt,
 			"chain", kmsConfig.ChainName)
 	}
 
 	// Start the node server
-	appLogger.Sugar().Infow("Starting KMS Server", "node_id", kmsConfig.NodeID, "port", kmsConfig.Port)
+	appLogger.Sugar().Infow("Starting KMS Server", "operator_address", kmsConfig.OperatorAddress, "port", kmsConfig.Port)
 	
 	if err := n.Start(); err != nil {
 		return fmt.Errorf("failed to start node: %w", err)
@@ -142,17 +134,17 @@ func runKMSServer(c *cli.Context) error {
 		scheduleDKG(n, kmsConfig.DKGAt, appLogger)
 	} else if kmsConfig.DKGAt == 0 && c.IsSet("dkg-at") {
 		// Immediate execution if explicitly set to 0
-		appLogger.Sugar().Infow("Running DKG immediately", "node_id", kmsConfig.NodeID)
+		appLogger.Sugar().Infow("Running DKG immediately", "operator_address", kmsConfig.OperatorAddress)
 		go func() {
 			if err := n.RunDKG(); err != nil {
-				appLogger.Sugar().Errorw("DKG failed", "node_id", kmsConfig.NodeID, "error", err)
+				appLogger.Sugar().Errorw("DKG failed", "operator_address", kmsConfig.OperatorAddress, "error", err)
 			} else {
-				appLogger.Sugar().Infow("DKG completed successfully", "node_id", kmsConfig.NodeID)
+				appLogger.Sugar().Infow("DKG completed successfully", "operator_address", kmsConfig.OperatorAddress)
 			}
 		}()
 	}
 
-	appLogger.Sugar().Infow("KMS Server running", "node_id", kmsConfig.NodeID, "port", kmsConfig.Port)
+	appLogger.Sugar().Infow("KMS Server running", "operator_address", kmsConfig.OperatorAddress, "port", kmsConfig.Port)
 	appLogger.Sugar().Infow("Available endpoints", 
 		"secrets", "POST /secrets",
 		"app_sign", "POST /app/sign",
@@ -166,14 +158,13 @@ func runKMSServer(c *cli.Context) error {
 
 func parseKMSConfig(c *cli.Context) (*config.KMSServerConfig, error) {
 	return &config.KMSServerConfig{
-		NodeID:        c.Int("node-id"),
-		Port:          c.Int("port"),
-		ChainID:       config.ChainId(c.Uint64("chain-id")),
-		P2PPrivateKey: []byte(c.String("p2p-private-key")),
-		P2PPublicKey:  []byte(c.String("p2p-public-key")),
-		DKGAt:         c.Int64("dkg-at"),
-		Debug:         c.Bool("verbose"),
-		Verbose:       c.Bool("verbose"),
+		OperatorAddress: c.String("operator-address"),
+		Port:            c.Int("port"),
+		ChainID:         config.ChainId(c.Uint64("chain-id")),
+		BN254PrivateKey: c.String("bn254-private-key"),
+		DKGAt:           c.Int64("dkg-at"),
+		Debug:           c.Bool("verbose"),
+		Verbose:         c.Bool("verbose"),
 	}, nil
 }
 

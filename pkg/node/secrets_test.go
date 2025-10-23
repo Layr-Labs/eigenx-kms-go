@@ -38,11 +38,10 @@ func testSecretsEndpointFlow(t *testing.T) {
 	
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 	cfg := Config{
-		ID:         1,
-		Port:       0, // Use random port
-		P2PPrivKey: []byte("test-priv-key"),
-		P2PPubKey:  []byte("test-pub-key"),
-		Logger:     testLogger,
+		OperatorAddress: "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+		Port:            0, // Use random port
+		BN254PrivateKey: "ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80",
+		Logger:          testLogger,
 	}
 	
 	peeringDataFetcher := createTestPeeringDataFetcher(operators)
@@ -162,11 +161,10 @@ func testSecretsEndpointValidation(t *testing.T) {
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 	peeringDataFetcher := createTestPeeringDataFetcher(operators)
 	node := NewNode(Config{
-		ID:         1,
-		Port:       0,
-		P2PPrivKey: []byte("test-priv-key"),
-		P2PPubKey:  []byte("test-pub-key"),
-		Logger:     testLogger,
+		OperatorAddress: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+		Port:            0,
+		BN254PrivateKey: "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+		Logger:          testLogger,
 	}, peeringDataFetcher)
 	
 	server := NewServer(node, 0)
@@ -239,11 +237,10 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 	peeringDataFetcher := createTestPeeringDataFetcher(operators)
 	node := NewNode(Config{
-		ID:         1,
-		Port:       0,
-		P2PPrivKey: []byte("test-priv-key"),
-		P2PPubKey:  []byte("test-pub-key"),
-		Logger:     testLogger,
+		OperatorAddress: "0x70997970C51812dc3A010C7d01b50e0d17dc79C8",
+		Port:            0,
+		BN254PrivateKey: "59c6995e998f97a5a0044966f0945389dc9e86dae88c7a8412f4603b6b78690d",
+		Logger:          testLogger,
 	}, peeringDataFetcher)
 	
 	// Create attestation with wrong image digest
