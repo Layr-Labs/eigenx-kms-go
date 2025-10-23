@@ -138,7 +138,7 @@ func testReshareSecretConsistency(t *testing.T) {
 	poly := make(polynomial.Polynomial, threshold)
 	poly[0].Set(secret)
 	for i := 1; i < threshold; i++ {
-		poly[i].SetRandom()
+		_, _ = poly[i].SetRandom()
 	}
 	
 	// Generate shares by evaluating polynomial at node IDs

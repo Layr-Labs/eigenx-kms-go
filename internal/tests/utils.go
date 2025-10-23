@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strings"
 )
 
 func GetProjectRootPath() string {
@@ -31,7 +30,6 @@ func GetProjectRootPath() string {
 			fmt.Printf("Found project root path: %s\n", p)
 			return p
 		}
-		p = strings.TrimSuffix(p, "/")
 		startingPath = startingPath + "/.."
 	}
 }

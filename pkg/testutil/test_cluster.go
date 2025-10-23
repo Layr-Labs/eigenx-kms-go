@@ -101,7 +101,7 @@ func (tc *TestCluster) RunDKGWithOperators(operators []types.OperatorInfo) error
 	poly := make(polynomial.Polynomial, threshold)
 	poly[0].Set(masterSecret)
 	for i := 1; i < threshold; i++ {
-		poly[i].SetRandom()
+		_, _ = poly[i].SetRandom()
 	}
 	
 	// Give each node their share directly (simulates completed DKG)

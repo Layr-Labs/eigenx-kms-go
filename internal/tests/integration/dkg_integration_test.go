@@ -30,6 +30,7 @@ func testFullDKGProtocol(t *testing.T) {
 		activeVersion := node.GetKeyStore().GetActiveVersion()
 		if activeVersion == nil {
 			t.Errorf("Node %d should have active key version", i+1)
+			continue
 		}
 		if activeVersion.PrivateShare == nil {
 			t.Errorf("Node %d should have valid private share", i+1)

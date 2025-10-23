@@ -300,7 +300,7 @@ func (c *Client) batchCall(ctx context.Context, requests []*RPCRequest) ([]*RPCR
 	}
 	requestBody, err := json.Marshal(requests)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to marshal requests: %s", err)
+		return nil, fmt.Errorf("failed to marshal requests: %s", err)
 	}
 
 	ctx, cancel := context.WithTimeout(ctx, time.Second*20)
@@ -308,7 +308,7 @@ func (c *Client) batchCall(ctx context.Context, requests []*RPCRequest) ([]*RPCR
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.clientConfig.BaseUrl, bytes.NewReader(requestBody))
 	if err != nil {
-		return nil, fmt.Errorf("Failed to make request: %s", err)
+		return nil, fmt.Errorf("failed to make request: %s", err)
 	}
 
 	request.Header.Set("Content-Type", "application/json")
@@ -316,12 +316,12 @@ func (c *Client) batchCall(ctx context.Context, requests []*RPCRequest) ([]*RPCR
 
 	response, err := c.httpClient.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("Request failed %v", err)
+		return nil, fmt.Errorf("request failed: %v", err)
 	}
 
 	responseBody, err := io.ReadAll(response.Body)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to read body %v", err)
+		return nil, fmt.Errorf("failed to read body: %v", err)
 	}
 
 	if response.StatusCode != http.StatusOK {
@@ -339,7 +339,7 @@ func (c *Client) batchCall(ctx context.Context, requests []*RPCRequest) ([]*RPCR
 			zap.String("error", string(responseBody)),
 		)
 		if errorResponse.Error.Message != "empty batch" {
-			return nil, fmt.Errorf("Error payload returned from batch call: %s", string(responseBody))
+			return nil, fmt.Errorf("error payload returned from batch call: %s", string(responseBody))
 		}
 	} else {
 		if err := json.Unmarshal(responseBody, &destination); err != nil {
@@ -350,7 +350,7 @@ func (c *Client) batchCall(ctx context.Context, requests []*RPCRequest) ([]*RPCR
 			return nil, fmt.Errorf("failed to unmarshal response: %s", err)
 		}
 	}
-	response.Body.Close()
+	_ = response.Body.Close()
 
 	return destination, nil
 }
@@ -517,7 +517,7 @@ func (c *Client) chunkedBatchCall(ctx context.Context, requests []*RPCRequest) (
 	}
 
 	if len(allResults) != len(requests) {
-		return nil, fmt.Errorf("Failed to fetch results for all requests. Expected %d, got %d", len(requests), len(allResults))
+		return nil, fmt.Errorf("failed to fetch results for all requests, expected %d, got %d", len(requests), len(allResults))
 	}
 	return allResults, nil
 }
@@ -544,7 +544,7 @@ func (c *Client) call(ctx context.Context, rpcRequest *RPCRequest) (*RPCResponse
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, c.clientConfig.BaseUrl, bytes.NewReader(requestBody))
 	if err != nil {
-		return nil, fmt.Errorf("Failed to make request %s", err)
+		return nil, fmt.Errorf("failed to make request: %s", err)
 	}
 
 	request.Header.Set("Content-Type", "application/json")
@@ -552,12 +552,12 @@ func (c *Client) call(ctx context.Context, rpcRequest *RPCRequest) (*RPCResponse
 
 	response, err := c.httpClient.Do(request)
 	if err != nil {
-		return nil, fmt.Errorf("Request failed %s", err)
+		return nil, fmt.Errorf("request failed: %s", err)
 	}
 
 	responseBody, err := io.ReadAll(response.Body)
 	if err != nil {
-		return nil, fmt.Errorf("Failed to read body %s", err)
+		return nil, fmt.Errorf("failed to read body: %s", err)
 	}
 	if response.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("received http error code %+v", response.StatusCode)
@@ -572,7 +572,7 @@ func (c *Client) call(ctx context.Context, rpcRequest *RPCRequest) (*RPCResponse
 		return nil, fmt.Errorf("received error response: %+v", destination.Error)
 	}
 
-	response.Body.Close()
+	_ = response.Body.Close()
 
 	return destination, nil
 }
@@ -599,5 +599,5 @@ func (c *Client) Call(ctx context.Context, rpcRequest *RPCRequest) (*RPCResponse
 		time.Sleep(time.Second * time.Duration(backoff))
 	}
 	c.Logger.Sugar().Errorw("Exceeded retries for Call", zap.Any("rpcRequest", rpcRequest))
-	return nil, fmt.Errorf("Exceeded retries for Call")
+	return nil, fmt.Errorf("exceeded retries for call")
 }

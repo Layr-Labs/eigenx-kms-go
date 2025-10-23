@@ -69,7 +69,7 @@ func testMasterPublicKeyDerivation(t *testing.T) {
 	for i := 0; i < numNodes; i++ {
 		poly := make(polynomial.Polynomial, threshold)
 		for j := 0; j < threshold; j++ {
-			poly[j].SetRandom()
+			_, _ = poly[j].SetRandom()
 		}
 		
 		// Create commitments
@@ -156,7 +156,7 @@ func testEncryptionPersistenceAcrossReshare(t *testing.T) {
 	masterPoly := make(polynomial.Polynomial, initialThreshold)
 	masterPoly[0].Set(masterSecret)
 	for i := 1; i < initialThreshold; i++ {
-		masterPoly[i].SetRandom()
+		_, _ = masterPoly[i].SetRandom()
 	}
 	
 	// Generate initial key shares
@@ -203,7 +203,7 @@ func testEncryptionPersistenceAcrossReshare(t *testing.T) {
 		newPoly := make(polynomial.Polynomial, newThreshold)
 		newPoly[0].Set(currentShare)
 		for j := 1; j < newThreshold; j++ {
-			newPoly[j].SetRandom()
+			_, _ = newPoly[j].SetRandom()
 		}
 		
 		// Generate new shares for all new operators
@@ -257,7 +257,7 @@ func testThresholdSignatureRecovery(t *testing.T) {
 	poly := make(polynomial.Polynomial, threshold)
 	poly[0].Set(masterSecret)
 	for i := 1; i < threshold; i++ {
-		poly[i].SetRandom()
+		_, _ = poly[i].SetRandom()
 	}
 	
 	// Generate key shares

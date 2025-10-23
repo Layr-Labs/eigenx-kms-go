@@ -426,10 +426,7 @@ func (n *Node) abandonReshare() {
 	n.logger.Sugar().Warnw("Reshare abandoned, keeping active version", "node_id", n.OperatorAddress.Hex())
 }
 
-func (n *Node) signAcknowledgement(dealerID int, commitmentHash [32]byte) []byte {
-	// STUB: In production, sign with ed25519 private key
-	return []byte(fmt.Sprintf("ack_sig_%s_%d", n.OperatorAddress.Hex(), dealerID))
-}
+// Note: signAcknowledgement removed - will be implemented when acknowledgement system is added
 
 // Wait functions
 

@@ -55,7 +55,7 @@ func (c *Client) SendShareWithRetry(toOperator types.OperatorInfo, share *fr.Ele
 	for attempt := 0; attempt < c.retryConfig.MaxAttempts; attempt++ {
 		resp, err := http.Post(toOperator.P2PNodeURL+endpoint, "application/json", bytes.NewReader(data))
 		if err == nil {
-			resp.Body.Close()
+			_ = resp.Body.Close()
 			return nil
 		}
 
@@ -98,7 +98,7 @@ func (c *Client) SendAcknowledgement(ack *types.Acknowledgement, toOperator type
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	return nil
 }
 

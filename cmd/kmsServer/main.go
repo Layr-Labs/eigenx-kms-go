@@ -235,11 +235,9 @@ func scheduleDKG(n *node.Node, dkgTimestamp int64, logger *zap.Logger) {
 		timer := time.NewTimer(delay)
 		defer timer.Stop()
 		
-		select {
-		case <-timer.C:
-			logger.Sugar().Infow("Starting scheduled DKG", "target_time", targetTime)
-			runDKGAsync(n, logger)
-		}
+		<-timer.C
+		logger.Sugar().Infow("Starting scheduled DKG", "target_time", targetTime)
+		runDKGAsync(n, logger)
 	}()
 }
 
