@@ -3,6 +3,7 @@ src = "contracts/src"
 out = "contracts/out"
 test = "contracts/test"
 libs = ["contracts/lib"]
+broadcast = "contracts/broadcast"
 
 fs_permissions = [{ access = "read-write", path = "./"}]
 show_progress=true

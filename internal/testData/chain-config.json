@@ -1,0 +1,16 @@
+{
+      "avsAccountAddress": "0x4A4540E58D6fCCF919B317aF72831DDa7bE099d5",
+      "avsAccountPk": "0x5d26c7c707d60f9bf2371b25933c3c58d992992510adbad6ec5eaab506c9db2c",
+      "avsAccountPublicKey": "0x58be6a2d03eebd5cfca69b98803fb63cf1b4dfada72cb790dfbb7067a14eaf29501de545d769ff8f4d1fffab144ebb88e30c7038ffcd6ab9df26120522e0b4cd",
+      "operatorAccountAddress_1": "0x9095535f04796d223A83c0e1346e7C1D9C6EE6f3",
+      "operatorAccountPk_1": "0x164c99fbf92b37b1cfa80194c7670b014f02c55eb5c1d99b65459921020ff6df",
+      "operatorAccountAddress_2": "0x753cfB4Da4872c77Bf78fE2031c86c218674B805",
+      "operatorAccountPk_2": "0xd93d143e2963cdc9b744edae90396f70f3dd200628686379a96fbd8564e5842b",
+      "operatorAccountAddress_3": "0x5B5B4D4A4B01aA9F76EC6C8562cD7B2F2dC48D9F",
+      "operatorAccountPk_3": "0xf977ed3eb4c222aaf3c54a2e912c89b2015015e95e994ad0c2d42f7ac590a775",
+      "operatorAccountAddress_4": "0xeF7e91f647888F6737f07720485827802B76eAcF",
+      "operatorAccountPk_4": "0xe1a6d3b0ef8ac47db3791fa4127a166c3f1f28fd45e4522e908b52bc82c742b6",
+      "operatorAccountAddress_5": "0xBd8e9963c1ce68D293C8a3B715Faa97301eB05BE",
+      "operatorAccountPk_5": "0x59b74c409b9c59507ddab13ee3347b9b9f89914f381fe3b2ce2b34a6034aa1c0",
+      "forkL1Block": "9469897"
+}

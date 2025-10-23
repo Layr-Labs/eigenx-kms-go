@@ -35,7 +35,7 @@ contract EigenKMSRegistrar is AVSRegistrar, SocketRegistry, Allowlist, EigenKMSR
         address _avs,
         address _owner,
         IEigenKMSRegistrarTypes.AvsConfig memory _initialConfig
-    ) internal onlyInitializing {
+    ) external initializer {
         __Allowlist_init(_owner); // initializes Ownable
         __AVSRegistrar_init(_avs);
 
