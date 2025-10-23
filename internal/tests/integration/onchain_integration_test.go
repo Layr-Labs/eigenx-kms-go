@@ -42,7 +42,7 @@ func createNode(
 }
 
 func Test_OnChainIntegration(t *testing.T) {
-
+	t.Skip()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 

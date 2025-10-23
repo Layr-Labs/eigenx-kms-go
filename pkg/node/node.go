@@ -430,19 +430,6 @@ func (n *Node) SignAppID(appID string, attestationTime int64) types.G1Point {
 	return partialSig
 }
 
-func (n *Node) abandonReshare() {
-	n.mu.Lock()
-	defer n.mu.Unlock()
-
-	n.keyStore.ClearPendingVersion()
-	n.receivedShares = make(map[int]*fr.Element)
-	n.receivedCommitments = make(map[int][]types.G2Point)
-	n.receivedAcks = make(map[int]map[int]*types.Acknowledgement)
-	n.reshareComplete = make(map[int]*types.CompletionSignature)
-
-	n.logger.Sugar().Warnw("Reshare abandoned, keeping active version", "node_id", n.OperatorAddress.Hex())
-}
-
 // Wait functions
 
 func (n *Node) waitForSharesWithRetry(expectedCount int, timeout time.Duration) error {
@@ -604,15 +591,19 @@ func (n *Node) verifyMessage(authMsg *types.AuthenticatedMessage, senderPeer *pe
 		return fmt.Errorf("payload digest mismatch")
 	}
 	
-	// Create BN254 scheme to verify signature
-	scheme := bn254.NewScheme()
-	sig, err := scheme.NewSignatureFromBytes(authMsg.Signature)
+	// Verify signature using BN254 (must use VerifySolidityCompatible to match SignSolidityCompatible)
+	sig, err := bn254.NewSignatureFromBytes(authMsg.Signature)
 	if err != nil {
 		return fmt.Errorf("invalid signature format: %w", err)
 	}
-	
-	// Verify signature using sender's public key
-	isValid, err := sig.Verify(senderPeer.WrappedPublicKey.PublicKey, authMsg.Hash[:])
+
+	// Type assert to BN254 public key
+	bn254PubKey, ok := senderPeer.WrappedPublicKey.PublicKey.(*bn254.PublicKey)
+	if !ok {
+		return fmt.Errorf("sender public key is not BN254 type")
+	}
+
+	isValid, err := sig.VerifySolidityCompatible(bn254PubKey, authMsg.Hash)
 	if err != nil {
 		return fmt.Errorf("signature verification error: %w", err)
 	}

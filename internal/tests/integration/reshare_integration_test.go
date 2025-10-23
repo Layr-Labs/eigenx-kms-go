@@ -127,77 +127,88 @@ func testReshareWithThresholdChange(t *testing.T) {
 func testReshareSecretConsistency(t *testing.T) {
 	cluster := testutil.NewTestCluster(t, 5)
 	defer cluster.Close()
-	
+
 	// Test with a known secret scenario using crypto functions
 	threshold := dkg.CalculateThreshold(5)
-	
-	// Create a known secret and proper polynomial shares
+
+	// Create test operators and derive their actual node IDs
+	testOperators := createTestOperatorsForReshare(t, 5)
+	nodeIDs := make([]int, 5)
+	for i := 0; i < 5; i++ {
+		nodeIDs[i] = addressToNodeID(testOperators[i].OperatorAddress)
+	}
+
+	// Create a known secret and proper polynomial shares using actual node IDs
 	secret := new(fr.Element).SetInt64(42)
 	poly := make(polynomial.Polynomial, threshold)
 	poly[0].Set(secret)
 	for i := 1; i < threshold; i++ {
 		_, _ = poly[i].SetRandom()
 	}
-	
-	// Generate shares by evaluating polynomial at node IDs
-	shares := make([]*fr.Element, 5)
+
+	// Generate shares by evaluating polynomial at actual node IDs
+	shares := make(map[int]*fr.Element)
 	for i := 0; i < 5; i++ {
-		shares[i] = eigenxcrypto.EvaluatePolynomial(poly, i+1)
+		shares[nodeIDs[i]] = eigenxcrypto.EvaluatePolynomial(poly, nodeIDs[i])
 	}
-	
+
 	// Each node reshares preserving their share
-	allNewShares := make([]map[int]*fr.Element, 5)
-	
-	// Create test operators for reshare
-	testOperators := createTestOperatorsForReshare(t, 5)
-	
+	allNewShares := make(map[int]map[int]*fr.Element) // dealerNodeID -> recipientNodeID -> share
+
 	for i := 0; i < 5; i++ {
-		nodeID := i + 1
-		resharer := reshare.NewReshare(nodeID, testOperators)
-		
-		newShares, _, err := resharer.GenerateNewShares(shares[i], threshold)
+		dealerNodeID := nodeIDs[i]
+		resharer := reshare.NewReshare(dealerNodeID, testOperators)
+
+		newShares, _, err := resharer.GenerateNewShares(shares[dealerNodeID], threshold)
 		if err != nil {
-			t.Fatalf("Node %d failed to reshare: %v", nodeID, err)
+			t.Fatalf("Node %d failed to reshare: %v", dealerNodeID, err)
 		}
-		allNewShares[i] = newShares
+		allNewShares[dealerNodeID] = newShares
 	}
-	
+
 	// Compute new shares for each node using Lagrange
-	newFinalShares := make([]*fr.Element, 5)
-	dealerIDs := []int{1, 2, 3, 4, 5}
-	
-	for nodeIdx := 0; nodeIdx < 5; nodeIdx++ {
-		nodeID := nodeIdx + 1
+	newFinalShares := make(map[int]*fr.Element)
+
+	for _, recipientNodeID := range nodeIDs {
 		nodeShare := new(fr.Element).SetZero()
-		
-		for dealerIdx := 0; dealerIdx < 5; dealerIdx++ {
-			dealerID := dealerIdx + 1
-			lambda := eigenxcrypto.ComputeLagrangeCoefficient(dealerID, dealerIDs)
-			share := allNewShares[dealerIdx][nodeID]
+
+		for _, dealerNodeID := range nodeIDs {
+			lambda := eigenxcrypto.ComputeLagrangeCoefficient(dealerNodeID, nodeIDs)
+			share := allNewShares[dealerNodeID][recipientNodeID]
+			if share == nil {
+				t.Fatalf("Missing share from dealer %d to recipient %d", dealerNodeID, recipientNodeID)
+			}
 			term := new(fr.Element).Mul(lambda, share)
 			nodeShare.Add(nodeShare, term)
 		}
-		
-		newFinalShares[nodeIdx] = nodeShare
+
+		newFinalShares[recipientNodeID] = nodeShare
 	}
-	
+
 	// Use threshold of new shares to recover secret
 	thresholdShares := make(map[int]*fr.Element)
 	for i := 0; i < threshold; i++ {
-		thresholdShares[i+1] = newFinalShares[i]
+		thresholdShares[nodeIDs[i]] = newFinalShares[nodeIDs[i]]
 	}
-	
+
 	recoveredSecret := eigenxcrypto.RecoverSecret(thresholdShares)
-	
+
 	// The recovered secret should equal the original
 	if !recoveredSecret.Equal(secret) {
 		t.Errorf("Secret not preserved: expected %v, got %v", secret, recoveredSecret)
 	}
-	
+
 	t.Logf("✓ Reshare secret consistency test passed")
 	t.Logf("  - Original secret preserved through reshare")
 	t.Logf("  - Lagrange interpolation working correctly")
 	t.Logf("  - Reshare module functions operating properly")
+}
+
+// addressToNodeID converts an Ethereum address to a node ID using keccak256 hash
+func addressToNodeID(address common.Address) int {
+	hash := ethcrypto.Keccak256(address.Bytes())
+	nodeID := int(common.BytesToHash(hash).Big().Uint64())
+	return nodeID
 }
 
 // createTestOperatorsForReshare creates test operators using the same pattern as other tests
