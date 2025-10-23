@@ -30,6 +30,10 @@ deps/go:
 build/cmd/poc:
 	go build $(GO_FLAGS) -o ${BIN}/poc ./cmd/poc
 
+.PHONY: cmd/kmsServer
+build/cmd/kmsServer:
+	go build $(GO_FLAGS) -o ${BIN}/kms-server ./cmd/kmsServer
+
 
 # -----------------------------------------------------------------------------
 # Tests and linting
