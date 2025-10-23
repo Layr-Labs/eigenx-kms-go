@@ -36,7 +36,7 @@ func (s *Server) validateAuthenticatedMessage(r *http.Request, expectedRecipient
 
 	// Fetch current operators to find sender
 	ctx := context.Background()
-	operators, err := s.node.fetchCurrentOperators(ctx)
+	operators, err := s.node.fetchCurrentOperators(ctx, s.node.AVSAddress, s.node.OperatorSetId)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to fetch operators for validation: %w", err)
 	}
@@ -357,4 +357,36 @@ func (s *Server) handleAppSign(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
+}
+
+// handleGetCommitments handles requests for public key commitments
+func (s *Server) handleGetCommitments(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Get active key version
+	activeVersion := s.node.keyStore.GetActiveVersion()
+	if activeVersion == nil {
+		http.Error(w, "No active key version", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Return commitments and operator address
+	response := map[string]interface{}{
+		"operatorAddress": s.node.OperatorAddress.Hex(),
+		"commitments":     activeVersion.Commitments,
+		"version":         activeVersion.Version,
+		"isActive":        activeVersion.IsActive,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		s.node.logger.Sugar().Errorw("Failed to encode commitments response", "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	s.node.logger.Sugar().Debugw("Served public key commitments", "operator_address", s.node.OperatorAddress.Hex())
 }

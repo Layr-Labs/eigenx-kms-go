@@ -74,6 +74,8 @@ func testSecretsEndpointFlow(t *testing.T) {
 		OperatorAddress: chainConfig.OperatorAccountAddress1,
 		Port:            0,
 		BN254PrivateKey: chainConfig.OperatorAccountPrivateKey1,
+		AVSAddress:      "0x1234567890123456789012345678901234567890",
+		OperatorSetId:   1,
 		Logger:          testLogger,
 	}
 
@@ -199,6 +201,8 @@ func testSecretsEndpointValidation(t *testing.T) {
 		OperatorAddress: chainConfig.OperatorAccountAddress1,
 		Port:            0,
 		BN254PrivateKey: chainConfig.OperatorAccountPrivateKey1,
+		AVSAddress:      "0x1234567890123456789012345678901234567890",
+		OperatorSetId:   1,
 		Logger:          testLogger,
 	}
 	node := NewNode(cfg, peeringDataFetcher)
@@ -236,6 +240,8 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 		OperatorAddress: chainConfig.OperatorAccountAddress1,
 		Port:            0,
 		BN254PrivateKey: chainConfig.OperatorAccountPrivateKey1,
+		AVSAddress:      "0x1234567890123456789012345678901234567890",
+		OperatorSetId:   1,
 		Logger:          testLogger,
 	}
 	node := NewNode(cfg, peeringDataFetcher)

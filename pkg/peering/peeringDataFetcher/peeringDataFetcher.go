@@ -1,6 +1,8 @@
 package peeringDataFetcher
 
 import (
+	"context"
+	
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"go.uber.org/zap"
@@ -21,6 +23,6 @@ func NewPeeringDataFetcher(
 	}
 }
 
-func (pdf *PeeringDataFetcher) ListKMSOperators(avsAddress string, operatorSetId uint32) (*peering.OperatorSetPeers, error) {
+func (pdf *PeeringDataFetcher) ListKMSOperators(ctx context.Context, avsAddress string, operatorSetId uint32) (*peering.OperatorSetPeers, error) {
 	return pdf.contractCaller.GetOperatorSetMembersWithPeering(avsAddress, operatorSetId)
 }

@@ -129,6 +129,11 @@ type KMSServerConfig struct {
 	// Cryptographic keys
 	BN254PrivateKey string `json:"bn254_private_key"` // BN254 private key for threshold crypto and P2P
 	
+	// Blockchain configuration
+	RpcUrl        string `json:"rpc_url"`         // Ethereum RPC endpoint
+	AVSAddress    string `json:"avs_address"`     // AVS contract address
+	OperatorSetId uint32 `json:"operator_set_id"` // Operator set ID
+	
 	// Operational settings
 	DKGAt   int64 `json:"dkg_at"`   // Unix timestamp to run DKG, 0 for immediate
 	Debug   bool  `json:"debug"`

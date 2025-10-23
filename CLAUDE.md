@@ -20,11 +20,14 @@ The system implements:
 
 ### Build
 ```bash
-# Build the POC binary
-make build/cmd/poc
-
-# Build with custom version and commit
+# Build all binaries
 make all
+
+# Build specific components
+make build/cmd/poc          # DKG proof of concept
+make build/cmd/kmsServer    # KMS node server
+make build/cmd/kmsClient    # KMS client CLI
+make build/cmd/registerOperator  # Operator registration utility
 ```
 
 ### Testing
@@ -69,6 +72,7 @@ make deps/go
 eigenx-kms-go/
 ├── cmd/                    # Command-line applications
 │   ├── kmsServer/         # Main KMS server binary
+│   ├── kmsClient/         # Client CLI for encrypt/decrypt operations
 │   ├── registerOperator/  # Operator registration utility
 │   └── debugAvsOperators/ # AVS debugging tool
 ├── pkg/                   # Core packages
@@ -143,3 +147,33 @@ eigenx-kms-go/
 - Players sign commitments to create non-repudiable acknowledgements
 - Dealers must receive threshold acknowledgements before proceeding
 - Uses same BN254 signing scheme as transport layer
+
+## KMS Client Usage
+
+The `kmsClient` CLI provides application developers with tools to encrypt/decrypt data using the distributed KMS:
+
+```bash
+# Get master public key for an application
+./bin/kms-client --avs-address "0x..." --operator-set-id 0 \
+  get-pubkey --app-id "my-app"
+
+# Encrypt data for an application  
+./bin/kms-client --avs-address "0x..." --operator-set-id 0 \
+  encrypt --app-id "my-app" --data "secret-config-data" --output encrypted.hex
+
+# Decrypt data by collecting threshold signatures
+./bin/kms-client --avs-address "0x..." --operator-set-id 0 \
+  decrypt --app-id "my-app" --encrypted-data encrypted.hex
+
+# Use custom RPC URL
+./bin/kms-client --rpc-url "https://eth-sepolia.g.alchemy.com/v2/..." \
+  --avs-address "0x..." --operator-set-id 1 \
+  encrypt --app-id "my-app" --data "secret-data"
+```
+
+### Client Flow
+1. **Operator Discovery**: Queries blockchain via `contractCaller.GetOperatorSetMembersWithPeering()` 
+2. **Master Public Key**: Collects commitments from operators via `/pubkey` endpoint
+3. **Encryption**: Uses IBE encryption with computed master public key
+4. **Decryption**: Collects partial signatures via `/app/sign` endpoint and recovers app private key
+5. **Threshold Security**: Requires ⌈2n/3⌉ operator signatures for decryption

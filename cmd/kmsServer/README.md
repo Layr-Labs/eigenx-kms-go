@@ -1,159 +1,138 @@
 # KMS Server Command
 
-This command starts a KMS node server that participates in the distributed key management system.
+This command starts a KMS node server that participates in the distributed key management system using authenticated messaging and address-based operator identification.
 
 ## Usage
 
 ### Basic Usage
 ```bash
-go run cmd/kms-server/main.go --node-id 1 --port 8001 --chain-id 31337
-```
-
-### With Environment Variables
-```bash
-export KMS_NODE_ID=1
-export KMS_PORT=8001
-export KMS_CHAIN_ID=11155111  # Sepolia testnet
-export KMS_P2P_PRIVATE_KEY="your-base64-private-key"
-export KMS_P2P_PUBLIC_KEY="your-base64-public-key"
-export KMS_DKG_AT=1640995260  # Unix timestamp for coordinated DKG
-
-go run cmd/kms-server/main.go
-```
-
-### Coordinated DKG Example (3-node cluster)
-
-First, calculate a future timestamp for coordinated DKG:
-```bash
-# DKG in 30 seconds from now
-DKG_TIME=$(($(date +%s) + 30))
-echo "DKG scheduled for: $(date -d @$DKG_TIME)"
-```
-
-**Terminal 1 (Node 1):**
-```bash
-go run cmd/kms-server/main.go \
-  --node-id 1 \
-  --port 8001 \
+make build/cmd/kmsServer
+./bin/kms-server \
+  --operator-address "0x..." \
+  --bn254-private-key "0x..." \
+  --avs-address "0x..." \
+  --operator-set-id 0 \
   --chain-id 31337 \
-  --dkg-at $DKG_TIME \
-  --verbose
+  --port 8001
 ```
 
-**Terminal 2 (Node 2):**
+### From Source
 ```bash
-go run cmd/kms-server/main.go \
-  --node-id 2 \
-  --port 8002 \
+go run cmd/kmsServer/main.go \
+  --operator-address "0x..." \
+  --bn254-private-key "0x..." \
+  --avs-address "0x..." \
+  --operator-set-id 0 \
   --chain-id 31337 \
-  --dkg-at $DKG_TIME \
-  --verbose
+  --port 8001
 ```
 
-**Terminal 3 (Node 3):**
-```bash
-go run cmd/kms-server/main.go \
-  --node-id 3 \
-  --port 8003 \
-  --chain-id 31337 \
-  --dkg-at $DKG_TIME \
-  --verbose
-```
+### Configuration
 
-All nodes will wait and start DKG at exactly the same time!
+Required flags:
+- **`--operator-address`**: Ethereum address identifying this operator
+- **`--bn254-private-key`**: BN254 private key for P2P authentication and threshold crypto
+- **`--avs-address`**: AVS contract address for operator discovery
+- **`--chain-id`**: Ethereum chain ID (1=mainnet, 11155111=sepolia, 31337=anvil)
 
-## Configuration
+Optional flags:
+- **`--rpc-url`**: Ethereum RPC endpoint (default: http://localhost:8545)
+- **`--operator-set-id`**: Operator set ID (default: 0)
+- **`--port`**: HTTP server port (default: 8000)
+- **`--dkg-at`**: Unix timestamp for coordinated DKG (0=immediate)
+- **`--verbose`**: Enable debug logging
 
-| Flag | Environment Variable | Default | Description |
-|------|---------------------|---------|-------------|
-| `--node-id` | `KMS_NODE_ID` | 1 | Unique node identifier |
-| `--port` | `KMS_PORT` | 8000 | HTTP server port |
-| `--chain-id` | `KMS_CHAIN_ID` | *required* | Ethereum chain ID (1=mainnet, 11155111=sepolia, 31337=anvil) |
-| `--p2p-private-key` | `KMS_P2P_PRIVATE_KEY` | test key | ed25519 private key (base64) |
-| `--p2p-public-key` | `KMS_P2P_PUBLIC_KEY` | test key | ed25519 public key (base64) |
-| `--dkg-at` | `KMS_DKG_AT` | none | Unix timestamp to run DKG (0 for immediate, blank for no DKG) |
-| `--verbose` | `KMS_VERBOSE` | false | Enable verbose logging |
+## Key Architecture Changes
 
-## Chain Integration
+### Address-Based Identity
+- Operators identified by Ethereum addresses (not sequential node IDs)
+- Node IDs derived from addresses using `addressToNodeID(keccak256(address))`
+- Consistent identity across DKG, reshare, and client operations
 
-The server automatically retrieves the operator set from the on-chain AVS registry based on the chain ID:
+### Authenticated Messaging
+- All inter-node messages signed with BN254 private keys
+- Message format: `{payload: []byte, hash: [32]byte, signature: []byte}`
+- Recipients verify sender identity using on-chain public keys
 
-- **Mainnet (1)**: Queries production KMS AVS registry
-- **Sepolia (11155111)**: Queries testnet KMS AVS registry  
-- **Anvil (31337)**: Uses local development operator set
+### Dynamic Operator Discovery
+- Operators fetched from peering system (not hardcoded)
+- Uses `peering.IPeeringDataFetcher` interface for operator set retrieval
+- Supports both on-chain and local/test configurations
 
-In production, this calls `IKmsAvsRegistry.getNodeInfos()` to get the current operator set.
+## Protocol Operations
 
-## DKG Coordination
+### DKG (Distributed Key Generation)
+- Nodes execute DKG protocol to establish shared secret
+- Uses authenticated acknowledgements to prevent equivocation  
+- Threshold: ⌈2n/3⌉ signatures required for completion
+- Node IDs derived from operator addresses for consistency
 
-The `--dkg-at` flag enables coordinated DKG execution across multiple nodes:
+### Key Resharing  
+- Automatic resharing every 10 minutes for security
+- Supports dynamic operator set changes
+- Maintains key share versions with epoch tracking
 
-### Immediate DKG
-```bash
-go run cmd/kms-server/main.go --node-id 1 --chain-id 31337 --dkg-at 0
-```
-
-### Scheduled DKG
-```bash
-# Calculate timestamp for 60 seconds from now
-FUTURE_TIME=$(($(date +%s) + 60))
-
-# All nodes use the same timestamp
-go run cmd/kms-server/main.go --node-id 1 --chain-id 31337 --dkg-at $FUTURE_TIME
-go run cmd/kms-server/main.go --node-id 2 --chain-id 31337 --dkg-at $FUTURE_TIME
-go run cmd/kms-server/main.go --node-id 3 --chain-id 31337 --dkg-at $FUTURE_TIME
-```
-
-### Production DKG Schedule
-In production, DKG should be coordinated across all operators:
-- Use the same `--dkg-at` timestamp across all nodes
-- Allows time for all operators to start their nodes
-- Ensures synchronized DKG execution
-- Prevents timing-based DKG failures
+### Application Signing
+- Provides partial signatures for application private key recovery
+- Uses BLS12-381 threshold signatures
+- Time-based key version selection for historical requests
 
 ## API Endpoints
 
 Once running, the server exposes these endpoints:
 
 ### Application Endpoints
-- `POST /secrets` - Applications request encrypted secrets and partial signatures
-- `POST /app/sign` - Direct application signing (legacy)
+- `POST /secrets` - TEE applications request encrypted secrets and partial signatures
+- `POST /app/sign` - Direct application partial signature requests
+- `GET /pubkey` - Public key commitments for master key computation
 
-### Protocol Endpoints  
-- `POST /dkg/share` - DKG share distribution
+### Protocol Endpoints (Authenticated)
+All protocol endpoints require `AuthenticatedMessage` wrapper with BN254 signatures:
+
+- `POST /dkg/share` - DKG share distribution with authentication
 - `POST /dkg/commitment` - DKG commitment broadcasting
-- `POST /dkg/ack` - DKG acknowledgements
+- `POST /dkg/ack` - DKG acknowledgements (prevents equivocation)
 - `POST /reshare/share` - Reshare share distribution
-- `POST /reshare/commitment` - Reshare commitment broadcasting
+- `POST /reshare/commitment` - Reshare commitment broadcasting  
 - `POST /reshare/ack` - Reshare acknowledgements
 - `POST /reshare/complete` - Reshare completion signals
 
-## Example Client Usage
+## Client Integration
 
-After starting the servers, test with a client:
+### Using KMS Client CLI
 
-```go
-// Use the KMS client
-import "github.com/Layr-Labs/eigenx-kms-go/pkg/client"
-
-client := client.NewKMSClient([]string{
-    "http://localhost:8001",
-    "http://localhost:8002", 
-    "http://localhost:8003",
-})
-
-result, err := client.RetrieveSecrets("your-app-id", "sha256:your-image-digest")
-if err != nil {
-    log.Fatalf("Failed to retrieve secrets: %v", err)
-}
-
-fmt.Printf("Retrieved app private key: %x...\n", result.AppPrivateKey.X.Bytes()[:8])
-fmt.Printf("Environment data: %s\n", result.EncryptedEnv)
-```
-
-Or test with a simple HTTP request:
+The recommended way to interact with the KMS is via the `kmsClient` CLI:
 
 ```bash
+# Build the client
+make build/cmd/kmsClient
+
+# Encrypt data (discovers operators from chain)
+./bin/kms-client --avs-address "0x..." --operator-set-id 0 \
+  encrypt --app-id "my-app" --data "secret-config" --output encrypted.hex
+
+# Decrypt data (collects threshold signatures)
+./bin/kms-client --avs-address "0x..." --operator-set-id 0 \
+  decrypt --app-id "my-app" --encrypted-data encrypted.hex
+```
+
+### Direct HTTP Testing
+
+Test individual endpoints:
+
+```bash
+# Get operator's public key commitments
+curl -X GET http://localhost:8001/pubkey
+
+# Request partial signature
+curl -X POST http://localhost:8001/app/sign \
+  -H "Content-Type: application/json" \
+  -d '{
+    "appID": "test-app", 
+    "attestationTime": 0
+  }'
+
+# Request secrets (TEE applications)
 curl -X POST http://localhost:8001/secrets \
   -H "Content-Type: application/json" \
   -d '{
@@ -163,3 +142,65 @@ curl -X POST http://localhost:8001/secrets \
     "attest_time": 1640995200
   }'
 ```
+
+## Security Model
+
+### Message Authentication
+- Every inter-node message includes sender's Ethereum address
+- Messages signed with operator's BN254 private key  
+- Recipients verify signatures using public keys from peering data
+- Prevents message forgery and ensures operator authenticity
+
+### Acknowledgement System
+- DKG phase includes authenticated acknowledgements
+- Prevents dealer equivocation during share distribution
+- Players must acknowledge valid shares before DKG completion
+- Uses same BN254 signing scheme as transport layer
+
+### Threshold Properties
+- Requires ⌈2n/3⌉ operators for key operations
+- Byzantine fault tolerance against malicious operators
+- No single point of failure in key management
+- Automatic key resharing maintains security over time
+
+## Testing
+
+### Unit Tests
+```bash
+# Run server tests
+go test ./pkg/node -v
+
+# Test authenticated messaging
+go test ./pkg/transport ./pkg/types -v
+```
+
+### Integration Testing
+```bash
+# Test full protocol with multiple nodes
+go test ./internal/tests/integration -v
+
+# Test with real operator data
+go test ./pkg/testutil -v
+```
+
+## Implementation Status
+
+### Current Features
+- ✅ Authenticated inter-node messaging with BN254 signatures
+- ✅ Complete DKG protocol with acknowledgement system  
+- ✅ Address-based operator identification
+- ✅ `/pubkey` endpoint for client master key computation
+- ✅ `/app/sign` endpoint for partial signature collection
+
+### Configuration Requirements
+The server requires proper `peering.IPeeringDataFetcher` implementation:
+- For production: Use on-chain peering data fetcher
+- For testing: Use `localPeeringDataFetcher` with ChainConfig data
+- The `fetchCurrentOperators` method uses the injected `peeringDataFetcher`
+
+### Local Development
+For testing, use the ChainConfig test data:
+- 5 preconfigured operator addresses and BN254 keys
+- Located in `internal/testData/chain-config.json`
+- Accessed via `tests.GetProjectRootPath()` and `tests.ReadChainConfig()`
+- Use `localPeeringDataFetcher.NewLocalPeeringDataFetcher()` for testing

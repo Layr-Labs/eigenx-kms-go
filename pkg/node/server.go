@@ -35,6 +35,9 @@ func NewServer(node *Node, port int) *Server {
 
 	// Secrets endpoint for TEE applications
 	mux.HandleFunc("/secrets", s.handleSecretsRequest)
+	
+	// Public key endpoint for clients
+	mux.HandleFunc("/pubkey", s.handleGetCommitments)
 
 	s.httpServer = &http.Server{
 		Addr:    fmt.Sprintf(":%d", port),

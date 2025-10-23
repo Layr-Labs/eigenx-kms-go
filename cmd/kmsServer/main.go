@@ -10,10 +10,13 @@ import (
 	"github.com/urfave/cli/v2"
 	"go.uber.org/zap"
 	
+	ethereum "github.com/Layr-Labs/eigenx-kms-go/pkg/clients"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/node"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering/peeringDataFetcher"
 )
 
 func main() {
@@ -56,6 +59,27 @@ This server implements:
 				Usage:    "BN254 private key (hex string) for threshold cryptography and P2P authentication",
 				EnvVars:  []string{"KMS_BN254_PRIVATE_KEY"},
 				Required: true,
+			},
+			&cli.StringFlag{
+				Name:    "rpc-url",
+				Aliases: []string{"rpc"},
+				Usage:   "Ethereum RPC endpoint URL",
+				Value:   "http://localhost:8545",
+				EnvVars: []string{"KMS_RPC_URL"},
+			},
+			&cli.StringFlag{
+				Name:     "avs-address",
+				Aliases:  []string{"avs"},
+				Usage:    "AVS contract address for operator discovery",
+				EnvVars:  []string{"KMS_AVS_ADDRESS"},
+				Required: true,
+			},
+			&cli.UintFlag{
+				Name:    "operator-set-id",
+				Aliases: []string{"set-id"},
+				Usage:   "Operator set ID",
+				Value:   0,
+				EnvVars: []string{"KMS_OPERATOR_SET_ID"},
 			},
 			&cli.Int64Flag{
 				Name:    "dkg-at",
@@ -105,11 +129,13 @@ func runKMSServer(c *cli.Context) error {
 		OperatorAddress: kmsConfig.OperatorAddress,
 		Port:            kmsConfig.Port,
 		BN254PrivateKey: kmsConfig.BN254PrivateKey,
+		AVSAddress:      kmsConfig.AVSAddress,
+		OperatorSetId:   kmsConfig.OperatorSetId,
 		Logger:          appLogger,
 	}
 
 	// Create peering data fetcher for dynamic operator fetching
-	peeringDataFetcher := createPeeringDataFetcher(kmsConfig.ChainID, appLogger)
+	peeringDataFetcher := createPeeringDataFetcher(kmsConfig, appLogger)
 	
 	// Create and configure the node
 	n := node.NewNode(nodeConfig, peeringDataFetcher)
@@ -162,6 +188,9 @@ func parseKMSConfig(c *cli.Context) (*config.KMSServerConfig, error) {
 		Port:            c.Int("port"),
 		ChainID:         config.ChainId(c.Uint64("chain-id")),
 		BN254PrivateKey: c.String("bn254-private-key"),
+		RpcUrl:          c.String("rpc-url"),
+		AVSAddress:      c.String("avs-address"),
+		OperatorSetId:   uint32(c.Uint("operator-set-id")),
 		DKGAt:           c.Int64("dkg-at"),
 		Debug:           c.Bool("verbose"),
 		Verbose:         c.Bool("verbose"),
@@ -170,33 +199,35 @@ func parseKMSConfig(c *cli.Context) (*config.KMSServerConfig, error) {
 
 // Note: Operator fetching now handled dynamically by peering data fetcher
 
-// createPeeringDataFetcher creates a peering data fetcher for the specified chain
-func createPeeringDataFetcher(chainID config.ChainId, logger *zap.Logger) peering.IPeeringDataFetcher {
-	// For now, use stub for testing. In production, this would create the appropriate
-	// peering data fetcher based on the chain ID that queries the real on-chain contracts
+// createPeeringDataFetcher creates a peering data fetcher that queries the blockchain
+func createPeeringDataFetcher(kmsConfig *config.KMSServerConfig, logger *zap.Logger) peering.IPeeringDataFetcher {
+	logger.Sugar().Infow("Creating peering data fetcher", 
+		"chain_id", kmsConfig.ChainID,
+		"rpc_url", kmsConfig.RpcUrl,
+		"avs_address", kmsConfig.AVSAddress)
 	
-	logger.Sugar().Debugw("Creating peering data fetcher", "chain_id", chainID)
-	
-	// TODO: Implement real chain-specific peering data fetcher that:
-	// 1. Uses the chain ID to determine which contracts to query
-	// 2. Calls IKmsAvsRegistry.getNodeInfos() for current operator set
-	// 3. Parses operator addresses, socket addresses, and public keys
-	// 4. Returns properly formatted OperatorSetPeers
-	
-	switch chainID {
-	case config.ChainId_EthereumMainnet:
-		// TODO: Return mainnet peering data fetcher
-		return peering.NewStubPeeringDataFetcher(createStubOperatorSetPeers(20))
-	case config.ChainId_EthereumSepolia:
-		// TODO: Return sepolia peering data fetcher  
-		return peering.NewStubPeeringDataFetcher(createStubOperatorSetPeers(5))
-	case config.ChainId_EthereumAnvil:
-		// TODO: Return anvil peering data fetcher
-		return peering.NewStubPeeringDataFetcher(createStubOperatorSetPeers(3))
-	default:
-		logger.Sugar().Warnw("Unknown chain ID, using default stub", "chain_id", chainID)
+	// Create Ethereum client
+	ethClient := ethereum.NewEthereumClient(&ethereum.EthereumClientConfig{
+		BaseUrl:   kmsConfig.RpcUrl,
+		BlockType: ethereum.BlockType_Latest,
+	}, logger)
+
+	// Get contract caller
+	l1Client, err := ethClient.GetEthereumContractCaller()
+	if err != nil {
+		logger.Sugar().Errorw("Failed to get Ethereum contract caller, falling back to stub", "error", err)
 		return peering.NewStubPeeringDataFetcher(createStubOperatorSetPeers(3))
 	}
+
+	// Create contract caller (no signer needed for read operations)
+	contractCaller, err := caller.NewContractCaller(l1Client, nil, logger)
+	if err != nil {
+		logger.Sugar().Errorw("Failed to create contract caller, falling back to stub", "error", err)
+		return peering.NewStubPeeringDataFetcher(createStubOperatorSetPeers(3))
+	}
+
+	// Return the existing peeringDataFetcher implementation
+	return peeringDataFetcher.NewPeeringDataFetcher(contractCaller, logger)
 }
 
 // createStubOperatorSetPeers creates stub operator set peers for testing

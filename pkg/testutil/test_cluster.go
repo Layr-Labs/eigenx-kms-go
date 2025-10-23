@@ -72,6 +72,8 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 			OperatorAddress: addresses[i],
 			Port:            0,
 			BN254PrivateKey: privateKeys[i],
+			AVSAddress:      "0x1234567890123456789012345678901234567890",
+			OperatorSetId:   1,
 			Logger:          testLogger,
 		}
 

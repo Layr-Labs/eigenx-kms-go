@@ -51,6 +51,8 @@ type Node struct {
 	OperatorAddress common.Address // Ethereum address of this operator
 	Port            int
 	BN254PrivateKey *bn254.PrivateKey // BN254 private key for threshold crypto and P2P
+	AVSAddress      string            // AVS contract address
+	OperatorSetId   uint32            // Operator set ID
 	Threshold       int
 	TotalNodes      int
 
@@ -82,6 +84,8 @@ type Config struct {
 	OperatorAddress string // Ethereum address of the operator (hex string)
 	Port            int
 	BN254PrivateKey string      // BN254 private key (hex string)
+	AVSAddress      string      // AVS contract address (hex string)
+	OperatorSetId   uint32      // Operator set ID
 	Logger          *zap.Logger // Optional logger, will create default if nil
 }
 
@@ -109,6 +113,8 @@ func NewNode(cfg Config, pdf peering.IPeeringDataFetcher) *Node {
 		OperatorAddress:     operatorAddress,
 		Port:                cfg.Port,
 		BN254PrivateKey:     bn254PrivKey,
+		AVSAddress:          cfg.AVSAddress,
+		OperatorSetId:       cfg.OperatorSetId,
 		keyStore:            keystore.NewKeyStore(),
 		server:              NewServer(nil, cfg.Port), // Will set node reference later
 		attestationVerifier: attestation.NewStubVerifier(),
@@ -142,12 +148,7 @@ func (n *Node) Stop() error {
 }
 
 // fetchCurrentOperators fetches the current operator set from the peering system
-func (n *Node) fetchCurrentOperators(ctx context.Context) ([]*peering.OperatorSetPeer, error) {
-	// TODO: Use actual AVS address and operator set ID from chain
-	// For now, using placeholder values
-	avsAddress := "0x1234567890123456789012345678901234567890"
-	operatorSetId := uint32(1)
-
+func (n *Node) fetchCurrentOperators(ctx context.Context, avsAddress string, operatorSetId uint32) ([]*peering.OperatorSetPeer, error) {
 	operatorSetPeers, err := n.peeringDataFetcher.ListKMSOperators(ctx, avsAddress, operatorSetId)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch operators from peering system: %w", err)
@@ -170,7 +171,7 @@ func (n *Node) RunDKG() error {
 	n.logger.Sugar().Infow("Starting DKG", "operator_address", n.OperatorAddress.Hex())
 
 	// Fetch current operators from peering system
-	operators, err := n.fetchCurrentOperators(ctx)
+	operators, err := n.fetchCurrentOperators(ctx, n.AVSAddress, n.OperatorSetId)
 	if err != nil {
 		return fmt.Errorf("failed to fetch operators: %w", err)
 	}
@@ -343,7 +344,7 @@ func (n *Node) RunReshare() error {
 	ctx := context.Background()
 
 	// Fetch current operators from peering system
-	operators, err := n.fetchCurrentOperators(ctx)
+	operators, err := n.fetchCurrentOperators(ctx, n.AVSAddress, n.OperatorSetId)
 	if err != nil {
 		return fmt.Errorf("failed to fetch operators for reshare: %w", err)
 	}

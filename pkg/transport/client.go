@@ -57,7 +57,7 @@ func (c *Client) SendShareWithRetry(toOperator *peering.OperatorSetPeer, share *
 	msg := types.ShareMessage{
 		FromOperatorAddress: c.operatorAddr,
 		ToOperatorAddress:   toOperator.OperatorAddress,
-		Share:              types.SerializeFr(share),
+		Share:               types.SerializeFr(share),
 	}
 
 	// Create authenticated message
@@ -97,7 +97,7 @@ func (c *Client) BroadcastCommitments(operators []*peering.OperatorSetPeer, comm
 	msg := types.CommitmentMessage{
 		FromOperatorAddress: c.operatorAddr,
 		ToOperatorAddress:   common.Address{}, // Zero address for broadcast
-		Commitments:        commitments,
+		Commitments:         commitments,
 	}
 
 	// Create authenticated message
@@ -126,7 +126,7 @@ func (c *Client) SendAcknowledgement(ack *types.Acknowledgement, toOperator *pee
 	msg := types.AcknowledgementMessage{
 		FromOperatorAddress: c.operatorAddr,
 		ToOperatorAddress:   toOperator.OperatorAddress,
-		Ack:                ack,
+		Ack:                 ack,
 	}
 
 	// Create authenticated message
@@ -153,7 +153,7 @@ func (c *Client) BroadcastCompletionSignature(operators []*peering.OperatorSetPe
 	msg := types.CompletionMessage{
 		FromOperatorAddress: c.operatorAddr,
 		ToOperatorAddress:   common.Address{}, // Zero address for broadcast
-		Completion:         completion,
+		Completion:          completion,
 	}
 
 	// Create authenticated message

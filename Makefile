@@ -6,7 +6,7 @@ BIN = ./bin
 GO_FLAGS=-ldflags "-X 'github.com/Layr-Labs/eigenx-kms-go/internal/version.Version=$(shell cat VERSION)' -X 'github.com/Layr-Labs/eigenx-kms-go/internal/version.Commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo 'unknown')'"
 
 
-all: deps/go build/cmd/poc
+all: deps/go build/cmd/poc build/cmd/kmsClient
 
 # -----------------------------------------------------------------------------
 # Dependencies
@@ -37,6 +37,10 @@ build/cmd/kmsServer:
 .PHONY: cmd/registerOperator
 build/cmd/registerOperator:
 	go build $(GO_FLAGS) -o ${BIN}/register-operator ./cmd/registerOperator
+
+.PHONY: cmd/kmsClient
+build/cmd/kmsClient:
+	go build $(GO_FLAGS) -o ${BIN}/kms-client ./cmd/kmsClient
 
 
 # -----------------------------------------------------------------------------

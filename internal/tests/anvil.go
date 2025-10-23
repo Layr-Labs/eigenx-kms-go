@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Layr-Labs/synapse/pkg/clients/ethereum"
+	ethereum "github.com/Layr-Labs/eigenx-kms-go/pkg/clients"
 )
 
 type AnvilConfig struct {
