@@ -81,3 +81,12 @@ build/contracts:
 test/contracts:
 	@echo "Running smart contract tests..."
 	forge test
+
+.PHONY: anvil/start
+anvil/start/l1:
+	anvil \
+		--fork-url https://practical-serene-mound.ethereum-sepolia.quiknode.pro/3aaa48bd95f3d6aed60e89a1a466ed1e2a440b61/ \
+		--load-state ./internal/testData/anvil-l1-state.json \
+		--chain-id 31337 \
+		--fork-block-number 9469897 \
+		--block-time 2

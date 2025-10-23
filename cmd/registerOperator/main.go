@@ -222,12 +222,7 @@ func (c *OperatorConfig) Validate() error {
 	if !strings.HasPrefix(c.RPCUrl, "http://") && !strings.HasPrefix(c.RPCUrl, "https://") && !strings.HasPrefix(c.RPCUrl, "ws://") && !strings.HasPrefix(c.RPCUrl, "wss://") {
 		return fmt.Errorf("RPC URL must start with http://, https://, ws://, or wss://")
 	}
-
-	// Validate operator set ID
-	if c.OperatorSetID == 0 {
-		return fmt.Errorf("operator set ID must be greater than 0")
-	}
-
+	
 	// Validate chain ID
 	supportedChains := config.GetSupportedChainIDs()
 	supported := false

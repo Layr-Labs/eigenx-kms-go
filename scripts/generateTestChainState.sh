@@ -127,10 +127,6 @@ function registerOperator() {
 
     forge script script/RegisterOperator.s.sol --slow --rpc-url $L1_RPC_URL --broadcast --sig "run()"
 
-    # advance past the allocation delay
-    echo "Advancing past allocation delay"
-    cast rpc --rpc-url $L1_RPC_URL anvil_mine 80
-
     echo "Acquiring testnet EIGEN"
     # impersonate the 0xDa account
     cast rpc anvil_impersonateAccount $GLOBAL_ROOT_CONFIRMER_ACCOUNT --rpc-url $L1_RPC_URL
@@ -174,17 +170,46 @@ forge script script/local/SetupEigenKMSRegistrar.s.sol --slow --rpc-url $L1_RPC_
 # forge script script/local/WhitelistDevnet.s.sol --slow --rpc-url $L1_RPC_URL --sender $CROSS_CHAIN_REGISTRY_OWNER_ACCOUNT --unlocked --broadcast --sig "run()"
 # forge script script/local/SetupAVSMultichain.s.sol --slow --rpc-url $L1_RPC_URL --broadcast --sig "run()"
 
+# Move back up into the project root
+cd ../
 
-# move past the global ALLOCATION_CONFIGURATION_DELAY which is 75 blocks for sepolia
-cast rpc --rpc-url $L1_RPC_URL anvil_mine 80
+function registerOperatorToAvs() {
+    operatorPk=$1
+    operatorAddress=$2
+    operatorIndex=$3
+    echo "Registering operator $operatorAddress to AVS"
+
+    socket="http://localhost:750${operatorIndex}"
+
+    set -e
+
+    go run cmd/registerOperator/main.go \
+        --avs-address $avsAccountAddress \
+        --operator-address $operatorAddress \
+        --operator-private-key $operatorPk \
+        --avs-private-key $avsAccountPk \
+        --bn254-private-key $operatorPk \
+        --socket $socket \
+        --operator-set-id 0 \
+        --rpc-url $L1_RPC_URL \
+        --chain-id $anvilL1ChainId \
+        --verbose
+}
+echo "-------------------------------------------------------------"
+echo "Registering operators to AVS"
+echo "-------------------------------------------------------------"
+
+registerOperatorToAvs $operatorAccountPk_1 $operatorAccountAddress_1 1
+registerOperatorToAvs $operatorAccountPk_2 $operatorAccountAddress_2 2
+registerOperatorToAvs $operatorAccountPk_3 $operatorAccountAddress_3 3
+registerOperatorToAvs $operatorAccountPk_4 $operatorAccountAddress_4 4
+registerOperatorToAvs $operatorAccountPk_5 $operatorAccountAddress_5 5
 
 echo "Ended at block number: "
 cast block-number
 
 kill $anvilL1Pid || true
 sleep 3
-
-cd ../
 
 rm -rf ./internal/testData/anvil*.json
 
