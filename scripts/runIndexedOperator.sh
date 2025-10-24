@@ -30,6 +30,5 @@ go run cmd/kmsServer/main.go \
     --bn254-private-key $privateKey \
     --avs-address $avsAddress \
     --rpc-url $rpcUrl \
-    --dkg-at $RUN_DKG_AT \
     --verbose
 

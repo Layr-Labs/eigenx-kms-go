@@ -6,7 +6,7 @@ BIN = ./bin
 GO_FLAGS=-ldflags "-X 'github.com/Layr-Labs/eigenx-kms-go/internal/version.Version=$(shell cat VERSION)' -X 'github.com/Layr-Labs/eigenx-kms-go/internal/version.Commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo 'unknown')'"
 
 
-all: deps/go build/cmd/poc build/cmd/kmsClient
+all: deps/go build/cmd
 
 # -----------------------------------------------------------------------------
 # Dependencies
@@ -26,9 +26,6 @@ deps/go:
 # -----------------------------------------------------------------------------
 # Build binaries
 # -----------------------------------------------------------------------------
-.PHONY: cmd/poc
-build/cmd/poc:
-	go build $(GO_FLAGS) -o ${BIN}/poc ./cmd/poc
 
 .PHONY: cmd/kmsServer
 build/cmd/kmsServer:
@@ -42,6 +39,8 @@ build/cmd/registerOperator:
 build/cmd/kmsClient:
 	go build $(GO_FLAGS) -o ${BIN}/kms-client ./cmd/kmsClient
 
+.PHONY: build/cmd
+build/cmd: build/cmd/kmsServer build/cmd/registerOperator build/cmd/kmsClient
 
 # -----------------------------------------------------------------------------
 # Tests and linting

@@ -5,11 +5,10 @@ import (
 	"log"
 	"os"
 
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/ethereum"
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/urfave/cli/v2"
 	"go.uber.org/zap"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/ethereum"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
@@ -195,35 +194,15 @@ func createPeeringDataFetcher(kmsConfig *config.KMSServerConfig, logger *zap.Log
 	// Get contract caller
 	l1Client, err := ethClient.GetEthereumContractCaller()
 	if err != nil {
-		logger.Sugar().Errorw("Failed to get Ethereum contract caller, falling back to stub", "error", err)
-		return peering.NewStubPeeringDataFetcher(createStubOperatorSetPeers(3))
+		logger.Sugar().Fatalw("Failed to get Ethereum contract caller", "error", err)
 	}
 
 	// Create contract caller (no signer needed for read operations)
 	contractCaller, err := caller.NewContractCaller(l1Client, nil, logger)
 	if err != nil {
-		logger.Sugar().Errorw("Failed to create contract caller, falling back to stub", "error", err)
-		return peering.NewStubPeeringDataFetcher(createStubOperatorSetPeers(3))
+		logger.Sugar().Fatalw("Failed to create contract caller", "error", err)
 	}
 
 	// Return the existing peeringDataFetcher implementation
 	return peeringDataFetcher.NewPeeringDataFetcher(contractCaller, logger)
-}
-
-// createStubOperatorSetPeers creates stub operator set peers for testing
-func createStubOperatorSetPeers(numOperators int) *peering.OperatorSetPeers {
-	peers := make([]*peering.OperatorSetPeer, numOperators)
-
-	for i := 0; i < numOperators; i++ {
-		peers[i] = &peering.OperatorSetPeer{
-			OperatorAddress: common.HexToAddress(fmt.Sprintf("0x%040d", i+1)),
-			SocketAddress:   fmt.Sprintf("http://localhost:%d", 8000+i+1),
-		}
-	}
-
-	return &peering.OperatorSetPeers{
-		OperatorSetId: 1,
-		AVSAddress:    common.HexToAddress("0x1234567890123456789012345678901234567890"),
-		Peers:         peers,
-	}
 }
