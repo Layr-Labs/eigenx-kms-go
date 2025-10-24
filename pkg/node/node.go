@@ -494,10 +494,10 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	}
 
 	// Wait for all shares and commitments
-	if err := n.waitForSharesWithRetry(len(operators), 30*time.Second); err != nil {
+	if err := n.waitForSharesWithRetry(len(operators), 60*time.Second); err != nil {
 		return err
 	}
-	if err := n.waitForCommitmentsWithRetry(len(operators), 30*time.Second); err != nil {
+	if err := n.waitForCommitmentsWithRetry(len(operators), 60*time.Second); err != nil {
 		return err
 	}
 
@@ -560,7 +560,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	n.mu.Unlock()
 
 	// Wait for acknowledgements (as a dealer)
-	if err := n.waitForAcknowledgements(threshold, 30*time.Second); err != nil {
+	if err := n.waitForAcknowledgements(threshold, 60*time.Second); err != nil {
 		return fmt.Errorf("insufficient acknowledgements: %v", err)
 	}
 
@@ -579,9 +579,13 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	}
 
 	keyVersion := n.dkg.FinalizeKeyShare(n.receivedShares, allCommitments, participantIDs)
+	keyVersion.Version = session.SessionTimestamp // Use session timestamp as version
 	n.keyStore.AddVersion(keyVersion)
 
-	n.logger.Sugar().Infow("DKG complete", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID)
+	n.logger.Sugar().Infow("DKG complete",
+		"operator_address", n.OperatorAddress.Hex(),
+		"node_id", thisNodeID,
+		"version", keyVersion.Version)
 	return nil
 }
 

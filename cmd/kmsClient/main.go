@@ -11,6 +11,7 @@ import (
 	"os"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/ethereum"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/urfave/cli/v2"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
@@ -200,7 +201,7 @@ func encryptCommand(c *cli.Context) error {
 	}
 
 	// Step 3: Output result
-	encryptedHex := hex.EncodeToString(encryptedData)
+	encryptedHex := hexutil.Encode(encryptedData)
 	if outputFile != "" {
 		if err := os.WriteFile(outputFile, []byte(encryptedHex), 0644); err != nil {
 			return fmt.Errorf("failed to write to file: %w", err)
@@ -244,7 +245,8 @@ func decryptCommand(c *cli.Context) error {
 	} else {
 		// It's a hex string
 		var decodeErr error
-		encryptedData, decodeErr = hex.DecodeString(encryptedInput)
+		fmt.Printf("Using encrypted input %s\n", encryptedInput)
+		encryptedData, decodeErr = hexutil.Decode(encryptedInput)
 		if decodeErr != nil {
 			return fmt.Errorf("failed to decode hex data: %w", decodeErr)
 		}
