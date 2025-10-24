@@ -95,6 +95,11 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 		// Replace placeholder server with actual server
 		server := node.NewServer(cluster.Nodes[i], 0)
 		cluster.Servers[i].Config.Handler = server.GetHandler()
+
+		// Start the node (starts scheduler and server)
+		if err := cluster.Nodes[i].Start(); err != nil {
+			t.Fatalf("Failed to start node %d: %v", i+1, err)
+		}
 	}
 
 	// Nodes now have automatic schedulers running

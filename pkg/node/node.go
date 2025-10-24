@@ -84,7 +84,7 @@ type Node struct {
 	enableAutoReshare      bool
 	reshareInterval        time.Duration
 	lastProcessedBoundary  int64
-	schedulerStop          chan struct{}
+	cancelFunc             context.CancelFunc
 
 	mu sync.RWMutex
 }
@@ -158,7 +158,6 @@ func NewNode(cfg Config, pdf peering.IPeeringDataFetcher) *Node {
 		enableAutoReshare:      true, // Always enabled
 		reshareInterval:        config.GetReshareIntervalForChain(cfg.ChainID),
 		lastProcessedBoundary:  0,
-		schedulerStop:          make(chan struct{}),
 	}
 
 	// Set node reference in server
@@ -167,14 +166,11 @@ func NewNode(cfg Config, pdf peering.IPeeringDataFetcher) *Node {
 	// Initialize transport with authenticated messaging
 	n.transport = transport.NewClient(transportClientID, operatorAddress, n)
 
-	// Always start scheduler (handles DKG scheduling and automatic resharing)
-	n.startScheduler()
-
 	return n
 }
 
-// startScheduler starts the automatic protocol scheduler
-func (n *Node) startScheduler() {
+// startScheduler starts the automatic protocol scheduler with context
+func (n *Node) startScheduler(ctx context.Context) {
 	go func() {
 		ticker := time.NewTicker(500 * time.Millisecond)
 		defer ticker.Stop()
@@ -188,7 +184,7 @@ func (n *Node) startScheduler() {
 			select {
 			case <-ticker.C:
 				n.checkScheduledOperations()
-			case <-n.schedulerStop:
+			case <-ctx.Done():
 				n.logger.Sugar().Infow("Protocol scheduler stopped", "operator_address", n.OperatorAddress.Hex())
 				return
 			}
@@ -285,22 +281,34 @@ func (n *Node) checkScheduledOperations() {
 	}
 }
 
-// Start starts the node's HTTP server
+// Start starts the node's HTTP server and scheduler
 func (n *Node) Start() error {
-	return n.server.Start()
+	// Create context for managing server and scheduler lifecycle
+	ctx, cancel := context.WithCancel(context.Background())
+	n.cancelFunc = cancel
+
+	// Start scheduler in goroutine
+	n.startScheduler(ctx)
+
+	// Start HTTP server in goroutine
+	go func() {
+		if err := n.server.Start(); err != nil {
+			n.logger.Sugar().Errorw("HTTP server error", "operator_address", n.OperatorAddress.Hex(), "error", err)
+		}
+	}()
+
+	n.logger.Sugar().Infow("Node started", "operator_address", n.OperatorAddress.Hex(), "port", n.Port)
+	return nil
 }
 
-// Stop stops the node and scheduler
+// Stop stops the node's HTTP server and scheduler
 func (n *Node) Stop() error {
-	// Stop scheduler if running
-	if n.schedulerStop != nil {
-		select {
-		case <-n.schedulerStop:
-			// Already closed
-		default:
-			close(n.schedulerStop)
-		}
+	// Cancel context to stop scheduler and any ongoing operations
+	if n.cancelFunc != nil {
+		n.cancelFunc()
 	}
+
+	// Stop HTTP server
 	return n.server.Stop()
 }
 
