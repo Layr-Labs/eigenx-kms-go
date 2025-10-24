@@ -157,7 +157,7 @@ type KMSServerConfig struct {
 	OperatorSetId uint32 `json:"operator_set_id"` // Operator set ID
 	
 	// Operational settings
-	DKGAt   int64 `json:"dkg_at"`   // Unix timestamp to run DKG, 0 for immediate
+	DKGAt   int64 `json:"dkg_at"` // Unix timestamp to run DKG, 0 for immediate
 	Debug   bool  `json:"debug"`
 	Verbose bool  `json:"verbose"`
 	

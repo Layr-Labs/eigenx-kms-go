@@ -124,6 +124,17 @@ func runKMSServer(c *cli.Context) error {
 
 	appLogger.Sugar().Infow("Using chain", "name", kmsConfig.ChainName, "chain_id", kmsConfig.ChainID)
 
+	// Convert DKGAt timestamp to time.Time if provided
+	var dkgAt *time.Time
+	if kmsConfig.DKGAt > 0 {
+		t := time.Unix(kmsConfig.DKGAt, 0)
+		dkgAt = &t
+	} else if kmsConfig.DKGAt == 0 && c.IsSet("dkg-at") {
+		// Immediate execution
+		t := time.Now()
+		dkgAt = &t
+	}
+
 	// Create node config from KMS config (operators fetched dynamically when needed)
 	nodeConfig := node.Config{
 		OperatorAddress: kmsConfig.OperatorAddress,
@@ -132,6 +143,7 @@ func runKMSServer(c *cli.Context) error {
 		ChainID:         kmsConfig.ChainID,
 		AVSAddress:      kmsConfig.AVSAddress,
 		OperatorSetId:   kmsConfig.OperatorSetId,
+		DKGAt:           dkgAt,
 		Logger:          appLogger,
 	}
 
@@ -151,26 +163,12 @@ func runKMSServer(c *cli.Context) error {
 
 	// Start the node server
 	appLogger.Sugar().Infow("Starting KMS Server", "operator_address", kmsConfig.OperatorAddress, "port", kmsConfig.Port)
-	
+
 	if err := n.Start(); err != nil {
 		return fmt.Errorf("failed to start node: %w", err)
 	}
 
-	// Schedule DKG execution if timestamp provided
-	if kmsConfig.DKGAt > 0 {
-		scheduleDKG(n, kmsConfig.DKGAt, appLogger)
-	} else if kmsConfig.DKGAt == 0 && c.IsSet("dkg-at") {
-		// Immediate execution if explicitly set to 0
-		appLogger.Sugar().Infow("Running DKG immediately", "operator_address", kmsConfig.OperatorAddress)
-		go func() {
-			if err := n.RunDKG(); err != nil {
-				appLogger.Sugar().Errorw("DKG failed", "operator_address", kmsConfig.OperatorAddress, "error", err)
-			} else {
-				appLogger.Sugar().Infow("DKG completed successfully", "operator_address", kmsConfig.OperatorAddress)
-			}
-		}()
-	}
-
+	// Node scheduler handles DKG and reshare automatically based on config
 	appLogger.Sugar().Infow("KMS Server running", "operator_address", kmsConfig.OperatorAddress, "port", kmsConfig.Port)
 	appLogger.Sugar().Infow("Available endpoints", 
 		"secrets", "POST /secrets",
@@ -246,38 +244,5 @@ func createStubOperatorSetPeers(numOperators int) *peering.OperatorSetPeers {
 		OperatorSetId: 1,
 		AVSAddress:    common.HexToAddress("0x1234567890123456789012345678901234567890"),
 		Peers:         peers,
-	}
-}
-
-// scheduleDKG schedules DKG execution at a specific timestamp
-func scheduleDKG(n *node.Node, dkgTimestamp int64, logger *zap.Logger) {
-	targetTime := time.Unix(dkgTimestamp, 0)
-	now := time.Now()
-	
-	if targetTime.Before(now) {
-		logger.Sugar().Warnw("DKG timestamp is in the past, running immediately", "target", targetTime, "now", now)
-		go runDKGAsync(n, logger)
-		return
-	}
-	
-	delay := targetTime.Sub(now)
-	logger.Sugar().Infow("DKG scheduled", "target_time", targetTime, "delay", delay)
-	
-	go func() {
-		timer := time.NewTimer(delay)
-		defer timer.Stop()
-		
-		<-timer.C
-		logger.Sugar().Infow("Starting scheduled DKG", "target_time", targetTime)
-		runDKGAsync(n, logger)
-	}()
-}
-
-// runDKGAsync runs DKG in a goroutine with proper error handling
-func runDKGAsync(n *node.Node, logger *zap.Logger) {
-	if err := n.RunDKG(); err != nil {
-		logger.Sugar().Errorw("Scheduled DKG failed", "error", err)
-	} else {
-		logger.Sugar().Infow("Scheduled DKG completed successfully")
 	}
 }

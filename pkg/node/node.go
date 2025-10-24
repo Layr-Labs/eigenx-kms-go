@@ -80,6 +80,14 @@ type Node struct {
 	activeSessions map[int64]*ProtocolSession
 	sessionMutex   sync.RWMutex
 
+	// Scheduling
+	dkgAt            *time.Time
+	enableAutoReshare bool
+	reshareInterval  time.Duration
+	lastReshareTime  time.Time
+	dkgTriggered     bool
+	schedulerStop    chan struct{}
+
 	mu sync.RWMutex
 }
 
@@ -107,6 +115,7 @@ type Config struct {
 	ChainID         config.ChainId // Ethereum chain ID
 	AVSAddress      string         // AVS contract address (hex string)
 	OperatorSetId   uint32         // Operator set ID
+	DKGAt           *time.Time     // Optional coordinated DKG time
 	Logger          *zap.Logger    // Optional logger, will create default if nil
 }
 
@@ -149,6 +158,10 @@ func NewNode(cfg Config, pdf peering.IPeeringDataFetcher) *Node {
 		receivedAcks:        make(map[int]map[int]*types.Acknowledgement),
 		reshareComplete:     make(map[int]*types.CompletionSignature),
 		activeSessions:      make(map[int64]*ProtocolSession),
+		dkgAt:               cfg.DKGAt,
+		enableAutoReshare:   true, // Always enabled
+		reshareInterval:     config.GetReshareIntervalForChain(cfg.ChainID),
+		schedulerStop:       make(chan struct{}),
 	}
 
 	// Set node reference in server
@@ -157,7 +170,78 @@ func NewNode(cfg Config, pdf peering.IPeeringDataFetcher) *Node {
 	// Initialize transport with authenticated messaging
 	n.transport = transport.NewClient(transportClientID, operatorAddress, n)
 
+	// Always start scheduler (handles DKG scheduling and automatic resharing)
+	n.startScheduler()
+
 	return n
+}
+
+// startScheduler starts the automatic protocol scheduler
+func (n *Node) startScheduler() {
+	go func() {
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+
+		n.logger.Sugar().Infow("Protocol scheduler started",
+			"operator_address", n.OperatorAddress.Hex(),
+			"auto_reshare", n.enableAutoReshare,
+			"reshare_interval", n.reshareInterval)
+
+		for {
+			select {
+			case <-ticker.C:
+				n.checkScheduledOperations()
+			case <-n.schedulerStop:
+				n.logger.Sugar().Infow("Protocol scheduler stopped", "operator_address", n.OperatorAddress.Hex())
+				return
+			}
+		}
+	}()
+}
+
+// checkScheduledOperations checks for scheduled DKG or reshare operations
+func (n *Node) checkScheduledOperations() {
+	now := time.Now()
+
+	// Check for scheduled DKG
+	if n.dkgAt != nil && !n.dkgTriggered && now.After(*n.dkgAt) {
+		n.dkgTriggered = true
+		n.logger.Sugar().Infow("Triggering scheduled DKG",
+			"operator_address", n.OperatorAddress.Hex(),
+			"scheduled_time", n.dkgAt)
+
+		go func() {
+			if err := n.RunDKG(); err != nil {
+				n.logger.Sugar().Errorw("Scheduled DKG failed",
+					"operator_address", n.OperatorAddress.Hex(),
+					"error", err)
+			}
+		}()
+	}
+
+	// Check for automatic reshare boundary
+	if n.enableAutoReshare {
+		// Calculate seconds since last reshare
+		secondsSinceLastReshare := now.Sub(n.lastReshareTime).Seconds()
+		reshareIntervalSeconds := n.reshareInterval.Seconds()
+
+		// Check if we're at a reshare boundary (within 1 second window)
+		if secondsSinceLastReshare >= reshareIntervalSeconds {
+			n.lastReshareTime = now
+			n.logger.Sugar().Infow("Triggering automatic reshare",
+				"operator_address", n.OperatorAddress.Hex(),
+				"interval", n.reshareInterval,
+				"time_since_last", time.Duration(secondsSinceLastReshare)*time.Second)
+
+			go func() {
+				if err := n.RunReshare(); err != nil {
+					n.logger.Sugar().Errorw("Automatic reshare failed",
+						"operator_address", n.OperatorAddress.Hex(),
+						"error", err)
+				}
+			}()
+		}
+	}
 }
 
 // Start starts the node's HTTP server
@@ -165,8 +249,17 @@ func (n *Node) Start() error {
 	return n.server.Start()
 }
 
-// Stop stops the node
+// Stop stops the node and scheduler
 func (n *Node) Stop() error {
+	// Stop scheduler if running
+	if n.schedulerStop != nil {
+		select {
+		case <-n.schedulerStop:
+			// Already closed
+		default:
+			close(n.schedulerStop)
+		}
+	}
 	return n.server.Stop()
 }
 
