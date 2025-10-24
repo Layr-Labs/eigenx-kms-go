@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"time"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/urfave/cli/v2"
@@ -81,11 +80,6 @@ This server implements:
 				Value:   0,
 				EnvVars: []string{"KMS_OPERATOR_SET_ID"},
 			},
-			&cli.Int64Flag{
-				Name:    "dkg-at",
-				Usage:   "Unix timestamp to run DKG at (for coordinated testing). Use 0 for immediate execution.",
-				EnvVars: []string{"KMS_DKG_AT"},
-			},
 			&cli.BoolFlag{
 				Name:    "verbose",
 				Usage:   "Enable verbose logging",
@@ -124,17 +118,6 @@ func runKMSServer(c *cli.Context) error {
 
 	appLogger.Sugar().Infow("Using chain", "name", kmsConfig.ChainName, "chain_id", kmsConfig.ChainID)
 
-	// Convert DKGAt timestamp to time.Time if provided
-	var dkgAt *time.Time
-	if kmsConfig.DKGAt > 0 {
-		t := time.Unix(kmsConfig.DKGAt, 0)
-		dkgAt = &t
-	} else if kmsConfig.DKGAt == 0 && c.IsSet("dkg-at") {
-		// Immediate execution
-		t := time.Now()
-		dkgAt = &t
-	}
-
 	// Create node config from KMS config (operators fetched dynamically when needed)
 	nodeConfig := node.Config{
 		OperatorAddress: kmsConfig.OperatorAddress,
@@ -143,7 +126,6 @@ func runKMSServer(c *cli.Context) error {
 		ChainID:         kmsConfig.ChainID,
 		AVSAddress:      kmsConfig.AVSAddress,
 		OperatorSetId:   kmsConfig.OperatorSetId,
-		DKGAt:           dkgAt,
 		Logger:          appLogger,
 	}
 
@@ -154,11 +136,11 @@ func runKMSServer(c *cli.Context) error {
 	n := node.NewNode(nodeConfig, peeringDataFetcher)
 
 	if c.Bool("verbose") {
-		appLogger.Sugar().Infow("KMS Server Configuration", 
+		appLogger.Sugar().Infow("KMS Server Configuration",
 			"operator_address", kmsConfig.OperatorAddress,
 			"port", kmsConfig.Port,
-			"dkg_at", kmsConfig.DKGAt,
-			"chain", kmsConfig.ChainName)
+			"chain", kmsConfig.ChainName,
+			"reshare_interval", config.GetReshareIntervalForChain(kmsConfig.ChainID))
 	}
 
 	// Start the node server
@@ -190,7 +172,6 @@ func parseKMSConfig(c *cli.Context) (*config.KMSServerConfig, error) {
 		RpcUrl:          c.String("rpc-url"),
 		AVSAddress:      c.String("avs-address"),
 		OperatorSetId:   uint32(c.Uint("operator-set-id")),
-		DKGAt:           c.Int64("dkg-at"),
 		Debug:           c.Bool("verbose"),
 		Verbose:         c.Bool("verbose"),
 	}, nil

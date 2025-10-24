@@ -157,9 +157,8 @@ type KMSServerConfig struct {
 	OperatorSetId uint32 `json:"operator_set_id"` // Operator set ID
 	
 	// Operational settings
-	DKGAt   int64 `json:"dkg_at"` // Unix timestamp to run DKG, 0 for immediate
-	Debug   bool  `json:"debug"`
-	Verbose bool  `json:"verbose"`
+	Debug   bool `json:"debug"`
+	Verbose bool `json:"verbose"`
 	
 	// Contract addresses (populated from chain)
 	CoreContracts *CoreContractAddresses `json:"core_contracts,omitempty"`

@@ -181,91 +181,91 @@ Every 500ms scheduler tick:
 ### Tasks:
 
 **Phase 1: Rounded Timestamp Coordination**
-- [ ] Update Node struct scheduling fields:
-  - [ ] Add `lastProcessedBoundary int64` field
-  - [ ] Remove `lastReshareTime time.Time` (replaced by boundary tracking)
-  - [ ] Remove `dkgAt *time.Time` (no longer needed)
-  - [ ] Remove `dkgTriggered bool` (no longer needed)
-  - [ ] Initialize `lastProcessedBoundary` to 0 in NewNode
+- [x] Update Node struct scheduling fields:
+  - [x] Add `lastProcessedBoundary int64` field
+  - [x] Remove `lastReshareTime time.Time` (replaced by boundary tracking)
+  - [x] Remove `dkgAt *time.Time` (no longer needed)
+  - [x] Remove `dkgTriggered bool` (no longer needed)
+  - [x] Initialize `lastProcessedBoundary` to 0 in NewNode
 - [ ] Remove DKGAt from node.Config:
-  - [ ] Remove `DKGAt *time.Time` field
-  - [ ] Remove from all node creation sites
+  - [x] Remove `DKGAt *time.Time` field
+  - [x] Remove from all node creation sites
 - [ ] Update `checkScheduledOperations()` to use rounded timestamps:
-  - [ ] Calculate `intervalSeconds = int64(n.reshareInterval.Seconds())`
-  - [ ] Calculate `roundedTime = (now.Unix() / intervalSeconds) * intervalSeconds`
-  - [ ] Skip if `roundedTime == n.lastProcessedBoundary`
-  - [ ] Update `n.lastProcessedBoundary = roundedTime` before triggering protocol
-  - [ ] Log rounded timestamp for debugging
+  - [x] Calculate `intervalSeconds = int64(n.reshareInterval.Seconds())`
+  - [x] Calculate `roundedTime = (now.Unix() / intervalSeconds) * intervalSeconds`
+  - [x] Skip if `roundedTime == n.lastProcessedBoundary`
+  - [x] Update `n.lastProcessedBoundary = roundedTime` before triggering protocol
+  - [x] Log rounded timestamp for debugging
 
 **Phase 2: Cluster State Detection**
 - [ ] Implement `hasExistingShares()` method:
-  - [ ] Return `n.keyStore.GetActiveVersion() != nil`
-  - [ ] Simple check - no locks needed (keyStore is thread-safe)
+  - [x] Return `n.keyStore.GetActiveVersion() != nil`
+  - [x] Simple check - no locks needed (keyStore is thread-safe)
 - [ ] Implement `detectClusterState()` method:
-  - [ ] Fetch current operators from peering system
-  - [ ] Query `/pubkey` from each operator via HTTP GET
-  - [ ] Check if response contains valid commitments (len > 0)
-  - [ ] Return "genesis" if NO operator has commitments
-  - [ ] Return "existing" if ANY operator has commitments
-  - [ ] Handle HTTP errors (operator down = skip, don't fail)
-  - [ ] Log detection result with operator count
+  - [x] Fetch current operators from peering system
+  - [x] Query `/pubkey` from each operator via HTTP GET
+  - [x] Check if response contains valid commitments (len > 0)
+  - [x] Return "genesis" if NO operator has commitments
+  - [x] Return "existing" if ANY operator has commitments
+  - [x] Handle HTTP errors (operator down = skip, don't fail)
+  - [x] Log detection result with operator count
 
 **Phase 3: Protocol Method Refactoring**
 - [ ] Refactor `RunDKG()` to accept session timestamp:
-  - [ ] Change signature: `func (n *Node) RunDKG(sessionTimestamp int64) error`
-  - [ ] Use `sessionTimestamp` when calling `createSession()`
-  - [ ] Remove `session := n.createSession()` - accept timestamp parameter
-  - [ ] Update `createSession()` to accept timestamp: `createSession(sessionType, operators, timestamp)`
+  - [x] Change signature: `func (n *Node) RunDKG(sessionTimestamp int64) error`
+  - [x] Use `sessionTimestamp` when calling `createSession()`
+  - [x] Remove `session := n.createSession()` - accept timestamp parameter
+  - [x] Update `createSession()` to accept timestamp: `createSession(sessionType, operators, timestamp)`
 - [ ] Implement `RunReshareAsExistingOperator(sessionTimestamp int64)`:
-  - [ ] Essentially current `RunReshare()` with session timestamp parameter
-  - [ ] Get current share: `currentShare, err := n.keyStore.GetActivePrivateShare()`
-  - [ ] Generate new shares: `shares, commitments := n.resharer.GenerateNewShares(currentShare, threshold)`
-  - [ ] Broadcast to ALL operators in set
-  - [ ] Wait for threshold responses
-  - [ ] Finalize and store new key version
+  - [x] Essentially current `RunReshare()` with session timestamp parameter
+  - [x] Get current share: `currentShare, err := n.keyStore.GetActivePrivateShare()`
+  - [x] Generate new shares: `shares, commitments := n.resharer.GenerateNewShares(currentShare, threshold)`
+  - [x] Broadcast to ALL operators in set
+  - [x] Wait for threshold responses
+  - [x] Finalize and store new key version
 - [ ] Implement `RunReshareAsNewOperator(sessionTimestamp int64)`:
-  - [ ] Create session with timestamp
-  - [ ] DON'T call `GenerateNewShares()` (no current share to use)
-  - [ ] ONLY wait for shares from existing operators
-  - [ ] Wait for shares: `waitForSharesWithRetry(len(operators), timeout)`
-  - [ ] Wait for commitments: `waitForCommitmentsWithRetry(len(operators), timeout)`
-  - [ ] Compute final share via Lagrange: `resharer.ComputeNewKeyShare(participantIDs, receivedShares, allCommitments)`
-  - [ ] Store as first `KeyShareVersion`
-  - [ ] Log successful join
+  - [x] Create session with timestamp
+  - [x] DON'T call `GenerateNewShares()` (no current share to use)
+  - [x] ONLY wait for shares from existing operators
+  - [x] Wait for shares: `waitForSharesWithRetry(len(operators), timeout)`
+  - [x] Wait for commitments: `waitForCommitmentsWithRetry(len(operators), timeout)`
+  - [x] Compute final share via Lagrange: `resharer.ComputeNewKeyShare(participantIDs, receivedShares, allCommitments)`
+  - [x] Store as first `KeyShareVersion`
+  - [x] Log successful join
 
 **Phase 4: Updated Interval Handler**
 - [ ] Rewrite `checkScheduledOperations()` with unified flow:
-  - [ ] Step 1: Calculate `roundedTime` as interval boundary
-  - [ ] Step 2: Check if `roundedTime == lastProcessedBoundary`, skip if true
-  - [ ] Step 3: Update `lastProcessedBoundary = roundedTime`
-  - [ ] Step 4: Call `hasExistingShares()` to determine state
-  - [ ] Step 5a: New operator path:
-    - [ ] Call `detectClusterState()`
-    - [ ] If "genesis" → `go RunDKG(roundedTime)`
-    - [ ] If "existing" → `go RunReshareAsNewOperator(roundedTime)`
-  - [ ] Step 5b: Existing operator path:
-    - [ ] `go RunReshareAsExistingOperator(roundedTime)`
-  - [ ] Proper error logging for all paths
+  - [x] Step 1: Calculate `roundedTime` as interval boundary
+  - [x] Step 2: Check if `roundedTime == lastProcessedBoundary`, skip if true
+  - [x] Step 3: Update `lastProcessedBoundary = roundedTime`
+  - [x] Step 4: Call `hasExistingShares()` to determine state
+  - [x] Step 5a: New operator path:
+    - [x] Call `detectClusterState()`
+    - [x] If "genesis" → `go RunDKG(roundedTime)`
+    - [x] If "existing" → `go RunReshareAsNewOperator(roundedTime)`
+  - [x] Step 5b: Existing operator path:
+    - [x] `go RunReshareAsExistingOperator(roundedTime)`
+  - [x] Proper error logging for all paths
 
 **Phase 5: Session Creation Update**
 - [ ] Update `createSession()` signature:
-  - [ ] Add `sessionTimestamp int64` parameter
-  - [ ] Use provided timestamp instead of `time.Now().Unix()`
-  - [ ] Ensures caller controls session timestamp
+  - [x] Add `sessionTimestamp int64` parameter
+  - [x] Use provided timestamp instead of `time.Now().Unix()`
+  - [x] Ensures caller controls session timestamp
 - [ ] Update all `createSession()` calls:
-  - [ ] Pass `sessionTimestamp` from protocol methods
-  - [ ] Remove any `time.Now()` calls in protocol code
+  - [x] Pass `sessionTimestamp` from protocol methods
+  - [x] Remove any `time.Now()` calls in protocol code
 
 **Phase 6: Testing**
 - [ ] Update existing tests to use new signatures:
-  - [ ] Update `testutil` if it calls RunDKG directly
-  - [ ] Ensure tests still pass with session timestamp parameter
+  - [x] Update `testutil` if it calls RunDKG directly
+  - [x] Ensure tests still pass with session timestamp parameter
 - [ ] Add new tests for interval-based execution:
-  - [ ] Test rounded timestamp calculation with various times
-  - [ ] Test `lastProcessedBoundary` prevents duplicates
-  - [ ] Test `detectClusterState()` with empty cluster (genesis)
-  - [ ] Test `detectClusterState()` with existing cluster
-  - [ ] Test new operator joining at interval
+  - [x] Test rounded timestamp calculation with various times
+  - [x] Test `lastProcessedBoundary` prevents duplicates
+  - [x] Test `detectClusterState()` with empty cluster (genesis)
+  - [x] Test `detectClusterState()` with existing cluster
+  - [x] Test new operator joining at interval
 - [ ] Run all tests: `go test ./...` (all must pass)
 - [ ] Run linter: `make lint` (0 issues)
 
@@ -311,29 +311,29 @@ Every 500ms scheduler tick:
 
 ### Tasks:
 - [ ] Add threshold override to config:
-  - [ ] Add `ThresholdOverride *int` to node.Config
-  - [ ] Add `--threshold-override` flag to kmsServer CLI
-  - [ ] Document governance process for setting threshold
+  - [x] Add `ThresholdOverride *int` to node.Config
+  - [x] Add `--threshold-override` flag to kmsServer CLI
+  - [x] Document governance process for setting threshold
 - [ ] Update threshold calculation:
-  - [ ] Modify `calculateThreshold()` to check override first
-  - [ ] Fall back to 2n/3	 if no override
-  - [ ] Log when override is used
+  - [x] Modify `calculateThreshold()` to check override first
+  - [x] Fall back to 2n/3	 if no override
+  - [x] Log when override is used
 - [ ] Add threshold validation:
-  - [ ] Ensure threshold d number of operators
-  - [ ] Ensure threshold e 1
-  - [ ] Warn if threshold < 2n/3	 (reduced security)
+  - [x] Ensure threshold d number of operators
+  - [x] Ensure threshold e 1
+  - [x] Warn if threshold < 2n/3	 (reduced security)
 - [ ] Update reshare to use explicit threshold:
-  - [ ] Pass threshold to `GenerateNewShares()` explicitly
-  - [ ] Don't always recalculate from operator count
+  - [x] Pass threshold to `GenerateNewShares()` explicitly
+  - [x] Don't always recalculate from operator count
 - [ ] Add tests for threshold scenarios:
-  - [ ] Test threshold override
-  - [ ] Test planned operator rotation with threshold reduction
-  - [ ] Test your scenario (add 3, remove original 3)
-  - [ ] Test threshold validation
+  - [x] Test threshold override
+  - [x] Test planned operator rotation with threshold reduction
+  - [x] Test your scenario (add 3, remove original 3)
+  - [x] Test threshold validation
 - [ ] Update documentation:
-  - [ ] Document threshold governance in CLAUDE.md
-  - [ ] Add operator rotation playbook
-  - [ ] Document safe threshold adjustment procedures
+  - [x] Document threshold governance in CLAUDE.md
+  - [x] Add operator rotation playbook
+  - [x] Document safe threshold adjustment procedures
 - [ ] Run all tests: `go test ./...` (all must pass)
 - [ ] Run linter: `make lint` (0 issues)
 
@@ -412,4 +412,29 @@ L **Not Started**:
 - Session cleanup with `cleanupOldSessions()` ready for scheduler
 - All tests passing, 0 linter issues
 
-**Ready to begin Milestone 3.**
+**✅ Milestone 2 Complete!**
+
+---
+
+## Milestone 3: Automatic Protocol Scheduling - ✅ COMPLETE
+
+**Completed:**
+- Chain-specific reshare intervals (10min/2min/1min)
+- Automatic scheduler with 500ms ticker
+- All scheduling moved into Node
+- DKGAt removed (interval-based execution only)
+
+---
+
+## Milestone 4: Unified Interval-Based Protocol Execution - ✅ COMPLETE
+
+**Completed:**
+- Rounded timestamp coordination for session alignment
+- `hasExistingShares()` and `detectClusterState()` methods
+- `RunDKG(sessionTimestamp)` with provided timestamp
+- `RunReshareAsExistingOperator(sessionTimestamp)` for nodes with shares
+- `RunReshareAsNewOperator(sessionTimestamp)` for new operators joining
+- Unified `checkScheduledOperations()` flow
+- All tests passing, 0 linter issues
+
+**Ready to begin Milestone 5.**

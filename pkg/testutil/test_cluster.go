@@ -152,13 +152,16 @@ func executeCoordinatedDKG(t *testing.T, cluster *TestCluster) error {
 	var wg sync.WaitGroup
 	errors := make(chan error, cluster.NumNodes)
 
-	// Start DKG on all nodes concurrently
+	// Use a coordinated session timestamp for all nodes
+	sessionTimestamp := time.Now().Unix()
+
+	// Start DKG on all nodes concurrently with same session timestamp
 	for i, n := range cluster.Nodes {
 		wg.Add(1)
 		go func(nodeIdx int, node *node.Node) {
 			defer wg.Done()
 			t.Logf("  Starting DKG on node %d (%s)", nodeIdx+1, node.GetOperatorAddress().Hex())
-			if err := node.RunDKG(); err != nil {
+			if err := node.RunDKG(sessionTimestamp); err != nil {
 				t.Logf("  ❌ Node %d DKG failed: %v", nodeIdx+1, err)
 				errors <- fmt.Errorf("node %d DKG failed: %w", nodeIdx+1, err)
 			} else {

@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"sort"
 	"sync"
 	"time"
@@ -81,12 +82,10 @@ type Node struct {
 	sessionMutex   sync.RWMutex
 
 	// Scheduling
-	dkgAt            *time.Time
-	enableAutoReshare bool
-	reshareInterval  time.Duration
-	lastReshareTime  time.Time
-	dkgTriggered     bool
-	schedulerStop    chan struct{}
+	enableAutoReshare      bool
+	reshareInterval        time.Duration
+	lastProcessedBoundary  int64
+	schedulerStop          chan struct{}
 
 	mu sync.RWMutex
 }
@@ -115,7 +114,6 @@ type Config struct {
 	ChainID         config.ChainId // Ethereum chain ID
 	AVSAddress      string         // AVS contract address (hex string)
 	OperatorSetId   uint32         // Operator set ID
-	DKGAt           *time.Time     // Optional coordinated DKG time
 	Logger          *zap.Logger    // Optional logger, will create default if nil
 }
 
@@ -157,11 +155,11 @@ func NewNode(cfg Config, pdf peering.IPeeringDataFetcher) *Node {
 		receivedCommitments: make(map[int][]types.G2Point),
 		receivedAcks:        make(map[int]map[int]*types.Acknowledgement),
 		reshareComplete:     make(map[int]*types.CompletionSignature),
-		activeSessions:      make(map[int64]*ProtocolSession),
-		dkgAt:               cfg.DKGAt,
-		enableAutoReshare:   true, // Always enabled
-		reshareInterval:     config.GetReshareIntervalForChain(cfg.ChainID),
-		schedulerStop:       make(chan struct{}),
+		activeSessions:         make(map[int64]*ProtocolSession),
+		enableAutoReshare:      true, // Always enabled
+		reshareInterval:        config.GetReshareIntervalForChain(cfg.ChainID),
+		lastProcessedBoundary:  0,
+		schedulerStop:          make(chan struct{}),
 	}
 
 	// Set node reference in server
@@ -199,48 +197,83 @@ func (n *Node) startScheduler() {
 	}()
 }
 
-// checkScheduledOperations checks for scheduled DKG or reshare operations
+// checkScheduledOperations checks for interval boundaries and executes appropriate protocol
 func (n *Node) checkScheduledOperations() {
 	now := time.Now()
 
-	// Check for scheduled DKG
-	if n.dkgAt != nil && !n.dkgTriggered && now.After(*n.dkgAt) {
-		n.dkgTriggered = true
-		n.logger.Sugar().Infow("Triggering scheduled DKG",
-			"operator_address", n.OperatorAddress.Hex(),
-			"scheduled_time", n.dkgAt)
+	// Step 1: Calculate rounded interval boundary
+	intervalSeconds := int64(n.reshareInterval.Seconds())
+	roundedTime := (now.Unix() / intervalSeconds) * intervalSeconds
 
-		go func() {
-			if err := n.RunDKG(); err != nil {
-				n.logger.Sugar().Errorw("Scheduled DKG failed",
-					"operator_address", n.OperatorAddress.Hex(),
-					"error", err)
-			}
-		}()
+	// Step 2: Check if we've already processed this boundary
+	if roundedTime == n.lastProcessedBoundary {
+		return // Already handled this interval
 	}
 
-	// Check for automatic reshare boundary
-	if n.enableAutoReshare {
-		// Calculate seconds since last reshare
-		secondsSinceLastReshare := now.Sub(n.lastReshareTime).Seconds()
-		reshareIntervalSeconds := n.reshareInterval.Seconds()
+	// Step 3: Update last processed boundary
+	n.lastProcessedBoundary = roundedTime
 
-		// Check if we're at a reshare boundary (within 1 second window)
-		if secondsSinceLastReshare >= reshareIntervalSeconds {
-			n.lastReshareTime = now
-			n.logger.Sugar().Infow("Triggering automatic reshare",
+	n.logger.Sugar().Debugw("Interval boundary reached",
+		"operator_address", n.OperatorAddress.Hex(),
+		"rounded_time", roundedTime,
+		"interval", n.reshareInterval)
+
+	// Step 4: Fetch current operators
+	ctx := context.Background()
+	operators, err := n.fetchCurrentOperators(ctx, n.AVSAddress, n.OperatorSetId)
+	if err != nil {
+		n.logger.Sugar().Errorw("Failed to fetch operators for interval check",
+			"operator_address", n.OperatorAddress.Hex(),
+			"error", err)
+		return
+	}
+
+	// Step 5: Determine if I'm a new or existing operator
+	if !n.hasExistingShares() {
+		// I'm a new operator - need to determine cluster state
+		clusterState := n.detectClusterState(operators)
+
+		if clusterState == "genesis" {
+			// No master key exists - run genesis DKG
+			n.logger.Sugar().Infow("Triggering genesis DKG at interval boundary",
 				"operator_address", n.OperatorAddress.Hex(),
-				"interval", n.reshareInterval,
-				"time_since_last", time.Duration(secondsSinceLastReshare)*time.Second)
+				"session_timestamp", roundedTime)
 
 			go func() {
-				if err := n.RunReshare(); err != nil {
-					n.logger.Sugar().Errorw("Automatic reshare failed",
+				if err := n.RunDKG(roundedTime); err != nil {
+					n.logger.Sugar().Errorw("Genesis DKG failed",
+						"operator_address", n.OperatorAddress.Hex(),
+						"error", err)
+				}
+			}()
+		} else {
+			// Existing cluster - join via reshare
+			n.logger.Sugar().Infow("Joining existing cluster via reshare",
+				"operator_address", n.OperatorAddress.Hex(),
+				"session_timestamp", roundedTime)
+
+			go func() {
+				if err := n.RunReshareAsNewOperator(roundedTime); err != nil {
+					n.logger.Sugar().Errorw("Failed to join cluster via reshare",
 						"operator_address", n.OperatorAddress.Hex(),
 						"error", err)
 				}
 			}()
 		}
+	} else {
+		// I'm an existing operator - run normal reshare
+		n.logger.Sugar().Infow("Triggering automatic reshare",
+			"operator_address", n.OperatorAddress.Hex(),
+			"session_timestamp", roundedTime,
+			"interval", n.reshareInterval)
+
+		go func() {
+			if err := n.RunReshareAsExistingOperator(roundedTime); err != nil {
+				n.logger.Sugar().Errorw("Automatic reshare failed",
+					"operator_address", n.OperatorAddress.Hex(),
+					"error", err)
+			}
+		}()
 	}
 }
 
@@ -281,10 +314,51 @@ func (n *Node) fetchCurrentOperators(ctx context.Context, avsAddress string, ope
 	return sortedPeers, nil
 }
 
-// createSession creates a new protocol session
-func (n *Node) createSession(sessionType string, operators []*peering.OperatorSetPeer) *ProtocolSession {
+// hasExistingShares returns true if this node has active key shares
+func (n *Node) hasExistingShares() bool {
+	return n.keyStore.GetActiveVersion() != nil
+}
+
+// detectClusterState queries operators to determine if genesis DKG or existing cluster
+func (n *Node) detectClusterState(operators []*peering.OperatorSetPeer) string {
+	// Query /pubkey from all operators to see if anyone has commitments
+	for _, op := range operators {
+		url := fmt.Sprintf("%s/pubkey", op.SocketAddress)
+		resp, err := http.Get(url)
+		if err != nil {
+			// Operator might be down - continue checking others
+			continue
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			continue
+		}
+
+		var response struct {
+			Commitments []types.G2Point `json:"commitments"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			continue
+		}
+
+		if len(response.Commitments) > 0 {
+			n.logger.Sugar().Infow("Detected existing cluster",
+				"operator_address", n.OperatorAddress.Hex(),
+				"peer_with_key", op.OperatorAddress.Hex())
+			return "existing"
+		}
+	}
+
+	n.logger.Sugar().Infow("No existing master key detected - genesis DKG needed",
+		"operator_address", n.OperatorAddress.Hex())
+	return "genesis"
+}
+
+// createSession creates a new protocol session with the provided timestamp
+func (n *Node) createSession(sessionType string, operators []*peering.OperatorSetPeer, sessionTimestamp int64) *ProtocolSession {
 	session := &ProtocolSession{
-		SessionTimestamp: time.Now().Unix(),
+		SessionTimestamp: sessionTimestamp, // Use provided timestamp for coordination
 		Type:             sessionType,
 		Phase:            1,
 		StartTime:        time.Now(),
@@ -295,12 +369,12 @@ func (n *Node) createSession(sessionType string, operators []*peering.OperatorSe
 	}
 
 	n.sessionMutex.Lock()
-	n.activeSessions[session.SessionTimestamp] = session
+	n.activeSessions[sessionTimestamp] = session
 	n.sessionMutex.Unlock()
 
 	n.logger.Sugar().Infow("Created protocol session",
 		"operator_address", n.OperatorAddress.Hex(),
-		"session_timestamp", session.SessionTimestamp,
+		"session_timestamp", sessionTimestamp,
 		"type", sessionType)
 
 	return session
@@ -343,10 +417,12 @@ func (n *Node) cleanupOldSessions(maxAge time.Duration) { //nolint:unused // Wil
 	}
 }
 
-// RunDKG executes the DKG protocol
-func (n *Node) RunDKG() error {
+// RunDKG executes the DKG protocol with the provided session timestamp
+func (n *Node) RunDKG(sessionTimestamp int64) error {
 	ctx := context.Background()
-	n.logger.Sugar().Infow("Starting DKG", "operator_address", n.OperatorAddress.Hex())
+	n.logger.Sugar().Infow("Starting DKG",
+		"operator_address", n.OperatorAddress.Hex(),
+		"session_timestamp", sessionTimestamp)
 
 	// Fetch current operators from peering system
 	operators, err := n.fetchCurrentOperators(ctx, n.AVSAddress, n.OperatorSetId)
@@ -354,8 +430,8 @@ func (n *Node) RunDKG() error {
 		return fmt.Errorf("failed to fetch operators: %w", err)
 	}
 
-	// Create session for this DKG run
-	session := n.createSession("dkg", operators)
+	// Create session for this DKG run with provided timestamp
+	session := n.createSession("dkg", operators, sessionTimestamp)
 	defer n.cleanupSession(session.SessionTimestamp)
 
 	// Use keccak256 hash of operator address as node ID
@@ -503,9 +579,12 @@ func (n *Node) RunDKG() error {
 }
 
 
-// RunReshare executes the reshare protocol
-func (n *Node) RunReshare() error {
+// RunReshareAsExistingOperator executes the reshare protocol as an existing operator with shares
+func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	ctx := context.Background()
+	n.logger.Sugar().Infow("Starting reshare as existing operator",
+		"operator_address", n.OperatorAddress.Hex(),
+		"session_timestamp", sessionTimestamp)
 
 	// Fetch current operators from peering system
 	operators, err := n.fetchCurrentOperators(ctx, n.AVSAddress, n.OperatorSetId)
@@ -547,8 +626,8 @@ func (n *Node) RunReshare() error {
 		return err
 	}
 
-	// Create session for this reshare run
-	session := n.createSession("reshare", operators)
+	// Create session for this reshare run with provided timestamp
+	session := n.createSession("reshare", operators, sessionTimestamp)
 	defer n.cleanupSession(session.SessionTimestamp)
 
 	// Broadcast commitments
@@ -615,6 +694,76 @@ func (n *Node) RunReshare() error {
 	n.keyStore.AddVersion(newKeyVersion)
 
 	n.logger.Sugar().Infow("Reshare completed", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "new_version", newKeyVersion.Version)
+
+	return nil
+}
+
+// RunReshareAsNewOperator executes reshare protocol as a new operator (no existing shares)
+func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
+	ctx := context.Background()
+	n.logger.Sugar().Infow("Starting reshare as new operator (joining existing cluster)",
+		"operator_address", n.OperatorAddress.Hex(),
+		"session_timestamp", sessionTimestamp)
+
+	// Fetch current operators from peering system
+	operators, err := n.fetchCurrentOperators(ctx, n.AVSAddress, n.OperatorSetId)
+	if err != nil {
+		return fmt.Errorf("failed to fetch operators: %w", err)
+	}
+
+	thisNodeID := addressToNodeID(n.OperatorAddress)
+
+	// Create reshare instance
+	n.resharer = reshare.NewReshare(thisNodeID, operators)
+
+	// Create session for this reshare (as recipient only)
+	session := n.createSession("reshare", operators, sessionTimestamp)
+	defer n.cleanupSession(session.SessionTimestamp)
+
+	// New operators DON'T generate shares - only receive from existing operators
+	n.logger.Sugar().Infow("Waiting for shares from existing operators",
+		"operator_address", n.OperatorAddress.Hex(),
+		"expected_operators", len(operators))
+
+	// Wait for shares and commitments from existing operators
+	if err := n.waitForSharesWithRetry(len(operators), 60*time.Second); err != nil {
+		return fmt.Errorf("failed to receive shares: %w", err)
+	}
+	if err := n.waitForCommitmentsWithRetry(len(operators), 60*time.Second); err != nil {
+		return fmt.Errorf("failed to receive commitments: %w", err)
+	}
+
+	// Collect all commitments and participant IDs
+	n.mu.RLock()
+	allCommitments := make([][]types.G2Point, 0, len(n.receivedCommitments))
+	participantIDs := make([]int, 0, len(n.receivedCommitments))
+
+	for _, op := range operators {
+		opNodeID := addressToNodeID(op.OperatorAddress)
+		if comm, ok := n.receivedCommitments[opNodeID]; ok {
+			allCommitments = append(allCommitments, comm)
+			participantIDs = append(participantIDs, opNodeID)
+		}
+	}
+
+	receivedShares := make(map[int]*fr.Element)
+	for k, v := range n.receivedShares {
+		receivedShares[k] = v
+	}
+	n.mu.RUnlock()
+
+	// Compute new key share using Lagrange interpolation
+	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDs, receivedShares, allCommitments)
+	newKeyVersion.Version = sessionTimestamp // Use session timestamp as version
+	newKeyVersion.IsActive = true // First key version becomes active immediately
+
+	// Add new version to keystore
+	n.keyStore.AddVersion(newKeyVersion)
+
+	n.logger.Sugar().Infow("Successfully joined cluster via reshare",
+		"operator_address", n.OperatorAddress.Hex(),
+		"node_id", thisNodeID,
+		"version", newKeyVersion.Version)
 
 	return nil
 }
