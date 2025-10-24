@@ -57,6 +57,29 @@ func buildRequestURL(socketAddress, path string) string {
 	return fmt.Sprintf("%s%s", socketAddress, path)
 }
 
+// QueryOperatorPubkey queries an operator's /pubkey endpoint for commitments
+func (c *Client) QueryOperatorPubkey(operator *peering.OperatorSetPeer) ([]types.G2Point, error) {
+	url := buildRequestURL(operator.SocketAddress, "/pubkey")
+	resp, err := http.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to contact operator: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("operator returned status %d", resp.StatusCode)
+	}
+
+	var response struct {
+		Commitments []types.G2Point `json:"commitments"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+
+	return response.Commitments, nil
+}
+
 // SendDKGShare sends an authenticated DKG share to another node with retries
 func (c *Client) SendDKGShare(toOperator *peering.OperatorSetPeer, share *fr.Element, sessionTimestamp int64) error {
 	msg := types.ShareMessage{

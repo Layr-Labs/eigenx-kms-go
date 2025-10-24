@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"sort"
 	"sync"
 	"time"
@@ -323,26 +322,17 @@ func (n *Node) hasExistingShares() bool {
 func (n *Node) detectClusterState(operators []*peering.OperatorSetPeer) string {
 	// Query /pubkey from all operators to see if anyone has commitments
 	for _, op := range operators {
-		url := fmt.Sprintf("%s/pubkey", op.SocketAddress)
-		resp, err := http.Get(url)
+		commitments, err := n.transport.QueryOperatorPubkey(op)
 		if err != nil {
 			// Operator might be down - continue checking others
-			continue
-		}
-		defer func() { _ = resp.Body.Close() }()
-
-		if resp.StatusCode != http.StatusOK {
-			continue
-		}
-
-		var response struct {
-			Commitments []types.G2Point `json:"commitments"`
-		}
-		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			n.logger.Sugar().Debugw("Failed to query operator pubkey",
+				"operator_address", n.OperatorAddress.Hex(),
+				"peer", op.OperatorAddress.Hex(),
+				"error", err)
 			continue
 		}
 
-		if len(response.Commitments) > 0 {
+		if len(commitments) > 0 {
 			n.logger.Sugar().Infow("Detected existing cluster",
 				"operator_address", n.OperatorAddress.Hex(),
 				"peer_with_key", op.OperatorAddress.Hex())
