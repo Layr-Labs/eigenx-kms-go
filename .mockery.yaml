@@ -1,0 +1,8 @@
+dir: "{{.InterfaceDir}}"
+inpackage: true
+filename: "mock_{{.InterfaceName}}.go"
+recursive: true
+packages:
+  github.com/Layr-Labs/eigenx-kms-go:
+    config:
+      all: true

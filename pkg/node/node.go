@@ -1,0 +1,1029 @@
+package node
+
+import (
+	"bytes"
+	"context"
+	"encoding/binary"
+	"encoding/json"
+	"fmt"
+	"sort"
+	"sync"
+	"time"
+
+	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
+	"go.uber.org/zap"
+
+	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
+	eigenxcrypto "github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/keystore"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/registry"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/reshare"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/transport"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+)
+
+// addressToNodeID converts an Ethereum address to a node ID using keccak256 hash
+// Equivalent to: uint64(uint256(keccak256(abi.encodePacked(address))))
+func addressToNodeID(address common.Address) int {
+	hash := crypto.Keccak256(address.Bytes())
+	// Take first 8 bytes of hash as uint64, then convert to int
+	nodeID := int(common.BytesToHash(hash).Big().Uint64())
+	return nodeID
+}
+
+const (
+	// ReshareFrequency is the frequency of resharing in seconds
+	ReshareFrequency = 10 * 60 // 10 minutes
+	// ReshareTimeout is the timeout for reshare operations
+	ReshareTimeout = 2 * 60 // 2 minutes
+)
+
+// Node represents a KMS node
+type Node struct {
+	// Identity
+	OperatorAddress common.Address // Ethereum address of this operator
+	Port            int
+	BN254PrivateKey *bn254.PrivateKey // BN254 private key for threshold crypto and P2P
+	ChainID         config.ChainId    // Ethereum chain ID
+	AVSAddress      string            // AVS contract address
+	OperatorSetId   uint32            // Operator set ID
+
+	// Dependencies
+	keyStore            *keystore.KeyStore
+	transport           *transport.Client
+	server              *Server
+	attestationVerifier attestation.Verifier
+	releaseRegistry     registry.Client
+	rsaEncryption       *encryption.RSAEncryption
+	peeringDataFetcher  peering.IPeeringDataFetcher
+	logger              *zap.Logger
+
+	// Dynamic components (created when needed)
+	dkg      *dkg.DKG
+	resharer *reshare.Reshare
+
+	// State management
+	receivedShares      map[int]*fr.Element
+	receivedCommitments map[int][]types.G2Point
+	receivedAcks        map[int]map[int]*types.Acknowledgement
+	reshareComplete     map[int]*types.CompletionSignature
+
+	// Session management
+	activeSessions map[int64]*ProtocolSession
+	sessionMutex   sync.RWMutex
+
+	// Scheduling
+	enableAutoReshare      bool
+	reshareInterval        time.Duration
+	lastProcessedBoundary  int64
+	cancelFunc             context.CancelFunc
+
+	mu sync.RWMutex
+}
+
+// ProtocolSession tracks state for a DKG or reshare session
+type ProtocolSession struct {
+	SessionTimestamp int64
+	Type             string // "dkg" or "reshare"
+	Phase            int    // 1, 2, 3
+	StartTime        time.Time
+	Operators        []*peering.OperatorSetPeer
+
+	// Session-specific state
+	shares      map[int]*fr.Element
+	commitments map[int][]types.G2Point
+	acks        map[int]map[int]*types.Acknowledgement
+
+	mu sync.RWMutex
+}
+
+// Config holds node configuration
+type Config struct {
+	OperatorAddress string         // Ethereum address of the operator (hex string)
+	Port            int
+	BN254PrivateKey string         // BN254 private key (hex string)
+	ChainID         config.ChainId // Ethereum chain ID
+	AVSAddress      string         // AVS contract address (hex string)
+	OperatorSetId   uint32         // Operator set ID
+	Logger          *zap.Logger    // Optional logger, will create default if nil
+}
+
+// NewNode creates a new node instance with dependency injection
+func NewNode(cfg Config, pdf peering.IPeeringDataFetcher) *Node {
+	// Create logger if not provided
+	nodeLogger := cfg.Logger
+	if nodeLogger == nil {
+		nodeLogger, _ = logger.NewLogger(&logger.LoggerConfig{Debug: false})
+	}
+
+	// Parse operator address
+	operatorAddress := common.HexToAddress(cfg.OperatorAddress)
+
+	// Parse BN254 private key
+	bn254PrivKey, err := bn254.NewPrivateKeyFromHexString(cfg.BN254PrivateKey)
+	if err != nil {
+		nodeLogger.Sugar().Fatalw("Invalid BN254 private key", "error", err)
+	}
+
+	// Use operator address hash as transport client ID (for consistency)
+	transportClientID := addressToNodeID(operatorAddress)
+
+	n := &Node{
+		OperatorAddress:     operatorAddress,
+		Port:                cfg.Port,
+		BN254PrivateKey:     bn254PrivKey,
+		ChainID:             cfg.ChainID,
+		AVSAddress:          cfg.AVSAddress,
+		OperatorSetId:       cfg.OperatorSetId,
+		keyStore:            keystore.NewKeyStore(),
+		server:              NewServer(nil, cfg.Port), // Will set node reference later
+		attestationVerifier: attestation.NewStubVerifier(),
+		releaseRegistry:     registry.NewStubClient(),
+		rsaEncryption:       encryption.NewRSAEncryption(),
+		peeringDataFetcher:  pdf,
+		logger:              nodeLogger,
+		receivedShares:      make(map[int]*fr.Element),
+		receivedCommitments: make(map[int][]types.G2Point),
+		receivedAcks:        make(map[int]map[int]*types.Acknowledgement),
+		reshareComplete:     make(map[int]*types.CompletionSignature),
+		activeSessions:         make(map[int64]*ProtocolSession),
+		enableAutoReshare:      true, // Always enabled
+		reshareInterval:        config.GetReshareIntervalForChain(cfg.ChainID),
+		lastProcessedBoundary:  0,
+	}
+
+	// Set node reference in server
+	n.server.node = n
+
+	// Initialize transport with authenticated messaging
+	n.transport = transport.NewClient(transportClientID, operatorAddress, n)
+
+	return n
+}
+
+// startScheduler starts the automatic protocol scheduler with context
+func (n *Node) startScheduler(ctx context.Context) {
+	go func() {
+		ticker := time.NewTicker(500 * time.Millisecond)
+		defer ticker.Stop()
+
+		n.logger.Sugar().Infow("Protocol scheduler started",
+			"operator_address", n.OperatorAddress.Hex(),
+			"auto_reshare", n.enableAutoReshare,
+			"reshare_interval", n.reshareInterval)
+
+		for {
+			select {
+			case <-ticker.C:
+				n.checkScheduledOperations()
+			case <-ctx.Done():
+				n.logger.Sugar().Infow("Protocol scheduler stopped", "operator_address", n.OperatorAddress.Hex())
+				return
+			}
+		}
+	}()
+}
+
+// checkScheduledOperations checks for interval boundaries and executes appropriate protocol
+func (n *Node) checkScheduledOperations() {
+	now := time.Now()
+
+	// Step 1: Calculate rounded interval boundary
+	intervalSeconds := int64(n.reshareInterval.Seconds())
+	roundedTime := (now.Unix() / intervalSeconds) * intervalSeconds
+
+	// Step 2: Initialize lastProcessedBoundary on first run
+	if n.lastProcessedBoundary == 0 {
+		n.lastProcessedBoundary = roundedTime
+		n.logger.Sugar().Debugw("Initialized interval boundary tracking",
+			"operator_address", n.OperatorAddress.Hex(),
+			"rounded_time", roundedTime)
+		return // Don't trigger on first tick
+	}
+
+	// Step 3: Check if we've already processed this boundary
+	if roundedTime == n.lastProcessedBoundary {
+		return // Already handled this interval
+	}
+
+	// Step 4: Update last processed boundary
+	n.lastProcessedBoundary = roundedTime
+
+	n.logger.Sugar().Debugw("Interval boundary reached",
+		"operator_address", n.OperatorAddress.Hex(),
+		"rounded_time", roundedTime,
+		"interval", n.reshareInterval)
+
+	// Step 4: Fetch current operators
+	ctx := context.Background()
+	operators, err := n.fetchCurrentOperators(ctx, n.AVSAddress, n.OperatorSetId)
+	if err != nil {
+		n.logger.Sugar().Errorw("Failed to fetch operators for interval check",
+			"operator_address", n.OperatorAddress.Hex(),
+			"error", err)
+		return
+	}
+
+	// Step 5: Determine if I'm a new or existing operator
+	if !n.hasExistingShares() {
+		// I'm a new operator - need to determine cluster state
+		clusterState := n.detectClusterState(operators)
+
+		if clusterState == "genesis" {
+			// No master key exists - run genesis DKG
+			n.logger.Sugar().Infow("Triggering genesis DKG at interval boundary",
+				"operator_address", n.OperatorAddress.Hex(),
+				"session_timestamp", roundedTime)
+
+			go func() {
+				if err := n.RunDKG(roundedTime); err != nil {
+					n.logger.Sugar().Errorw("Genesis DKG failed",
+						"operator_address", n.OperatorAddress.Hex(),
+						"error", err)
+				}
+			}()
+		} else {
+			// Existing cluster - join via reshare
+			n.logger.Sugar().Infow("Joining existing cluster via reshare",
+				"operator_address", n.OperatorAddress.Hex(),
+				"session_timestamp", roundedTime)
+
+			go func() {
+				if err := n.RunReshareAsNewOperator(roundedTime); err != nil {
+					n.logger.Sugar().Errorw("Failed to join cluster via reshare",
+						"operator_address", n.OperatorAddress.Hex(),
+						"error", err)
+				}
+			}()
+		}
+	} else {
+		// I'm an existing operator - run normal reshare
+		n.logger.Sugar().Infow("Triggering automatic reshare",
+			"operator_address", n.OperatorAddress.Hex(),
+			"session_timestamp", roundedTime,
+			"interval", n.reshareInterval)
+
+		go func() {
+			if err := n.RunReshareAsExistingOperator(roundedTime); err != nil {
+				n.logger.Sugar().Errorw("Automatic reshare failed",
+					"operator_address", n.OperatorAddress.Hex(),
+					"error", err)
+			}
+		}()
+	}
+}
+
+// Start starts the node's HTTP server and scheduler
+func (n *Node) Start() error {
+	// Create context for managing server and scheduler lifecycle
+	ctx, cancel := context.WithCancel(context.Background())
+	n.cancelFunc = cancel
+
+	// Start scheduler in goroutine
+	n.startScheduler(ctx)
+
+	// Start HTTP server in goroutine
+	go func() {
+		if err := n.server.Start(); err != nil {
+			n.logger.Sugar().Errorw("HTTP server error", "operator_address", n.OperatorAddress.Hex(), "error", err)
+		}
+	}()
+
+	n.logger.Sugar().Infow("Node started", "operator_address", n.OperatorAddress.Hex(), "port", n.Port)
+	return nil
+}
+
+// Stop stops the node's HTTP server and scheduler
+func (n *Node) Stop() error {
+	// Cancel context to stop scheduler and any ongoing operations
+	if n.cancelFunc != nil {
+		n.cancelFunc()
+	}
+
+	// Stop HTTP server
+	return n.server.Stop()
+}
+
+// fetchCurrentOperators fetches the current operator set from the peering system
+func (n *Node) fetchCurrentOperators(ctx context.Context, avsAddress string, operatorSetId uint32) ([]*peering.OperatorSetPeer, error) {
+	operatorSetPeers, err := n.peeringDataFetcher.ListKMSOperators(ctx, avsAddress, operatorSetId)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch operators from peering system: %w", err)
+	}
+
+	// Sort peers by address for consistent ordering
+	sortedPeers := make([]*peering.OperatorSetPeer, len(operatorSetPeers.Peers))
+	copy(sortedPeers, operatorSetPeers.Peers)
+	sort.Slice(sortedPeers, func(i, j int) bool {
+		return sortedPeers[i].OperatorAddress.Hex() < sortedPeers[j].OperatorAddress.Hex()
+	})
+
+	n.logger.Sugar().Infow("Fetched operators from chain", "operator_address", n.OperatorAddress.Hex(), "count", len(sortedPeers))
+	return sortedPeers, nil
+}
+
+// hasExistingShares returns true if this node has active key shares
+func (n *Node) hasExistingShares() bool {
+	return n.keyStore.GetActiveVersion() != nil
+}
+
+// detectClusterState queries operators to determine if genesis DKG or existing cluster
+func (n *Node) detectClusterState(operators []*peering.OperatorSetPeer) string {
+	// Query /pubkey from all operators to see if anyone has commitments
+	for _, op := range operators {
+		commitments, err := n.transport.QueryOperatorPubkey(op)
+		if err != nil {
+			// Operator might be down - continue checking others
+			n.logger.Sugar().Debugw("Failed to query operator pubkey",
+				"operator_address", n.OperatorAddress.Hex(),
+				"peer", op.OperatorAddress.Hex(),
+				"error", err)
+			continue
+		}
+
+		if len(commitments) > 0 {
+			n.logger.Sugar().Infow("Detected existing cluster",
+				"operator_address", n.OperatorAddress.Hex(),
+				"peer_with_key", op.OperatorAddress.Hex())
+			return "existing"
+		}
+	}
+
+	n.logger.Sugar().Infow("No existing master key detected - genesis DKG needed",
+		"operator_address", n.OperatorAddress.Hex())
+	return "genesis"
+}
+
+// createSession creates a new protocol session with the provided timestamp
+func (n *Node) createSession(sessionType string, operators []*peering.OperatorSetPeer, sessionTimestamp int64) *ProtocolSession {
+	session := &ProtocolSession{
+		SessionTimestamp: sessionTimestamp, // Use provided timestamp for coordination
+		Type:             sessionType,
+		Phase:            1,
+		StartTime:        time.Now(),
+		Operators:        operators,
+		shares:           make(map[int]*fr.Element),
+		commitments:      make(map[int][]types.G2Point),
+		acks:             make(map[int]map[int]*types.Acknowledgement),
+	}
+
+	n.sessionMutex.Lock()
+	n.activeSessions[sessionTimestamp] = session
+	n.sessionMutex.Unlock()
+
+	n.logger.Sugar().Infow("Created protocol session",
+		"operator_address", n.OperatorAddress.Hex(),
+		"session_timestamp", sessionTimestamp,
+		"type", sessionType)
+
+	return session
+}
+
+// getSession retrieves a session by timestamp
+func (n *Node) getSession(sessionTimestamp int64) *ProtocolSession {
+	n.sessionMutex.RLock()
+	defer n.sessionMutex.RUnlock()
+	return n.activeSessions[sessionTimestamp]
+}
+
+// cleanupSession removes a completed or failed session
+func (n *Node) cleanupSession(sessionTimestamp int64) {
+	n.sessionMutex.Lock()
+	delete(n.activeSessions, sessionTimestamp)
+	n.sessionMutex.Unlock()
+
+	n.logger.Sugar().Debugw("Cleaned up session",
+		"operator_address", n.OperatorAddress.Hex(),
+		"session_timestamp", sessionTimestamp)
+}
+
+// cleanupOldSessions removes sessions older than the specified duration
+// This will be called by the automatic scheduler in Milestone 3
+func (n *Node) cleanupOldSessions(maxAge time.Duration) { //nolint:unused // Will be used by scheduler in Milestone 3
+	n.sessionMutex.Lock()
+	defer n.sessionMutex.Unlock()
+
+	now := time.Now()
+	for timestamp, session := range n.activeSessions {
+		if now.Sub(session.StartTime) > maxAge {
+			delete(n.activeSessions, timestamp)
+			n.logger.Sugar().Warnw("Cleaned up expired session",
+				"operator_address", n.OperatorAddress.Hex(),
+				"session_timestamp", timestamp,
+				"type", session.Type,
+				"age", now.Sub(session.StartTime))
+		}
+	}
+}
+
+// RunDKG executes the DKG protocol with the provided session timestamp
+func (n *Node) RunDKG(sessionTimestamp int64) error {
+	ctx := context.Background()
+	n.logger.Sugar().Infow("Starting DKG",
+		"operator_address", n.OperatorAddress.Hex(),
+		"session_timestamp", sessionTimestamp)
+
+	// Fetch current operators from peering system
+	operators, err := n.fetchCurrentOperators(ctx, n.AVSAddress, n.OperatorSetId)
+	if err != nil {
+		return fmt.Errorf("failed to fetch operators: %w", err)
+	}
+
+	// Create session for this DKG run with provided timestamp
+	session := n.createSession("dkg", operators, sessionTimestamp)
+	defer n.cleanupSession(session.SessionTimestamp)
+
+	// Use keccak256 hash of operator address as node ID
+	thisNodeID := addressToNodeID(n.OperatorAddress)
+
+	// Verify this operator is in the fetched operator set
+	operatorFound := false
+	for _, op := range operators {
+		if op.OperatorAddress == n.OperatorAddress {
+			operatorFound = true
+			break
+		}
+	}
+	if !operatorFound {
+		return fmt.Errorf("this operator %s (ID: %d) not found in operator set", n.OperatorAddress.Hex(), thisNodeID)
+	}
+
+	// Create DKG instance using address-derived ID
+	threshold := dkg.CalculateThreshold(len(operators))
+	n.dkg = dkg.NewDKG(thisNodeID, threshold, operators)
+
+	n.logger.Sugar().Infow("Starting DKG Phase 1", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "threshold", threshold, "total_operators", len(operators))
+
+	// Phase 1: Generate shares and commitments
+	shares, commitments, err := n.dkg.GenerateShares()
+	if err != nil {
+		return err
+	}
+
+	// Broadcast commitments
+	if err := n.transport.BroadcastDKGCommitments(operators, commitments, session.SessionTimestamp); err != nil {
+		n.logger.Sugar().Errorw("Failed to broadcast commitments", "operator_address", n.OperatorAddress.Hex(), "error", err)
+		// Continue anyway - other nodes may have received
+	}
+
+	// Send shares to each participant
+	for _, op := range operators {
+		opNodeID := addressToNodeID(op.OperatorAddress)
+		if opNodeID == thisNodeID {
+			n.mu.Lock()
+			n.receivedShares[thisNodeID] = shares[thisNodeID]
+			n.receivedCommitments[thisNodeID] = commitments
+			n.mu.Unlock()
+			continue
+		}
+		if err := n.transport.SendDKGShare(op, shares[opNodeID], session.SessionTimestamp); err != nil {
+			n.logger.Sugar().Warnw("Failed to send share to operator",
+				"operator_address", n.OperatorAddress.Hex(),
+				"target", op.OperatorAddress.Hex(),
+				"error", err)
+			// Continue with other operators
+		}
+	}
+
+	// Wait for all shares and commitments (timeout must be less than interval)
+	if err := n.waitForSharesWithRetry(len(operators), 15*time.Second); err != nil {
+		return err
+	}
+	if err := n.waitForCommitmentsWithRetry(len(operators), 15*time.Second); err != nil {
+		return err
+	}
+
+	// Phase 2: Verify and send acknowledgements
+	n.logger.Sugar().Infow("Starting DKG Phase 2", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "phase", "verify_and_ack")
+
+	n.mu.RLock()
+	receivedShares := make(map[int]*fr.Element)
+	for k, v := range n.receivedShares {
+		receivedShares[k] = v
+	}
+	receivedCommitments := make(map[int][]types.G2Point)
+	for k, v := range n.receivedCommitments {
+		receivedCommitments[k] = v
+	}
+	n.mu.RUnlock()
+
+	validShares := make(map[int]*fr.Element)
+	for dealerID, share := range receivedShares {
+		commitments := receivedCommitments[dealerID]
+		if n.dkg.VerifyShare(dealerID, share, commitments) {
+			validShares[dealerID] = share
+
+			// Create acknowledgement for verified share
+			ack := dkg.CreateAcknowledgement(thisNodeID, dealerID, commitments, n.signAcknowledgement)
+			
+			// Find dealer's peer info for transport
+			var dealerPeer *peering.OperatorSetPeer
+			for _, op := range operators {
+				if addressToNodeID(op.OperatorAddress) == dealerID {
+					dealerPeer = op
+					break
+				}
+			}
+			
+			if dealerPeer != nil {
+				// Send acknowledgement to dealer
+				err := n.transport.SendDKGAcknowledgement(ack, dealerPeer, session.SessionTimestamp)
+				if err != nil {
+					n.logger.Sugar().Warnw("Failed to send acknowledgement", 
+						"operator_address", n.OperatorAddress.Hex(), 
+						"dealer_address", dealerPeer.OperatorAddress.Hex(), 
+						"error", err)
+				} else {
+					n.logger.Sugar().Debugw("Sent acknowledgement", 
+						"operator_address", n.OperatorAddress.Hex(), 
+						"dealer_address", dealerPeer.OperatorAddress.Hex(),
+						"dealer_id", dealerID)
+				}
+			}
+
+			n.logger.Sugar().Infow("Verified and acked share", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "dealer_id", dealerID)
+		} else {
+			n.logger.Sugar().Warnw("Invalid share received", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "dealer_id", dealerID)
+		}
+	}
+
+	n.mu.Lock()
+	n.receivedShares = validShares
+	n.mu.Unlock()
+
+	// Wait for acknowledgements (as a dealer) - need ALL operators for DKG
+	if err := n.waitForAcknowledgements(len(operators), 15*time.Second); err != nil {
+		return fmt.Errorf("insufficient acknowledgements: %v", err)
+	}
+
+	// Phase 3: Finalize
+	n.logger.Sugar().Infow("Starting DKG Phase 3", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "phase", "finalization")
+
+	allCommitments := make([][]types.G2Point, 0, len(receivedCommitments))
+	participantIDs := make([]int, 0, len(receivedCommitments))
+
+	for _, op := range operators {
+		opNodeID := addressToNodeID(op.OperatorAddress)
+		if comm, ok := receivedCommitments[opNodeID]; ok {
+			allCommitments = append(allCommitments, comm)
+			participantIDs = append(participantIDs, opNodeID)
+		}
+	}
+
+	keyVersion := n.dkg.FinalizeKeyShare(n.receivedShares, allCommitments, participantIDs)
+	keyVersion.Version = session.SessionTimestamp // Use session timestamp as version
+	n.keyStore.AddVersion(keyVersion)
+
+	n.logger.Sugar().Infow("DKG complete",
+		"operator_address", n.OperatorAddress.Hex(),
+		"node_id", thisNodeID,
+		"version", keyVersion.Version)
+	return nil
+}
+
+
+// RunReshareAsExistingOperator executes the reshare protocol as an existing operator with shares
+func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
+	ctx := context.Background()
+	n.logger.Sugar().Infow("Starting reshare as existing operator",
+		"operator_address", n.OperatorAddress.Hex(),
+		"session_timestamp", sessionTimestamp)
+
+	// Fetch current operators from peering system
+	operators, err := n.fetchCurrentOperators(ctx, n.AVSAddress, n.OperatorSetId)
+	if err != nil {
+		return fmt.Errorf("failed to fetch operators for reshare: %w", err)
+	}
+
+	// Use keccak256 hash of operator address as node ID (same as DKG)
+	thisNodeID := addressToNodeID(n.OperatorAddress)
+
+	// Verify this operator is in the fetched operator set
+	operatorFound := false
+	for _, op := range operators {
+		if op.OperatorAddress == n.OperatorAddress {
+			operatorFound = true
+			break
+		}
+	}
+	if !operatorFound {
+		return fmt.Errorf("this operator %s (ID: %d) not found in reshare operator set", n.OperatorAddress.Hex(), thisNodeID)
+	}
+
+	// Calculate new threshold
+	newThreshold := dkg.CalculateThreshold(len(operators))
+	n.logger.Sugar().Infow("Starting reshare", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "threshold", newThreshold, "operators", len(operators))
+
+	// Create reshare instance with current operators
+	n.resharer = reshare.NewReshare(thisNodeID, operators)
+
+	// Get current share
+	currentShare, err := n.keyStore.GetActivePrivateShare()
+	if err != nil {
+		return err
+	}
+
+	// Phase 1: Generate new shares
+	shares, commitments, err := n.resharer.GenerateNewShares(currentShare, newThreshold)
+	if err != nil {
+		return err
+	}
+
+	// Create session for this reshare run with provided timestamp
+	session := n.createSession("reshare", operators, sessionTimestamp)
+	defer n.cleanupSession(session.SessionTimestamp)
+
+	// Broadcast commitments
+	if err := n.transport.BroadcastReshareCommitments(operators, commitments, session.SessionTimestamp); err != nil {
+		n.logger.Sugar().Errorw("Failed to broadcast reshare commitments", "operator_address", n.OperatorAddress.Hex(), "error", err)
+		// Continue anyway - other nodes may have received
+	}
+
+	// Send shares to all operators
+	for _, op := range operators {
+		opNodeID := addressToNodeID(op.OperatorAddress)
+		if opNodeID == thisNodeID {
+			n.mu.Lock()
+			n.receivedShares[thisNodeID] = shares[opNodeID]
+			n.receivedCommitments[thisNodeID] = commitments
+			n.mu.Unlock()
+			continue
+		}
+		if err := n.transport.SendReshareShare(op, shares[opNodeID], session.SessionTimestamp); err != nil {
+			n.logger.Sugar().Warnw("Failed to send reshare share to operator",
+				"operator_address", n.OperatorAddress.Hex(),
+				"target", op.OperatorAddress.Hex(),
+				"error", err)
+			// Continue with other operators
+		}
+	}
+
+	// Wait for shares and commitments (timeout must be less than interval)
+	if err := n.waitForSharesWithRetry(len(operators), 15*time.Second); err != nil {
+		return err
+	}
+	if err := n.waitForCommitmentsWithRetry(len(operators), 15*time.Second); err != nil {
+		return err
+	}
+
+	// Phase 2: Finalize reshare
+	n.logger.Sugar().Infow("Starting Reshare Finalization", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID)
+
+	// Collect all commitments and participant IDs
+	n.mu.RLock()
+	allCommitments := make([][]types.G2Point, 0, len(n.receivedCommitments))
+	participantIDs := make([]int, 0, len(n.receivedCommitments))
+	
+	for _, op := range operators {
+		opNodeID := addressToNodeID(op.OperatorAddress)
+		if comm, ok := n.receivedCommitments[opNodeID]; ok {
+			allCommitments = append(allCommitments, comm)
+			participantIDs = append(participantIDs, opNodeID)
+		}
+	}
+	
+	receivedShares := make(map[int]*fr.Element)
+	for k, v := range n.receivedShares {
+		receivedShares[k] = v
+	}
+	n.mu.RUnlock()
+
+	// Compute new key share using Lagrange interpolation
+	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDs, receivedShares, allCommitments)
+	newKeyVersion.Version = sessionTimestamp // Use session timestamp as version
+	newKeyVersion.IsActive = true // Activate immediately (all operators must participate)
+
+	// Add new version to keystore
+	n.keyStore.AddVersion(newKeyVersion)
+
+	n.logger.Sugar().Infow("Reshare completed", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "new_version", newKeyVersion.Version)
+
+	return nil
+}
+
+// RunReshareAsNewOperator executes reshare protocol as a new operator (no existing shares)
+func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
+	ctx := context.Background()
+	n.logger.Sugar().Infow("Starting reshare as new operator (joining existing cluster)",
+		"operator_address", n.OperatorAddress.Hex(),
+		"session_timestamp", sessionTimestamp)
+
+	// Fetch current operators from peering system
+	operators, err := n.fetchCurrentOperators(ctx, n.AVSAddress, n.OperatorSetId)
+	if err != nil {
+		return fmt.Errorf("failed to fetch operators: %w", err)
+	}
+
+	thisNodeID := addressToNodeID(n.OperatorAddress)
+
+	// Create reshare instance
+	n.resharer = reshare.NewReshare(thisNodeID, operators)
+
+	// Create session for this reshare (as recipient only)
+	session := n.createSession("reshare", operators, sessionTimestamp)
+	defer n.cleanupSession(session.SessionTimestamp)
+
+	// New operators DON'T generate shares - only receive from existing operators
+	n.logger.Sugar().Infow("Waiting for shares from existing operators",
+		"operator_address", n.OperatorAddress.Hex(),
+		"expected_operators", len(operators))
+
+	// Wait for shares and commitments from existing operators
+	if err := n.waitForSharesWithRetry(len(operators), 15*time.Second); err != nil {
+		return fmt.Errorf("failed to receive shares: %w", err)
+	}
+	if err := n.waitForCommitmentsWithRetry(len(operators), 15*time.Second); err != nil {
+		return fmt.Errorf("failed to receive commitments: %w", err)
+	}
+
+	// Collect all commitments and participant IDs
+	n.mu.RLock()
+	allCommitments := make([][]types.G2Point, 0, len(n.receivedCommitments))
+	participantIDs := make([]int, 0, len(n.receivedCommitments))
+
+	for _, op := range operators {
+		opNodeID := addressToNodeID(op.OperatorAddress)
+		if comm, ok := n.receivedCommitments[opNodeID]; ok {
+			allCommitments = append(allCommitments, comm)
+			participantIDs = append(participantIDs, opNodeID)
+		}
+	}
+
+	receivedShares := make(map[int]*fr.Element)
+	for k, v := range n.receivedShares {
+		receivedShares[k] = v
+	}
+	n.mu.RUnlock()
+
+	// Compute new key share using Lagrange interpolation
+	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDs, receivedShares, allCommitments)
+	newKeyVersion.Version = sessionTimestamp // Use session timestamp as version
+	newKeyVersion.IsActive = true // First key version becomes active immediately
+
+	// Add new version to keystore
+	n.keyStore.AddVersion(newKeyVersion)
+
+	n.logger.Sugar().Infow("Successfully joined cluster via reshare",
+		"operator_address", n.OperatorAddress.Hex(),
+		"node_id", thisNodeID,
+		"version", newKeyVersion.Version)
+
+	return nil
+}
+
+// SignAppID signs an application ID
+func (n *Node) SignAppID(appID string, attestationTime int64) types.G1Point {
+	keyVersion := n.keyStore.GetKeyVersionAtTime(attestationTime, ReshareFrequency)
+	if keyVersion == nil {
+		keyVersion = n.keyStore.GetActiveVersion()
+	}
+
+	if keyVersion == nil || keyVersion.PrivateShare == nil {
+		return types.G1Point{}
+	}
+
+	privateShare := new(fr.Element).Set(keyVersion.PrivateShare)
+	qID := eigenxcrypto.HashToG1(appID)
+	partialSig := eigenxcrypto.ScalarMulG1(qID, privateShare)
+	return partialSig
+}
+
+// Wait functions
+
+func (n *Node) waitForSharesWithRetry(expectedCount int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	checkInterval := 200 * time.Millisecond
+
+	for time.Now().Before(deadline) {
+		n.mu.RLock()
+		received := len(n.receivedShares)
+		n.mu.RUnlock()
+
+		if received >= expectedCount {
+			return nil
+		}
+
+		time.Sleep(checkInterval)
+	}
+
+	n.mu.RLock()
+	received := len(n.receivedShares)
+	n.mu.RUnlock()
+
+	return fmt.Errorf("timeout: got %d shares, expected %d", received, expectedCount)
+}
+
+func (n *Node) waitForCommitmentsWithRetry(expectedCount int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	checkInterval := 200 * time.Millisecond
+
+	for time.Now().Before(deadline) {
+		n.mu.RLock()
+		received := len(n.receivedCommitments)
+		n.mu.RUnlock()
+
+		if received >= expectedCount {
+			return nil
+		}
+
+		time.Sleep(checkInterval)
+	}
+
+	n.mu.RLock()
+	received := len(n.receivedCommitments)
+	n.mu.RUnlock()
+
+	return fmt.Errorf("timeout: got %d commitments, expected %d", received, expectedCount)
+}
+
+func (n *Node) waitForAcknowledgements(threshold int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	checkInterval := 200 * time.Millisecond
+	thisNodeID := addressToNodeID(n.OperatorAddress)
+
+	for time.Now().Before(deadline) {
+		n.mu.RLock()
+		// receivedAcks is keyed by dealer ID, we are the dealer waiting for acks
+		acks := n.receivedAcks[thisNodeID]
+		count := 0
+		if acks != nil {
+			count = len(acks)
+		}
+		n.mu.RUnlock()
+
+		if count >= threshold {
+			n.logger.Sugar().Infow("Received sufficient acknowledgements", 
+				"operator_address", n.OperatorAddress.Hex(), 
+				"received", count, 
+				"threshold", threshold)
+			return nil
+		}
+
+		time.Sleep(checkInterval)
+	}
+
+	n.mu.RLock()
+	acks := n.receivedAcks[thisNodeID]
+	count := 0
+	if acks != nil {
+		count = len(acks)
+	}
+	n.mu.RUnlock()
+
+	return fmt.Errorf("timeout waiting for acknowledgements: got %d acks, expected %d", count, threshold)
+}
+
+// Helper methods for testing
+
+// GetOperatorAddress returns the operator's address
+func (n *Node) GetOperatorAddress() common.Address {
+	return n.OperatorAddress
+}
+
+// GetReleaseRegistry returns the release registry client (for testing)
+func (n *Node) GetReleaseRegistry() registry.Client {
+	return n.releaseRegistry
+}
+
+// GetKeyStore returns the keystore (for testing)
+func (n *Node) GetKeyStore() *keystore.KeyStore {
+	return n.keyStore
+}
+
+// RunDKGPhase1 runs only phase 1 of DKG (for testing)
+func (n *Node) RunDKGPhase1() (map[int]*fr.Element, []types.G2Point, error) {
+	return n.dkg.GenerateShares()
+}
+
+// ReceiveShare receives a share from another node (for testing)
+func (n *Node) ReceiveShare(fromID int, share *fr.Element, commitments []types.G2Point) error {
+	n.mu.Lock()
+	n.receivedShares[fromID] = share
+	n.receivedCommitments[fromID] = commitments
+	n.mu.Unlock()
+
+	// Verify the share
+	if n.dkg.VerifyShare(fromID, share, commitments) {
+		n.logger.Sugar().Infow("Verified share", "node_id", n.OperatorAddress.Hex(), "from_id", fromID)
+		return nil
+	} else {
+		return fmt.Errorf("node %s: invalid share from node %d", n.OperatorAddress.Hex(), fromID)
+	}
+}
+
+// UpdateOperatorSet is no longer needed - operators are fetched dynamically from peering system
+
+// FinalizeDKG finalizes the DKG process and creates active key version (for testing)
+func (n *Node) FinalizeDKG(allCommitments [][]types.G2Point, participantIDs []int) error {
+	n.mu.RLock()
+	receivedShares := make(map[int]*fr.Element)
+	for k, v := range n.receivedShares {
+		receivedShares[k] = v
+	}
+	n.mu.RUnlock()
+
+	keyVersion := n.dkg.FinalizeKeyShare(receivedShares, allCommitments, participantIDs)
+	n.keyStore.AddVersion(keyVersion)
+
+	n.logger.Sugar().Infow("DKG finalized", "node_id", n.OperatorAddress.Hex(), "version", keyVersion.Version)
+	return nil
+}
+
+// signMessage signs a message payload using the node's BN254 private key
+func (n *Node) signMessage(payloadBytes []byte) ([]byte, error) {
+	payloadHash := crypto.Keccak256(payloadBytes)
+	var hash32 [32]byte
+	copy(hash32[:], payloadHash)
+	signature, err := n.BN254PrivateKey.SignSolidityCompatible(hash32)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign message: %w", err)
+	}
+	return signature.Bytes(), nil
+}
+
+// verifyMessage verifies an authenticated message using the sender's BN254 public key
+func (n *Node) verifyMessage(authMsg *types.AuthenticatedMessage, senderPeer *peering.OperatorSetPeer) error {
+	// Verify payload hash
+	actualHash := crypto.Keccak256(authMsg.Payload)
+	if !bytes.Equal(actualHash, authMsg.Hash[:]) {
+		return fmt.Errorf("payload digest mismatch")
+	}
+	
+	// Verify signature using BN254 (must use VerifySolidityCompatible to match SignSolidityCompatible)
+	sig, err := bn254.NewSignatureFromBytes(authMsg.Signature)
+	if err != nil {
+		return fmt.Errorf("invalid signature format: %w", err)
+	}
+
+	// Type assert to BN254 public key
+	bn254PubKey, ok := senderPeer.WrappedPublicKey.PublicKey.(*bn254.PublicKey)
+	if !ok {
+		return fmt.Errorf("sender public key is not BN254 type")
+	}
+
+	isValid, err := sig.VerifySolidityCompatible(bn254PubKey, authMsg.Hash)
+	if err != nil {
+		return fmt.Errorf("signature verification error: %w", err)
+	}
+	if !isValid {
+		return fmt.Errorf("signature verification failed")
+	}
+	
+	return nil
+}
+
+// CreateAuthenticatedMessage creates an authenticated message wrapper for any payload
+func (n *Node) CreateAuthenticatedMessage(payload interface{}) (*types.AuthenticatedMessage, error) {
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal payload: %w", err)
+	}
+	
+	payloadHash := crypto.Keccak256(payloadBytes)
+	signature, err := n.signMessage(payloadBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign message: %w", err)
+	}
+	
+	return &types.AuthenticatedMessage{
+		Payload:   payloadBytes,
+		Hash:      [32]byte(payloadHash),
+		Signature: signature,
+	}, nil
+}
+
+// findPeerByAddress finds a peer by their operator address
+func (n *Node) findPeerByAddress(address common.Address, peers []*peering.OperatorSetPeer) *peering.OperatorSetPeer {
+	for _, peer := range peers {
+		if peer.OperatorAddress == address {
+			return peer
+		}
+	}
+	return nil
+}
+
+// signAcknowledgement signs an acknowledgement using BN254 private key
+func (n *Node) signAcknowledgement(dealerID int, commitmentHash [32]byte) []byte {
+	// Create message: dealerID || commitmentHash 
+	dealerBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(dealerBytes, uint32(dealerID))
+	message := append(dealerBytes, commitmentHash[:]...)
+	messageHash := crypto.Keccak256(message)
+	
+	var hash32 [32]byte
+	copy(hash32[:], messageHash)
+	signature, err := n.BN254PrivateKey.SignSolidityCompatible(hash32)
+	if err != nil {
+		n.logger.Sugar().Errorw("Failed to sign acknowledgement", "error", err)
+		return nil
+	}
+	return signature.Bytes()
+}

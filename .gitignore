@@ -1,0 +1,5 @@
+/bin
+/cache
+/contracts/out
+/contracts/broadcast
+/anvil-*.json
