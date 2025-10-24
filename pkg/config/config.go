@@ -3,7 +3,8 @@ package config
 import (
 	"fmt"
 	"strings"
-	
+	"time"
+
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -81,6 +82,27 @@ func GetChainIdFromName(name ChainName) (ChainId, error) {
 		return 0, fmt.Errorf("unsupported chain name: %s", name)
 	}
 	return chainId, nil
+}
+
+// Reshare interval constants by chain
+const (
+	ReshareInterval_Mainnet = 10 * time.Minute
+	ReshareInterval_Sepolia = 2 * time.Minute
+	ReshareInterval_Anvil   = 1 * time.Minute
+)
+
+// GetReshareIntervalForChain returns the reshare interval for a given chain
+func GetReshareIntervalForChain(chainId ChainId) time.Duration {
+	switch chainId {
+	case ChainId_EthereumMainnet:
+		return ReshareInterval_Mainnet
+	case ChainId_EthereumSepolia:
+		return ReshareInterval_Sepolia
+	case ChainId_EthereumAnvil:
+		return ReshareInterval_Anvil
+	default:
+		return 10 * time.Minute // Default to mainnet interval
+	}
 }
 
 type CoreContractAddresses struct {

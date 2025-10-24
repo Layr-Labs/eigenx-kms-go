@@ -16,6 +16,7 @@ import (
 
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	eigenxcrypto "github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
@@ -51,6 +52,7 @@ type Node struct {
 	OperatorAddress common.Address // Ethereum address of this operator
 	Port            int
 	BN254PrivateKey *bn254.PrivateKey // BN254 private key for threshold crypto and P2P
+	ChainID         config.ChainId    // Ethereum chain ID
 	AVSAddress      string            // AVS contract address
 	OperatorSetId   uint32            // Operator set ID
 
@@ -99,12 +101,13 @@ type ProtocolSession struct {
 
 // Config holds node configuration
 type Config struct {
-	OperatorAddress string // Ethereum address of the operator (hex string)
+	OperatorAddress string         // Ethereum address of the operator (hex string)
 	Port            int
-	BN254PrivateKey string      // BN254 private key (hex string)
-	AVSAddress      string      // AVS contract address (hex string)
-	OperatorSetId   uint32      // Operator set ID
-	Logger          *zap.Logger // Optional logger, will create default if nil
+	BN254PrivateKey string         // BN254 private key (hex string)
+	ChainID         config.ChainId // Ethereum chain ID
+	AVSAddress      string         // AVS contract address (hex string)
+	OperatorSetId   uint32         // Operator set ID
+	Logger          *zap.Logger    // Optional logger, will create default if nil
 }
 
 // NewNode creates a new node instance with dependency injection
@@ -131,6 +134,7 @@ func NewNode(cfg Config, pdf peering.IPeeringDataFetcher) *Node {
 		OperatorAddress:     operatorAddress,
 		Port:                cfg.Port,
 		BN254PrivateKey:     bn254PrivKey,
+		ChainID:             cfg.ChainID,
 		AVSAddress:          cfg.AVSAddress,
 		OperatorSetId:       cfg.OperatorSetId,
 		keyStore:            keystore.NewKeyStore(),

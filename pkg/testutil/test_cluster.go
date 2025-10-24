@@ -86,6 +86,7 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 			OperatorAddress: addresses[i],
 			Port:            0,
 			BN254PrivateKey: privateKeys[i],
+			ChainID:         config.ChainId_EthereumAnvil, // Use anvil for tests (1 minute reshare)
 			AVSAddress:      "0x1234567890123456789012345678901234567890",
 			OperatorSetId:   1,
 			Logger:          testLogger,

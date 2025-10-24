@@ -91,10 +91,18 @@ This document outlines the implementation plan for completing the EigenX KMS sys
 **Why Third**: Now that we have session management, we can safely add automatic scheduling.
 
 ### Tasks:
-- [ ] Update node.Config:
+- [x] Add chain-specific reshare intervals to config:
+  - [x] Add `ReshareInterval` constants by ChainId to `pkg/config/config.go`
+    - [x] Mainnet: 10 minutes
+    - [x] Sepolia: 2 minutes
+    - [x] Anvil/Devnet: 1 minute
+  - [x] Add `GetReshareIntervalForChain(chainId)` function
+- [x] Update node.Config:
+  - [x] Add `ChainID config.ChainId` parameter
+  - [x] Update all node creation to include ChainID
   - [ ] Add `DKGAt *time.Time` (optional coordinated DKG time)
-  - [ ] Add `EnableAutoReshare bool` (enable 10-minute cycles)
-  - [ ] Add `ReshareInterval time.Duration` (default 10 minutes)
+  - [ ] Add `EnableAutoReshare bool` (enable automatic reshare cycles)
+  - [ ] Derive `ReshareInterval` from ChainID at runtime
 - [ ] Implement `startScheduler()` method in Node:
   - [ ] Create 500ms ticker
   - [ ] Run in goroutine

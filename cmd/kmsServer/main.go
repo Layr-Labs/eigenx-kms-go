@@ -129,6 +129,7 @@ func runKMSServer(c *cli.Context) error {
 		OperatorAddress: kmsConfig.OperatorAddress,
 		Port:            kmsConfig.Port,
 		BN254PrivateKey: kmsConfig.BN254PrivateKey,
+		ChainID:         kmsConfig.ChainID,
 		AVSAddress:      kmsConfig.AVSAddress,
 		OperatorSetId:   kmsConfig.OperatorSetId,
 		Logger:          appLogger,
