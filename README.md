@@ -9,7 +9,7 @@ EigenX KMS enables applications to securely encrypt and decrypt data using a dis
 - **BLS12-381 threshold signatures** for distributed key generation and signing
 - **Identity-Based Encryption (IBE)** where application IDs serve as public keys
 - **Automatic key resharing** at regular intervals for security rotation
-- **Byzantine fault tolerance** with 2n/3	 threshold for partial signature recovery
+- **Byzantine fault tolerance** with ceiling(2n/3) threshold for partial signature recovery
 - **100% operator participation** required for DKG to ensure complete key distribution
 
 ## Quick Start
@@ -71,8 +71,8 @@ Every node runs a 500ms scheduler that:
 1. **Calculates interval boundary** (rounded to chain-specific interval)
 2. **Checks if boundary already processed** (prevents duplicates)
 3. **Determines operator state**:
-   - Has shares? ’ Run reshare as existing operator
-   - No shares? ’ Query peers to detect genesis vs existing cluster
+   - Has shares?  Run reshare as existing operator
+   - No shares?  Query peers to detect genesis vs existing cluster
 4. **Executes appropriate protocol** with synchronized session timestamp
 
 ### Distributed Key Generation (DKG)
@@ -83,7 +83,7 @@ Every node runs a 500ms scheduler that:
 1. Each operator generates random polynomial `f_i(z)`
 2. Operators broadcast commitments and send shares to all peers
 3. Each operator verifies received shares and sends acknowledgements
-4. All operators finalize: `master_secret = £ f_i(0)`
+4. All operators finalize: `master_secret = sum(f_i(0))` across all operators
 
 **Requirement**: ALL operators must participate (100% acknowledgements)
 
@@ -95,7 +95,7 @@ Every node runs a 500ms scheduler that:
 1. Existing operators use current share as `f'_i(0) = current_share_i`
 2. Generate new shares and distribute to ALL operators (including new ones)
 3. Each operator computes new share via Lagrange interpolation
-4. Master secret preserved: `£ f'_i(0) = £ current_share_i = original_master_secret`
+4. Master secret preserved: `sum(f'_i(0)) = sum(current_share_i) = original_master_secret`
 
 **New Operator Joining**:
 - Waits for next interval boundary
@@ -108,8 +108,8 @@ Every node runs a 500ms scheduler that:
 **Encryption**: `ciphertext = Encrypt(H_1(app_id), master_public_key, plaintext)`
 
 **Decryption**:
-1. Client collects 2n/3	 partial signatures from operators
-2. Recovers `app_private_key = £ »_i * partial_sig_i` (Lagrange)
+1. Client collects ceiling(2n/3) partial signatures from operators
+2. Recovers `app_private_key = sum(lambda_i * partial_sig_i)` (Lagrange interpolation)
 3. Decrypts: `plaintext = Decrypt(app_private_key, ciphertext)`
 
 ## Architecture
@@ -149,9 +149,8 @@ Recipients verify:
 ### Threshold Properties
 
 - **DKG**: Requires 100% operator participation (all must send shares + acknowledgements)
-- **Partial Signatures**: Requires 2n/3	 operators for app key recovery
-- **Byzantine Fault Tolerance**: System secure with up to 
-n/3 malicious operators
+- **Partial Signatures**: Requires ceiling(2n/3) operators for app key recovery
+- **Byzantine Fault Tolerance**: System secure with up to floor(n/3) malicious operators
 
 ## Development
 
