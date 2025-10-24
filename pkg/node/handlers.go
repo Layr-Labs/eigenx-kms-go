@@ -183,16 +183,34 @@ func (s *Server) handleDKGCommitment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get or create session for this message
+	session := s.node.getSession(commitMsg.SessionTimestamp)
+	if session == nil {
+		s.node.logger.Sugar().Warnw("Received commitment for unknown session",
+			"session_timestamp", commitMsg.SessionTimestamp,
+			"from", senderPeer.OperatorAddress.Hex())
+		http.Error(w, "Unknown session", http.StatusBadRequest)
+		return
+	}
+
 	// Convert sender address to node ID and store commitments
 	senderNodeID := addressToNodeID(senderPeer.OperatorAddress)
+
+	// Store in session
+	session.mu.Lock()
+	session.commitments[senderNodeID] = commitMsg.Commitments
+	session.mu.Unlock()
+
+	// Also store in global state for backward compatibility
 	s.node.mu.Lock()
 	s.node.receivedCommitments[senderNodeID] = commitMsg.Commitments
 	s.node.mu.Unlock()
 
-	s.node.logger.Sugar().Debugw("Received authenticated DKG commitments", 
-		"node_id", s.node.OperatorAddress.Hex(), 
+	s.node.logger.Sugar().Debugw("Received authenticated DKG commitments",
+		"node_id", s.node.OperatorAddress.Hex(),
 		"from_address", senderPeer.OperatorAddress.Hex(),
 		"sender_node_id", senderNodeID,
+		"session_timestamp", commitMsg.SessionTimestamp,
 		"count", len(commitMsg.Commitments))
 	
 	w.WriteHeader(http.StatusOK)
@@ -220,19 +238,35 @@ func (s *Server) handleDKGShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get or create session for this message
+	session := s.node.getSession(shareMsg.SessionTimestamp)
+	if session == nil {
+		s.node.logger.Sugar().Warnw("Received share for unknown session",
+			"session_timestamp", shareMsg.SessionTimestamp,
+			"from", senderPeer.OperatorAddress.Hex())
+		http.Error(w, "Unknown session", http.StatusBadRequest)
+		return
+	}
+
 	// Convert addresses to node IDs
 	senderNodeID := addressToNodeID(senderPeer.OperatorAddress)
 	share := types.DeserializeFr(shareMsg.Share)
 
-	// Store received share
+	// Store received share in session
+	session.mu.Lock()
+	session.shares[senderNodeID] = share
+	session.mu.Unlock()
+
+	// Also store in global state for backward compatibility
 	s.node.mu.Lock()
 	s.node.receivedShares[senderNodeID] = share
 	s.node.mu.Unlock()
 
-	s.node.logger.Sugar().Debugw("Received authenticated DKG share", 
-		"node_id", s.node.OperatorAddress.Hex(), 
+	s.node.logger.Sugar().Debugw("Received authenticated DKG share",
+		"node_id", s.node.OperatorAddress.Hex(),
 		"from_address", senderPeer.OperatorAddress.Hex(),
-		"sender_node_id", senderNodeID)
+		"sender_node_id", senderNodeID,
+		"session_timestamp", shareMsg.SessionTimestamp)
 	
 	w.WriteHeader(http.StatusOK)
 }
@@ -259,10 +293,29 @@ func (s *Server) handleDKGAck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get or create session for this message
+	session := s.node.getSession(ackMsg.SessionTimestamp)
+	if session == nil {
+		s.node.logger.Sugar().Warnw("Received ack for unknown session",
+			"session_timestamp", ackMsg.SessionTimestamp,
+			"from", senderPeer.OperatorAddress.Hex())
+		http.Error(w, "Unknown session", http.StatusBadRequest)
+		return
+	}
+
 	// Convert sender address to node ID and store acknowledgement
 	senderNodeID := addressToNodeID(senderPeer.OperatorAddress)
 	thisNodeID := addressToNodeID(s.node.OperatorAddress)
-	
+
+	// Store in session
+	session.mu.Lock()
+	if session.acks[thisNodeID] == nil {
+		session.acks[thisNodeID] = make(map[int]*types.Acknowledgement)
+	}
+	session.acks[thisNodeID][senderNodeID] = ackMsg.Ack
+	session.mu.Unlock()
+
+	// Also store in global state for backward compatibility
 	s.node.mu.Lock()
 	if s.node.receivedAcks[thisNodeID] == nil {
 		s.node.receivedAcks[thisNodeID] = make(map[int]*types.Acknowledgement)
@@ -270,11 +323,12 @@ func (s *Server) handleDKGAck(w http.ResponseWriter, r *http.Request) {
 	s.node.receivedAcks[thisNodeID][senderNodeID] = ackMsg.Ack
 	s.node.mu.Unlock()
 
-	s.node.logger.Sugar().Debugw("Received authenticated acknowledgement", 
-		"node_id", s.node.OperatorAddress.Hex(), 
+	s.node.logger.Sugar().Debugw("Received authenticated acknowledgement",
+		"node_id", s.node.OperatorAddress.Hex(),
 		"from_address", senderPeer.OperatorAddress.Hex(),
-		"from_player", senderNodeID, 
-		"for_dealer", thisNodeID)
+		"from_player", senderNodeID,
+		"for_dealer", thisNodeID,
+		"session_timestamp", ackMsg.SessionTimestamp)
 	
 	w.WriteHeader(http.StatusOK)
 }

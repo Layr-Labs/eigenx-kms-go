@@ -227,6 +227,25 @@ func (n *Node) cleanupSession(sessionTimestamp int64) {
 		"session_timestamp", sessionTimestamp)
 }
 
+// cleanupOldSessions removes sessions older than the specified duration
+// This will be called by the automatic scheduler in Milestone 3
+func (n *Node) cleanupOldSessions(maxAge time.Duration) { //nolint:unused // Will be used by scheduler in Milestone 3
+	n.sessionMutex.Lock()
+	defer n.sessionMutex.Unlock()
+
+	now := time.Now()
+	for timestamp, session := range n.activeSessions {
+		if now.Sub(session.StartTime) > maxAge {
+			delete(n.activeSessions, timestamp)
+			n.logger.Sugar().Warnw("Cleaned up expired session",
+				"operator_address", n.OperatorAddress.Hex(),
+				"session_timestamp", timestamp,
+				"type", session.Type,
+				"age", now.Sub(session.StartTime))
+		}
+	}
+}
+
 // RunDKG executes the DKG protocol
 func (n *Node) RunDKG() error {
 	ctx := context.Background()
@@ -237,6 +256,10 @@ func (n *Node) RunDKG() error {
 	if err != nil {
 		return fmt.Errorf("failed to fetch operators: %w", err)
 	}
+
+	// Create session for this DKG run
+	session := n.createSession("dkg", operators)
+	defer n.cleanupSession(session.SessionTimestamp)
 
 	// Use keccak256 hash of operator address as node ID
 	thisNodeID := addressToNodeID(n.OperatorAddress)
@@ -266,7 +289,10 @@ func (n *Node) RunDKG() error {
 	}
 
 	// Broadcast commitments
-	_ = n.transport.BroadcastCommitments(operators, commitments, "/dkg/commitment")
+	if err := n.transport.BroadcastDKGCommitments(operators, commitments, session.SessionTimestamp); err != nil {
+		n.logger.Sugar().Errorw("Failed to broadcast commitments", "operator_address", n.OperatorAddress.Hex(), "error", err)
+		// Continue anyway - other nodes may have received
+	}
 
 	// Send shares to each participant
 	for _, op := range operators {
@@ -278,7 +304,13 @@ func (n *Node) RunDKG() error {
 			n.mu.Unlock()
 			continue
 		}
-		_ = n.transport.SendShareWithRetry(op, shares[opNodeID], "/dkg/share")
+		if err := n.transport.SendDKGShare(op, shares[opNodeID], session.SessionTimestamp); err != nil {
+			n.logger.Sugar().Warnw("Failed to send share to operator",
+				"operator_address", n.OperatorAddress.Hex(),
+				"target", op.OperatorAddress.Hex(),
+				"error", err)
+			// Continue with other operators
+		}
 	}
 
 	// Wait for all shares and commitments
@@ -323,7 +355,7 @@ func (n *Node) RunDKG() error {
 			
 			if dealerPeer != nil {
 				// Send acknowledgement to dealer
-				err := n.transport.SendAcknowledgement(ack, dealerPeer, "/dkg/ack")
+				err := n.transport.SendDKGAcknowledgement(ack, dealerPeer, session.SessionTimestamp)
 				if err != nil {
 					n.logger.Sugar().Warnw("Failed to send acknowledgement", 
 						"operator_address", n.OperatorAddress.Hex(), 
@@ -418,8 +450,15 @@ func (n *Node) RunReshare() error {
 		return err
 	}
 
+	// Create session for this reshare run
+	session := n.createSession("reshare", operators)
+	defer n.cleanupSession(session.SessionTimestamp)
+
 	// Broadcast commitments
-	_ = n.transport.BroadcastCommitments(operators, commitments, "/reshare/commitment")
+	if err := n.transport.BroadcastReshareCommitments(operators, commitments, session.SessionTimestamp); err != nil {
+		n.logger.Sugar().Errorw("Failed to broadcast reshare commitments", "operator_address", n.OperatorAddress.Hex(), "error", err)
+		// Continue anyway - other nodes may have received
+	}
 
 	// Send shares to all operators
 	for _, op := range operators {
@@ -431,7 +470,13 @@ func (n *Node) RunReshare() error {
 			n.mu.Unlock()
 			continue
 		}
-		_ = n.transport.SendShareWithRetry(op, shares[opNodeID], "/reshare/share")
+		if err := n.transport.SendReshareShare(op, shares[opNodeID], session.SessionTimestamp); err != nil {
+			n.logger.Sugar().Warnw("Failed to send reshare share to operator",
+				"operator_address", n.OperatorAddress.Hex(),
+				"target", op.OperatorAddress.Hex(),
+				"error", err)
+			// Continue with other operators
+		}
 	}
 
 	// Wait for shares and commitments
