@@ -141,53 +141,165 @@ This document outlines the implementation plan for completing the EigenX KMS sys
 - ✅ All tests pass, 0 linter issues
 
 ---
+## Milestone 4: Unified Interval-Based Protocol Execution
 
-## Milestone 4: Bootstrap Detection & New Operator Support
+**Goal**: Implement interval-based protocol execution that handles genesis DKG, automatic resharing, and new operator joining in a unified flow.
 
-**Goal**: Enable nodes to detect if they're joining an existing cluster vs starting fresh, and support new operators joining via reshare.
+**Why Fourth**: The scheduler ticks at intervals - we need to implement the decision logic for what to execute at each boundary.
 
-**Why Fourth**: With scheduling and sessions working, we can now handle the complexities of new operators joining.
+**Key Insight**: DKG is a group effort where `master_secret = Σ f_i(0)`. Nodes don't need perfect start-time coordination - they just need to use the same session timestamp (rounded to interval boundary). The master secret is the aggregate of all contributions regardless of when each node starts.
+
+### The Unified Execution Flow:
+
+```
+Every 500ms scheduler tick:
+  │
+  ├─ [Step 1] Calculate rounded interval boundary
+  │   intervalSeconds = reshareInterval.Seconds()
+  │   roundedTime = (now.Unix() / intervalSeconds) * intervalSeconds
+  │
+  ├─ [Step 2] Check if already processed this boundary
+  │   if roundedTime == lastProcessedBoundary:
+  │       return  // Skip - already handled this interval
+  │   lastProcessedBoundary = roundedTime
+  │
+  ├─ [Step 3] Determine if I'm a new or existing operator
+  │   hasShares = (keyStore.GetActiveVersion() != nil)
+  │
+  ├─ [Step 4] Execute appropriate protocol with rounded timestamp
+  │   if !hasShares:  // I'm a new operator
+  │       ├─ Query /pubkey from all operators in set
+  │       ├─ Does anyone have master public key commitments?
+  │       │   ├─ NO → Genesis DKG needed
+  │       │   │   └─ RunDKG(roundedTime)
+  │       │   └─ YES → Existing cluster, join via reshare
+  │       │       └─ RunReshareAsNewOperator(roundedTime)
+  │   else:  // I'm an existing operator
+  │       └─ RunReshareAsExistingOperator(roundedTime)
+```
 
 ### Tasks:
-- [ ] Implement bootstrap detection:
-  - [ ] Add `detectClusterState()` method
-  - [ ] Query operators via `/pubkey` for existing commitments
-  - [ ] Return "genesis" if no operators have keys, "existing" otherwise
-- [ ] Update Node startup logic:
-  - [ ] On start, call `detectClusterState()`
-  - [ ] If genesis + DKGAt set � schedule DKG
-  - [ ] If existing cluster � wait for next reshare cycle
-- [ ] Implement new operator reshare flow:
-  - [ ] Add `isNewOperator()` method - checks if node has active key share
-  - [ ] Split `RunReshare()` into two paths:
-    - [ ] `runReshareAsExistingOperator()` - generates new shares from current share
-    - [ ] `runReshareAsNewOperator()` - only receives shares from existing operators
-- [ ] Update `runReshareAsExistingOperator()`:
-  - [ ] Use current share as `f'_i(0)`
-  - [ ] Generate and send shares to ALL operators (including new)
-  - [ ] Participate in finalization
-- [ ] Implement `runReshareAsNewOperator()`:
-  - [ ] Don't generate shares (no current share)
-  - [ ] Only receive shares from existing operators
-  - [ ] Compute final share via Lagrange: `x'_j = � �_i s'_ij`
-  - [ ] Store first key version
-- [ ] Update operator set change detection:
-  - [ ] Compare current vs previous operator set
-  - [ ] Log added/removed operators
-  - [ ] Trigger reshare when set changes (don't wait for 10-minute boundary)
-- [ ] Add tests for new operator joining:
-  - [ ] Test genesis DKG with all operators
-  - [ ] Test new operator joining existing cluster
-  - [ ] Test operator removal scenarios
-  - [ ] Test complete operator turnover (your scenario)
+
+**Phase 1: Rounded Timestamp Coordination**
+- [ ] Update Node struct scheduling fields:
+  - [ ] Add `lastProcessedBoundary int64` field
+  - [ ] Remove `lastReshareTime time.Time` (replaced by boundary tracking)
+  - [ ] Remove `dkgAt *time.Time` (no longer needed)
+  - [ ] Remove `dkgTriggered bool` (no longer needed)
+  - [ ] Initialize `lastProcessedBoundary` to 0 in NewNode
+- [ ] Remove DKGAt from node.Config:
+  - [ ] Remove `DKGAt *time.Time` field
+  - [ ] Remove from all node creation sites
+- [ ] Update `checkScheduledOperations()` to use rounded timestamps:
+  - [ ] Calculate `intervalSeconds = int64(n.reshareInterval.Seconds())`
+  - [ ] Calculate `roundedTime = (now.Unix() / intervalSeconds) * intervalSeconds`
+  - [ ] Skip if `roundedTime == n.lastProcessedBoundary`
+  - [ ] Update `n.lastProcessedBoundary = roundedTime` before triggering protocol
+  - [ ] Log rounded timestamp for debugging
+
+**Phase 2: Cluster State Detection**
+- [ ] Implement `hasExistingShares()` method:
+  - [ ] Return `n.keyStore.GetActiveVersion() != nil`
+  - [ ] Simple check - no locks needed (keyStore is thread-safe)
+- [ ] Implement `detectClusterState()` method:
+  - [ ] Fetch current operators from peering system
+  - [ ] Query `/pubkey` from each operator via HTTP GET
+  - [ ] Check if response contains valid commitments (len > 0)
+  - [ ] Return "genesis" if NO operator has commitments
+  - [ ] Return "existing" if ANY operator has commitments
+  - [ ] Handle HTTP errors (operator down = skip, don't fail)
+  - [ ] Log detection result with operator count
+
+**Phase 3: Protocol Method Refactoring**
+- [ ] Refactor `RunDKG()` to accept session timestamp:
+  - [ ] Change signature: `func (n *Node) RunDKG(sessionTimestamp int64) error`
+  - [ ] Use `sessionTimestamp` when calling `createSession()`
+  - [ ] Remove `session := n.createSession()` - accept timestamp parameter
+  - [ ] Update `createSession()` to accept timestamp: `createSession(sessionType, operators, timestamp)`
+- [ ] Implement `RunReshareAsExistingOperator(sessionTimestamp int64)`:
+  - [ ] Essentially current `RunReshare()` with session timestamp parameter
+  - [ ] Get current share: `currentShare, err := n.keyStore.GetActivePrivateShare()`
+  - [ ] Generate new shares: `shares, commitments := n.resharer.GenerateNewShares(currentShare, threshold)`
+  - [ ] Broadcast to ALL operators in set
+  - [ ] Wait for threshold responses
+  - [ ] Finalize and store new key version
+- [ ] Implement `RunReshareAsNewOperator(sessionTimestamp int64)`:
+  - [ ] Create session with timestamp
+  - [ ] DON'T call `GenerateNewShares()` (no current share to use)
+  - [ ] ONLY wait for shares from existing operators
+  - [ ] Wait for shares: `waitForSharesWithRetry(len(operators), timeout)`
+  - [ ] Wait for commitments: `waitForCommitmentsWithRetry(len(operators), timeout)`
+  - [ ] Compute final share via Lagrange: `resharer.ComputeNewKeyShare(participantIDs, receivedShares, allCommitments)`
+  - [ ] Store as first `KeyShareVersion`
+  - [ ] Log successful join
+
+**Phase 4: Updated Interval Handler**
+- [ ] Rewrite `checkScheduledOperations()` with unified flow:
+  - [ ] Step 1: Calculate `roundedTime` as interval boundary
+  - [ ] Step 2: Check if `roundedTime == lastProcessedBoundary`, skip if true
+  - [ ] Step 3: Update `lastProcessedBoundary = roundedTime`
+  - [ ] Step 4: Call `hasExistingShares()` to determine state
+  - [ ] Step 5a: New operator path:
+    - [ ] Call `detectClusterState()`
+    - [ ] If "genesis" → `go RunDKG(roundedTime)`
+    - [ ] If "existing" → `go RunReshareAsNewOperator(roundedTime)`
+  - [ ] Step 5b: Existing operator path:
+    - [ ] `go RunReshareAsExistingOperator(roundedTime)`
+  - [ ] Proper error logging for all paths
+
+**Phase 5: Session Creation Update**
+- [ ] Update `createSession()` signature:
+  - [ ] Add `sessionTimestamp int64` parameter
+  - [ ] Use provided timestamp instead of `time.Now().Unix()`
+  - [ ] Ensures caller controls session timestamp
+- [ ] Update all `createSession()` calls:
+  - [ ] Pass `sessionTimestamp` from protocol methods
+  - [ ] Remove any `time.Now()` calls in protocol code
+
+**Phase 6: Testing**
+- [ ] Update existing tests to use new signatures:
+  - [ ] Update `testutil` if it calls RunDKG directly
+  - [ ] Ensure tests still pass with session timestamp parameter
+- [ ] Add new tests for interval-based execution:
+  - [ ] Test rounded timestamp calculation with various times
+  - [ ] Test `lastProcessedBoundary` prevents duplicates
+  - [ ] Test `detectClusterState()` with empty cluster (genesis)
+  - [ ] Test `detectClusterState()` with existing cluster
+  - [ ] Test new operator joining at interval
 - [ ] Run all tests: `go test ./...` (all must pass)
 - [ ] Run linter: `make lint` (0 issues)
 
 ### Success Criteria:
-- Nodes correctly detect genesis vs existing cluster
-- New operators successfully join via reshare
-- Existing operators handle new members correctly
-- All bootstrap scenarios tested
+- ✅ All nodes calculate same rounded timestamp for interval boundaries
+- ✅ `lastProcessedBoundary` prevents duplicate protocol executions
+- ✅ Genesis DKG happens automatically at first interval when no master pubkey exists
+- ✅ New operators automatically join via reshare at next interval
+- ✅ Existing operators automatically reshare at intervals
+- ✅ No coordination required - nodes self-organize via interval boundaries
+- ✅ All tests pass, 0 linter issues
+
+### Why This Works:
+
+**Rounded Timestamps Solve Coordination:**
+```go
+// Node A ticks at 17:00:00.157 → roundedTime = 17:00:00
+// Node B ticks at 17:00:00.623 → roundedTime = 17:00:00
+// Node C ticks at 17:00:01.091 → roundedTime = 17:00:00
+// All use sessionTimestamp = 17:00:00 → messages route correctly
+```
+
+**Genesis DKG Works Without Perfect Sync:**
+- Each node independently generates random polynomial
+- Master secret = aggregate of all polynomials
+- Doesn't matter if Node A starts at :00.1 and Node B at :00.8
+- Final key is `f_A(0) + f_B(0) + f_C(0)` regardless of timing
+
+**New Operators Join Seamlessly:**
+- At interval boundary, existing operators detect new member in operator set
+- Existing operators reshare (include new operator in distribution)
+- New operator waits for shares, computes via Lagrange
+- All use same roundedTime for session coordination
+
 
 ---
 
