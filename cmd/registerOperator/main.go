@@ -9,7 +9,7 @@ import (
 
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
 	"github.com/Layr-Labs/eigenx-kms-go/internal/operator"
-	ethereum "github.com/Layr-Labs/eigenx-kms-go/pkg/clients"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/ethereum"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transactionSigner"
 	"github.com/ethereum/go-ethereum/common"
@@ -222,7 +222,7 @@ func (c *OperatorConfig) Validate() error {
 	if !strings.HasPrefix(c.RPCUrl, "http://") && !strings.HasPrefix(c.RPCUrl, "https://") && !strings.HasPrefix(c.RPCUrl, "ws://") && !strings.HasPrefix(c.RPCUrl, "wss://") {
 		return fmt.Errorf("RPC URL must start with http://, https://, ws://, or wss://")
 	}
-	
+
 	// Validate chain ID
 	supportedChains := config.GetSupportedChainIDs()
 	supported := false

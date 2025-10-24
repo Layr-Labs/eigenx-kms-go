@@ -8,26 +8,30 @@ import (
 	"net/http"
 	"time"
 
+	"go.uber.org/zap"
+
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 )
 
-// KMSClient provides a client interface for applications to retrieve secrets from KMS
+// KMSClient provides a client interface for applications to interact with KMS operators
 type KMSClient struct {
-	kmsServerURLs []string
+	operatorURLs  []string
 	rsaEncryption *encryption.RSAEncryption
 	threshold     int
+	logger        *zap.Logger
 }
 
-// NewKMSClient creates a new KMS client
-func NewKMSClient(kmsServerURLs []string) *KMSClient {
-	threshold := dkg.CalculateThreshold(len(kmsServerURLs))
+// NewKMSClient creates a new KMS client with operator URLs
+func NewKMSClient(operatorURLs []string, logger *zap.Logger) *KMSClient {
+	threshold := dkg.CalculateThreshold(len(operatorURLs))
 	return &KMSClient{
-		kmsServerURLs: kmsServerURLs,
+		operatorURLs:  operatorURLs,
 		rsaEncryption: encryption.NewRSAEncryption(),
 		threshold:     threshold,
+		logger:        logger,
 	}
 }
 
@@ -77,7 +81,7 @@ func (c *KMSClient) RetrieveSecrets(appID, imageDigest string) (*SecretsResult, 
 	var responses []types.SecretsResponseV1
 	var partialSigs []types.G1Point
 
-	for i, serverURL := range c.kmsServerURLs {
+	for i, serverURL := range c.operatorURLs {
 		fmt.Printf("KMS Client: Requesting from server %d: %s\n", i+1, serverURL)
 
 		resp, err := c.requestSecretsFromKMS(serverURL, req)
@@ -170,9 +174,111 @@ func (c *KMSClient) requestSecretsFromKMS(serverURL string, req types.SecretsReq
 	return &response, nil
 }
 
-// GetAppPublicKey returns the public key for an application (for encryption)
-func GetAppPublicKey(appID string) types.G1Point {
-	return crypto.GetAppPublicKey(appID)
+// GetMasterPublicKey fetches the master public key from operators by querying /pubkey
+func (c *KMSClient) GetMasterPublicKey() (types.G2Point, error) {
+	c.logger.Sugar().Infow("Fetching master public key from operators", "operator_count", len(c.operatorURLs))
+
+	var allCommitments [][]types.G2Point
+
+	for i, operatorURL := range c.operatorURLs {
+		resp, err := http.Get(operatorURL + "/pubkey")
+		if err != nil {
+			c.logger.Sugar().Warnw("Failed to contact operator", "operator_index", i, "url", operatorURL, "error", err)
+			continue
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			c.logger.Sugar().Warnw("Operator returned error", "operator_index", i, "status", resp.StatusCode, "body", string(body))
+			continue
+		}
+
+		var response struct {
+			Commitments []types.G2Point `json:"commitments"`
+			IsActive    bool            `json:"isActive"`
+		}
+
+		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			c.logger.Sugar().Warnw("Failed to decode response", "operator_index", i, "error", err)
+			continue
+		}
+
+		if !response.IsActive || len(response.Commitments) == 0 {
+			c.logger.Sugar().Debugw("Operator has no active commitments", "operator_index", i)
+			continue
+		}
+
+		allCommitments = append(allCommitments, response.Commitments)
+		c.logger.Sugar().Debugw("Collected commitments from operator", "operator_index", i)
+	}
+
+	if len(allCommitments) == 0 {
+		return types.G2Point{}, fmt.Errorf("failed to collect commitments from any operator")
+	}
+
+	masterPubKey := crypto.ComputeMasterPublicKey(allCommitments)
+	c.logger.Sugar().Infow("Computed master public key", "commitment_count", len(allCommitments))
+
+	return masterPubKey, nil
+}
+
+// CollectPartialSignatures collects partial signatures from threshold operators for an app
+func (c *KMSClient) CollectPartialSignatures(appID string, attestationTime int64) (map[int]types.G1Point, error) {
+	c.logger.Sugar().Infow("Collecting partial signatures",
+		"app_id", appID,
+		"threshold", c.threshold,
+		"operators", len(c.operatorURLs))
+
+	partialSigs := make(map[int]types.G1Point)
+	collected := 0
+
+	for i, operatorURL := range c.operatorURLs {
+		if collected >= c.threshold {
+			break
+		}
+
+		req := types.AppSignRequest{
+			AppID:           appID,
+			AttestationTime: attestationTime,
+		}
+
+		reqBody, err := json.Marshal(req)
+		if err != nil {
+			c.logger.Sugar().Warnw("Failed to marshal request", "operator_index", i, "error", err)
+			continue
+		}
+
+		resp, err := http.Post(operatorURL+"/app/sign", "application/json", bytes.NewReader(reqBody))
+		if err != nil {
+			c.logger.Sugar().Warnw("Failed to contact operator", "operator_index", i, "url", operatorURL, "error", err)
+			continue
+		}
+		defer func() { _ = resp.Body.Close() }()
+
+		if resp.StatusCode != http.StatusOK {
+			body, _ := io.ReadAll(resp.Body)
+			c.logger.Sugar().Warnw("Operator returned error", "operator_index", i, "status", resp.StatusCode, "body", string(body))
+			continue
+		}
+
+		var response types.AppSignResponse
+		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			c.logger.Sugar().Warnw("Failed to decode response", "operator_index", i, "error", err)
+			continue
+		}
+
+		partialSigs[i] = response.PartialSignature
+		collected++
+		c.logger.Sugar().Debugw("Collected partial signature", "operator_index", i, "total", collected)
+	}
+
+	if collected < c.threshold {
+		return nil, fmt.Errorf("insufficient partial signatures: collected %d, needed %d", collected, c.threshold)
+	}
+
+	c.logger.Sugar().Infow("Successfully collected threshold partial signatures", "collected", collected, "threshold", c.threshold)
+	return partialSigs, nil
 }
 
 // EncryptForApp encrypts data for a specific application using IBE
@@ -180,7 +286,17 @@ func (c *KMSClient) EncryptForApp(appID string, masterPublicKey types.G2Point, p
 	return crypto.EncryptForApp(appID, masterPublicKey, plaintext)
 }
 
-// DecryptWithPrivateKey decrypts data using the recovered application private key
-func (c *KMSClient) DecryptWithPrivateKey(appID string, appPrivateKey types.G1Point, ciphertext []byte) ([]byte, error) {
+// DecryptForApp decrypts data by collecting partial signatures and recovering app private key
+func (c *KMSClient) DecryptForApp(appID string, ciphertext []byte, attestationTime int64) ([]byte, error) {
+	// Collect partial signatures from threshold operators
+	partialSigs, err := c.CollectPartialSignatures(appID, attestationTime)
+	if err != nil {
+		return nil, fmt.Errorf("failed to collect partial signatures: %w", err)
+	}
+
+	// Recover application private key
+	appPrivateKey := crypto.RecoverAppPrivateKey(appID, partialSigs, c.threshold)
+
+	// Decrypt using recovered key
 	return crypto.DecryptForApp(appID, appPrivateKey, ciphertext)
 }

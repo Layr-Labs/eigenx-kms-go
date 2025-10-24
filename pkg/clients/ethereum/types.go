@@ -4,9 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"github.com/Layr-Labs/synapse/pkg/config"
 	"math/big"
 	"strings"
+
+	"github.com/Layr-Labs/synapse/pkg/config"
 
 	"github.com/ethereum/go-ethereum/common/hexutil"
 )

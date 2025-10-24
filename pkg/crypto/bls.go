@@ -22,7 +22,7 @@ func init() {
 	// Initialize generators from the BLS module
 	g1X, g1Y := bls.G1Generator.ToBigInt()
 	G1Generator = types.G1Point{X: g1X, Y: g1Y}
-	
+
 	g2X, g2Y := bls.G2Generator.ToBigInt()
 	G2Generator = types.G2Point{X: g2X, Y: g2Y}
 }
@@ -35,10 +35,10 @@ func ScalarMulG1(point types.G1Point, scalar *fr.Element) types.G1Point {
 		// Return identity on error
 		return types.G1Point{X: big.NewInt(0), Y: big.NewInt(0)}
 	}
-	
+
 	// Perform scalar multiplication
 	result := bls.ScalarMulG1(g1Point, scalar)
-	
+
 	// Convert back to types.G1Point
 	x, y := result.ToBigInt()
 	return types.G1Point{X: x, Y: y}
@@ -52,10 +52,10 @@ func ScalarMulG2(point types.G2Point, scalar *fr.Element) types.G2Point {
 		// Return identity on error
 		return types.G2Point{X: big.NewInt(0), Y: big.NewInt(0)}
 	}
-	
+
 	// Perform scalar multiplication
 	result := bls.ScalarMulG2(g2Point, scalar)
-	
+
 	// Convert back to types.G2Point
 	x, y := result.ToBigInt()
 	return types.G2Point{X: x, Y: y}
@@ -66,17 +66,17 @@ func AddG1(a, b types.G1Point) types.G1Point {
 	// Convert to BLS module points
 	aPoint, err1 := bls.G1PointFromBigInt(a.X, a.Y)
 	bPoint, err2 := bls.G1PointFromBigInt(b.X, b.Y)
-	
+
 	if err1 != nil {
 		return b
 	}
 	if err2 != nil {
 		return a
 	}
-	
+
 	// Perform addition
 	result := bls.AddG1(aPoint, bPoint)
-	
+
 	// Convert back to types.G1Point
 	x, y := result.ToBigInt()
 	return types.G1Point{X: x, Y: y}
@@ -87,17 +87,17 @@ func AddG2(a, b types.G2Point) types.G2Point {
 	// Convert to BLS module points
 	aPoint, err1 := bls.G2PointFromBigInt(a.X, a.Y)
 	bPoint, err2 := bls.G2PointFromBigInt(b.X, b.Y)
-	
+
 	if err1 != nil {
 		return b
 	}
 	if err2 != nil {
 		return a
 	}
-	
+
 	// Perform addition
 	result := bls.AddG2(aPoint, bPoint)
-	
+
 	// Convert back to types.G2Point
 	x, y := result.ToBigInt()
 	return types.G2Point{X: x, Y: y}
@@ -108,12 +108,12 @@ func PointsEqualG2(a, b types.G2Point) bool {
 	// Convert to BLS module points
 	aPoint, err1 := bls.G2PointFromBigInt(a.X, a.Y)
 	bPoint, err2 := bls.G2PointFromBigInt(b.X, b.Y)
-	
+
 	if err1 != nil || err2 != nil {
 		// If either conversion fails, compare the big ints directly
 		return a.X.Cmp(b.X) == 0 && a.Y.Cmp(b.Y) == 0
 	}
-	
+
 	return aPoint.Equal(bPoint)
 }
 
@@ -194,7 +194,7 @@ func VerifyShareWithCommitments(nodeID int, share *fr.Element, commitments []typ
 		}
 		blsCommitments[i] = g2Point
 	}
-	
+
 	// Use the BLS module's verification
 	return bls.VerifyShare(nodeID, share, blsCommitments)
 }
@@ -217,27 +217,28 @@ func ComputeAppPublicKeyFromMaster(appID string, masterPublicKey types.G2Point) 
 
 // EncryptForApp encrypts data for an application using IBE
 // This is a simplified version - full IBE would involve pairings
+// TODO(seanmcgary): make this full IBE
 func EncryptForApp(appID string, masterPublicKey types.G2Point, plaintext []byte) ([]byte, error) {
 	// STUB: Full IBE implementation would be more complex
 	// For now, this is a placeholder that demonstrates the concept
 	// Real implementation would follow the IBE encryption scheme from the design docs
-	
+
 	// Step 1: Compute Q_ID = H_1(app_id)
 	_ = HashToG1(appID)
-	
+
 	// Step 2-5: Full IBE encryption (simplified for now)
 	// In production: Choose random α, compute r = H_3(α, M), etc.
-	
+
 	// For testing, we'll use a simple XOR with the app's hash
 	appHash := HashToG1(appID + "-encryption-key")
 	keyBytes := appHash.X.Bytes()
-	
+
 	// Simple XOR encryption (NOT secure, just for testing)
 	encrypted := make([]byte, len(plaintext))
 	for i, b := range plaintext {
 		encrypted[i] = b ^ keyBytes[i%len(keyBytes)]
 	}
-	
+
 	fmt.Printf("IBE encryption for app %s (simplified)\n", appID)
 	return encrypted, nil
 }
@@ -246,17 +247,17 @@ func EncryptForApp(appID string, masterPublicKey types.G2Point, plaintext []byte
 func DecryptForApp(appID string, appPrivateKey types.G1Point, ciphertext []byte) ([]byte, error) {
 	// STUB: This matches the simplified encryption above
 	// In production, this would use the full IBE decryption scheme
-	
+
 	// Use the same "key" derivation as encryption
 	appHash := HashToG1(appID + "-encryption-key")
 	keyBytes := appHash.X.Bytes()
-	
+
 	// Simple XOR decryption
 	decrypted := make([]byte, len(ciphertext))
 	for i, b := range ciphertext {
 		decrypted[i] = b ^ keyBytes[i%len(keyBytes)]
 	}
-	
+
 	fmt.Printf("IBE decryption for app %s (simplified)\n", appID)
 	return decrypted, nil
 }

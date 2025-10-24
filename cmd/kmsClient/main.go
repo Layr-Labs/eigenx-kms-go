@@ -10,9 +10,9 @@ import (
 	"net/http"
 	"os"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/ethereum"
 	"github.com/urfave/cli/v2"
 
-	ethereum "github.com/Layr-Labs/eigenx-kms-go/pkg/clients"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
@@ -336,10 +336,10 @@ func getMasterPublicKey(appID string, operators *peering.OperatorSetPeers) (type
 		}
 
 		var response struct {
-			OperatorAddress string           `json:"operatorAddress"`
+			OperatorAddress string          `json:"operatorAddress"`
 			Commitments     []types.G2Point `json:"commitments"`
-			Version         int64            `json:"version"`
-			IsActive        bool             `json:"isActive"`
+			Version         int64           `json:"version"`
+			IsActive        bool            `json:"isActive"`
 		}
 
 		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
@@ -376,7 +376,7 @@ func getMasterPublicKey(appID string, operators *peering.OperatorSetPeers) (type
 // collectPartialSignatures collects partial signatures from threshold number of operators
 func collectPartialSignatures(appID string, operators *peering.OperatorSetPeers, threshold int) (map[int]types.G1Point, error) {
 	partialSigs := make(map[int]types.G1Point)
-	
+
 	// Generate a random attestation time for signature requests
 	attestationTime := int64(0) // Use current active key version
 

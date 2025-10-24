@@ -4,7 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
-	ethereum "github.com/Layr-Labs/eigenx-kms-go/pkg/clients"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/ethereum"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 )

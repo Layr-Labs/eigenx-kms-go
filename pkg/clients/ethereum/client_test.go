@@ -2,8 +2,9 @@ package ethereum
 
 import (
 	"context"
-	"github.com/Layr-Labs/synapse/pkg/logger"
 	"testing"
+
+	"github.com/Layr-Labs/synapse/pkg/logger"
 
 	"github.com/stretchr/testify/assert"
 )

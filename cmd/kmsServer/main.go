@@ -5,11 +5,11 @@ import (
 	"log"
 	"os"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/ethereum"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/urfave/cli/v2"
 	"go.uber.org/zap"
-	
-	ethereum "github.com/Layr-Labs/eigenx-kms-go/pkg/clients"
+
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
@@ -131,7 +131,7 @@ func runKMSServer(c *cli.Context) error {
 
 	// Create peering data fetcher for dynamic operator fetching
 	peeringDataFetcher := createPeeringDataFetcher(kmsConfig, appLogger)
-	
+
 	// Create and configure the node
 	n := node.NewNode(nodeConfig, peeringDataFetcher)
 
@@ -152,7 +152,7 @@ func runKMSServer(c *cli.Context) error {
 
 	// Node scheduler handles DKG and reshare automatically based on config
 	appLogger.Sugar().Infow("KMS Server running", "operator_address", kmsConfig.OperatorAddress, "port", kmsConfig.Port)
-	appLogger.Sugar().Infow("Available endpoints", 
+	appLogger.Sugar().Infow("Available endpoints",
 		"secrets", "POST /secrets",
 		"app_sign", "POST /app/sign",
 		"dkg", "POST /dkg/*",
@@ -181,11 +181,11 @@ func parseKMSConfig(c *cli.Context) (*config.KMSServerConfig, error) {
 
 // createPeeringDataFetcher creates a peering data fetcher that queries the blockchain
 func createPeeringDataFetcher(kmsConfig *config.KMSServerConfig, logger *zap.Logger) peering.IPeeringDataFetcher {
-	logger.Sugar().Infow("Creating peering data fetcher", 
+	logger.Sugar().Infow("Creating peering data fetcher",
 		"chain_id", kmsConfig.ChainID,
 		"rpc_url", kmsConfig.RpcUrl,
 		"avs_address", kmsConfig.AVSAddress)
-	
+
 	// Create Ethereum client
 	ethClient := ethereum.NewEthereumClient(&ethereum.EthereumClientConfig{
 		BaseUrl:   kmsConfig.RpcUrl,
@@ -213,14 +213,14 @@ func createPeeringDataFetcher(kmsConfig *config.KMSServerConfig, logger *zap.Log
 // createStubOperatorSetPeers creates stub operator set peers for testing
 func createStubOperatorSetPeers(numOperators int) *peering.OperatorSetPeers {
 	peers := make([]*peering.OperatorSetPeer, numOperators)
-	
+
 	for i := 0; i < numOperators; i++ {
 		peers[i] = &peering.OperatorSetPeer{
 			OperatorAddress: common.HexToAddress(fmt.Sprintf("0x%040d", i+1)),
 			SocketAddress:   fmt.Sprintf("http://localhost:%d", 8000+i+1),
 		}
 	}
-	
+
 	return &peering.OperatorSetPeers{
 		OperatorSetId: 1,
 		AVSAddress:    common.HexToAddress("0x1234567890123456789012345678901234567890"),

@@ -10,7 +10,7 @@ import (
 	"github.com/Layr-Labs/eigenlayer-contracts/pkg/bindings/IDelegationManager"
 	"github.com/Layr-Labs/eigenlayer-contracts/pkg/bindings/IKeyRegistrar"
 	"github.com/Layr-Labs/eigenlayer-contracts/pkg/bindings/IReleaseManager"
-	ethereum "github.com/Layr-Labs/eigenx-kms-go/pkg/clients"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/ethereum"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/middleware-bindings/IEigenKMSRegistrar"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
