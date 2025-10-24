@@ -90,11 +90,11 @@ func testAutomaticReshare(t *testing.T) {
 		t.Logf("  Node %d DKG version: %d", i+1, activeVersion.Version)
 	}
 
-	t.Logf("Waiting for automatic reshare at next 15s boundary...")
+	t.Logf("Waiting for automatic reshare at next 30s boundary...")
 
 	// Wait for next interval boundary - reshare should trigger automatically
-	// Need longer timeout since we need to wait up to 15 seconds for next boundary
-	if !testutil.WaitForReshare(cluster, dkgVersions, 25*time.Second) {
+	// Need longer timeout since we need to wait up to 30 seconds for next boundary
+	if !testutil.WaitForReshare(cluster, dkgVersions, 45*time.Second) {
 		t.Fatal("Automatic reshare did not occur within timeout")
 	}
 

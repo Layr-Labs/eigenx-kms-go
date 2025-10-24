@@ -88,7 +88,7 @@ func GetChainIdFromName(name ChainName) (ChainId, error) {
 const (
 	ReshareInterval_Mainnet = 10 * time.Minute
 	ReshareInterval_Sepolia = 2 * time.Minute
-	ReshareInterval_Anvil   = 15 * time.Second // Fast interval for testing
+	ReshareInterval_Anvil   = 30 * time.Second // Fast interval for testing
 )
 
 // GetReshareIntervalForChain returns the reshare interval for a given chain

@@ -493,11 +493,11 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 		}
 	}
 
-	// Wait for all shares and commitments
-	if err := n.waitForSharesWithRetry(len(operators), 60*time.Second); err != nil {
+	// Wait for all shares and commitments (timeout must be less than interval)
+	if err := n.waitForSharesWithRetry(len(operators), 15*time.Second); err != nil {
 		return err
 	}
-	if err := n.waitForCommitmentsWithRetry(len(operators), 60*time.Second); err != nil {
+	if err := n.waitForCommitmentsWithRetry(len(operators), 15*time.Second); err != nil {
 		return err
 	}
 
@@ -559,8 +559,8 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	n.receivedShares = validShares
 	n.mu.Unlock()
 
-	// Wait for acknowledgements (as a dealer)
-	if err := n.waitForAcknowledgements(threshold, 60*time.Second); err != nil {
+	// Wait for acknowledgements (as a dealer) - need ALL operators for DKG
+	if err := n.waitForAcknowledgements(len(operators), 15*time.Second); err != nil {
 		return fmt.Errorf("insufficient acknowledgements: %v", err)
 	}
 
@@ -666,11 +666,11 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		}
 	}
 
-	// Wait for shares and commitments
-	if err := n.waitForSharesWithRetry(len(operators), 60*time.Second); err != nil {
+	// Wait for shares and commitments (timeout must be less than interval)
+	if err := n.waitForSharesWithRetry(len(operators), 15*time.Second); err != nil {
 		return err
 	}
-	if err := n.waitForCommitmentsWithRetry(len(operators), 60*time.Second); err != nil {
+	if err := n.waitForCommitmentsWithRetry(len(operators), 15*time.Second); err != nil {
 		return err
 	}
 
@@ -737,10 +737,10 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		"expected_operators", len(operators))
 
 	// Wait for shares and commitments from existing operators
-	if err := n.waitForSharesWithRetry(len(operators), 60*time.Second); err != nil {
+	if err := n.waitForSharesWithRetry(len(operators), 15*time.Second); err != nil {
 		return fmt.Errorf("failed to receive shares: %w", err)
 	}
-	if err := n.waitForCommitmentsWithRetry(len(operators), 60*time.Second); err != nil {
+	if err := n.waitForCommitmentsWithRetry(len(operators), 15*time.Second); err != nil {
 		return fmt.Errorf("failed to receive commitments: %w", err)
 	}
 

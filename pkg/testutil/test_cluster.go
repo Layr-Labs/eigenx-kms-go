@@ -1,7 +1,9 @@
 package testutil
 
 import (
+	"fmt"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -17,12 +19,12 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
-// TestCluster represents a cluster of KMS nodes for testing  
+// TestCluster represents a cluster of KMS nodes for testing
 type TestCluster struct {
-	Nodes       []*node.Node
-	Servers     []*httptest.Server  
-	ServerURLs  []string
-	NumNodes    int
+	Nodes        []*node.Node
+	Servers      []*httptest.Server
+	ServerURLs   []string
+	NumNodes     int
 	MasterPubKey types.G2Point
 }
 
@@ -41,7 +43,7 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 
 	addresses := []string{
 		chainConfig.OperatorAccountAddress1,
-		chainConfig.OperatorAccountAddress2, 
+		chainConfig.OperatorAccountAddress2,
 		chainConfig.OperatorAccountAddress3,
 		chainConfig.OperatorAccountAddress4,
 		chainConfig.OperatorAccountAddress5,
@@ -80,9 +82,10 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 
 	// Create nodes with proper configuration
 	for i := 0; i < numNodes; i++ {
+		portNumber, _ := strconv.Atoi(fmt.Sprintf("750%d", i))
 		cfg := node.Config{
 			OperatorAddress: addresses[i],
-			Port:            0,
+			Port:            portNumber,
 			BN254PrivateKey: privateKeys[i],
 			ChainID:         config.ChainId_EthereumAnvil, // Use anvil for tests (1 minute reshare)
 			AVSAddress:      "0x1234567890123456789012345678901234567890",
@@ -103,9 +106,9 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 	}
 
 	// Nodes now have automatic schedulers running
-	// Wait for automatic DKG to complete (15 second intervals for anvil)
-	t.Logf("Waiting for automatic DKG to complete (interval: 15s, timeout: 30s)...")
-	if !WaitForDKGCompletion(cluster, 30*time.Second) {
+	// Wait for automatic DKG to complete (30 second intervals for anvil)
+	t.Logf("Waiting for automatic DKG to complete (interval: 30s, timeout: 45s)...")
+	if !WaitForDKGCompletion(cluster, 45*time.Second) {
 		t.Fatalf("DKG did not complete within timeout")
 	}
 
@@ -114,7 +117,6 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 
 	t.Logf("✓ Test cluster ready with automatic DKG complete")
 	t.Logf("  - Nodes: %d", numNodes)
-	t.Logf("  - Threshold: %d", calculateThreshold(numNodes))
 	t.Logf("  - Master Public Key: X=%s", cluster.MasterPubKey.X.String()[:20]+"...")
 
 	return cluster
@@ -218,11 +220,6 @@ func ComputeMasterPublicKey(cluster *TestCluster) types.G2Point {
 	return crypto.ComputeMasterPublicKey(allCommitments)
 }
 
-// calculateThreshold calculates the threshold for a given number of nodes
-func calculateThreshold(n int) int {
-	return (2*n + 2) / 3
-}
-
 // GetMasterPublicKey returns the master public key
 func (c *TestCluster) GetMasterPublicKey() types.G2Point {
 	return c.MasterPubKey
@@ -238,7 +235,7 @@ func (c *TestCluster) Close() {
 	if c == nil {
 		return
 	}
-	
+
 	for i, server := range c.Servers {
 		if server != nil {
 			server.Close()
