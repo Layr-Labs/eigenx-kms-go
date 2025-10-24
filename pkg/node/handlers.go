@@ -20,10 +20,11 @@ func (s *Server) validateAuthenticatedMessage(r *http.Request, expectedRecipient
 		return nil, nil, nil, fmt.Errorf("failed to parse authenticated message: %w", err)
 	}
 
-	// First decode payload to get sender address
+	// First decode payload to get sender address and session timestamp
 	var baseMsg struct {
 		FromOperatorAddress common.Address `json:"fromOperatorAddress"`
 		ToOperatorAddress   common.Address `json:"toOperatorAddress"`
+		SessionTimestamp    int64          `json:"sessionTimestamp"`
 	}
 	if err := json.Unmarshal(authMsg.Payload, &baseMsg); err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to parse message addresses: %w", err)
@@ -34,11 +35,24 @@ func (s *Server) validateAuthenticatedMessage(r *http.Request, expectedRecipient
 		return nil, nil, nil, fmt.Errorf("message not intended for this operator")
 	}
 
-	// Fetch current operators to find sender
-	ctx := context.Background()
-	operators, err := s.node.fetchCurrentOperators(ctx, s.node.AVSAddress, s.node.OperatorSetId)
-	if err != nil {
-		return nil, nil, nil, fmt.Errorf("failed to fetch operators for validation: %w", err)
+	// Get session - it contains the operators for this protocol run
+	session := s.node.getSession(baseMsg.SessionTimestamp)
+	var operators []*peering.OperatorSetPeer
+
+	if session != nil {
+		// Use operators from session (already fetched when protocol started)
+		session.mu.RLock()
+		operators = session.Operators
+		session.mu.RUnlock()
+	} else {
+		// No session yet - fetch operators (this happens for first message of a session)
+		// This is normal - receiving node might not have started protocol yet
+		ctx := context.Background()
+		var err error
+		operators, err = s.node.fetchCurrentOperators(ctx, s.node.AVSAddress, s.node.OperatorSetId)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to fetch operators for validation: %w", err)
+		}
 	}
 
 	// Find sender peer

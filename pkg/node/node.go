@@ -204,12 +204,21 @@ func (n *Node) checkScheduledOperations() {
 	intervalSeconds := int64(n.reshareInterval.Seconds())
 	roundedTime := (now.Unix() / intervalSeconds) * intervalSeconds
 
-	// Step 2: Check if we've already processed this boundary
+	// Step 2: Initialize lastProcessedBoundary on first run
+	if n.lastProcessedBoundary == 0 {
+		n.lastProcessedBoundary = roundedTime
+		n.logger.Sugar().Debugw("Initialized interval boundary tracking",
+			"operator_address", n.OperatorAddress.Hex(),
+			"rounded_time", roundedTime)
+		return // Don't trigger on first tick
+	}
+
+	// Step 3: Check if we've already processed this boundary
 	if roundedTime == n.lastProcessedBoundary {
 		return // Already handled this interval
 	}
 
-	// Step 3: Update last processed boundary
+	// Step 4: Update last processed boundary
 	n.lastProcessedBoundary = roundedTime
 
 	n.logger.Sugar().Debugw("Interval boundary reached",
@@ -677,10 +686,10 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 
 	// Compute new key share using Lagrange interpolation
 	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDs, receivedShares, allCommitments)
-	newKeyVersion.Version = time.Now().Unix() // Set proper epoch
-	newKeyVersion.IsActive = false // Mark as pending until activation
+	newKeyVersion.Version = sessionTimestamp // Use session timestamp as version
+	newKeyVersion.IsActive = true // Activate immediately (all operators must participate)
 
-	// Add new version to keystore (will become active after validation)
+	// Add new version to keystore
 	n.keyStore.AddVersion(newKeyVersion)
 
 	n.logger.Sugar().Infow("Reshare completed", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "new_version", newKeyVersion.Version)

@@ -21,11 +21,15 @@ func Test_ReshareIntegration(t *testing.T) {
 	t.Run("FullReshareProtocol", func(t *testing.T) {
 		testFullReshareProtocol(t)
 	})
-	
+
+	t.Run("AutomaticReshare", func(t *testing.T) {
+		testAutomaticReshare(t)
+	})
+
 	t.Run("ReshareWithThresholdChange", func(t *testing.T) {
 		testReshareWithThresholdChange(t)
 	})
-	
+
 	t.Run("ReshareSecretConsistency", func(t *testing.T) {
 		testReshareSecretConsistency(t)
 	})
@@ -67,6 +71,50 @@ func testFullReshareProtocol(t *testing.T) {
 	t.Logf("  - All nodes have valid DKG key shares")
 	t.Logf("  - All nodes can generate partial signatures")
 	t.Logf("  - Ready for actual reshare protocol implementation")
+}
+
+// testAutomaticReshare tests that reshare triggers automatically at intervals
+func testAutomaticReshare(t *testing.T) {
+	// Create cluster - automatic DKG will happen at first boundary
+	cluster := testutil.NewTestCluster(t, 3)
+	defer cluster.Close()
+
+	// DKG has completed - record these versions (created at first interval)
+	dkgVersions := make(map[int]int64)
+	for i, n := range cluster.Nodes {
+		activeVersion := n.GetKeyStore().GetActiveVersion()
+		if activeVersion == nil {
+			t.Fatalf("Node %d should have key version after DKG", i+1)
+		}
+		dkgVersions[i] = activeVersion.Version
+		t.Logf("  Node %d DKG version: %d", i+1, activeVersion.Version)
+	}
+
+	t.Logf("Waiting for automatic reshare at next 15s boundary...")
+
+	// Wait for next interval boundary - reshare should trigger automatically
+	// Need longer timeout since we need to wait up to 15 seconds for next boundary
+	if !testutil.WaitForReshare(cluster, dkgVersions, 25*time.Second) {
+		t.Fatal("Automatic reshare did not occur within timeout")
+	}
+
+	// Verify all nodes have NEW key versions (different from DKG versions)
+	for i, n := range cluster.Nodes {
+		activeVersion := n.GetKeyStore().GetActiveVersion()
+		if activeVersion == nil {
+			t.Fatalf("Node %d should have key version after reshare", i+1)
+		}
+		if activeVersion.Version == dkgVersions[i] {
+			t.Errorf("Node %d key version did not change from DKG version %d (reshare did not occur)",
+				i+1, dkgVersions[i])
+		}
+		t.Logf("  Node %d reshare version: %d (changed from %d)", i+1, activeVersion.Version, dkgVersions[i])
+	}
+
+	t.Logf("✓ Automatic reshare test passed")
+	t.Logf("  - Reshare triggered automatically at interval boundary")
+	t.Logf("  - All nodes have new key versions")
+	t.Logf("  - Scheduler working correctly")
 }
 
 // testReshareWithThresholdChange tests reshare with operator set changes

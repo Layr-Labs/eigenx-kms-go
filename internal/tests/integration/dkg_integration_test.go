@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/testutil"
-	"github.com/ethereum/go-ethereum/common"
 )
 
 // Test_DKGIntegration tests the complete DKG protocol using real Node instances
@@ -14,34 +13,39 @@ func Test_DKGIntegration(t *testing.T) {
 	})
 }
 
-// testFullDKGProtocol tests a complete DKG protocol run using real Node instances
+// testFullDKGProtocol tests automatic DKG execution via interval-based scheduling
 func testFullDKGProtocol(t *testing.T) {
-	// Create test cluster with real Node instances
+	// Create test cluster - nodes start with schedulers running
 	cluster := testutil.NewTestCluster(t, 5)
 	defer cluster.Close()
-	
-	// For now, just verify cluster was created successfully
-	if cluster == nil {
-		t.Fatal("Expected non-nil test cluster")
-	}
-	
-	if len(cluster.Nodes) != 5 {
-		t.Fatalf("Expected 5 nodes, got %d", len(cluster.Nodes))
-	}
-	
-	expectedThreshold := (2*5+2)/3
-	if expectedThreshold != 4 {
-		t.Errorf("Expected threshold calculation to be 4 for 5 nodes, got %d", expectedThreshold)
-	}
-	
-	// Verify all nodes were created with proper addresses
+
+	// testutil.NewTestCluster() already waits for DKG completion
+	// Verify all nodes have active key shares
 	for i, n := range cluster.Nodes {
-		if n == nil {
-			t.Errorf("Node %d is nil", i)
-		} else if n.GetOperatorAddress() == (common.Address{}) {
-			t.Errorf("Node %d has zero address", i)
+		activeVersion := n.GetKeyStore().GetActiveVersion()
+		if activeVersion == nil {
+			t.Fatalf("Node %d should have active key version after automatic DKG", i+1)
+		}
+		if activeVersion.PrivateShare == nil {
+			t.Fatalf("Node %d should have valid private share", i+1)
 		}
 	}
-	
-	t.Logf("✓ DKG integration test cluster created with %d nodes", cluster.NumNodes)
+
+	// Verify master public key was computed
+	masterPubKey := cluster.GetMasterPublicKey()
+	if masterPubKey.X.Sign() == 0 {
+		t.Fatal("Master public key should not be zero after DKG")
+	}
+
+	// Verify threshold properties
+	expectedThreshold := (2*5+2)/3
+	if expectedThreshold != 4 {
+		t.Errorf("Expected threshold 4 for 5 nodes, got %d", expectedThreshold)
+	}
+
+	t.Logf("✓ Automatic DKG integration test passed")
+	t.Logf("  - Nodes: %d", cluster.NumNodes)
+	t.Logf("  - All nodes have active key shares")
+	t.Logf("  - Master public key computed successfully")
+	t.Logf("  - DKG triggered automatically via scheduler")
 }

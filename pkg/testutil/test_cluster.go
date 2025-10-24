@@ -1,9 +1,7 @@
 package testutil
 
 import (
-	"fmt"
 	"net/http/httptest"
-	"sync"
 	"testing"
 	"time"
 
@@ -99,16 +97,17 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 		cluster.Servers[i].Config.Handler = server.GetHandler()
 	}
 
-	// Execute coordinated DKG
-	t.Logf("Executing DKG with %d nodes...", numNodes)
-	if err := executeCoordinatedDKG(t, cluster); err != nil {
-		t.Fatalf("DKG failed: %v", err)
+	// Nodes now have automatic schedulers running
+	// Wait for automatic DKG to complete (15 second intervals for anvil)
+	t.Logf("Waiting for automatic DKG to complete (interval: 15s, timeout: 30s)...")
+	if !WaitForDKGCompletion(cluster, 30*time.Second) {
+		t.Fatalf("DKG did not complete within timeout")
 	}
 
 	// Compute master public key from commitments
-	cluster.MasterPubKey = computeMasterPublicKey(cluster)
+	cluster.MasterPubKey = ComputeMasterPublicKey(cluster)
 
-	t.Logf("✓ Test cluster ready with DKG complete")
+	t.Logf("✓ Test cluster ready with automatic DKG complete")
 	t.Logf("  - Nodes: %d", numNodes)
 	t.Logf("  - Threshold: %d", calculateThreshold(numNodes))
 	t.Logf("  - Master Public Key: X=%s", cluster.MasterPubKey.X.String()[:20]+"...")
@@ -147,51 +146,57 @@ func createTestPeeringDataFetcherWithURLs(t *testing.T, addresses, privateKeys, 
 	return localPeeringDataFetcher.NewLocalPeeringDataFetcher([]*peering.OperatorSetPeers{operatorSet}, testLogger)
 }
 
-// executeCoordinatedDKG runs DKG across all nodes in the cluster
-func executeCoordinatedDKG(t *testing.T, cluster *TestCluster) error {
-	var wg sync.WaitGroup
-	errors := make(chan error, cluster.NumNodes)
+// WaitForDKGCompletion polls nodes until all have completed DKG
+func WaitForDKGCompletion(cluster *TestCluster, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	checkInterval := 500 * time.Millisecond
 
-	// Use a coordinated session timestamp for all nodes
-	sessionTimestamp := time.Now().Unix()
-
-	// Start DKG on all nodes concurrently with same session timestamp
-	for i, n := range cluster.Nodes {
-		wg.Add(1)
-		go func(nodeIdx int, node *node.Node) {
-			defer wg.Done()
-			t.Logf("  Starting DKG on node %d (%s)", nodeIdx+1, node.GetOperatorAddress().Hex())
-			if err := node.RunDKG(sessionTimestamp); err != nil {
-				t.Logf("  ❌ Node %d DKG failed: %v", nodeIdx+1, err)
-				errors <- fmt.Errorf("node %d DKG failed: %w", nodeIdx+1, err)
-			} else {
-				t.Logf("  ✅ Node %d DKG completed", nodeIdx+1)
+	for time.Now().Before(deadline) {
+		allComplete := true
+		for _, n := range cluster.Nodes {
+			if n.GetKeyStore().GetActiveVersion() == nil {
+				allComplete = false
+				break
 			}
-		}(i, n)
-	}
-
-	// Wait for all nodes with timeout
-	done := make(chan struct{})
-	go func() {
-		wg.Wait()
-		close(done)
-	}()
-
-	select {
-	case <-done:
-		// All completed
-		close(errors)
-		if len(errors) > 0 {
-			return <-errors
 		}
-		return nil
-	case <-time.After(60 * time.Second):
-		return fmt.Errorf("DKG timeout after 60 seconds")
+
+		if allComplete {
+			return true
+		}
+
+		time.Sleep(checkInterval)
 	}
+
+	return false
 }
 
-// computeMasterPublicKey computes the master public key from all node commitments
-func computeMasterPublicKey(cluster *TestCluster) types.G2Point {
+// WaitForReshare waits for nodes to complete a reshare (key version change)
+func WaitForReshare(cluster *TestCluster, initialVersions map[int]int64, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	checkInterval := 500 * time.Millisecond
+
+	for time.Now().Before(deadline) {
+		reshareOccurred := false
+		for i, n := range cluster.Nodes {
+			activeVersion := n.GetKeyStore().GetActiveVersion()
+			if activeVersion != nil && activeVersion.Version != initialVersions[i] {
+				reshareOccurred = true
+				break
+			}
+		}
+
+		if reshareOccurred {
+			return true
+		}
+
+		time.Sleep(checkInterval)
+	}
+
+	return false
+}
+
+// ComputeMasterPublicKey computes the master public key from all node commitments
+func ComputeMasterPublicKey(cluster *TestCluster) types.G2Point {
 	var allCommitments [][]types.G2Point
 
 	for _, n := range cluster.Nodes {
