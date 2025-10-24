@@ -74,6 +74,26 @@ type Node struct {
 	receivedAcks        map[int]map[int]*types.Acknowledgement
 	reshareComplete     map[int]*types.CompletionSignature
 
+	// Session management
+	activeSessions map[int64]*ProtocolSession
+	sessionMutex   sync.RWMutex
+
+	mu sync.RWMutex
+}
+
+// ProtocolSession tracks state for a DKG or reshare session
+type ProtocolSession struct {
+	SessionTimestamp int64
+	Type             string // "dkg" or "reshare"
+	Phase            int    // 1, 2, 3
+	StartTime        time.Time
+	Operators        []*peering.OperatorSetPeer
+
+	// Session-specific state
+	shares      map[int]*fr.Element
+	commitments map[int][]types.G2Point
+	acks        map[int]map[int]*types.Acknowledgement
+
 	mu sync.RWMutex
 }
 
@@ -124,6 +144,7 @@ func NewNode(cfg Config, pdf peering.IPeeringDataFetcher) *Node {
 		receivedCommitments: make(map[int][]types.G2Point),
 		receivedAcks:        make(map[int]map[int]*types.Acknowledgement),
 		reshareComplete:     make(map[int]*types.CompletionSignature),
+		activeSessions:      make(map[int64]*ProtocolSession),
 	}
 
 	// Set node reference in server
@@ -161,6 +182,49 @@ func (n *Node) fetchCurrentOperators(ctx context.Context, avsAddress string, ope
 
 	n.logger.Sugar().Infow("Fetched operators from chain", "operator_address", n.OperatorAddress.Hex(), "count", len(sortedPeers))
 	return sortedPeers, nil
+}
+
+// createSession creates a new protocol session
+func (n *Node) createSession(sessionType string, operators []*peering.OperatorSetPeer) *ProtocolSession {
+	session := &ProtocolSession{
+		SessionTimestamp: time.Now().Unix(),
+		Type:             sessionType,
+		Phase:            1,
+		StartTime:        time.Now(),
+		Operators:        operators,
+		shares:           make(map[int]*fr.Element),
+		commitments:      make(map[int][]types.G2Point),
+		acks:             make(map[int]map[int]*types.Acknowledgement),
+	}
+
+	n.sessionMutex.Lock()
+	n.activeSessions[session.SessionTimestamp] = session
+	n.sessionMutex.Unlock()
+
+	n.logger.Sugar().Infow("Created protocol session",
+		"operator_address", n.OperatorAddress.Hex(),
+		"session_timestamp", session.SessionTimestamp,
+		"type", sessionType)
+
+	return session
+}
+
+// getSession retrieves a session by timestamp
+func (n *Node) getSession(sessionTimestamp int64) *ProtocolSession {
+	n.sessionMutex.RLock()
+	defer n.sessionMutex.RUnlock()
+	return n.activeSessions[sessionTimestamp]
+}
+
+// cleanupSession removes a completed or failed session
+func (n *Node) cleanupSession(sessionTimestamp int64) {
+	n.sessionMutex.Lock()
+	delete(n.activeSessions, sessionTimestamp)
+	n.sessionMutex.Unlock()
+
+	n.logger.Sugar().Debugw("Cleaned up session",
+		"operator_address", n.OperatorAddress.Hex(),
+		"session_timestamp", sessionTimestamp)
 }
 
 // RunDKG executes the DKG protocol

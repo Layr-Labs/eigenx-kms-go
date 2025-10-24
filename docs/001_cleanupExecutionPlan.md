@@ -13,23 +13,25 @@ This document outlines the implementation plan for completing the EigenX KMS sys
 **Why First**: We need working integration tests to validate all subsequent changes. Currently, testutil creates empty nodes without running DKG, causing integration tests to fail.
 
 ### Tasks:
-- [ ] Update `testutil.NewTestCluster()` to actually execute DKG protocol
-  - [ ] Have nodes coordinate DKG execution
-  - [ ] Wait for DKG completion with timeout
-  - [ ] Populate `cluster.MasterPubKey` from commitments
-  - [ ] Ensure all nodes have active key versions
-- [ ] Verify restored integration tests pass:
-  - [ ] `Test_ReshareIntegration/FullReshareProtocol`
-  - [ ] `Test_ReshareIntegration/ReshareWithThresholdChange`
-  - [ ] `Test_ReshareIntegration/ReshareSecretConsistency`
-  - [ ] `Test_DKGIntegration/FullDKGProtocol`
-- [ ] Run all tests: `go test ./...` (all must pass)
-- [ ] Run linter: `make lint` (0 issues)
+- [x] Update `testutil.NewTestCluster()` to actually execute DKG protocol
+  - [x] Have nodes coordinate DKG execution
+  - [x] Wait for DKG completion with timeout
+  - [x] Populate `cluster.MasterPubKey` from commitments
+  - [x] Ensure all nodes have active key versions
+- [x] Verify restored integration tests pass:
+  - [x] `Test_ReshareIntegration/FullReshareProtocol`
+  - [x] `Test_ReshareIntegration/ReshareWithThresholdChange`
+  - [x] `Test_ReshareIntegration/ReshareSecretConsistency`
+  - [x] `Test_DKGIntegration/FullDKGProtocol`
+- [x] Run all tests: `go test ./...` (all must pass)
+- [x] Run linter: `make lint` (0 issues)
+- [x] Fixed critical authentication bug: `VerifySolidityCompatible` vs `Verify`
 
 ### Success Criteria:
-- All integration tests pass with real DKG execution
-- Tests verify cryptographic properties (secret preservation, threshold correctness)
-- No test skips or stubs remaining
+- âœ… All integration tests pass with real DKG execution
+- âœ… Tests verify cryptographic properties (secret preservation, threshold correctness)
+- âœ… No test skips or stubs remaining
+- âœ… Authentication working correctly with BN254 signatures
 
 ---
 
@@ -140,8 +142,8 @@ This document outlines the implementation plan for completing the EigenX KMS sys
   - [ ] Return "genesis" if no operators have keys, "existing" otherwise
 - [ ] Update Node startup logic:
   - [ ] On start, call `detectClusterState()`
-  - [ ] If genesis + DKGAt set ’ schedule DKG
-  - [ ] If existing cluster ’ wait for next reshare cycle
+  - [ ] If genesis + DKGAt set ï¿½ schedule DKG
+  - [ ] If existing cluster ï¿½ wait for next reshare cycle
 - [ ] Implement new operator reshare flow:
   - [ ] Add `isNewOperator()` method - checks if node has active key share
   - [ ] Split `RunReshare()` into two paths:
@@ -154,7 +156,7 @@ This document outlines the implementation plan for completing the EigenX KMS sys
 - [ ] Implement `runReshareAsNewOperator()`:
   - [ ] Don't generate shares (no current share)
   - [ ] Only receive shares from existing operators
-  - [ ] Compute final share via Lagrange: `x'_j = £ »_i s'_ij`
+  - [ ] Compute final share via Lagrange: `x'_j = ï¿½ ï¿½_i s'_ij`
   - [ ] Store first key version
 - [ ] Update operator set change detection:
   - [ ] Compare current vs previous operator set
@@ -261,4 +263,12 @@ L **Not Started**:
 - New operator support (Milestone 4)
 - Threshold governance (Milestone 5)
 
-**Ready to begin Milestone 1.**
+**âœ… Milestone 1 Complete!**
+
+- Fixed `testutil.NewTestCluster()` to execute real coordinated DKG
+- Fixed authentication bug (`VerifySolidityCompatible` vs `Verify`)
+- Restored all comprehensive integration tests
+- All tests passing with real cryptographic verification
+- 0 linter issues
+
+**Ready to begin Milestone 2.**

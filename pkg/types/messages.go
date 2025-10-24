@@ -21,6 +21,7 @@ type SerializedFrElement struct {
 type ShareMessage struct {
 	FromOperatorAddress common.Address        `json:"fromOperatorAddress"`
 	ToOperatorAddress   common.Address        `json:"toOperatorAddress"`
+	SessionTimestamp    int64                 `json:"sessionTimestamp"`
 	Share              *SerializedFrElement `json:"share"`
 }
 
@@ -28,6 +29,7 @@ type ShareMessage struct {
 type CommitmentMessage struct {
 	FromOperatorAddress common.Address `json:"fromOperatorAddress"`
 	ToOperatorAddress   common.Address `json:"toOperatorAddress"` // 0x0 for broadcast
+	SessionTimestamp    int64          `json:"sessionTimestamp"`
 	Commitments        []G2Point      `json:"commitments"`
 }
 
@@ -35,6 +37,7 @@ type CommitmentMessage struct {
 type AcknowledgementMessage struct {
 	FromOperatorAddress common.Address   `json:"fromOperatorAddress"`
 	ToOperatorAddress   common.Address   `json:"toOperatorAddress"`
+	SessionTimestamp    int64            `json:"sessionTimestamp"`
 	Ack                *Acknowledgement `json:"ack"`
 }
 
@@ -42,6 +45,7 @@ type AcknowledgementMessage struct {
 type CompletionMessage struct {
 	FromOperatorAddress common.Address        `json:"fromOperatorAddress"`
 	ToOperatorAddress   common.Address        `json:"toOperatorAddress"`
+	SessionTimestamp    int64                 `json:"sessionTimestamp"`
 	Completion         *CompletionSignature `json:"completion"`
 }
 
