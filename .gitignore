@@ -3,3 +3,5 @@
 /contracts/out
 /contracts/broadcast
 /anvil-*.json
+/cloned-copies
+.idea

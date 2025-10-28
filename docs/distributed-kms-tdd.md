@@ -73,69 +73,69 @@ Before diving into the KMS-specific architecture, it's important to understand h
 EigenX is structured as a multi-layer platform where the KMS serves as the critical trust layer:
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
+┌──────────────────────────────────────────────────────────────────┐
 │                      Developer Layer                             │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
-│  │ EigenX CLI   │  │ Docker Image │  │ App Config   │          │
-│  │ (Build/Deploy│  │ Registry     │  │ (Secrets)    │          │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘          │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐            │
+│  │ EigenX CLI   │  │ Docker Image │  │ App Config   │            │
+│  │ (Build/Deploy│  │ Registry     │  │ (Secrets)    │            │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘            │ 
 │         │                 │                  │                   │
 └─────────┼─────────────────┼──────────────────┼───────────────────┘
           │                 │                  │
-┌─────────▼─────────────────▼──────────────────▼───────────────────┐
+┌─────────▼─────────────────▼──────────────────▼────────────────────┐
 │                       Trust Layer (Blockchain)                    │
-│  ┌──────────────────────────────────────────────────────────────┐│
-│  │  EigenX Smart Contracts (Ethereum)                           ││
-│  │  - App Registry: Stores authorized Docker image digests     ││
-│  │  - App Configuration: Stores encrypted secrets, state       ││
-│  │  - Access Control: Defines who can deploy/manage apps       ││
-│  └──────────────────────────────────────────────────────────────┘│
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │  EigenX Smart Contracts (Ethereum)                         │  │
+│  │  - App Registry: Stores authorized Docker image digests   │  │
+│  │  - App Configuration: Stores encrypted secrets, state     │  │
+│  │  - Access Control: Defines who can deploy/manage apps     │  │
+│  └────────────────────────────────────────────────────────────┘  │
 │                                                                   │
-│  ┌──────────────────────────────────────────────────────────────┐│
-│  │  KMS AVS (This System)                                       ││
-│  │  - TEE Attestation Verification                              ││
-│  │  - Image Digest Validation (queries blockchain)             ││
-│  │  - Deterministic Mnemonic Generation: HMAC(master, appID)   ││
-│  │  - Secret Delivery to Authenticated TEEs                    ││
-│  └──────────────────────────────────────────────────────────────┘│
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │  KMS AVS (This System)                                     │  │
+│  │  - TEE Attestation Verification                            │  │
+│  │  - Image Digest Validation (queries blockchain)           │  │
+│  │  - Deterministic Mnemonic Generation: HMAC(master, appID) │  │
+│  │  - Secret Delivery to Authenticated TEEs                  │  │
+│  └────────────────────────────────────────────────────────────┘  │
 └───────────────────────────┬───────────────────────────────────────┘
                             │
 ┌───────────────────────────▼───────────────────────────────────────┐
 │                    Automation Layer                               │
-│  ┌──────────────────────────────────────────────────────────────┐│
-│  │  EigenX Coordinator                                          ││
-│  │  - Watches blockchain for deployment events                  ││
-│  │  - Provisions Google Cloud VMs with Intel TDX               ││
-│  │  - Manages application lifecycle (start/stop/upgrade)        ││
-│  │  - Monitors TEE instance health                              ││
-│  └──────────────────────────────────────────────────────────────┘│
+│  ┌────────────────────────────────────────────────────────────┐   │
+│  │  EigenX Coordinator                                        │   │
+│  │  - Watches blockchain for deployment events                │   │
+│  │  - Provisions Google Cloud VMs with Intel TDX              │   │
+│  │  - Manages application lifecycle (start/stop/upgrade)      │   │
+│  │  - Monitors TEE instance health                            │   │
+│  └────────────────────────────────────────────────────────────┘   │
 └───────────────────────────┬───────────────────────────────────────┘
                             │
 ┌───────────────────────────▼───────────────────────────────────────┐
 │                     Execution Layer                               │
-│  ┌──────────────────────────────────────────────────────────────┐│
-│  │  TEE Instance (Intel TDX on Google Cloud)                    ││
-│  │                                                               ││
-│  │  ┌──────────────────────────────────────────────────────┐   ││
-│  │  │ Hardware-Isolated VM (Memory Encrypted)              │   ││
-│  │  │                                                       │   ││
-│  │  │  ┌─────────────────────────────────────────────┐    │   ││
-│  │  │  │ Docker Container (Application Code)         │    │   ││
-│  │  │  │                                              │    │   ││
-│  │  │  │  Environment Variables:                      │    │   ││
-│  │  │  │  - MNEMONIC="word1 word2 ... word12"        │    │   ││
-│  │  │  │  - DB_PASSWORD="..." (from developer)       │    │   ││
-│  │  │  │  - API_KEY="..." (from developer)           │    │   ││
-│  │  │  │                                              │    │   ││
-│  │  │  │  Application derives wallets from mnemonic: │    │   ││
-│  │  │  │  - Ethereum: m/44'/60'/0'/0/0               │    │   ││
-│  │  │  │  - Bitcoin: m/44'/0'/0'/0/0                 │    │   ││
-│  │  │  │  - Signs transactions autonomously          │    │   ││
-│  │  │  └─────────────────────────────────────────────┘    │   ││
-│  │  │                                                       │   ││
-│  │  │  Host OS CANNOT access memory (Intel TDX)            │   ││
-│  │  └──────────────────────────────────────────────────────┘   ││
-│  └──────────────────────────────────────────────────────────────┘│
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │  TEE Instance (Intel TDX on Google Cloud)                  │  │
+│  │                                                             │  │
+│  │  ┌────────────────────────────────────────────────────┐    │  │
+│  │  │ Hardware-Isolated VM (Memory Encrypted)            │    │  │
+│  │  │                                                     │    │  │
+│  │  │  ┌───────────────────────────────────────────┐     │    │  │
+│  │  │  │ Docker Container (Application Code)       │     │    │  │
+│  │  │  │                                            │     │    │  │
+│  │  │  │  Environment Variables:                    │     │    │  │
+│  │  │  │  - MNEMONIC="word1 word2 ... word12"      │     │    │  │
+│  │  │  │  - DB_PASSWORD="..." (from developer)     │     │    │  │
+│  │  │  │  - API_KEY="..." (from developer)         │     │    │  │
+│  │  │  │                                            │     │    │  │
+│  │  │  │  Application derives wallets from mnemonic│     │    │  │
+│  │  │  │  - Ethereum: m/44'/60'/0'/0/0             │     │    │  │
+│  │  │  │  - Bitcoin: m/44'/0'/0'/0/0               │     │    │  │
+│  │  │  │  - Signs transactions autonomously        │     │    │  │
+│  │  │  └───────────────────────────────────────────┘     │    │  │
+│  │  │                                                     │    │  │
+│  │  │  Host OS CANNOT access memory (Intel TDX)          │    │  │
+│  │  └────────────────────────────────────────────────────┘    │  │
+│  └────────────────────────────────────────────────────────────┘  │
 └───────────────────────────────────────────────────────────────────┘
 ```
 
@@ -400,116 +400,259 @@ func main() {
 The EigenX KMS AVS is built on a modular architecture with clear separation of concerns:
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
+┌──────────────────────────────────────────────────────────────────┐
 │                        Application Layer                         │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐          │
-│  │ KMS Client   │  │ TEE Runtime  │  │ Web3 App     │          │
-│  │ CLI Tool     │  │ (TDX/SGX)    │  │ Integration  │          │
-│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘          │
-│         │                 │                  │                   │
-│         └─────────────────┴──────────────────┘                   │
-│                           │                                      │
-│                  HTTP API (Public Endpoints)                     │
-└───────────────────────────┼──────────────────────────────────────┘
-                            │
-┌───────────────────────────┼──────────────────────────────────────┐
-│                    KMS Node (Operator)                           │
-│  ┌─────────────────────────────────────────────────────────────┐ │
-│  │                  HTTP Server (pkg/node)                     │ │
-│  │  ┌──────────────────┐  ┌─────────────────────────────────┐ │ │
-│  │  │ Protocol APIs    │  │ Application APIs                │ │ │
-│  │  │ /dkg/*           │  │ /pubkey, /app/sign, /secrets    │ │ │
-│  │  └──────────────────┘  └─────────────────────────────────┘ │ │
-│  └───────────┬──────────────────────────┬──────────────────────┘ │
-│              │                          │                        │
-│  ┌───────────▼───────────┐  ┌──────────▼─────────────┐          │
-│  │ Protocol Engines      │  │ Application Handler    │          │
-│  │ - DKG (pkg/dkg)       │  │ - Pubkey aggregation   │          │
-│  │ - Reshare             │  │ - Partial signing      │          │
-│  │   (pkg/reshare)       │  │ - TEE verification     │          │
-│  └───────────┬───────────┘  └────────────────────────┘          │
-│              │                                                    │
-│  ┌───────────▼──────────────────────────────────────┐           │
-│  │         Transport Layer (pkg/transport)          │           │
-│  │  - Message signing/verification (BN254)          │           │
-│  │  - Authenticated message wrapping                │           │
-│  │  - HTTP client with retry logic                  │           │
-│  └───────────┬──────────────────────────────────────┘           │
-│              │                                                    │
-│  ┌───────────▼──────────────────────────────────────┐           │
-│  │    Cryptographic Operations (pkg/crypto)         │           │
-│  │  - BLS12-381: threshold sigs, DKG (pkg/bls)      │           │
-│  │  - BN254: message authentication                 │           │
-│  │  - IBE: encryption/decryption                    │           │
-│  │  - Share verification & Lagrange interpolation   │           │
-│  └──────────────────────────────────────────────────┘           │
-│                                                                   │
-│  ┌──────────────────────────────────────────────────┐           │
-│  │      Key Management (pkg/keystore)               │           │
-│  │  - Versioned key share storage                   │           │
-│  │  - Active/historical version tracking            │           │
-│  │  - Time-based key lookup                         │           │
-│  └──────────────────────────────────────────────────┘           │
-│                                                                   │
-│  ┌──────────────────────────────────────────────────┐           │
-│  │    Peering System (pkg/peering)                  │           │
-│  │  - Operator discovery from blockchain            │           │
-│  │  - Socket address resolution                     │           │
-│  │  - BN254 public key retrieval                    │           │
-│  └───────────┬──────────────────────────────────────┘           │
-│              │                                                    │
-└──────────────┼────────────────────────────────────────────────────┘
-               │
-┌──────────────▼────────────────────────────────────────────────────┐
-│                    EigenLayer Protocol                            │
 │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐           │
-│  │ AVSDirectory │  │ Operator Set │  │ Key Registrar│           │
-│  │              │  │ Registrar    │  │ (BN254)      │           │
-│  └──────────────┘  └──────────────┘  └──────────────┘           │
-└───────────────────────────────────────────────────────────────────┘
+│  │ KMS Client   │  │ TEE Runtime  │  │ Web3 App     │           │
+│  │ CLI Tool     │  │ (TDX/SGX)    │  │ Integration  │           │
+│  └──────┬───────┘  └──────┬───────┘  └──────┬───────┘           │
+│         │                 │                  │                    │
+│         └─────────────────┴──────────────────┘                    │
+│                           │                                       │
+│                  HTTP API (Public Endpoints)                      │
+└───────────────────────────┼───────────────────────────────────────┘
+                            │
+┌───────────────────────────┼───────────────────────────────────────┐
+│                    KMS Node (Operator)                            │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │                  HTTP Server (pkg/node)                    │  │
+│  │  ┌──────────────────┐  ┌──────────────────────────────┐   │  │
+│  │  │ Protocol APIs    │  │ Application APIs             │   │  │
+│  │  │ /dkg/*           │  │ /pubkey, /app/sign, /secrets │   │  │
+│  │  └──────────────────┘  └──────────────────────────────┘   │  │
+│  └───────────┬──────────────────────────┬─────────────────────┘  │
+│              │                          │                         │
+│  ┌───────────▼───────────┐  ┌──────────▼──────────────┐          │
+│  │ Protocol Engines      │  │ Application Handler     │          │
+│  │ - DKG (pkg/dkg)       │  │ - Pubkey aggregation    │          │
+│  │ - Reshare             │  │ - Partial signing       │          │
+│  │   (pkg/reshare)       │  │ - TEE verification      │          │
+│  └───────────┬───────────┘  └─────────────────────────┘          │
+│              │                                                     │
+│  ┌───────────▼─────────────────────────────────────┐             │
+│  │         Transport Layer (pkg/transport)         │             │
+│  │  - Message signing/verification (BN254)         │             │
+│  │  - Authenticated message wrapping               │             │
+│  │  - HTTP client with retry logic                 │             │
+│  └───────────┬─────────────────────────────────────┘             │
+│              │                                                     │
+│  ┌───────────▼─────────────────────────────────────┐             │
+│  │    Cryptographic Operations (pkg/crypto)        │             │
+│  │  - BLS12-381: threshold sigs, DKG (pkg/bls)     │             │
+│  │  - BN254: message authentication                │             │
+│  │  - IBE: encryption/decryption                   │             │
+│  │  - Share verification & Lagrange interpolation  │             │
+│  └─────────────────────────────────────────────────┘             │
+│                                                                    │
+│  ┌─────────────────────────────────────────────────┐             │
+│  │      Key Management (pkg/keystore)              │             │
+│  │  - Versioned key share storage                  │             │
+│  │  - Active/historical version tracking           │             │
+│  │  - Time-based key lookup                        │             │
+│  └─────────────────────────────────────────────────┘             │
+│                                                                    │
+│  ┌─────────────────────────────────────────────────┐             │
+│  │    Peering System (pkg/peering)                 │             │
+│  │  - Operator discovery from blockchain           │             │
+│  │  - Socket address resolution                    │             │
+│  │  - BN254 public key retrieval                   │             │
+│  └───────────┬─────────────────────────────────────┘             │
+│              │                                                     │
+└──────────────┼─────────────────────────────────────────────────────┘
+               │
+┌──────────────▼─────────────────────────────────────────────────────┐
+│                    EigenLayer Protocol                             │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐            │
+│  │ AVSDirectory │  │ Operator Set │  │ Key Registrar│            │
+│  │              │  │ Registrar    │  │ (BN254)      │            │
+│  └──────────────┘  └──────────────┘  └──────────────┘            │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-### Component Responsibilities
+### Component Responsibilities and API Contracts
 
-**KMS Node (`pkg/node/`)**
-- Main server process managing protocol execution and application requests
-- Automatic scheduler for DKG/reshare protocol execution at interval boundaries
-- HTTP server exposing protocol and application endpoints
-- Operator identity via Ethereum address and BN254 private key
-- Session management for concurrent protocol runs
+#### KMS Node Server
 
-**Protocol Engines**
-- **DKG (`pkg/dkg/`)**: Complete distributed key generation with authenticated acknowledgements
-- **Reshare (`pkg/reshare/`)**: Key rotation protocol supporting existing and new operators
-- **Session State**: Per-protocol state machines with phase tracking
+**Responsibility**: Manages protocol lifecycle and exposes HTTP APIs for inter-operator communication and application requests.
 
-**Transport Layer (`pkg/transport/`)**
-- Wraps all messages in `AuthenticatedMessage` structure
-- Automatic signing with BN254 private key
-- Verification using sender's public key from peering data
-- Retry logic with exponential backoff for network resilience
-- Broadcast support (zero-address recipient)
+**Public API Contract**:
+- Protocol endpoints (authenticated): `/dkg/*`, `/reshare/*`
+- Application endpoints (public): `/pubkey`, `/app/sign`, `/secrets`
+- Health monitoring: `/health`, `/metrics`
 
-**Cryptographic Operations (`pkg/crypto/`, `pkg/bls/`)**
-- **BLS12-381 Operations**:
-  - Polynomial evaluation and commitment generation
-  - Share verification against commitments
-  - Lagrange interpolation for share recovery
-  - Threshold signature aggregation
-- **BN254 Operations**: Message signing and verification
-- **IBE Operations**: Identity-based encryption and decryption
+**Key Behaviors**:
+- Automatic protocol scheduling at interval boundaries (configurable per chain)
+- Session management for concurrent DKG/reshare runs (isolated by timestamp)
+- Request authentication via BN254 signature verification against peering data
+- Graceful degradation when subset of operators unavailable
 
-**Key Management (`pkg/keystore/`)**
-- Versioned storage of key shares (currently in-memory)
-- Active version tracking for current operations
-- Historical version retention for time-based attestation
+**Security Boundaries**:
+- All inter-operator messages must carry valid BN254 signatures
+- Application endpoints rate-limited to prevent DoS
+- TEE attestation verification required for `/secrets` endpoint
+
+---
+
+#### Protocol Engines (DKG/Reshare)
+
+**Responsibility**: Execute distributed cryptographic protocols for key generation and rotation.
+
+**Interface Contract**:
+```
+GenerateShares() → (shares, commitments, error)
+VerifyShare(dealerNodeID, share, commitments) → bool
+FinalizeKeyShare(receivedShares, allCommitments, participants) → KeyShareVersion
+```
+
+**Key Behaviors**:
+- **Alpha**: Feldman-VSS with single polynomial (fast iteration)
+- **Production**: Pedersen-VSS with dual polynomials (information-theoretic hiding)
+- Three-phase execution: commitment, verification, finalization
+- Acknowledgement system prevents dealer equivocation
+- Automatic fraud detection and reporting
+
+**Security Properties**:
+- Share verification ensures polynomial consistency
+- Threshold t = ⌈2n/3⌉ for Byzantine fault tolerance
+- No single operator learns master secret
+- Forward secrecy via periodic resharing
+
+---
+
+#### Authenticated Transport Layer
+
+**Responsibility**: Provides authenticated, reliable message delivery between operators with cryptographic proof of sender identity.
+
+**Message Contract**:
+```
+AuthenticatedMessage {
+    payload: []byte           // Serialized protocol message
+    hash: [32]byte           // keccak256(payload)
+    signature: []byte        // BN254_sign(hash, operatorPrivateKey)
+}
+
+Payload contains:
+    fromOperatorAddress: Ethereum address
+    toOperatorAddress: Ethereum address (0x0 for broadcast)
+    sessionTimestamp: int64
+    messageData: protocol-specific content
+```
+
+**Key Behaviors**:
+- Automatic message signing on send
+- Signature verification on receive using peering system
+- Retry with exponential backoff (max 3 attempts)
+- Broadcast support via zero-address routing
+- Message routing to correct session by timestamp
+
+**Security Properties**:
+- Prevents impersonation (signature verification)
+- Prevents replay attacks (session timestamp binding)
+- Detects tampering (hash verification)
+- Ensures message authenticity (BN254 cryptographic proofs)
+
+---
+
+#### Cryptographic Operations
+
+**Responsibility**: Provides primitive cryptographic operations for threshold protocols, ensuring correct implementation of BLS12-381 and BN254 operations.
+
+**Operation Contract**:
+```
+BLS12-381 Operations:
+- EvaluatePolynomial(poly, x) → share
+- ComputeCommitments(poly) → []G2Point
+- VerifyShare(share, nodeID, commitments) → bool
+- ComputeLagrangeCoefficient(nodeID, participants) → coefficient
+- RecoverSecret(shares, participants) → secret
+
+BN254 Operations:
+- SignMessage(payload, privateKey) → signature
+- VerifySignature(payload, signature, publicKey) → bool
+
+IBE Operations:
+- HashToG1(appID) → G1Point
+- GeneratePartialSignature(appID, keyShare) → G1Point
+- RecoverAppPrivateKey(partialSigs, participants) → G1Point
+```
+
+**Key Behaviors**:
+- Constant-time operations where cryptographically relevant
+- Comprehensive input validation
+- Deterministic outputs for reproducibility
+- Error propagation with context
+
+**Security Properties**:
+- Implementation follows gnark-crypto (audited library)
+- Scalar operations in correct field (Fr for BLS12-381)
+- Point validation on deserialization
+- No timing side-channels in critical paths
+
+---
+
+#### Key Store
+
+**Responsibility**: Manages versioned key share storage with time-based lookups, supporting historical key versions for attestation validation.
+
+**Storage Interface**:
+```
+StoreKeyShareVersion(version KeyShareVersion) → error
+GetActiveKeyShare() → KeyShareVersion
+GetKeyVersionAtTime(timestamp int64) → KeyShareVersion
+ListVersions() → []int64
+```
+
+**Data Model**:
+```
+KeyShareVersion {
+    version: int64              // Session timestamp (epoch)
+    privateShare: *fr.Element   // Threshold share
+    commitments: []G2Point      // Public commitments
+    isActive: bool              // Current version flag
+    participantIDs: []int       // Operator node IDs
+}
+```
+
+**Key Behaviors**:
 - Epoch-based versioning using session timestamps
+- Automatic activation of new versions (marks previous inactive)
+- Historical lookups for TEE attestation time validation
+- Thread-safe concurrent access
 
-**Peering System (`pkg/peering/`)**
-- `IPeeringDataFetcher` interface for operator discovery
-- Production: blockchain queries via `ContractCaller`
-- Testing: local `ChainConfig` with authentic test data
-- Returns `OperatorSetPeer` with address, socket, and BN254 public key
+**Security Properties**:
+- Shares encrypted at rest (production requirement)
+- Version immutability (once stored, never modified)
+- Atomic updates (no partial state visible)
+- Configurable retention period
+
+---
+
+#### Peering System
+
+**Responsibility**: Discovers and validates operator set membership, providing BN254 public keys for message authentication.
+
+**Interface Contract**:
+```
+GetOperators() → []OperatorSetPeer
+
+OperatorSetPeer {
+    operatorAddress: Ethereum address
+    socketAddress: HTTP endpoint URL
+    wrappedPublicKey: BN254 public key
+    curveType: "BN254"
+}
+```
+
+**Key Behaviors**:
+- Queries blockchain for current operator set at each interval
+- Caches operator data with TTL (avoid excessive RPC calls)
+- Validates operator registrations via smart contract state
+- Detects operator churn (joins/leaves)
+
+**Security Properties**:
+- Public keys fetched from trusted source (blockchain)
+- Operator set immutable within session (timestamp-locked)
+- Address-to-nodeID derivation deterministic and collision-resistant
 
 ### Identity Model
 
@@ -580,244 +723,235 @@ Application
 
 ### Automatic Scheduling
 
-The system uses **interval-based scheduling** to coordinate protocol execution without requiring consensus:
+The system uses **interval-based scheduling** to coordinate protocol execution without requiring consensus. Operators independently detect interval boundaries and initiate DKG/Reshare protocols, using blockchain time as coordination mechanism.
 
-```go
-// Scheduler loop (pkg/node/node.go)
-ticker := time.NewTicker(500 * time.Millisecond)
-for range ticker.C {
-    now := time.Now()
-    interval := getChainInterval(chainID)  // 10min, 2min, or 30sec
+**Scheduling Mechanism**:
 
-    // Round to interval boundary
-    roundedTime := (now.Unix() / interval) * interval
-
-    // Skip if already processed
-    if processedIntervals[roundedTime] {
-        continue
-    }
-
-    // Fetch current operators
-    operators := peeringFetcher.GetOperators()
-
-    // Determine protocol type
-    if !hasExistingShares() {
-        if clusterHasKeys() {
-            runReshareAsNewOperator(roundedTime, operators)
-        } else {
-            runDKG(roundedTime, operators)
-        }
-    } else {
-        runReshareAsExistingOperator(roundedTime, operators)
-    }
-
-    processedIntervals[roundedTime] = true
-}
+```
+Every 500ms check loop:
+  1. Compute next interval boundary: roundedTime = (now / interval) × interval
+  2. Skip if already processed this boundary
+  3. Fetch current operator set from blockchain
+  4. Determine protocol type:
+     - No local shares + no cluster keys → Genesis DKG
+     - No local shares + cluster has keys → Join via Reshare
+     - Has local shares → Routine Reshare
+  5. Execute protocol in background
+  6. Mark interval as processed
 ```
 
-**Key Properties:**
-- Deterministic timing eliminates need for leader election
-- All operators execute simultaneously at interval boundaries
-- Session timestamp (`roundedTime`) coordinates message routing
-- Supports operator churn (joins/leaves detected at each interval)
+**Interval Configuration**:
+
+| Chain    | Interval | Rationale                                    |
+|----------|----------|----------------------------------------------|
+| Mainnet  | 10 min   | Balance security (regular rotation) with cost |
+| Sepolia  | 2 min    | Faster testing without excessive load         |
+| Anvil    | 30 sec   | Rapid development and integration testing     |
+
+**Key Properties**:
+- **Deterministic**: All operators trigger at same timestamp (no leader election)
+- **Decentralized**: No coordinator or master node required
+- **Resilient**: Operators can miss intervals and catch up at next boundary
+- **Churn-tolerant**: Operator set queried fresh each interval (handles joins/leaves)
 
 ### DKG Process
 
-The Distributed Key Generation (DKG) protocol enables operators to collectively generate a shared master secret without any single operator ever knowing the complete secret. The system implements a three-phase protocol based on Pedersen's verifiable secret sharing with authenticated acknowledgements to prevent dealer equivocation.
+The Distributed Key Generation (DKG) protocol enables operators to collectively generate a shared master secret without any single operator ever knowing the complete secret. The system targets **Pedersen Verifiable Secret Sharing (VSS)** for production deployment, providing information-theoretic security against bias attacks. Alpha testnet uses **Feldman-VSS** for rapid iteration.
 
-#### Protocol Overview
+#### Feldman-VSS vs Pedersen-VSS
+
+**Alpha Testnet Implementation (Feldman-VSS)**:
+
+**Commitment Scheme**: Single polynomial with public commitments
+```
+Each operator i generates: fᵢ(z) = aᵢ₀ + aᵢ₁·z + ... + aᵢ₍ₜ₋₁₎·z^(t-1)
+Commitments: Cᵢₖ = aᵢₖ · G₂  (only uses G₂ generator)
+```
+
+**Security**: Computationally secure (discrete log assumption)
+
+**Vulnerability**: Commitments reveal information about polynomial to computationally unbounded adversary. Timing attacks possible where adversary:
+1. Sees all commitments after Phase 1
+2. Computes aggregate key distribution
+3. Decides which corrupted operators to disqualify
+4. Biases final key distribution
+
+**Mitigation**: Economic security via fraud proofs and slashing (see Fraud Detection section)
+
+---
+
+**Production Target (Pedersen-VSS)**:
+
+**Commitment Scheme**: Dual polynomials with hiding commitments
+```
+Each operator i generates TWO polynomials:
+  fᵢ(z) = aᵢ₀ + aᵢ₁·z + ... + aᵢ₍ₜ₋₁₎·z^(t-1)  (secret polynomial)
+  f'ᵢ(z) = bᵢ₀ + bᵢ₁·z + ... + bᵢ₍ₜ₋₁₎·z^(t-1)  (blinding polynomial)
+
+Commitments: Cᵢₖ = aᵢₖ·G₂ + bᵢₖ·H₂  (uses two generators G₂ and H₂)
+
+Where H₂ generated via distributed coin flip such that dlog(H₂) is unknown
+```
+
+**Security**: Information-theoretically hiding (commitments reveal zero information about polynomial)
+
+**Protection**: Bias attacks cryptographically impossible - adversary cannot determine key distribution from commitments regardless of computational power
+
+**Requirement**: Must generate H₂ via distributed protocol before first DKG (one-time setup)
+
+---
+
+#### Protocol Flow (Pedersen-VSS - Production Target)
 
 ```
 Operator 1          Operator 2          Operator 3          ...  Operator n
     │                   │                   │                       │
     │◄──────────────────┴───────────────────┴───────────────────────┘
-    │  Phase 1: Share Distribution (Broadcast + P2P)
+    │  Phase 1a: Commitment (Information-Theoretically Hiding)
     │
-    ├─→ Generate polynomial f₁(z) with random coefficients
-    │   Constant term f₁(0) is operator 1's secret contribution
+    ├─→ Generate TWO random polynomials: fᵢ(z), f'ᵢ(z)
+    │   Both degree t-1 with independent random coefficients
     │
-    ├─→ Compute commitments: C₁ = [f₁(0)·G₂, f₁(1)·G₂, ..., f₁(t-1)·G₂]
-    │   Broadcast commitments to all operators
+    ├─→ Compute Pedersen commitments:
+    │   Cᵢₖ = aᵢₖ·G₂ + bᵢₖ·H₂  (hides aᵢₖ via bᵢₖ)
+    │   Broadcast to all operators
     │
-    ├─→ Evaluate shares: s₁ⱼ = f₁(nodeID_j) for each operator j
-    │   Send encrypted share to each operator via P2P
+    ├─→ Evaluate and send shares:
+    │   sᵢⱼ = fᵢ(nodeID_j), s'ᵢⱼ = f'ᵢ(nodeID_j)
+    │   Send (sᵢⱼ, s'ᵢⱼ) to operator j
     │
     │◄──────────────────────────────────────────────────────────────┐
-    │  Receive commitments and shares from all other operators       │
+    │  Receive commitments and share pairs from all operators        │
+    │  Adversary sees C commitments but CANNOT compute yᵢ = g^(zᵢ)  │
     │                                                                 │
     │◄──────────────────┬───────────────────┬────────────────────────┘
-    │  Phase 2: Verification & Acknowledgement
+    │  Phase 1b: Verification
     │
-    ├─→ Verify each received share against commitments:
-    │   sᵢⱼ·G₂ ?= Σ(Cᵢ[k] · nodeID_j^k) for k=0 to t-1
+    ├─→ Verify each received share pair:
+    │   sᵢⱼ·G₂ + s'ᵢⱼ·H₂ ?= Σ(Cᵢₖ · nodeID_j^k) for k=0 to t-1
     │
-    ├─→ Sign acknowledgement for each valid share
-    │   ack_msg = {from: j, to: i, sessionTimestamp, shareHash}
-    │   sig = Sign_BN254(keccak256(ack_msg))
-    │
-    ├─→ Send acknowledgement to dealer
-    │   POST /dkg/ack with authenticated message
+    ├─→ Send acknowledgement if valid
+    │   (Same acknowledgement system as Feldman)
     │
     │◄──────────────────────────────────────────────────────────────┐
-    │  Wait for ALL operators to send acknowledgements (100%)        │
-    │  CRITICAL: Any missing ack aborts protocol                     │
+    │  Wait for ALL acknowledgements (100% required)                 │
+    │  Determine QUAL = set of operators who received all acks       │
     │                                                                 │
+    │◄──────────────────┬───────────────────┬────────────────────────┘
+    │  Phase 2: Extraction (Reveal Public Values)
+    │
+    ├─→ Broadcast extraction commitments:
+    │   Aᵢₖ = aᵢₖ·G₂  (reveals actual polynomial, no blinding)
+    │
+    ├─→ Verify consistency with Phase 1:
+    │   Check Aᵢₖ·G₂ + (derived_bᵢₖ)·H₂ = Cᵢₖ
+    │
+    ├─→ Verify shares against extracted commitments:
+    │   sᵢⱼ·G₂ ?= Σ(Aᵢₖ · nodeID_j^k)
+    │
     │◄──────────────────┬───────────────────┬────────────────────────┘
     │  Phase 3: Finalization
     │
-    ├─→ Compute final share: xⱼ = Σ(all valid shares received)
-    │   Master secret: S = Σ(fᵢ(0)) (never computed by any party)
+    ├─→ Compute final share: xⱼ = Σ(sᵢⱼ) for all i ∈ QUAL
+    │   Master secret: S = Σ(aᵢ₀) for all i ∈ QUAL
     │
-    ├─→ Store KeyShareVersion:
-    │   - Version: sessionTimestamp
-    │   - PrivateShare: xⱼ
-    │   - Commitments: all received commitments
-    │   - IsActive: true
-    │   - ParticipantIDs: [all operator node IDs]
+    ├─→ Store KeyShareVersion with extracted commitments
     │
-    └─→ DKG complete, ready for application signing requests
+    └─→ DKG complete
 ```
 
-#### Phase Details
+**Critical Security Property**: By the time adversary sees `Aᵢₖ` values in Phase 2 (which reveal `yᵢ = g^(zᵢ)`), QUAL is already determined in Phase 1. Adversary cannot retroactively change participation to bias key distribution.
 
-**Phase 1: Share Distribution**
+---
 
-Each operator i independently generates a random polynomial:
+#### Current Implementation (Feldman-VSS for Alpha)
+
+The alpha testnet implementation uses simplified Feldman-VSS for rapid development:
 
 ```
-fᵢ(z) = aᵢ₀ + aᵢ₁·z + aᵢ₂·z² + ... + aᵢ₍ₜ₋₁₎·z^(t-1)
+Phase 1: Commitment and Share Distribution
+  - Generate single polynomial fᵢ(z)
+  - Commitments: Cᵢₖ = aᵢₖ·G₂ (Feldman-style, not hiding)
+  - Broadcast commitments to all operators
+  - Send shares sᵢⱼ = fᵢ(nodeID_j) to each operator
+
+Phase 2: Verification and Acknowledgement
+  - Verify: sᵢⱼ·G₂ = Σ(Cᵢₖ · nodeID_j^k)
+  - Send signed acknowledgement to dealer
+  - Dealer waits for ALL acknowledgements (100% required)
+
+Phase 3: Finalization
+  - Compute final share: xⱼ = Σ(sᵢⱼ)
+  - Store KeyShareVersion
+```
+
+**Acknowledgement System**: Prevents dealer equivocation by requiring proof that all operators received and verified shares before finalization.
+
+#### Mathematical Foundation
+
+**Polynomial Secret Sharing**:
+
+Each operator i contributes secret `zᵢ` via polynomial:
+```
+fᵢ(z) = aᵢ₀ + aᵢ₁·z + ... + aᵢ₍ₜ₋₁₎·z^(t-1)
 
 Where:
-- t = ⌈2n/3⌉ (threshold)
-- aᵢₖ ∈ Fr (BLS12-381 scalar field) chosen uniformly at random
-- aᵢ₀ = fᵢ(0) is operator i's secret contribution to master secret
+- t = ⌈2n/3⌉ (threshold for Byzantine fault tolerance)
+- aᵢₖ ∈ Fr (BLS12-381 scalar field), chosen uniformly at random
+- aᵢ₀ = fᵢ(0) = zᵢ (operator i's secret contribution)
 ```
 
-Operator i computes:
-1. **Commitments** (polynomial coefficients in G2):
-   ```
-   Cᵢ = [Cᵢ₀, Cᵢ₁, ..., Cᵢ₍ₜ₋₁₎]
-   Where Cᵢₖ = aᵢₖ · G₂
-   ```
+**Share Generation**: Each operator j receives `sᵢⱼ = fᵢ(nodeID_j)` from operator i
 
-2. **Shares** (polynomial evaluations at each operator's node ID):
-   ```
-   sᵢⱼ = fᵢ(nodeIDⱼ) for each operator j
-   ```
+**Final Share Computation**: `xⱼ = Σ sᵢⱼ` for all i
 
-3. **Message Distribution**:
-   - Broadcast commitments via `POST /dkg/commitment` (ToOperatorAddress = 0x0)
-   - Send individual shares via `POST /dkg/share` (P2P, ToOperatorAddress = specific operator)
+**Master Secret**: `S = Σ zᵢ = Σ fᵢ(0)` (never computed by any party, remains distributed)
 
-**Phase 2: Verification & Acknowledgement**
-
-Each operator j verifies received shares using the commitment scheme:
-
+**Threshold Reconstruction**: Any t operators can recover S via Lagrange interpolation:
 ```
-Verification equation:
-sᵢⱼ · G₂ = Σ(Cᵢₖ · nodeIDⱼ^k) for k=0 to t-1
-
-Left side:  Share scaled by G₂ generator
-Right side: Sum of commitment terms scaled by powers of receiver's node ID
-
-Implementation (pkg/crypto/bls/verification.go):
-```go
-func VerifyShare(share *fr.Element, nodeID int, commitments []G2Point) bool {
-    // Left side: share · G₂
-    leftSide := new(bls12381.G2Affine).ScalarMultiplication(
-        bls12381.G2Generator,
-        share.BigInt(),
-    )
-
-    // Right side: Σ(Cₖ · nodeID^k)
-    rightSide := new(bls12381.G2Affine).Set(&bls12381.G2Affine{})
-    nodeIDPower := big.NewInt(1)
-    nodeIDBig := big.NewInt(int64(nodeID))
-
-    for k, commitment := range commitments {
-        term := new(bls12381.G2Affine).ScalarMultiplication(
-            &commitment,
-            nodeIDPower,
-        )
-        rightSide.Add(rightSide, term)
-        nodeIDPower.Mul(nodeIDPower, nodeIDBig)
-    }
-
-    return leftSide.Equal(rightSide)
-}
-```
-
-**Acknowledgement System** (prevents equivocation):
-
-After verification, operator j creates a non-repudiable acknowledgement:
-
-```go
-type DKGAcknowledgement struct {
-    FromOperatorAddress common.Address  // Receiver (j)
-    ToOperatorAddress   common.Address  // Dealer (i)
-    SessionTimestamp    int64
-    ShareHash           [32]byte         // keccak256(share)
-}
-
-// Wrapped in AuthenticatedMessage with BN254 signature
-ack := AuthenticatedMessage{
-    Payload:   serialize(ackMsg),
-    Hash:      keccak256(payload),
-    Signature: Sign_BN254(hash, privateKey_j),
-}
-```
-
-**Critical Requirement**: Dealer i MUST receive acknowledgements from **ALL** operators before proceeding to finalization. This prevents:
-- Dealer equivocation (sending different shares to different operators)
-- Partial participation attacks
-- Inconsistent state across operators
-
-**Phase 3: Finalization**
-
-Once all operators have sent acknowledgements, each operator j computes their final share:
-
-```
-xⱼ = Σ(sᵢⱼ) for all i ∈ [1, n]
-
-Where:
-- xⱼ is operator j's private share
-- sᵢⱼ is the share received from dealer i
-```
-
-The **master secret** (never computed by any party):
-```
-S = Σ(fᵢ(0)) for all i ∈ [1, n]
-```
-
-Due to polynomial properties:
-```
-Any subset T of t operators can recover the master secret using Lagrange interpolation:
-
-S = Σ(λⱼ · xⱼ) for j ∈ T
-
-Where λⱼ are Lagrange coefficients:
+S = Σ(λⱼ · xⱼ) for j ∈ T where |T| ≥ t
 λⱼ = Π((0 - i)/(j - i)) for all i ∈ T, i ≠ j
 ```
 
-#### Threshold Calculation
+---
 
-```go
-// pkg/dkg/dkg.go
-func CalculateThreshold(n int) int {
-    return int(math.Ceil(float64(2*n) / 3.0))
-}
+#### Share Verification
 
-Examples:
-- n=3:  t=2  (⌈6/3⌉ = 2)
-- n=4:  t=3  (⌈8/3⌉ = 3)
-- n=7:  t=5  (⌈14/3⌉ = 5)
-- n=10: t=7  (⌈20/3⌉ = 7)
+**Feldman-VSS Verification** (Alpha):
+```
+Verify: sᵢⱼ·G₂ = Σ(Cᵢₖ · nodeID_j^k) for k=0 to t-1
+
+Where: Cᵢₖ = aᵢₖ·G₂ (public commitments)
 ```
 
-This threshold provides Byzantine fault tolerance:
-- Up to ⌊n/3⌋ operators can be malicious or offline
-- Any ⌈2n/3⌉ honest operators can complete operations
-- Standard BFT requirement for safety + liveness
+**Pedersen-VSS Verification** (Production):
+```
+Phase 1 Verify: sᵢⱼ·G₂ + s'ᵢⱼ·H₂ = Σ(Cᵢₖ · nodeID_j^k)
+  Where: Cᵢₖ = aᵢₖ·G₂ + bᵢₖ·H₂ (hiding commitments)
+
+Phase 2 Verify: sᵢⱼ·G₂ = Σ(Aᵢₖ · nodeID_j^k)
+  Where: Aᵢₖ = aᵢₖ·G₂ (extracted commitments)
+```
+
+**Properties**:
+- Cryptographic proof of share correctness
+- Prevents dealer from sending invalid shares
+- Detectable violations enable fraud proofs
+
+#### Threshold Calculation
+
+**Formula**: `t = ⌈2n/3⌉`
+
+**Examples**:
+- n=3 operators → t=2 threshold (can tolerate 1 failure)
+- n=4 operators → t=3 threshold (can tolerate 1 failure)
+- n=7 operators → t=5 threshold (can tolerate 2 failures)
+- n=10 operators → t=7 threshold (can tolerate 3 failures)
+
+**Byzantine Fault Tolerance**:
+- **Safety**: Up to ⌊n/3⌋ operators can be malicious without compromising security
+- **Liveness**: Any ⌈2n/3⌉ honest operators can complete operations
+- **Standard BFT**: Matches typical Byzantine agreement requirements
 
 #### State Machine
 
@@ -857,21 +991,19 @@ DKG Session State Machine:
 
 #### Security Properties
 
-1. **Secrecy**: No coalition of fewer than t operators can learn the master secret
-2. **Correctness**: Any t or more operators can reconstruct the master secret
-3. **Verifiability**: All shares can be verified against public commitments
-4. **Non-repudiation**: Acknowledgements prevent dealer equivocation
-5. **Fairness**: All operators contribute equally to master secret
-6. **Abort Security**: If any operator misbehaves, protocol aborts safely
+1. **Secrecy (Information-Theoretic)**: No coalition of fewer than t = ⌈2n/3⌉ operators can learn the master secret, even with unbounded computation (Pedersen-VSS) or under discrete log assumption (Feldman-VSS)
 
-#### Implementation Locations
+2. **Correctness**: Any t or more operators can reconstruct the master secret via Lagrange interpolation with probability 1
 
-- **Protocol Logic**: `pkg/dkg/dkg.go`
-- **Share Generation**: `pkg/crypto/bls/polynomial.go`
-- **Share Verification**: `pkg/crypto/bls/verification.go`
-- **HTTP Handlers**: `pkg/node/dkg_handlers.go`
-- **Transport**: `pkg/transport/client.go`
-- **Tests**: `internal/tests/integration/dkg_integration_test.go`
+3. **Verifiability**: All shares cryptographically verifiable against public commitments, enabling fraud detection
+
+4. **Hiding (Pedersen only)**: Commitments reveal zero information about secret contributions during commitment phase, preventing bias attacks
+
+5. **Non-repudiation**: Acknowledgement system with BN254 signatures prevents dealer equivocation and creates audit trail
+
+6. **Fairness**: All operators contribute equally to master secret (uniform random polynomial coefficients)
+
+7. **Abort Security**: Protocol aborts safely if any operator misbehaves, preventing partial key leakage
 
 ### Reshare Process
 
@@ -1026,156 +1158,84 @@ func ComputeNewShare(
 
 #### Operator Scenarios
 
-**Scenario 1: Existing Operator (Key Rotation)**
+**Scenario 1: Existing Operator (Routine Key Rotation)**
 
-An operator with existing shares participates in scheduled reshare:
+An operator that participated in the previous DKG or reshare executes periodic key rotation at the next interval boundary.
 
-```go
-// pkg/reshare/reshare.go
-func (r *ReshareManager) RunReshareAsExistingOperator(
-    sessionTimestamp int64,
-    operators []peering.OperatorSetPeer,
-) error {
-    // 1. Get current active share
-    currentShare := r.keystore.GetActiveKeyShare()
+**Process**:
+1. **Retrieve Current Share**: Operator loads its active key share from local keystore
+2. **Generate Reshare Polynomial**: Creates new polynomial where the constant term equals the current share
+   - **Critical**: `f'(0) = currentShare` preserves the master secret across resharing
+   - Higher-degree terms (a₁, a₂, ..., aₜ₋₁) chosen randomly
+3. **Distribute New Shares**: Evaluates polynomial at all current operator node IDs
+   - Sends shares to both existing operators and any newly joined operators
+   - Broadcasts commitments to all participants for verification
+4. **Receive and Verify**: Collects shares from all other existing operators
+   - Verifies each share against dealer's broadcast commitments
+   - Reports fraud if verification fails
+5. **Compute Updated Share**: Uses Lagrange interpolation to compute new share
+   - Lagrange coefficients computed for existing operator set
+   - New share = Σ(λᵢ × received_share_i) for all existing operators i
+6. **Activate New Version**: Stores new key share with incremented version timestamp
+   - Marks previous version as inactive
+   - Immediately usable for application signing requests
 
-    // 2. Create reshare polynomial with share as constant term
-    polynomial := crypto.GenerateResharePolynomial(
-        currentShare.PrivateShare,  // f'(0) = current share
-        threshold,
-    )
+**Properties**:
+- Master secret S remains unchanged: S' = S
+- Old shares become cryptographically independent from new shares (forward secrecy)
+- New threshold may differ if operator set size changed (t' = ⌈2n'/3⌉)
+- Applications unaffected (master public key unchanged)
 
-    // 3. Generate commitments
-    commitments := crypto.ComputeCommitments(polynomial)
+---
 
-    // 4. Broadcast commitments to ALL operators
-    r.broadcastCommitments(commitments, sessionTimestamp)
+**Scenario 2: New Operator (Joining Existing Cluster)**
 
-    // 5. Generate and send shares to ALL operators (existing + new)
-    for _, op := range operators {
-        nodeID := addressToNodeID(op.OperatorAddress)
-        share := crypto.EvaluatePolynomial(polynomial, nodeID)
-        r.sendShare(op, share, sessionTimestamp)
-    }
+An operator joining an existing KMS cluster for the first time participates passively in reshare to obtain its initial key share.
 
-    // 6. Receive shares from all existing operators
-    receivedShares := r.waitForShares(existingOperators)
+**Process**:
+1. **Passive Participation**: Operator does NOT generate or distribute shares
+   - Only existing operators (those with current shares) act as dealers
+   - New operator is purely a receiver in this reshare round
+2. **Receive Shares**: Waits for shares from all existing operators
+   - Each existing operator sends one share (their polynomial evaluated at new operator's node ID)
+3. **Verify Shares**: Validates each received share against dealer's commitments
+   - Uses same verification equation as existing operators
+   - Reports fraud for invalid shares
+4. **Compute Initial Share**: Uses Lagrange interpolation with existing operators' node IDs
+   - Same mathematical process as existing operators
+   - Results in valid share of the unchanged master secret
+5. **Store and Activate**: Saves first key share version, becomes full participant
+   - Immediately eligible for application signing requests
+   - Will act as dealer in next reshare round
 
-    // 7. Compute Lagrange coefficients
-    existingNodeIDs := extractNodeIDs(existingOperators)
-    coefficients := ComputeLagrangeCoefficients(existingNodeIDs, big.NewInt(0))
+**Properties**:
+- New operator cannot influence master secret (passive receiver only)
+- Master secret S unchanged despite operator set expansion
+- New operator immediately capable of threshold operations (becomes full peer)
+- Operator count increase causes threshold recalculation
 
-    // 8. Compute new share
-    newShare := ComputeNewShare(receivedShares, coefficients)
+---
 
-    // 9. Store new version, mark old as inactive
-    r.keystore.StoreKeyShareVersion(&KeyShareVersion{
-        Version:        sessionTimestamp,
-        PrivateShare:   newShare,
-        Commitments:    allCommitments,
-        IsActive:       true,
-        ParticipantIDs: allNodeIDs,
-    })
+**Scenario 3: Operator Leaves**
 
-    return nil
-}
-```
+An operator removed from the operator set (by AVS governance or slashing) stops participating in protocols.
 
-**Scenario 2: New Operator (Joining Cluster)**
+**Process**:
+1. **Detection**: At interval boundary, operator discovers it's no longer in current operator set
+2. **Cessation**: Operator stops participating in DKG/Reshare protocols
+3. **Redistribution**: Remaining operators execute reshare without departed operator
+   - Shares redistributed among remaining n' operators
+   - Threshold recalculated: t' = ⌈2n'/3⌉
+4. **Key Invalidation**: Departed operator's share becomes useless
+   - Cannot participate in threshold reconstruction (not in current set)
+   - Master secret S unchanged, but access requires current operator participation
 
-A new operator without existing shares joins during reshare:
+**Properties**:
+- Graceful operator removal without master secret change
+- Departed operator's share provides no information (information-theoretic secrecy)
+- System continues operating with remaining operators (if ≥ t)
 
-```go
-func (r *ReshareManager) RunReshareAsNewOperator(
-    sessionTimestamp int64,
-    operators []peering.OperatorSetPeer,
-) error {
-    // 1. No existing share - only RECEIVE from existing operators
-    // Do NOT generate or send own shares
-
-    // 2. Wait for commitments from existing operators
-    commitments := r.waitForCommitments(existingOperators)
-
-    // 3. Wait for shares from existing operators
-    receivedShares := r.waitForShares(existingOperators)
-
-    // 4. Verify shares against commitments
-    for i, share := range receivedShares {
-        valid := crypto.VerifyShare(share, myNodeID, commitments[i])
-        if !valid {
-            return errors.New("share verification failed")
-        }
-    }
-
-    // 5. Compute Lagrange coefficients (same as existing)
-    existingNodeIDs := extractNodeIDs(existingOperators)
-    coefficients := ComputeLagrangeCoefficients(existingNodeIDs, big.NewInt(0))
-
-    // 6. Compute first share using Lagrange interpolation
-    newShare := ComputeNewShare(receivedShares, coefficients)
-
-    // 7. Store as first (active) version
-    r.keystore.StoreKeyShareVersion(&KeyShareVersion{
-        Version:        sessionTimestamp,
-        PrivateShare:   newShare,
-        Commitments:    commitments,
-        IsActive:       true,
-        ParticipantIDs: allNodeIDs,
-    })
-
-    return nil
-}
-```
-
-#### Reshare Frequency
-
-The system uses chain-specific intervals for automatic resharing:
-
-```go
-// pkg/node/scheduler.go
-func GetChainInterval(chainID uint64) int64 {
-    switch chainID {
-    case 1:        // Ethereum Mainnet
-        return 600  // 10 minutes
-    case 11155111: // Sepolia Testnet
-        return 120  // 2 minutes
-    case 31337:    // Anvil (local)
-        return 30   // 30 seconds
-    default:
-        return 600  // Default 10 minutes
-    }
-}
-```
-
-**Rationale:**
-- **Mainnet (10min)**: Balance security (regular rotation) with operational cost
-- **Sepolia (2min)**: Faster testing iteration without excessive load
-- **Anvil (30sec)**: Rapid development and integration testing
-
-#### Dynamic Operator Sets
-
-Reshare supports operator set changes detected from the peering system:
-
-```go
-// At each interval boundary
-currentOperators := peeringFetcher.GetOperators()
-
-// Determine operator status
-if isNewOperator(myAddress, currentOperators) {
-    // Operator just joined operator set
-    runReshareAsNewOperator(timestamp, currentOperators)
-} else {
-    // Operator was in previous operator set
-    runReshareAsExistingOperator(timestamp, currentOperators)
-}
-```
-
-**Operator Churn Scenarios:**
-
-1. **Operator Joins**: New operator receives shares from existing operators, computes first share via Lagrange
-2. **Operator Leaves**: Removed from operator set, stops participating, shares redistributed among remaining
-3. **Multiple Changes**: System handles multiple joins/leaves simultaneously at interval boundary
-4. **Threshold Adjustment**: Threshold recalculated based on new operator count: t = ⌈2n'/3⌉
+---
 
 #### Security Properties
 
@@ -1186,15 +1246,6 @@ if isNewOperator(myAddress, currentOperators) {
 5. **No Trusted Dealer**: Reshare is distributed; no central party needed
 6. **Operator Churn Support**: Handles joins/leaves without full DKG
 
-#### Implementation Locations
-
-- **Reshare Logic**: `pkg/reshare/reshare.go`
-- **Lagrange Interpolation**: `pkg/reshare/lagrange.go`
-- **Polynomial Generation**: `pkg/crypto/bls/polynomial.go`
-- **HTTP Handlers**: `pkg/node/reshare_handlers.go`
-- **Scheduler Integration**: `pkg/node/scheduler.go`
-- **Tests**: `internal/tests/integration/reshare_integration_test.go`
-
 ### EigenLayer Protocol Integration
 
 EigenX KMS operates as a native EigenLayer AVS, leveraging EigenLayer's restaking infrastructure for operator management, economic security, and cryptographic key registration. The integration spans multiple EigenLayer contracts and protocols.
@@ -1202,345 +1253,100 @@ EigenX KMS operates as a native EigenLayer AVS, leveraging EigenLayer's restakin
 #### Contract Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
+┌──────────────────────────────────────────────────────────────────┐
 │                    EigenLayer Core Contracts                     │
 │                                                                   │
-│  ┌────────────────────┐  ┌──────────────────────────────────┐  │
-│  │ DelegationManager  │  │   AllocationManager              │  │
-│  │ - Operator reg     │  │   - Stake allocation tracking    │  │
-│  │ - Delegations      │  │   - Slashing conditions          │  │
-│  └────────────────────┘  └──────────────────────────────────┘  │
+│  ┌────────────────────┐  ┌──────────────────────────────────┐   │
+│  │ DelegationManager  │  │   AllocationManager              │   │
+│  │ - Operator reg     │  │   - Stake allocation tracking    │   │
+│  │ - Delegations      │  │   - Slashing conditions          │   │
+│  └────────────────────┘  └──────────────────────────────────┘   │
 │                                                                   │
-│  ┌────────────────────┐  ┌──────────────────────────────────┐  │
-│  │ AVSDirectory       │  │   OperatorSetRegistrar           │  │
-│  │ - AVS registry     │  │   - Operator set management      │  │
-│  │ - Operator→AVS     │  │   - Join/leave operations        │  │
-│  └────────────────────┘  └──────────────────────────────────┘  │
+│  ┌────────────────────┐  ┌──────────────────────────────────┐   │
+│  │ AVSDirectory       │  │   OperatorSetRegistrar           │   │
+│  │ - AVS registry     │  │   - Operator set management      │   │
+│  │ - Operator→AVS     │  │   - Join/leave operations        │   │
+│  └────────────────────┘  └──────────────────────────────────┘   │
 │                                                                   │
-└─────────────────────────────────────────────────────────────────┘
-                                │
-                                │
-┌───────────────────────────────▼─────────────────────────────────┐
-│                    KMS AVS Contracts                             │
-│                                                                   │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │ KeyRegistrar                                              │  │
-│  │ - BN254 public key registration                           │  │
-│  │ - Key history tracking                                    │  │
-│  │ - Operator key queries                                    │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                                                                   │
-│  ┌──────────────────────────────────────────────────────────┐  │
-│  │ KMS Release Manager (Future)                              │  │
-│  │ - Configuration management                                │  │
-│  │ - Interval updates                                        │  │
-│  │ - Feature flags                                           │  │
-│  └──────────────────────────────────────────────────────────┘  │
-│                                                                   │
-└───────────────────────────────────────────────────────────────────┘
+└───────────────────────────┬───────────────────────────────────────┘
+                            │
+                            │
+┌───────────────────────────▼───────────────────────────────────────┐
+│                    KMS AVS Contracts                              │
+│                                                                    │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │ KeyRegistrar                                               │  │
+│  │ - BN254 public key registration                            │  │
+│  │ - Key history tracking                                     │  │
+│  │ - Operator key queries                                     │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│                                                                    │
+│  ┌────────────────────────────────────────────────────────────┐  │
+│  │ KMS Release Manager (Future)                               │  │
+│  │ - Configuration management                                 │  │
+│  │ - Interval updates                                         │  │
+│  │ - Feature flags                                            │  │
+│  └────────────────────────────────────────────────────────────┘  │
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-#### Operator Registration Flow
-
-An operator must complete several registration steps before participating in KMS operations:
+#### Operator Discovery via Peering
 
 ```
-Step 1: Register with EigenLayer
-    │
-    ├─→ Call DelegationManager.registerAsOperator()
-    │   - Provides metadata (name, website, description)
-    │   - Sets delegation terms
-    │   - Becomes eligible for delegations
-    │
-Step 2: Generate BN254 Key Pair
-    │
-    ├─→ Generate BN254 private key
-    │   privateKey := crypto.GenerateKey()  // 32 bytes
-    │
-    ├─→ Derive public key
-    │   publicKey := privateKey.PublicKey()  // G1 point
-    │
-Step 3: Register with KMS AVS
-    │
-    ├─→ Call registerOperator via CLI tool:
-    │   ./bin/register-operator \
-    │     --operator-address "0x..." \
-    │     --avs-address "0x..." \
-    │     --bn254-private-key "0x..." \
-    │     --rpc-url "https://..."
-    │
-    ├─→ Backend calls:
-    │   a. KeyRegistrar.registerOperatorWithKey(operatorAddress, bn254PubKey)
-    │      - Stores BN254 public key on-chain
-    │      - Indexed for quick lookup
-    │
-    │   b. AVSDirectory.registerOperatorToAVS(operatorAddress, signature)
-    │      - Links operator to KMS AVS
-    │      - Enables operator set inclusion
-    │
-    │   c. OperatorSetRegistrar.registerOperatorToOperatorSet(operatorAddress, setId)
-    │      - Adds operator to specific operator set
-    │      - Triggers operator discovery by existing operators
-    │
-Step 4: Start KMS Node
-    │
-    └─→ ./bin/kms-server \
-          --operator-address "0x..." \
-          --bn254-private-key "0x..." \
-          --avs-address "0x..." \
-          --operator-set-id 0
+┌─────────────┐
+│  KMS Node   │
+└──────┬──────┘
+       │
+       │ GetOperators()
+       ▼
+┌──────────────────────────┐
+│ OperatorSetRegistrar     │  (EigenLayer Contract)
+│ getOperatorSet(setId)    │
+└──────┬───────────────────┘
+       │ Returns: [operatorAddress₁, operatorAddress₂, ...]
+       │
+       │ For each operator:
+       ▼
+┌──────────────────────────┐
+│  KeyRegistrar Contract   │
+│  getOperatorKey(address) │
+└──────┬───────────────────┘
+       │ Returns: BN254 Public Key (G1 point)
+       │
+       ▼
+┌──────────────────────────┐
+│  Socket Registry         │
+│  getSocket(address)      │
+└──────┬───────────────────┘
+       │ Returns: "http://host:port"
+       │
+       ▼
+┌──────────────────────────┐
+│  OperatorSetPeer[]       │
+│  {                       │
+│    operatorAddress,      │
+│    bn254PublicKey,       │
+│    socketAddress         │
+│  }                       │
+└──────────────────────────┘
 ```
 
-**Implementation** (`cmd/registerOperator/main.go`):
-
-```go
-func registerOperator(
-    operatorAddr common.Address,
-    avsAddr common.Address,
-    bn254PrivateKey *ecdsa.PrivateKey,
-    rpcURL string,
-) error {
-    // 1. Connect to Ethereum client
-    client, err := ethclient.Dial(rpcURL)
-    if err != nil {
-        return fmt.Errorf("failed to connect: %w", err)
-    }
-
-    // 2. Derive BN254 public key
-    bn254PubKey := bn254PrivateKey.PublicKey()
-    pubKeyBytes := crypto.MarshalBN254PublicKey(bn254PubKey)
-
-    // 3. Register key with KeyRegistrar
-    keyRegistrar := contracts.NewKeyRegistrar(keyRegistrarAddr, client)
-    tx, err := keyRegistrar.RegisterOperatorWithKey(
-        operatorAddr,
-        pubKeyBytes,
-    )
-    if err != nil {
-        return fmt.Errorf("failed to register key: %w", err)
-    }
-    receipt, _ := bind.WaitMined(context.Background(), client, tx)
-    log.Printf("Key registered: tx=%s", receipt.TxHash.Hex())
-
-    // 4. Sign operator registration
-    digestHash := crypto.CalculateOperatorAVSRegistrationDigestHash(
-        operatorAddr,
-        avsAddr,
-        salt,
-        expiry,
-    )
-    signature, err := crypto.SignHash(digestHash, bn254PrivateKey)
-    if err != nil {
-        return fmt.Errorf("failed to sign: %w", err)
-    }
-
-    // 5. Register with AVSDirectory
-    avsDirectory := contracts.NewAVSDirectory(avsDirectoryAddr, client)
-    tx, err = avsDirectory.RegisterOperatorToAVS(
-        operatorAddr,
-        signature,
-    )
-    if err != nil {
-        return fmt.Errorf("failed to register to AVS: %w", err)
-    }
-    receipt, _ = bind.WaitMined(context.Background(), client, tx)
-    log.Printf("AVS registration: tx=%s", receipt.TxHash.Hex())
-
-    // 6. Join operator set
-    operatorSetRegistrar := contracts.NewOperatorSetRegistrar(opSetRegistrarAddr, client)
-    tx, err = operatorSetRegistrar.RegisterOperatorToOperatorSet(
-        operatorAddr,
-        operatorSetID,
-    )
-    if err != nil {
-        return fmt.Errorf("failed to join operator set: %w", err)
-    }
-    receipt, _ = bind.WaitMined(context.Background(), client, tx)
-    log.Printf("Operator set registration: tx=%s", receipt.TxHash.Hex())
-
-    return nil
-}
+**Peering Interface**:
+```
+GetOperators() → []OperatorSetPeer
 ```
 
-#### Peering Data Fetcher
+**Returned Data**:
+- `operatorAddress`: Ethereum address (operator identity)
+- `bn254PublicKey`: Public key for message verification
+- `socketAddress`: HTTP endpoint for P2P communication
 
-The KMS node discovers other operators through the peering system, which queries EigenLayer contracts:
+**Implementations**:
+- **Production**: Queries blockchain via EigenLayer contracts
+- **Testing**: Local mock using ChainConfig test data
 
-**Production Implementation** (`pkg/peering/contract_fetcher.go`):
-
-```go
-type ContractPeeringDataFetcher struct {
-    contractCaller *contract.ContractCaller
-    avsAddress     common.Address
-    operatorSetID  uint32
-}
-
-func (f *ContractPeeringDataFetcher) GetOperators() ([]OperatorSetPeer, error) {
-    // Query OperatorSetRegistrar for operator set members
-    members, err := f.contractCaller.GetOperatorSetMembersWithPeering(
-        f.avsAddress,
-        f.operatorSetID,
-    )
-    if err != nil {
-        return nil, fmt.Errorf("failed to get operators: %w", err)
-    }
-
-    peers := make([]OperatorSetPeer, 0, len(members))
-    for _, member := range members {
-        // Extract peering information
-        peer := OperatorSetPeer{
-            OperatorAddress:  member.OperatorAddress,
-            SocketAddress:    member.Socket,  // "http://host:port"
-            WrappedPublicKey: member.PubkeyG1,
-            CurveType:        "BN254",
-        }
-        peers = append(peers, peer)
-    }
-
-    return peers, nil
-}
-```
-
-**Contract Query Flow**:
-
-```
-KMS Node
-    │
-    ├─→ GetOperators()
-    │
-    ├─→ ContractCaller.GetOperatorSetMembersWithPeering(avsAddr, setId)
-    │
-    └─→ OperatorSetRegistrar.getOperatorSet(setId)
-         ├─→ Returns: []Operator
-         │    - operatorAddress
-         │    - stakeWeight
-         │    - joinedAt
-         │
-         └─→ KeyRegistrar.getOperatorKey(operatorAddress)
-              ├─→ Returns: BN254PublicKey
-              │    - G1 point (X, Y coordinates)
-              │    - registeredAt timestamp
-              │
-              └─→ OperatorMetadata.getSocket(operatorAddress)
-                   └─→ Returns: "http://ip:port"
-```
-
-#### Dynamic Operator Discovery
-
-At each interval boundary, the scheduler queries the peering system to detect operator set changes:
-
-```go
-// pkg/node/scheduler.go
-func (n *Node) schedulerLoop() {
-    ticker := time.NewTicker(500 * time.Millisecond)
-    defer ticker.Stop()
-
-    for range ticker.C {
-        now := time.Now()
-        interval := GetChainInterval(n.chainID)
-        roundedTime := (now.Unix() / interval) * interval
-
-        // Skip if already processed
-        if n.processedIntervals[roundedTime] {
-            continue
-        }
-
-        // CRITICAL: Fetch current operators from blockchain
-        currentOperators, err := n.peeringFetcher.GetOperators()
-        if err != nil {
-            log.Printf("Failed to fetch operators: %v", err)
-            continue
-        }
-
-        // Detect operator set changes
-        if operatorSetChanged(n.lastOperators, currentOperators) {
-            log.Printf("Operator set changed: %d → %d operators",
-                len(n.lastOperators), len(currentOperators))
-        }
-
-        // Determine if this node is new or existing
-        wasInPrevious := containsOperator(n.lastOperators, n.operatorAddress)
-        isInCurrent := containsOperator(currentOperators, n.operatorAddress)
-
-        if !isInCurrent {
-            log.Printf("Not in current operator set, skipping")
-            continue
-        }
-
-        // Execute appropriate protocol
-        if !wasInPrevious && isInCurrent {
-            // Just joined operator set
-            go n.runReshareAsNewOperator(roundedTime, currentOperators)
-        } else if hasExistingShares() {
-            // Existing operator with shares
-            go n.runReshareAsExistingOperator(roundedTime, currentOperators)
-        } else {
-            // Genesis DKG needed
-            go n.runDKG(roundedTime, currentOperators)
-        }
-
-        n.lastOperators = currentOperators
-        n.processedIntervals[roundedTime] = true
-    }
-}
-```
-
-#### Economic Security Model
-
-EigenLayer provides economic security through restaking and slashing:
-
-**Restaking**: Operators stake ETH (native or liquid staking tokens) which is delegated to the KMS AVS, providing economic collateral.
-
-**Slashing Conditions** (future implementation):
-1. **Equivocation**: Sending different shares to different operators
-2. **Unavailability**: Missing threshold number of reshare intervals
-3. **Invalid Signatures**: Providing incorrect partial signatures
-4. **Protocol Violations**: Deviating from DKG/reshare protocols
-
-**Stake Weighting**: Currently unweighted (1 operator = 1 share), but architecture supports stake-weighted thresholds:
-
-```go
-// Future: Stake-weighted threshold calculation
-func CalculateStakeWeightedThreshold(operators []Operator) *big.Int {
-    totalStake := big.NewInt(0)
-    for _, op := range operators {
-        totalStake.Add(totalStake, op.StakeWeight)
-    }
-
-    // Threshold: 2/3 of total stake
-    threshold := new(big.Int).Mul(totalStake, big.NewInt(2))
-    threshold.Div(threshold, big.NewInt(3))
-
-    return threshold
-}
-```
-
-#### Contract Deployment
-
-KMS AVS contracts must be deployed before operator registration:
-
-```bash
-# Deploy AVS contracts (Sepolia example)
-forge script script/DeployKMSAVS.s.sol \
-  --rpc-url https://sepolia.infura.io/v3/$INFURA_KEY \
-  --broadcast \
-  --verify
-
-# Output:
-# AVSDirectory: 0x...
-# OperatorSetRegistrar: 0x...
-# KeyRegistrar: 0x... (KMS-specific)
-# AllocationManager: 0x...
-```
-
-#### Implementation Locations
-
-- **Contract Bindings**: `pkg/contract/` (generated via abigen)
-- **Peering Fetcher**: `pkg/peering/contract_fetcher.go`
-- **Operator Registration**: `cmd/registerOperator/main.go`
-- **Scheduler Integration**: `pkg/node/scheduler.go`
-- **Contracts**: `contracts/` (Solidity source)
-- **Deployment Scripts**: `scripts/deploy_avs.sh`
+**Security**: Public keys and socket addresses are fetched from trusted blockchain state, preventing MITM attacks during peer discovery
 
 ### HTTP API Interface
 
@@ -1548,13 +1354,14 @@ The KMS node exposes two categories of HTTP endpoints: **Protocol APIs** for int
 
 #### Protocol APIs (Authenticated)
 
-All protocol messages are wrapped in `AuthenticatedMessage` with BN254 signatures:
+All protocol messages wrapped in `AuthenticatedMessage` structure with BN254 signatures for authentication.
 
-```go
-type AuthenticatedMessage struct {
-    Payload   []byte   `json:"payload"`    // Serialized message
-    Hash      [32]byte `json:"hash"`       // keccak256(payload)
-    Signature []byte   `json:"signature"`  // BN254 signature over hash
+**Message Envelope**:
+```
+AuthenticatedMessage {
+    payload: []byte       // Serialized protocol message
+    hash: [32]byte       // keccak256(payload)
+    signature: []byte    // BN254_sign(hash, operatorPrivateKey)
 }
 ```
 
@@ -1562,37 +1369,28 @@ type AuthenticatedMessage struct {
 
 ```
 POST /dkg/commitment
-Body: AuthenticatedMessage {
-    Payload: {
-        FromOperatorAddress: "0x...",
-        ToOperatorAddress: "0x0",  // Broadcast (zero address)
-        SessionTimestamp: 1640995200,
-        Commitments: [G2Point, ...]  // Polynomial commitments
-    }
-}
-Response: 200 OK
+  Request: AuthenticatedMessage<CommitmentMessage>
+    FromOperatorAddress: dealer address
+    ToOperatorAddress: 0x0 (broadcast)
+    SessionTimestamp: interval boundary time
+    Commitments: []G2Point
+  Response: 200 OK | 400 Bad Request
 
 POST /dkg/share
-Body: AuthenticatedMessage {
-    Payload: {
-        FromOperatorAddress: "0x...",
-        ToOperatorAddress: "0x...",  // Specific recipient
-        SessionTimestamp: 1640995200,
-        Share: "0x..."  // Encrypted BLS12-381 Fr element
-    }
-}
-Response: 200 OK
+  Request: AuthenticatedMessage<ShareMessage>
+    FromOperatorAddress: dealer address
+    ToOperatorAddress: specific receiver address
+    SessionTimestamp: interval boundary time
+    Share: Fr element (encrypted)
+  Response: 200 OK | 400 Bad Request | 401 Unauthorized
 
 POST /dkg/ack
-Body: AuthenticatedMessage {
-    Payload: {
-        FromOperatorAddress: "0x...",  // Receiver
-        ToOperatorAddress: "0x...",    // Dealer
-        SessionTimestamp: 1640995200,
-        ShareHash: "0x..."  // keccak256(share)
-    }
-}
-Response: 200 OK
+  Request: AuthenticatedMessage<AcknowledgementMessage>
+    FromOperatorAddress: receiver address
+    ToOperatorAddress: dealer address
+    SessionTimestamp: interval boundary time
+    ShareHash: keccak256(share)
+  Response: 200 OK | 400 Bad Request
 ```
 
 **Reshare Endpoints:**
@@ -1603,68 +1401,17 @@ POST /reshare/share
 POST /reshare/ack
 POST /reshare/complete
 
-// Same structure as DKG endpoints
+(Same message structure as DKG endpoints)
 ```
 
-**Authentication Handler** (`pkg/node/middleware.go`):
-
-```go
-func AuthenticateOperatorMessage(
-    peeringFetcher peering.IPeeringDataFetcher,
-) http.HandlerFunc {
-    return func(w http.ResponseWriter, r *http.Request) {
-        // 1. Parse authenticated message
-        var authMsg transport.AuthenticatedMessage
-        if err := json.NewDecoder(r.Body).Decode(&authMsg); err != nil {
-            http.Error(w, "invalid message", http.StatusBadRequest)
-            return
-        }
-
-        // 2. Verify payload hash
-        computedHash := crypto.Keccak256Hash(authMsg.Payload)
-        if computedHash != authMsg.Hash {
-            http.Error(w, "hash mismatch", http.StatusUnauthorized)
-            return
-        }
-
-        // 3. Extract sender address from payload
-        var baseMsg types.BaseMessage
-        json.Unmarshal(authMsg.Payload, &baseMsg)
-
-        // 4. Get sender's BN254 public key from peering
-        operators, _ := peeringFetcher.GetOperators()
-        var senderPubKey *ecdsa.PublicKey
-        for _, op := range operators {
-            if op.OperatorAddress == baseMsg.FromOperatorAddress {
-                senderPubKey = op.WrappedPublicKey
-                break
-            }
-        }
-        if senderPubKey == nil {
-            http.Error(w, "unknown operator", http.StatusUnauthorized)
-            return
-        }
-
-        // 5. Verify BN254 signature
-        if !crypto.VerifySignature(senderPubKey, authMsg.Hash[:], authMsg.Signature) {
-            http.Error(w, "invalid signature", http.StatusUnauthorized)
-            return
-        }
-
-        // 6. Verify recipient (if not broadcast)
-        if baseMsg.ToOperatorAddress != (common.Address{}) {
-            if baseMsg.ToOperatorAddress != nodeAddress {
-                http.Error(w, "message not for this operator", http.StatusForbidden)
-                return
-            }
-        }
-
-        // Success: forward to handler
-        r = r.WithContext(context.WithValue(r.Context(), "authMsg", authMsg))
-        next.ServeHTTP(w, r)
-    }
-}
-```
+**Authentication Flow**:
+1. Parse `AuthenticatedMessage` from request body
+2. Verify payload hash matches `keccak256(payload)`
+3. Extract sender address from deserialized payload
+4. Lookup sender's BN254 public key from peering data
+5. Verify signature: `ecrecover(hash, signature) == senderAddress`
+6. Verify recipient matches (if not broadcast message)
+7. Forward to protocol handler if all checks pass
 
 #### Application APIs (Public)
 
@@ -1754,127 +1501,9 @@ Response: 200 OK
 }
 ```
 
-#### HTTP Server Implementation
-
-**Server Setup** (`pkg/node/server.go`):
-
-```go
-func (n *Node) StartServer(port int) error {
-    mux := http.NewServeMux()
-
-    // Protocol endpoints (authenticated)
-    mux.HandleFunc("/dkg/commitment",
-        AuthenticateOperatorMessage(n.peeringFetcher)(n.handleDKGCommitment))
-    mux.HandleFunc("/dkg/share",
-        AuthenticateOperatorMessage(n.peeringFetcher)(n.handleDKGShare))
-    mux.HandleFunc("/dkg/ack",
-        AuthenticateOperatorMessage(n.peeringFetcher)(n.handleDKGAck))
-
-    mux.HandleFunc("/reshare/commitment",
-        AuthenticateOperatorMessage(n.peeringFetcher)(n.handleReshareCommitment))
-    mux.HandleFunc("/reshare/share",
-        AuthenticateOperatorMessage(n.peeringFetcher)(n.handleReshareShare))
-
-    // Application endpoints (public)
-    mux.HandleFunc("/pubkey", n.handleGetPublicKey)
-    mux.HandleFunc("/app/sign", n.handleApplicationSign)
-    mux.HandleFunc("/secrets", n.handleSecrets)
-    mux.HandleFunc("/health", n.handleHealth)
-
-    // CORS and logging middleware
-    handler := loggingMiddleware(corsMiddleware(mux))
-
-    server := &http.Server{
-        Addr:         fmt.Sprintf(":%d", port),
-        Handler:      handler,
-        ReadTimeout:  30 * time.Second,
-        WriteTimeout: 30 * time.Second,
-    }
-
-    log.Printf("Starting KMS server on port %d", port)
-    return server.ListenAndServe()
-}
-```
-
 #### Client Request Flow
 
-**KMS Client Example** (`pkg/client/client.go`):
-
-```go
-type KMSClient struct {
-    operatorEndpoints []string
-    httpClient        *http.Client
-}
-
-// GetMasterPublicKey aggregates commitments from operators
-func (c *KMSClient) GetMasterPublicKey(appID string) (*MasterPublicKey, error) {
-    commitmentSets := make([][]G2Point, 0, len(c.operatorEndpoints))
-
-    // Query each operator
-    for _, endpoint := range c.operatorEndpoints {
-        resp, err := c.httpClient.Get(endpoint + "/pubkey")
-        if err != nil {
-            continue  // Try other operators
-        }
-
-        var pubkeyResp PubkeyResponse
-        json.NewDecoder(resp.Body).Decode(&pubkeyResp)
-        commitmentSets = append(commitmentSets, pubkeyResp.Commitments)
-    }
-
-    // Aggregate commitments (should be identical)
-    masterCommitments := aggregateCommitments(commitmentSets)
-    return &MasterPublicKey{Commitments: masterCommitments}, nil
-}
-
-// CollectPartialSignatures collects threshold signatures
-func (c *KMSClient) CollectPartialSignatures(
-    appID string,
-    threshold int,
-) ([]PartialSignature, error) {
-    partialSigs := make([]PartialSignature, 0, threshold)
-
-    req := ApplicationSignRequest{
-        AppID:           appID,
-        AttestationTime: time.Now().Unix(),
-    }
-
-    for _, endpoint := range c.operatorEndpoints {
-        resp, err := c.httpClient.Post(
-            endpoint+"/app/sign",
-            "application/json",
-            marshalJSON(req),
-        )
-        if err != nil {
-            continue
-        }
-
-        var sigResp PartialSignatureResponse
-        json.NewDecoder(resp.Body).Decode(&sigResp)
-        partialSigs = append(partialSigs, sigResp.PartialSignature)
-
-        // Stop once we have threshold signatures
-        if len(partialSigs) >= threshold {
-            break
-        }
-    }
-
-    if len(partialSigs) < threshold {
-        return nil, fmt.Errorf("insufficient signatures: got %d, need %d",
-            len(partialSigs), threshold)
-    }
-
-    return partialSigs, nil
-}
-```
-
-#### Implementation Locations
-
-- **HTTP Server**: `pkg/node/server.go`
-- **Protocol Handlers**: `pkg/node/*_handlers.go`
-- **Authentication Middleware**: `pkg/node/middleware.go`
-- **KMS Client**: `pkg/client/client.go`
-- **CLI Tool**: `cmd/kmsClient/main.go`
+See the **Encryption Workflow** and **Decryption Workflow** sections in the "Application Integration" chapter for detailed diagrams of client request flows.
 
 ## Cryptographic Components
 
@@ -1891,115 +1520,33 @@ func (c *KMSClient) CollectPartialSignatures(
 
 **Key Operations:**
 
-```go
-// Polynomial generation (pkg/crypto/bls/polynomial.go)
-func GeneratePolynomial(degree int) ([]*fr.Element, error) {
-    coefficients := make([]*fr.Element, degree)
-    for i := 0; i < degree; i++ {
-        coeff, err := rand.Int(rand.Reader, fr.Modulus())
-        if err != nil {
-            return nil, err
-        }
-        coefficients[i] = new(fr.Element).SetBigInt(coeff)
-    }
-    return coefficients, nil
-}
-
-// Polynomial evaluation: f(x) = Σ(aₖ·xᵏ)
-func EvaluatePolynomial(polynomial []*fr.Element, x int) *fr.Element {
-    result := fr.NewElement().SetZero()
-    xPower := fr.NewElement().SetOne()
-    xElement := fr.NewElement().SetInt64(int64(x))
-
-    for _, coeff := range polynomial {
-        term := fr.NewElement()
-        term.Mul(coeff, xPower)
-        result.Add(result, term)
-        xPower.Mul(xPower, xElement)
-    }
-
-    return result
-}
-
-// Commitment generation: Cₖ = aₖ·G₂
-func ComputeCommitments(polynomial []*fr.Element) []bls12381.G2Affine {
-    commitments := make([]bls12381.G2Affine, len(polynomial))
-    generator := bls12381.G2Generator()
-
-    for i, coeff := range polynomial {
-        commitments[i].ScalarMultiplication(generator, coeff.BigInt())
-    }
-
-    return commitments
-}
-```
+1. **Polynomial Generation**: Creates a random polynomial of degree t-1 where coefficients are sampled from the field Fr
+2. **Polynomial Evaluation**: Computes f(x) = Σ(aₖ·xᵏ) for generating secret shares at each operator's node ID
+3. **Commitment Generation**: Creates public commitments Cₖ = aₖ·G₂ for each polynomial coefficient for verifiable secret sharing
 
 **Share Verification:**
 
-```go
-// Verify: s·G₂ = Σ(Cₖ·xᵏ) for k=0 to t-1
-func VerifyShare(
-    share *fr.Element,
-    nodeID int,
-    commitments []bls12381.G2Affine,
-) bool {
-    // Left side: share·G₂
-    leftSide := new(bls12381.G2Affine)
-    leftSide.ScalarMultiplication(bls12381.G2Generator(), share.BigInt())
-
-    // Right side: Σ(Cₖ·nodeIDᵏ)
-    rightSide := new(bls12381.G2Affine).SetInfinity()
-    nodeIDPower := big.NewInt(1)
-    nodeIDBig := big.NewInt(int64(nodeID))
-
-    for _, commitment := range commitments {
-        term := new(bls12381.G2Affine)
-        term.ScalarMultiplication(&commitment, nodeIDPower)
-        rightSide.Add(rightSide, term)
-        nodeIDPower.Mul(nodeIDPower, nodeIDBig)
-    }
-
-    return leftSide.Equal(rightSide)
-}
+Operators verify received shares using the polynomial commitments by checking the equation:
 ```
+s·G₂ = Σ(Cₖ·xᵏ) for k=0 to t-1
+```
+where s is the share, x is the nodeID, and Cₖ are the commitments. This ensures the dealer correctly distributed shares from the same polynomial.
 
 **Partial Signature Generation:**
 
-```go
-// Generate partial signature: σᵢ = H₁(appID)^(xᵢ)
-func GeneratePartialSignature(
-    appID string,
-    privateShare *fr.Element,
-) *bls12381.G1Affine {
-    // Hash app ID to G1 point
-    Q := HashToG1(appID)
-
-    // Compute partial signature: Q^(privateShare)
-    partialSig := new(bls12381.G1Affine)
-    partialSig.ScalarMultiplication(Q, privateShare.BigInt())
-
-    return partialSig
-}
-
-// Recover full signature using Lagrange interpolation
-func RecoverSignature(
-    partialSigs []bls12381.G1Affine,
-    operatorNodeIDs []int,
-) *bls12381.G1Affine {
-    // Compute Lagrange coefficients at x=0
-    coeffs := ComputeLagrangeCoefficients(operatorNodeIDs, big.NewInt(0))
-
-    // Aggregate: σ = Σ(λᵢ·σᵢ)
-    signature := new(bls12381.G1Affine).SetInfinity()
-    for i, partialSig := range partialSigs {
-        term := new(bls12381.G1Affine)
-        term.ScalarMultiplication(&partialSig, coeffs[i].BigInt())
-        signature.Add(signature, term)
-    }
-
-    return signature
-}
+Each operator generates a partial signature for an application using their private share:
 ```
+σᵢ = H₁(appID)^(xᵢ)
+```
+where H₁ hashes the app ID to a G1 point and xᵢ is the operator's private share.
+
+**Signature Recovery:**
+
+The full application private key is recovered from threshold partial signatures using Lagrange interpolation:
+```
+sk_app = Σ(λᵢ·σᵢ) for i ∈ [1, t]
+```
+where λᵢ are Lagrange coefficients computed at x=0 for the participating operators' node IDs.
 
 ### BN254 Message Authentication
 
@@ -2010,106 +1557,37 @@ func RecoverSignature(
 - Solidity-compatible (ecrecover-style verification on-chain)
 - Efficient signature generation and verification
 
-**Message Signing** (`pkg/transport/signing.go`):
+**Message Authentication Process:**
 
-```go
-func SignMessage(
-    payload []byte,
-    privateKey *ecdsa.PrivateKey,
-) (AuthenticatedMessage, error) {
-    // 1. Compute payload hash
-    hash := crypto.Keccak256Hash(payload)
+1. **Message Signing**: Compute keccak256 hash of the payload, then sign with BN254 private key. Returns an AuthenticatedMessage containing the payload, hash, and signature.
 
-    // 2. Sign hash with BN254 private key
-    signature, err := crypto.Sign(hash.Bytes(), privateKey)
-    if err != nil {
-        return AuthenticatedMessage{}, err
-    }
+2. **Message Verification**:
+   - Verify the payload hash matches the included hash
+   - Recover the signer's public key from the signature
+   - Compare recovered public key with expected operator's public key
+   - All steps must succeed for message to be authenticated
 
-    // 3. Return authenticated message
-    return AuthenticatedMessage{
-        Payload:   payload,
-        Hash:      hash,
-        Signature: signature,
-    }, nil
-}
-
-func VerifyMessage(
-    authMsg AuthenticatedMessage,
-    publicKey *ecdsa.PublicKey,
-) bool {
-    // 1. Verify payload hash
-    computedHash := crypto.Keccak256Hash(authMsg.Payload)
-    if computedHash != authMsg.Hash {
-        return false
-    }
-
-    // 2. Recover signer from signature
-    recoveredPubKey, err := crypto.SigToPub(authMsg.Hash.Bytes(), authMsg.Signature)
-    if err != nil {
-        return false
-    }
-
-    // 3. Compare with expected public key
-    return publicKey.Equal(recoveredPubKey)
-}
-```
+**Security Properties:**
+- Prevents message tampering (hash verification)
+- Authenticates sender identity (signature verification)
+- Non-repudiable (cryptographic signature binding)
 
 ### Identity-Based Encryption (IBE)
 
 **Concept**: Encrypt data using simple identifiers (app IDs) without pre-shared keys
 
-**Encryption Flow:**
+**Encryption Process:**
 
-```go
-// 1. Hash app ID to G1 point
-func HashToG1(appID string) *bls12381.G1Affine {
-    hash := sha256.Sum256([]byte(appID))
-    point := bls12381.HashToG1(hash[:])
-    return point
-}
+1. **Hash to G1**: Hash the app ID to a G1 point using SHA-256 and the standard hash-to-curve algorithm
+2. **Derive Encryption Key**: Compute a pairing between the hashed app ID and the master public key (constant term of commitments) to derive a symmetric encryption key in GT
+3. **Symmetric Encryption**: Use AES-GCM with the derived key to encrypt the plaintext data
 
-// 2. Encrypt with master public key
-func IBEEncrypt(
-    appID string,
-    masterPublicKey []bls12381.G2Affine,  // Commitments
-    plaintext []byte,
-) ([]byte, error) {
-    // Derive encryption key from master public key
-    Q := HashToG1(appID)
-    encryptionKey := ComputePairingKey(Q, masterPublicKey[0])  // Use constant term
+**Decryption Process:**
 
-    // AES-GCM encryption with derived key
-    keyBytes := encryptionKey.Bytes()
-    block, _ := aes.NewCipher(keyBytes[:32])
-    gcm, _ := cipher.NewGCM(block)
-
-    nonce := make([]byte, gcm.NonceSize())
-    rand.Read(nonce)
-
-    ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
-    return ciphertext, nil
-}
-
-// 3. Decrypt with recovered app private key
-func IBEDecrypt(
-    appPrivateKey *bls12381.G1Affine,  // Recovered via threshold sigs
-    ciphertext []byte,
-) ([]byte, error) {
-    // Derive decryption key from app private key
-    decryptionKey := appPrivateKey.Bytes()
-
-    // Extract nonce
-    block, _ := aes.NewCipher(decryptionKey[:32])
-    gcm, _ := cipher.NewGCM(block)
-    nonceSize := gcm.NonceSize()
-    nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
-
-    // AES-GCM decryption
-    plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
-    return plaintext, err
-}
-```
+1. **Collect Partial Signatures**: Application requests threshold partial signatures from operators
+2. **Recover App Private Key**: Use Lagrange interpolation to aggregate partial signatures into the full application private key (a G1 point)
+3. **Derive Decryption Key**: Convert the app private key to bytes for use as symmetric key
+4. **Symmetric Decryption**: Use AES-GCM to decrypt the ciphertext
 
 **Application Private Key Recovery:**
 
@@ -2137,219 +1615,299 @@ Step 3: Use sk_app to decrypt ciphertext
 
 ### Key Serialization
 
-**BLS12-381 Serialization** (`pkg/crypto/bls/serialization.go`):
+**BLS12-381 Serialization Formats:**
 
-```go
-// G1 point (48 bytes compressed)
-func SerializeG1(point *bls12381.G1Affine) []byte {
-    return point.Compressed()  // 48 bytes
-}
+All cryptographic elements use compressed point encoding for efficient storage and transmission:
 
-func DeserializeG1(data []byte) (*bls12381.G1Affine, error) {
-    point := new(bls12381.G1Affine)
-    err := point.Uncompress(data)
-    return point, err
-}
+- **G1 Points**: 48 bytes compressed (used for signatures and application private keys)
+- **G2 Points**: 96 bytes compressed (used for public keys and polynomial commitments)
+- **Fr Elements**: 32 bytes big-endian (used for secret shares and scalars)
 
-// G2 point (96 bytes compressed)
-func SerializeG2(point *bls12381.G2Affine) []byte {
-    return point.Compressed()  // 96 bytes
-}
-
-func DeserializeG2(data []byte) (*bls12381.G2Affine, error) {
-    point := new(bls12381.G2Affine)
-    err := point.Uncompress(data)
-    return point, err
-}
-
-// Fr element (32 bytes)
-func SerializeFr(element *fr.Element) []byte {
-    return element.Bytes()  // 32 bytes big-endian
-}
-
-func DeserializeFr(data []byte) (*fr.Element, error) {
-    element := new(fr.Element)
-    element.SetBytes(data)
-    return element, nil
-}
-```
-
-#### Implementation Locations
-
-- **BLS12-381 Operations**: `pkg/crypto/bls/`
-- **BN254 Signing**: `pkg/transport/signing.go`
-- **IBE**: `pkg/crypto/ibe/` (future extraction)
-- **Hash Functions**: `pkg/crypto/hash.go`
-- **Serialization**: `pkg/crypto/bls/serialization.go`
-- **Library**: `github.com/consensys/gnark-crypto` (BLS12-381, BN254)
+**Operations:**
+- Serialization converts curve points to compressed byte representations
+- Deserialization reconstructs curve points from compressed formats
+- Compression reduces bandwidth and storage requirements while maintaining security
 
 ## Security Model
 
 ### Threat Model
 
 **Adversary Capabilities:**
-- Control up to ⌊n/3⌋ operators (Byzantine fault tolerance)
-- Network-level adversary (delay, reorder, drop messages)
-- Passive observation of all network traffic
-- Access to historical key shares (compromised operator)
+- Control up to ⌊n/3⌋ operators through compromise or collusion
+- Network-level adversary (delay, reorder, drop, or inject messages)
+- Passive observation of all network traffic and blockchain state
+- Access to historical key shares from compromised operators
+- Unbounded computational power (for analyzing Feldman-VSS commitments in alpha)
+- Real-time decision making during protocol execution (for bias attacks)
 
-**System Assumptions:**
-- Honest majority: At least ⌈2n/3⌉ operators follow protocol correctly
-- Computational hardness: Discrete log problem in BLS12-381, ECDLP in BN254
-- EigenLayer slashing: Economic disincentive for misbehavior
-- Blockchain liveness: Ethereum available for operator discovery
+**Trust Assumptions:**
+- **Honest Majority**: At least ⌈2n/3⌉ operators follow protocol correctly and are not colluding
+- **Cryptographic Hardness**:
+  - Discrete log problem in BLS12-381 (128-bit security)
+  - Elliptic curve discrete log in BN254 (EigenLayer standard)
+- **Economic Rationality**: Operators act rationally under slashing incentives
+- **Permissioned Operation**: Operators vetted and approved by AVS governance before admission
+- **Blockchain Security**: Ethereum provides tamper-proof source of truth for operator sets
+- **Hardware Trust**: Intel TDX provides authentic attestation of TEE execution
+
+**Out of Scope Threats:**
+- Quantum adversaries (post-quantum cryptography not implemented)
+- Side-channel attacks on operator hardware (assumed secure operational environment)
+- Social engineering of operator key material (operators responsible for key security)
+- Supply chain attacks on operator infrastructure (operators responsible for secure deployment)
 
 ### Security Properties
 
-**1. Confidentiality**
+**1. Threshold Secrecy (Information-Theoretic)**
 
-**Property**: No coalition of fewer than t = ⌈2n/3⌉ operators can learn application secrets
+**Property**: No coalition of fewer than t = ⌈2n/3⌉ operators can learn the master secret or any application private key, regardless of computational resources.
 
-**Mechanism**:
-- Master secret S distributed via Shamir secret sharing
-- Any subset of t operators can reconstruct via Lagrange interpolation
-- Subsets smaller than t gain zero information (information-theoretic security)
+**Mechanism**: Shamir secret sharing over BLS12-381 scalar field
+- Master secret `S = Σ fᵢ(0)` distributed across operators
+- Each operator holds share `xⱼ = Σ fᵢ(j)`
+- Any t shares can reconstruct S via Lagrange interpolation
+- Fewer than t shares reveal zero information (information-theoretic guarantee)
+
+**Security Level**:
+- **Alpha (Feldman-VSS)**: Computational security under discrete log assumption
+- **Production (Pedersen-VSS)**: Information-theoretic hiding during commitment phase
 
 **Attack Resistance**:
-- Passive adversary with ⌊n/3⌋ compromised operators: Cannot recover any app keys
-- Reshare with forward secrecy: Old shares useless after rotation
+- ⌊n/3⌋ compromised operators cannot recover master secret
+- Reshare invalidates compromised shares (forward secrecy)
+- Applications receive independent private keys (IBE isolation)
 
-**2. Integrity**
+---
 
-**Property**: Invalid shares, signatures, or messages are detectable
+**2. Hiding (Pedersen-VSS Production Target)**
+
+**Property**: During DKG commitment phase, polynomial commitments reveal zero information about operator secret contributions, preventing bias attacks.
+
+**Feldman-VSS Limitation (Alpha)**:
+```
+Commitments: Cᵢₖ = aᵢₖ·G₂
+Problem: Adversary can compute yᵢ = g^(zᵢ) from commitments
+Result: Timing-based bias attacks theoretically possible
+```
+
+**Pedersen-VSS Solution (Production)**:
+```
+Commitments: Cᵢₖ = aᵢₖ·G₂ + bᵢₖ·H₂
+Property: Information-theoretically hiding (no information about aᵢₖ)
+Result: Bias attacks cryptographically impossible
+```
+
+**Bias Attack Prevention**:
+- **Feldman**: Relies on economic security (slashing) and limited attack window
+- **Pedersen**: Cryptographically prevents bias attacks (hiding commitments)
+
+---
+
+**3. Verifiability and Fraud Detection**
+
+**Property**: All protocol violations are cryptographically detectable and provable on-chain.
 
 **Mechanisms**:
-- Share verification via polynomial commitments (Pedersen VSS)
-- BN254 signatures on all P2P messages
-- Acknowledgement system prevents equivocation
-- Application signature verification via pairing checks
+- Share verification equation: `sᵢⱼ·G₂ = Σ(Cᵢₖ · nodeID_j^k)`
+- BN254 signatures on all inter-operator messages
+- Acknowledgement system with cryptographic proofs
+- On-chain fraud proof verification in smart contracts
 
-**Attack Resistance**:
-- Malicious dealer sending invalid shares: Detected during verification phase
-- Message tampering: Signature verification fails
-- Dealer equivocation: Prevented by acknowledgement requirement
+**Detectable Violations**:
+- Invalid shares (don't verify against commitments)
+- Equivocation (different shares to different operators with same commitments)
+- Commitment inconsistency (different commitments broadcast to different receivers)
+- Missing acknowledgements (protocol non-participation)
 
-**3. Availability**
+**Enforcement**: Verified fraud proofs trigger automatic slashing via EigenLayer
 
-**Property**: System remains operational with up to ⌊n/3⌋ faulty operators
+---
 
-**Mechanisms**:
-- Threshold t = ⌈2n/3⌉ ensures availability with ⌊n/3⌋ failures
-- Automatic reshare handles operator churn
-- No single point of failure
+**4. Byzantine Fault Tolerance**
 
-**Attack Resistance**:
-- DoS on ⌊n/3⌋ operators: Remaining operators sufficient for operations
-- Network partitions: Clients collect threshold signatures from available operators
-
-**4. Non-Repudiation**
-
-**Property**: Operators cannot deny participation or equivocate
+**Property**: System maintains safety and liveness with up to ⌊n/3⌋ Byzantine (malicious or faulty) operators.
 
 **Mechanisms**:
-- Signed acknowledgements during DKG/reshare
-- BN254 signatures on all messages
-- On-chain operator registration and key publication
+- Threshold t = ⌈2n/3⌉ ensures any honest majority can operate
+- Share verification prevents invalid contribution acceptance
+- Acknowledgements prevent partial participation attacks
+- Reshare handles operator recovery and churn
 
-**Attack Resistance**:
-- Dealer claims different operators sent invalid shares: Acknowledgements provide proof
-- Operator denies participation: Signature verification proves authorship
+**Guarantees**:
+- **Safety**: Adversary with ≤⌊n/3⌋ operators cannot compromise master secret
+- **Liveness**: Any ⌈2n/3⌉ operators can complete DKG/Reshare and serve applications
+- **Self-Healing**: Malicious operators detected and removed via slashing
 
-**5. Forward Secrecy**
+---
 
-**Property**: Compromise of current shares doesn't compromise historical data encrypted with old keys
+**5. Economic Security via Slashing**
 
-**Mechanism**:
-- Automatic periodic reshare generates new shares
-- Old shares computationally independent from new shares
-- Applications should re-encrypt with new keys periodically
+**Property**: Protocol violations are economically irrational due to slashing penalties exceeding potential gains.
 
-**Limitation**: Doesn't protect against data encrypted with old master public key (master secret unchanged)
+**Mechanism**: Operators submit fraud proofs to slashing contract
+- Smart contract verifies proofs cryptographically on-chain
+- Verified fraud triggers automatic slashing via EigenLayer AllocationManager
+- Repeated violations result in operator ejection from AVS
 
-**Future Enhancement**: Master secret rotation via full DKG (breaking backward compatibility)
+**Economic Deterrence**:
+- **Invalid Share**: 0.1 ETH slash per fraud (threshold: 3 reports)
+- **Equivocation**: 1 ETH slash (threshold: 1 proof)
+- **Repeated Violations**: Escalating penalties + ejection
 
-### Attack Scenarios
+**Game Theory**: Cost of attack (stake slashed) >> Gain from attack (biased key distribution provides no financial benefit)
 
-**Scenario 1: Malicious Dealer in DKG**
+---
 
-```
-Attack: Operator i sends different shares to different operators (equivocation)
+**6. Non-Repudiation and Accountability**
 
-Defense:
-  1. All operators receive same commitments (broadcast)
-  2. Each operator verifies share against commitments
-  3. If valid, operator sends signed acknowledgement to dealer
-  4. Dealer must collect ALL acknowledgements before proceeding
-  5. If dealer sent different shares, verification fails for some operators
-  6. Missing acknowledgements cause protocol abort
+**Property**: All operator actions cryptographically attributable with non-repudiable signatures.
 
-Result: Equivocation detected, protocol aborts safely
-```
+**Mechanisms**:
+- BN254 signatures on all protocol messages (commitment, share, acknowledgement)
+- Signatures include sender address, recipient address, session timestamp
+- On-chain BN254 public key registration provides signature verification anchor
+- Acknowledgements create audit trail of protocol participation
 
-**Scenario 2: Compromised Operator Shares**
+**Accountability**:
+- Operators cannot deny sending invalid shares (signature proof)
+- Operators cannot claim they didn't receive shares (acknowledgement absence is observable)
+- All protocol violations have cryptographic evidence trail
 
-```
-Attack: Adversary compromises ⌊n/3⌋ operators and steals private shares
+---
 
-Impact Analysis:
-  - Operators compromised: 3 out of 10
-  - Threshold: ⌈20/3⌉ = 7
-  - Adversary has: 3 shares (insufficient)
+**7. Forward Secrecy**
 
-Defense:
-  - Threshold cryptography: 3 < 7, cannot recover master secret
-  - Information-theoretic security: 3 shares reveal zero information
-  - Reshare invalidates compromised shares after next interval
+**Property**: Compromise of current key shares does not compromise previously encrypted application data.
 
-Result: No secret leakage, automatic recovery via reshare
-```
+**Mechanism**: Periodic resharing with cryptographically independent share generation
+- Reshare creates new shares from existing shares via Lagrange interpolation
+- New shares computationally independent from old shares
+- Old shares become useless for decryption after reshare
 
-**Scenario 3: Message Replay Attack**
+**Limitation**: Master secret S remains constant (only shares rotate)
+- Data encrypted with master public key before reshare can still be decrypted after reshare
+- Applications should periodically re-encrypt with updated master public key (after full DKG)
 
-```
-Attack: Adversary captures valid DKG share message, replays in future protocol
+**Future Enhancement**: Master secret rotation via periodic full DKG (backward compatibility break)
 
-Defense:
-  1. SessionTimestamp in message payload ties message to specific protocol run
-  2. Nodes reject messages with SessionTimestamp not matching current session
-  3. BN254 signature ensures message authenticity
-  4. ToOperatorAddress ensures message intended for specific recipient
+### Attack Scenarios and Defenses
 
-Result: Replay detected and rejected
-```
+**Scenario 1: Key Distribution Bias Attack (Feldman-VSS Vulnerability)**
 
-**Scenario 4: Application Key Request Spoofing**
+**Attack**: Adversary controlling multiple operators attempts to bias the final master key distribution.
 
-```
-Attack: Malicious client requests partial signatures for victim's appID
+**Attack Steps** (Feldman-VSS only):
+1. All operators broadcast commitments Cᵢₖ = aᵢₖ·G₂
+2. Adversary sees commitments, computes aggregate `y = Π yᵢ where yᵢ = g^(zᵢ)`
+3. Adversary analyzes last bit of y
+4. If unfavorable, adversary forces one corrupted operator to be disqualified
+5. Final key changes to `y' = y / yₐ` where yₐ is disqualified operator's contribution
+6. Adversary gains ~1 bit of bias per execution
 
-Defense:
-  - No defense at protocol level (by design)
-  - Application-layer authentication required:
-    a. TEE attestation (Intel TDX quote verification)
-    b. OAuth/JWT tokens
-    c. IP allowlisting
-    d. Rate limiting
+**Defense (Alpha Testnet - Feldman-VSS)**:
+- **Economic Deterrence**: Slashing makes attack costly (lose stake for minimal bias)
+- **Permissioned Operators**: Pre-vetted operators reduce anonymous adversaries
+- **Statistical Monitoring**: Repeated bias attempts detectable across multiple DKGs
+- **Limited Gain**: ~1 bit bias provides no practical attack advantage
 
-Result: Protocol provides cryptographic primitives; application handles access control
-```
+**Defense (Production - Pedersen-VSS)**:
+- **Cryptographic Prevention**: Information-theoretic hiding makes bias attack impossible
+- Commitments `Cᵢₖ = aᵢₖ·G₂ + bᵢₖ·H₂` reveal zero information about yᵢ
+- By the time yᵢ values revealed (Phase 2), QUAL already determined
+- Adversary cannot retroactively change participation decisions
 
-**Scenario 5: Network Partition During Reshare**
+**Verdict**:
+- **Alpha**: Low risk (economic disincentive + limited gain)
+- **Production**: No risk (cryptographically prevented)
 
-```
-Attack: Network partition isolates ⌊n/3⌋ operators during reshare
+---
 
-Impact:
-  - Operators in minority partition: Cannot complete reshare (lack threshold)
-  - Operators in majority partition: ⌈2n/3⌉ still available, reshare succeeds
+**Scenario 2: Equivocation (Malicious Dealer)**
 
-Defense:
-  - Interval-based timing: Minority partition will retry at next interval
-  - Historical key versions: Old keys still valid for historical attestation times
-  - Graceful degradation: System continues with available operators
+**Attack**: Operator i sends different shares to different operators while broadcasting same commitments.
 
-Result: Majority partition completes reshare, minority rejoins at next interval
-```
+**Attack Example**:
+- Dealer broadcasts commitments C
+- Sends share s₁ to operator 1 where s₁ verifies against C
+- Sends share s₂ to operator 2 where s₂ verifies against C
+- But s₁ and s₂ lie on different polynomials (inconsistent)
+
+**Defense**:
+1. All operators receive identical commitments (broadcast channel)
+2. Each operator verifies received share against commitments
+3. Both shares may verify individually but define different polynomials
+4. Operators exchange acknowledgements, detect inconsistency
+5. Operators can collab to generate equivocation fraud proof
+6. Submit proof to slashing contract for verification
+
+**Result**: Equivocation cryptographically proven, dealer slashed and ejected
+
+---
+
+**Scenario 3: Compromised Operator Shares**
+
+**Attack**: Adversary compromises ⌊n/3⌋ operators and steals their private key shares.
+
+**Impact Analysis** (n=10 example):
+- Operators compromised: 3
+- Threshold required: ⌈20/3⌉ = 7
+- Adversary has: 3 shares (insufficient for reconstruction)
+
+**Defense**:
+- **Threshold Security**: 3 < 7, mathematically impossible to recover master secret
+- **Information-Theoretic**: 3 shares reveal zero information about S
+- **Automatic Recovery**: Next reshare (10 min intervals) generates new shares
+- **Compromised shares become useless after reshare**
+
+**Result**: No secret leakage, automatic mitigation within 10 minutes
+
+---
+
+**Scenario 4: Message Replay Attack**
+
+**Attack**: Adversary captures valid DKG share message, attempts replay in future protocol run.
+
+**Defense**:
+- `SessionTimestamp` in message binds it to specific DKG run
+- Nodes maintain set of processed session timestamps
+- Messages with non-current SessionTimestamp rejected
+- BN254 signature prevents message modification
+
+**Result**: Replay detected and rejected (stale session timestamp)
+
+---
+
+**Scenario 5: Application Key Request Spoofing**
+
+**Attack**: Malicious client requests partial signatures for victim application's appID.
+
+**Impact**: Without application-layer authentication, attacker could decrypt victim's data.
+
+**Defense** (Application Responsibility):
+- **TEE Attestation**: Intel TDX quote proving authorized code (EigenX platform)
+- **Access Control**: OAuth/JWT tokens, API keys, IP allowlisting
+- **Rate Limiting**: Prevent brute-force appID enumeration
+- **Monitoring**: Alert on suspicious partial signature request patterns
+
+**Protocol Position**: KMS provides cryptographic primitives; applications must implement access control appropriate to their threat model.
+
+---
+
+**Scenario 6: Network Partition During Reshare**
+
+**Attack**: Network partition splits operator set during reshare protocol execution.
+
+**Impact**:
+- Minority partition (< ⌈2n/3⌉): Cannot complete reshare (insufficient operators)
+- Majority partition (≥ ⌈2n/3⌉): Reshare succeeds with available operators
+
+**Defense**:
+- **Graceful Degradation**: Majority continues operations
+- **Automatic Retry**: Minority operators retry at next interval boundary (10 min)
+- **Historical Keys**: Old key versions remain valid for historical attestation times
+- **No Data Loss**: Applications can still decrypt with previous key version
+
+**Result**: Majority completes reshare, minority rejoins at next opportunity
 
 ### Cryptographic Assumptions
 
@@ -2379,6 +1937,187 @@ Result: Majority partition completes reshare, minority rejoins at next interval
 - Operator key compromise: Immediately deregister from operator set
 - Suspected equivocation: Investigate acknowledgement logs
 - Protocol failure: Automatic retry at next interval
+
+## Fraud Detection and Slashing
+
+### Overview
+
+The KMS implements an on-chain fraud proof system enabling cryptographic detection and economic punishment of protocol violations. Operators monitor peer behavior and submit verifiable proofs of misbehavior to the slashing smart contract, which triggers automatic penalties via EigenLayer's AllocationManager.
+
+### Fraud Detection Mechanism
+
+**Detection Flow**:
+```
+Operator detects violation → Construct fraud proof → Submit to contract
+                                                              ↓
+                                            Verify proof cryptographically
+                                                              ↓
+                                            Slash via AllocationManager
+                                                              ↓
+                                            Eject if threshold exceeded
+```
+
+**Fraud Proof Components**:
+1. **Cryptographic Evidence**: Signatures proving dealer's actions
+2. **Violation Proof**: Mathematical proof of protocol deviation
+3. **Context**: Session timestamp, operator addresses, commitments
+4. **Verification**: On-chain cryptographic verification (no trusted party)
+
+### Slashable Violations
+
+**1. Invalid Share**
+
+**Violation**: Dealer sends share that doesn't verify against broadcast commitments.
+
+**Detection**: Receiver computes `sᵢⱼ·G₂` and `Σ(Cᵢₖ · nodeID_j^k)`, finds inequality.
+
+**Fraud Proof Contains**:
+- Dealer's broadcast commitments (with signature)
+- Invalid share sent to receiver (with signature)
+- Receiver's node ID for verification
+
+**On-Chain Verification**:
+```
+Contract computes:
+  leftSide = g^share
+  rightSide = Σ(commitments[k] · nodeID^k)
+
+If leftSide ≠ rightSide:
+  Fraud proven → Increment dealer's fraud counter
+```
+
+**Slashing Threshold**: 3 independent reports from different receivers
+**Penalty**: 0.1 ETH per fraud, escalating with repeat violations
+
+---
+
+**2. Equivocation**
+
+**Violation**: Dealer sends different shares to different operators (both verify individually, but inconsistent).
+
+**Detection**: Two receivers compare notes, find they received different shares for same polynomial.
+
+**Fraud Proof Contains**:
+- Dealer's broadcast commitments (signed)
+- Share 1 sent to receiver 1 (signed) + receiver 1's node ID
+- Share 2 sent to receiver 2 (signed) + receiver 2's node ID
+- Both shares verify individually but define different polynomials
+
+**On-Chain Verification**:
+```
+Verify both shares valid individually:
+  s₁·G₂ = Σ(C_k · nodeID₁^k) ✓
+  s₂·G₂ = Σ(C_k · nodeID₂^k) ✓
+
+But shares are inconsistent (different polynomials):
+  Lagrange interpolation shows polynomial mismatch
+```
+
+**Slashing Threshold**: 1 cryptographic proof (more severe)
+**Penalty**: 1 ETH immediate slash + ejection consideration
+
+---
+
+**3. Commitment Inconsistency**
+
+**Violation**: Dealer broadcasts different commitments to different operators.
+
+**Detection**: Operators compare received commitments, find inconsistency.
+
+**Fraud Proof Contains**:
+- Commitment set 1 sent to receiver 1 (signed, includes receiver address)
+- Commitment set 2 sent to receiver 2 (signed, includes receiver address)
+- Both signed by same dealer but different content
+
+**On-Chain Verification**:
+```
+Verify dealer signed both commitment sets
+Verify commitments are different (array inequality)
+Fraud proven if both signatures valid and commitments differ
+```
+
+**Slashing Threshold**: 1 proof
+**Penalty**: 0.5 ETH + monitoring for repeated violations
+
+---
+
+**4. Protocol Non-Participation**
+
+**Violation**: Operator fails to send shares/acknowledgements, causing protocol abortion.
+
+**Detection**: Operators track which peers responded, identify non-responsive operators.
+
+**Enforcement**: Off-chain monitoring with on-chain checkpoints
+- Missing multiple consecutive reshares triggers availability violation
+- Accumulated violations lead to ejection
+
+**Slashing Threshold**: Missing 5 consecutive reshares
+**Penalty**: 0.05 ETH per missed reshare + ejection after 10 misses
+
+### Slashing Configuration
+
+**Penalty Structure**:
+
+| Violation Type | First Offense | Threshold | Escalation |
+|---------------|---------------|-----------|------------|
+| Invalid Share | Warning | 3 reports | 0.1 ETH → 0.2 ETH → 0.4 ETH |
+| Equivocation | 1 ETH | 1 proof | Immediate ejection consideration |
+| Commitment Inconsistency | 0.5 ETH | 1 proof | Monitor for pattern |
+| Non-Participation | 0.05 ETH/miss | 5 misses | Ejection after 10 |
+
+**Escalation Policy**:
+- First fraud in session: Base penalty
+- Second fraud in session: 2× penalty
+- Fraud in 3+ sessions: Automatic ejection from operator set
+
+**Ejection Triggers**:
+- Equivocation (single proof)
+- 3+ different fraud types across sessions
+- Total penalties > 5 ETH
+- Non-participation for 10 consecutive intervals
+
+### Economic Game Theory
+
+**Attack Cost-Benefit Analysis** (for bias attack):
+
+**Costs**:
+- Minimum 2 operators required (2× stake at risk)
+- Slashing if fraud detected: 0.1-1 ETH per operator
+- Ejection permanently loses future rewards
+- Reputation damage (publicly visible fraud proofs)
+
+**Benefits**:
+- ~1 bit of bias in key distribution
+- No direct financial gain (keys still secure)
+- Applications unaffected (keys functionally random)
+
+**Conclusion**: Economically irrational (cost >> benefit)
+
+### Fraud Proof Submission Process
+
+**Operator Side**:
+1. Detect violation during protocol execution
+2. Collect cryptographic evidence (signatures, commitments, shares)
+3. Construct fraud proof struct with all evidence
+4. Submit transaction to `EigenKMSSlashing` contract
+5. Monitor for slashing event confirmation
+
+**Contract Side**:
+1. Receive fraud proof via transaction
+2. Verify reporter is in operator set (authorized)
+3. Verify all signatures (commitment sig, share sig)
+4. Execute verification equation on-chain (BLS12-381 operations)
+5. If verified, increment fraud counter for dealer
+6. Trigger slashing if threshold reached
+7. Emit events for monitoring and transparency
+
+**Security Considerations**:
+- **False Accusations**: Cryptographic verification prevents false positives
+- **Collusion**: Multiple independent reporters required for threshold
+- **Griefing**: False accusers can be counter-slashed
+- **Frontrunning**: Fraud proofs processed in submission order
+
+See `docs/003_fraudProofs.md` for detailed implementation specification.
 
 ## Key Management
 
@@ -2589,103 +2328,76 @@ func ComputeMasterPublicKey(
 
 **Property**: Constant term Σ(C₀ᵢ) = Σ(f_i(0)·G₂) = S·G₂ where S is master secret
 
-### Persistence (Future)
+### Key Share Persistence
 
-Current implementation uses in-memory storage. Planned persistence:
+**Current State**: In-memory storage (ephemeral, lost on node restart)
+**Production Requirement**: Durable persistence with encryption at rest
 
-**Design Goals:**
-1. Encrypted at rest (AES-256-GCM with operator-derived key)
-2. Atomic writes (no partial state corruption)
-3. Version history retention (configurable retention period)
-4. Fast lookup by version timestamp
+#### Persistence Interface
 
-**Proposed Schema** (BoltDB/SQLite):
+The system defines a pluggable persistence interface supporting multiple storage backends:
 
-```sql
-CREATE TABLE key_versions (
-    version INTEGER PRIMARY KEY,      -- Session timestamp
-    encrypted_share BLOB NOT NULL,    -- AES-encrypted private share
-    commitments BLOB NOT NULL,        -- Serialized G2 points
-    is_active BOOLEAN NOT NULL,
-    participant_ids BLOB NOT NULL,    -- Serialized []int
-    created_at INTEGER NOT NULL
-);
-
-CREATE INDEX idx_active ON key_versions(is_active);
-CREATE INDEX idx_created_at ON key_versions(created_at);
+```
+KeySharePersistence interface:
+  Store(version KeyShareVersion) → error
+  LoadActive() → (KeyShareVersion, error)
+  LoadAtTime(timestamp int64) → (KeyShareVersion, error)
+  ListVersions() → ([]int64, error)
+  Prune(retentionPeriod time.Duration) → error
 ```
 
-**Encryption Scheme:**
+#### Design Requirements
 
-```go
-func EncryptKeyShare(
-    share *fr.Element,
-    operatorPrivateKey *ecdsa.PrivateKey,
-) ([]byte, error) {
-    // Derive encryption key from operator BN254 private key
-    keyMaterial := sha256.Sum256(operatorPrivateKey.D.Bytes())
+1. **Encryption at Rest**: All key shares encrypted using operator-derived encryption key
+   - Key derivation: `HKDF-SHA256(operatorBN254PrivateKey, "kms-keyshare-encryption")`
+   - Encryption: AES-256-GCM (authenticated encryption)
+   - Key rotation: Supported via re-encryption with new derived key
 
-    block, _ := aes.NewCipher(keyMaterial[:])
-    gcm, _ := cipher.NewGCM(block)
+2. **Atomic Operations**: Prevent partial state corruption during failures
+   - Transactional writes required (all-or-nothing semantics)
+   - Crash recovery to consistent state
+   - No torn writes visible to readers
 
-    nonce := make([]byte, gcm.NonceSize())
-    rand.Read(nonce)
+3. **Version History**: Configurable retention period for historical key lookups
+   - Default retention: 30 days (TEE attestation time validation)
+   - Configurable per deployment needs
+   - Automatic pruning of expired versions
 
-    plaintext := share.Bytes()
-    ciphertext := gcm.Seal(nonce, nonce, plaintext, nil)
+4. **Performance**: Fast lookups by version timestamp
+   - O(log n) or O(1) lookup by version
+   - Index on `isActive` for active version queries
+   - Index on `createdAt` for time-based queries
 
-    return ciphertext, nil
-}
-```
+5. **Backup and Recovery**: Support for encrypted backups
+   - Export encrypted key versions
+   - Import on operator migration
+   - Verify integrity post-import
 
-### Backend Keystore Integration (Future)
+#### Candidate Storage Backends
 
-Support for external key management systems:
+**BadgerDB** (Embedded LSM Key-Value Store):
+- **Pros**: Pure Go, ACID transactions, fast lookups, built-in encryption
+- **Cons**: Single-writer limitation, periodic compaction needed
+- **Use Case**: Default recommendation for most deployments
+- **Performance**: Microsecond latencies, handles high throughput
 
-**Supported Backends:**
-1. **AWS KMS**: Store BN254 private key, derive encryption key for shares
-2. **GCP KMS**: Similar to AWS KMS
-3. **HashiCorp Vault**: Transit secrets engine for encryption
-4. **Hardware Security Modules (HSMs)**: PKCS#11 interface
+**SQLite** (Embedded Relational Database):
+- **Pros**: SQL queries, widely understood, excellent tooling, ACID guarantees
+- **Cons**: Write performance lower than BadgerDB for high-throughput workloads
+- **Use Case**: Operators preferring SQL for operational queries/debugging
+- **Performance**: Millisecond latencies, sufficient for KMS use case
 
-**Architecture:**
+**PostgreSQL/MySQL** (External RDBMS):
+- **Pros**: Enterprise features, replication, point-in-time recovery
+- **Cons**: External dependency, network latency, operational complexity
+- **Use Case**: Enterprise deployments with existing database infrastructure
+- **Performance**: Network RTT dependent
 
-```go
-type KeyBackend interface {
-    // Encrypt key share using backend
-    EncryptShare(share *fr.Element) ([]byte, error)
-
-    // Decrypt key share using backend
-    DecryptShare(ciphertext []byte) (*fr.Element, error)
-
-    // Sign message using operator private key
-    SignMessage(hash []byte) ([]byte, error)
-}
-
-// AWS KMS implementation
-type AWSKMSBackend struct {
-    kmsClient *kms.Client
-    keyID     string
-}
-
-func (b *AWSKMSBackend) EncryptShare(share *fr.Element) ([]byte, error) {
-    plaintext := share.Bytes()
-
-    result, err := b.kmsClient.Encrypt(context.Background(), &kms.EncryptInput{
-        KeyId:     aws.String(b.keyID),
-        Plaintext: plaintext,
-    })
-
-    return result.CiphertextBlob, err
-}
-```
-
-#### Implementation Locations
-
-- **KeyStore**: `pkg/keystore/keystore.go`
-- **Persistence (future)**: `pkg/keystore/persistent_store.go`
-- **Backend Interface (future)**: `pkg/keystore/backend/`
-- **Tests**: `pkg/keystore/keystore_test.go`
+**External KMS** (Vault, AWS KMS, GCP KMS):
+- **Pros**: Centralized key management, audit logging, compliance features
+- **Cons**: External dependency, higher latency, cost per operation
+- **Use Case**: Regulated industries requiring HSM-backed key storage
+- **Performance**: 10-100ms per operation (API calls)
 
 ## Application Integration (Encrypt/Decrypt Flow)
 
@@ -2869,339 +2581,334 @@ Option 2: Threshold Signature (Alternative)
 Current implementation uses Option 2 (reuses IBE infrastructure)
 ```
 
+---
+
+#### Intel TDX Attestation Verification
+
+**Attestation Service**: Intel Trust Authority (cloud-based) or Intel DCAP libraries (self-hosted verification)
+
+**Verification API Integration**:
+
+KMS operators use **Intel Trust Authority API** for production attestation verification:
+
+```
+Attestation Request Flow:
+  1. TEE generates TDX quote via tdx-attest library
+  2. KMS receives quote in /secrets request
+  3. KMS calls Intel Trust Authority API:
+
+     POST https://api.trustauthority.intel.com/appraisal/v2/attest
+     Headers:
+       Authorization: Bearer <intel-api-key>
+       Content-Type: application/json
+     Body:
+       {
+         "quote": "<base64-encoded-tdx-quote>",
+         "runtime_data": "<nonce-or-ephemeral-key-hash>",
+         "policy_ids": ["<app-specific-policy-id>"]
+       }
+
+     Response:
+       {
+         "token": "<jwt-attestation-token>",
+         "verification_result": "SUCCESS",
+         "tcb_status": "UpToDate",
+         "tdx_module_identity": {...},
+         "measurements": {
+           "rtmr0": "<hash-of-code>",
+           "rtmr1": "<hash-of-config>",
+           "rtmr2": "<reserved>",
+           "rtmr3": "<reserved>"
+         }
+       }
+
+  4. KMS verifies JWT signature (Intel signing key)
+  5. KMS validates TCB status is "UpToDate"
+  6. KMS checks RTMR0 against expected image digest from blockchain
+  7. If all checks pass, generate and return partial signature
+```
+
+**Alternative (Self-Hosted)**: Intel DCAP libraries
+- Requires local provisioning of Intel attestation certificates
+- Lower latency (no external API call)
+- Higher operational complexity (certificate management)
+- Suitable for airgapped or high-security deployments
+
+**Security Properties**:
+- **Hardware Root of Trust**: Attestation signed by Intel CPU hardware keys
+- **Freshness**: Nonce in quote prevents replay attacks
+- **Code Binding**: RTMR0 cryptographically ties quote to running code
+- **TCB Validation**: Ensures firmware/microcode up-to-date and unrevoked
+
+---
+
 #### Complete TEE Integration Flow
 
-For EigenX TEE-based applications, the complete integration:
-
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│ TEE Application (Inside Intel TDX Enclave)                       │
-│                                                                   │
-│ Step 1: Generate Attestation                                     │
-│   quote = TDX.GenerateQuote(reportData)                          │
-│   ephemeralRSAKey = RSA.GenerateKey(2048)                        │
-│                                                                   │
-│ Step 2: Request Secrets from KMS Operators                       │
-│   for operator in operators:                                      │
-│       response = POST operator/secrets                            │
-│                    Body: {                                        │
-│                      "app_id": "my-tee-app",                      │
-│                      "attestation": base64(quote),                │
-│                      "rsa_pubkey_tmp": ephemeralRSAKey.Public(),  │
-│                      "attest_time": currentTimestamp              │
-│                    }                                              │
-│                                                                   │
-│       // Operator verifies attestation before responding          │
-│       encryptedPartialSig = response.encrypted_partial_sig        │
-│       decryptedPartialSig = RSA.Decrypt(ephemeralRSAKey,          │
-│                                         encryptedPartialSig)       │
-│       partialSigs.append(decryptedPartialSig)                     │
-│                                                                   │
-│ Step 3: Recover App Private Key (Inside TEE)                     │
-│   sk_app = RecoverSignature(partialSigs, operatorNodeIDs)        │
-│                                                                   │
-│ Step 4: Decrypt Application Secrets                              │
-│   secrets = IBE.Decrypt(sk_app, encryptedSecrets)                │
-│   // Use secrets for database connections, API calls, etc.       │
-└───────────────────────────────────────────────────────────────────┘
-```
-
-**Operator-Side Attestation Verification** (`pkg/node/tee_handler.go`):
-
-```go
-func (n *Node) handleSecrets(w http.ResponseWriter, r *http.Request) {
-    var req SecretsRequest
-    json.NewDecoder(r.Body).Decode(&req)
-
-    // 1. Verify Intel TDX attestation quote
-    attestation, err := base64.StdEncoding.DecodeString(req.Attestation)
-    if err != nil {
-        http.Error(w, "invalid attestation", http.StatusBadRequest)
-        return
-    }
-
-    valid, err := tee.VerifyTDXQuote(attestation)
-    if err != nil || !valid {
-        http.Error(w, "attestation verification failed", http.StatusUnauthorized)
-        return
-    }
-
-    // 2. Extract measurements from quote
-    quote, _ := tee.ParseTDXQuote(attestation)
-
-    // 3. Verify measurements match expected values for app
-    expectedMeasurements := n.appRegistry.GetExpectedMeasurements(req.AppID)
-    if !bytes.Equal(quote.RTMR0, expectedMeasurements.RTMR0) {
-        http.Error(w, "measurement mismatch", http.StatusUnauthorized)
-        return
-    }
-
-    // 4. Get key version for attestation time
-    keyVersion := n.keystore.GetKeyVersionAtTime(req.AttestTime)
-    if keyVersion == nil {
-        http.Error(w, "no key for attestation time", http.StatusNotFound)
-        return
-    }
-
-    // 5. Generate partial signature
-    partialSig := crypto.GeneratePartialSignature(
-        req.AppID,
-        keyVersion.PrivateShare,
-    )
-
-    // 6. Encrypt partial signature with ephemeral RSA key
-    rsaPubKey, _ := x509.ParsePKIXPublicKey([]byte(req.RSAPubKeyTmp))
-    encryptedPartialSig, _ := rsa.EncryptOAEP(
-        sha256.New(),
-        rand.Reader,
-        rsaPubKey.(*rsa.PublicKey),
-        partialSig.Bytes(),
-        nil,
-    )
-
-    // 7. Return encrypted response
-    response := SecretsResponse{
-        EncryptedEnv:         encryptSecrets(req.AppID),  // AES-encrypted
-        PublicEnv:            getPublicEnv(req.AppID),
-        EncryptedPartialSig:  base64.StdEncoding.EncodeToString(encryptedPartialSig),
-    }
-
-    json.NewEncoder(w).Encode(response)
-}
+TEE Application (Intel TDX)          KMS Operators (≥ ⌈2n/3⌉)          Blockchain
+        │                                      │                           │
+        │ 1. Generate attestation              │                           │
+        │    - TDX quote (proves hardware)     │                           │
+        │    - Ephemeral RSA key pair          │                           │
+        │                                      │                           │
+        │ 2. Request secrets                   │                           │
+        ├─────────POST /secrets────────────────→│                           │
+        │    {appID, attestation, rsaPubKey}   │                           │
+        │                                      │                           │
+        │                                      │ 3. Query image digest     │
+        │                                      ├──────────────────────────→│
+        │                                      │←──────imageDigest─────────│
+        │                                      │                           │
+        │                                      │ 4. Verify attestation:    │
+        │                                      │    - Call Intel API       │
+        │                                      │    - Check TCB status     │
+        │                                      │    - Validate RTMR0       │
+        │                                      │    - Match image digest   │
+        │                                      │                           │
+        │                                      │ 5. Generate partial sig   │
+        │                                      │    σᵢ = H(appID)^(xᵢ)     │
+        │                                      │                           │
+        │                                      │ 6. Encrypt with RSA       │
+        │                                      │    enc = RSA(σᵢ, pubKey)  │
+        │                                      │                           │
+        │←────encrypted partial sig────────────│                           │
+        │                                      │                           │
+        │ 7. Collect threshold sigs            │                           │
+        │    (repeat for ⌈2n/3⌉ operators)     │                           │
+        │                                      │                           │
+        │ 8. Decrypt with ephemeral RSA        │                           │
+        │    σᵢ = RSA_decrypt(enc)             │                           │
+        │                                      │                           │
+        │ 9. Recover mnemonic                  │                           │
+        │    sk = Σ(λᵢ · σᵢ) [Lagrange]       │                           │
+        │    mnemonic = derive(sk)             │                           │
+        │                                      │                           │
+        │ 10. Inject MNEMONIC env var          │                           │
+        │     Start application container      │                           │
 ```
 
-**Security Properties:**
-1. **Attestation Verification**: Only valid TEE instances receive secrets
-2. **Measurement Binding**: Secrets tied to specific application code (RTMR0)
-3. **Ephemeral Encryption**: Partial signatures encrypted with TEE-generated RSA key
-4. **Forward Secrecy**: Ephemeral RSA key used once, then discarded
+**Operator Verification Steps**:
+1. Parse TDX attestation quote from request
+2. Call Intel Trust Authority API to verify quote signature and freshness
+3. Extract RTMR measurements from verified quote
+4. Query blockchain for expected image digest (by appID)
+5. Verify `RTMR0 == keccak256(expectedImageDigest)`
+6. Verify TCB status is "UpToDate" (no revoked firmware)
+7. If all checks pass, generate partial signature for mnemonic derivation
+8. Encrypt partial signature with TEE's ephemeral RSA public key
+9. Return encrypted response to TEE
 
-### Client Library Usage
+**Security Properties**:
+- **Attestation Verification**: Only authentic Intel TDX hardware instances receive secrets
+- **Code Binding**: RTMR0 measurement ensures only authorized code executes
+- **Image Authorization**: Blockchain check ensures only approved Docker images run
+- **Ephemeral Encryption**: RSA key used once, discarded after mnemonic recovery
+- **Threshold Security**: No single operator can generate mnemonic alone
 
-**Go Client Example:**
+## Implementation Timeline
 
-```go
-import "github.com/eigenx/kms-go/pkg/client"
+### Phase 1: Alpha Testnet with Feldman-VSS
 
-func main() {
-    // Initialize client
-    kmsClient := client.NewKMSClient(&client.Config{
-        AVSAddress:      common.HexToAddress("0xAVS..."),
-        OperatorSetID:   0,
-        RPCURL:          "https://sepolia.infura.io/v3/...",
-        Timeout:         30 * time.Second,
-    })
+**Milestone**: Production-ready Feldman-VSS with fraud detection, deployed to public testnet
 
-    // Encrypt secrets
-    plaintext := []byte("DATABASE_URL=postgres://...")
-    ciphertext, err := kmsClient.Encrypt("my-app", plaintext)
-    if err != nil {
-        log.Fatal(err)
-    }
+**Duration**: 8 weeks
 
-    // Save ciphertext to database/file
-    saveEncryptedSecrets("my-app", ciphertext)
+**Week 1-2: Fraud Proof System**
+- [ ] Design and deploy `EigenKMSSlashing.sol` smart contract
+- [ ] Implement fraud detection in DKG/Reshare protocol handlers
+- [ ] Add fraud proof construction and submission logic
+- [ ] Configure slashing thresholds (3 invalid shares, 1 equivocation)
+- [ ] Unit tests for fraud proof verification
+- **Deliverable**: Working fraud detection on Anvil local testnet
 
-    // Later: decrypt secrets
-    ciphertext = loadEncryptedSecrets("my-app")
-    plaintext, err = kmsClient.Decrypt("my-app", ciphertext, 0)  // attestationTime=0 (use active key)
-    if err != nil {
-        log.Fatal(err)
-    }
+**Week 3-4: Protocol Hardening**
+- [ ] Comprehensive integration test suite (100+ test cases)
+- [ ] Fuzz testing for DKG/Reshare message handling
+- [ ] Performance benchmarking (3, 5, 7, 10, 15 operator sets)
+- [ ] Load testing (sustained reshare cycles)
+- [ ] Monitoring and alerting infrastructure (Prometheus + Grafana)
+- **Deliverable**: Battle-tested Feldman-VSS implementation
 
-    // Use plaintext secrets
-    log.Printf("Decrypted: %s", plaintext)
-}
+**Week 5-6: TEE Integration**
+- [ ] Intel Trust Authority API integration (quote verification)
+- [ ] Attestation verification implementation with RTMR validation
+- [ ] Image digest validation against blockchain registry
+- [ ] `/secrets` endpoint with full attestation checks
+- [ ] TEE integration testing with mock TDX quotes
+- **Deliverable**: End-to-end EigenX platform authentication
+
+**Week 7-8: Alpha Testnet Deployment**
+- [ ] Deploy contracts to Sepolia testnet
+- [ ] Onboard 5-7 test operators (distributed geographically)
+- [ ] Execute genesis DKG with testnet operators
+- [ ] Run continuous reshare cycles (2 min intervals)
+- [ ] Monitor for fraud attempts, performance metrics
+- [ ] Public documentation and operator guides
+- **Deliverable**: Public alpha testnet (sepolia.eigenx-kms.io)
+
+---
+
+### Phase 2: Pedersen-VSS Migration
+
+**Milestone**: Information-theoretically secure DKG protocol ready for audit
+
+**Duration**: 8 weeks
+
+**Week 9-10: Pedersen-VSS Core Implementation**
+- [ ] Implement dual-polynomial VSS (f_i, f'_i)
+- [ ] Distributed coin flip protocol for H₂ generation
+- [ ] Two-phase DKG protocol (commit, extract)
+- [ ] Phase 1 verification: `s·G₂ + s'·H₂ = Σ(C_k · j^k)`
+- [ ] Phase 2 verification: `s·G₂ = Σ(A_k · j^k)`
+- [ ] Unit tests for Pedersen primitives
+- **Deliverable**: Complete Pedersen-VSS implementation with tests
+
+**Week 11-12: Integration and Migration**
+- [ ] Protocol version negotiation (operators signal Pedersen support)
+- [ ] Parallel testnet deployment (Feldman + Pedersen operator sets)
+- [ ] Migration testing: Feldman → Pedersen upgrade path
+- [ ] Performance comparison (Pedersen overhead < 20%)
+- [ ] Integration tests with both protocols
+- **Deliverable**: Proven migration path with backward compatibility
+
+**Week 13-14: Code Quality and Documentation**
+- [ ] Code freeze for audit scope
+- [ ] Security-focused code review (internal)
+- [ ] TDD update with Pedersen-VSS details
+- [ ] Threat model formalization
+- [ ] Test coverage > 90% (unit + integration)
+- [ ] Static analysis and linter fixes (golangci-lint)
+- **Deliverable**: Audit-ready codebase with comprehensive documentation
+
+**Week 15-16: Security Audit Preparation**
+- [ ] Prepare audit scope document
+- [ ] Create attack scenario test suite
+- [ ] Document all assumptions and trust boundaries
+- [ ] Set up audit communication channels
+- [ ] Pre-audit internal security review
+- **Deliverable**: Ready for external security audit
+
+---
+
+### Phase 3: Production Readiness
+
+**Milestone**: Mainnet-ready system with external audit completion
+
+**Duration**: 8 weeks
+
+**Week 17-19: External Security Audit**
+- [ ] Contract audit (EigenKMSSlashing, KeyRegistrar)
+- [ ] Protocol audit (Pedersen-VSS, fraud proofs)
+- [ ] Cryptographic implementation review
+- [ ] Address audit findings (critical and high severity)
+- [ ] Re-audit if significant changes required
+- **Deliverable**: Clean audit report (no critical/high findings)
+
+**Week 20-21: Persistence Layer Implementation**
+- [ ] Implement BadgerDB persistence backend
+- [ ] Key share encryption at rest (AES-256-GCM)
+- [ ] Crash recovery and integrity testing
+- [ ] Backup/restore procedures
+- [ ] Migration from in-memory to persistent (zero-downtime)
+- [ ] Performance validation (persistence overhead < 10ms)
+- **Deliverable**: Durable key storage with encrypted backups
+
+**Week 22-23: Operator Tooling and Infrastructure**
+- [ ] Operator deployment playbooks (Docker, Kubernetes)
+- [ ] Monitoring dashboards (DKG success rate, reshare latency)
+- [ ] Alert rules (fraud detection, protocol failures)
+- [ ] Incident response runbooks
+- [ ] Operator onboarding documentation
+- [ ] CLI tools for operator management
+- **Deliverable**: Production-grade operator infrastructure
+
+**Week 24: Mainnet Launch Preparation**
+- [ ] Mainnet deployment plan and timeline
+- [ ] Contract deployment to Ethereum mainnet
+- [ ] Security checklist validation
+- [ ] Backup operator coordination
+- [ ] Communication plan (announcements, docs)
+- [ ] Monitoring setup (PagerDuty integration)
+- **Deliverable**: Ready for mainnet genesis DKG
+
+---
+
+### Phase 4: Mainnet Launch and Iteration
+
+**Milestone**: Live production system serving EigenX platform
+
+**Duration**: Ongoing (weeks 25+)
+
+**Week 25-26: Mainnet Genesis**
+- [ ] Deploy contracts to Ethereum mainnet
+- [ ] Onboard initial operator set (7-10 operators)
+- [ ] Execute genesis DKG ceremony (coordinated)
+- [ ] Monitor first 48 hours (24/7 on-call)
+- [ ] Validate first reshare cycle (10 min after genesis)
+- [ ] Announce mainnet launch publicly
+- **Deliverable**: Live KMS AVS on Ethereum mainnet
+
+**Week 27-30: Post-Launch Stabilization**
+- [ ] Monitor protocol health (DKG/reshare success rates)
+- [ ] Track fraud proof submissions (expect zero)
+- [ ] Optimize performance based on real data
+- [ ] Operator feedback incorporation
+- [ ] Bug fixes and minor improvements
+- **Deliverable**: Stable production operation
+
+**Week 31+: Advanced Features**
+- [ ] Backend keystore integration (AWS KMS, Vault, HSMs)
+- [ ] Cross-chain deployment (Arbitrum, Optimism, Base)
+- [ ] Advanced monitoring and analytics
+- [ ] Operator reputation system
+- [ ] Governance mechanisms (parameter voting)
+- [ ] Master secret rotation (periodic full DKG)
+- **Deliverable**: Enhanced production features
+
+---
+
+### Critical Path Dependencies
+
+```
+Genesis DKG Support (Weeks 1-4)
+    ↓
+Fraud Proofs (Weeks 1-2) ──→ Alpha Testnet (Weeks 7-8)
+    ↓                              ↓
+Pedersen-VSS (Weeks 9-12) ──→ Audit Prep (Weeks 13-16)
+    ↓                              ↓
+Security Audit (Weeks 17-19) ──→ Mainnet Launch (Week 25)
+    ↓
+Persistence (Weeks 20-21)
 ```
 
-#### Implementation Locations
+### Resource Requirements
 
-- **KMS Client**: `pkg/client/client.go`
-- **CLI Tool**: `cmd/kmsClient/main.go`
-- **TEE Handler**: `pkg/node/tee_handler.go`
-- **TEE Verification (future)**: `pkg/tee/tdx_verifier.go`
-- **Examples**: `examples/encrypt_decrypt/`
+**Development Team**:
+- 1 Lead Engineer (Sean - full time)
+- 1 Smart Contract Engineer (weeks 1-2, 17-19)
+- 1 Security Engineer (weeks 13-19, ongoing)
+- 1 DevOps Engineer (weeks 20-24)
 
-## What's Next
+**External Services**:
+- Security audit firm (weeks 17-19): ~$50-80k
+- Intel Trust Authority API keys (production)
+- Ethereum testnet ETH (Sepolia faucet)
+- Infrastructure (7-10 operator nodes): ~$500/month testnet, ~$2k/month mainnet
 
-The current implementation provides a solid foundation for distributed key management with threshold cryptography. The following enhancements are planned for future releases:
+### Risk Mitigation
 
-### 1. Persistent Key Storage
+**High-Risk Items**:
+1. **Pedersen-VSS complexity** (Weeks 9-12)
+   - Mitigation: Parallel Feldman testnet as fallback
+2. **Audit timeline** (Weeks 17-19)
+   - Mitigation: Pre-audit with trusted security researchers
+3. **Mainnet genesis coordination** (Week 25)
+   - Mitigation: Extensive testnet rehearsal, operator coordination protocol
 
-**Current State**: Key shares stored in-memory, lost on node restart
-
-**Planned Implementation**:
-- **Storage Backend**: BoltDB or SQLite for embedded persistence
-- **Encryption at Rest**: AES-256-GCM encryption of key shares using operator-derived keys
-- **Atomic Operations**: Transactional writes to prevent partial state corruption
-- **Version History**: Configurable retention policy for historical key versions
-- **Backup/Restore**: Secure backup procedures with encrypted exports
-
-**Design Considerations**:
-```go
-// Proposed persistent keystore interface
-type PersistentKeyStore interface {
-    // Store encrypted key share version
-    StoreKeyVersion(version *KeyShareVersion) error
-
-    // Load active key share
-    LoadActiveKeyShare() (*KeyShareVersion, error)
-
-    // Load key version by timestamp
-    LoadKeyVersionAtTime(timestamp int64) (*KeyShareVersion, error)
-
-    // List all stored versions
-    ListVersions() ([]int64, error)
-
-    // Prune old versions (beyond retention period)
-    PruneOldVersions(retentionPeriod time.Duration) error
-}
-```
-
-**Timeline**: Q2 2024
-
-### 2. Intel TDX Attestation Verification
-
-**Current State**: TEE `/secrets` endpoint exists but attestation verification is placeholder
-
-**Planned Implementation**:
-- **Quote Verification**: Full Intel TDX quote validation including:
-  - Signature verification using Intel attestation keys
-  - RTMR (Runtime Measurement Register) validation
-  - TCB (Trusted Computing Base) level checking
-  - Freshness verification (nonce/timestamp)
-
-- **Measurement Registry**: On-chain or configuration-based registry of expected measurements:
-  ```go
-  type AppMeasurements struct {
-      AppID              string
-      ExpectedRTMR0      [48]byte  // Measurement of initial TEE state
-      ExpectedRTMR1      [48]byte  // Measurement of runtime configuration
-      MinTCBLevel        uint32     // Minimum acceptable TCB version
-      AllowedSignerKeys  [][]byte   // Intel signing keys
-  }
-  ```
-
-- **Attestation Flow**:
-  ```
-  1. TEE generates quote with report data containing:
-     - Hash of ephemeral RSA public key
-     - Application ID
-     - Timestamp
-
-  2. Operator verifies:
-     - Quote signature (Intel signing key)
-     - Report data integrity
-     - Measurements match expected values
-     - TCB level acceptable
-     - Freshness (timestamp within window)
-
-  3. If valid, operator returns encrypted partial signature
-  ```
-
-**Intel SGX Support**: Similar attestation flow for SGX enclaves (DCAP verification)
-
-**Timeline**: Q3 2024
-
-### 3. Backend Keystore Integration
-
-**Current State**: BN254 private keys managed manually by operators
-
-**Planned Implementation**:
-- **AWS KMS Integration**:
-  - Store operator BN254 private key in AWS KMS
-  - Use KMS for message signing operations
-  - Encrypt key shares using KMS data keys
-
-- **GCP Cloud KMS Integration**:
-  - Similar to AWS KMS
-  - Support for GCP HSM-backed keys
-
-- **HashiCorp Vault Integration**:
-  - Store operator keys in Vault Transit engine
-  - Use Vault for encryption/decryption of key shares
-  - Dynamic credentials for enhanced security
-
-- **Hardware Security Modules (HSMs)**:
-  - PKCS#11 interface for standards-compliant HSMs
-  - Support for network-attached HSMs (nShield, Thales, etc.)
-
-**Interface Design**:
-```go
-type KeyBackend interface {
-    // Sign message using operator private key
-    SignMessage(hash []byte) (signature []byte, err error)
-
-    // Encrypt key share for persistent storage
-    EncryptShare(share *fr.Element) (ciphertext []byte, err error)
-
-    // Decrypt key share from storage
-    DecryptShare(ciphertext []byte) (share *fr.Element, err error)
-
-    // Get operator public key
-    GetPublicKey() (*ecdsa.PublicKey, error)
-}
-
-// Example: AWS KMS backend
-type AWSKMSBackend struct {
-    kmsClient    *kms.Client
-    signingKeyID string
-    dataKeyID    string
-}
-
-// Example: Vault backend
-type VaultBackend struct {
-    vaultClient *vault.Client
-    transitPath string
-    keyName     string
-}
-```
-
-**Configuration**:
-```yaml
-# kms-config.yaml
-keyBackend:
-  type: aws-kms  # Options: aws-kms, gcp-kms, vault, hsm, local
-  awsKMS:
-    signingKeyID: "arn:aws:kms:us-east-1:123456789012:key/..."
-    dataKeyID: "arn:aws:kms:us-east-1:123456789012:key/..."
-    region: us-east-1
-  vault:
-    address: "https://vault.example.com:8200"
-    transitPath: "/transit"
-    keyName: "kms-operator-key"
-    authMethod: kubernetes  # or aws, gcp, token
-```
-
-**Timeline**: Q3-Q4 2024
-
-### 4. Additional Future Enhancements
-
-**Metrics and Observability**:
-- Prometheus metrics export
-- Protocol success/failure rates
-- Latency tracking for DKG/reshare operations
-- Operator availability monitoring
-
-**Performance Optimizations**:
-- Parallel share verification
-- Batch message processing
-- Connection pooling for operator communication
-- Caching of operator public keys
-
-**Protocol Enhancements**:
-- Proactive secret sharing for reduced round trips
-- Batch DKG for multiple applications
-- Master secret rotation (full key refresh)
-
-**Governance**:
-- On-chain configuration management
-- Operator voting for parameter changes
-- Emergency pause mechanisms
-
-**Cross-Chain Support**:
-- Deployment to additional EVM chains (Arbitrum, Optimism, Base)
-- Cross-chain key synchronization
+**Contingency Plans**:
+- If audit finds critical issues: Delay mainnet, fix and re-audit
+- If Pedersen performance issues: Optimize or fallback to Feldman + enhanced slashing
+- If operator onboarding slow: Launch with 5 operators, expand to 10+ over time
 
 ## Conclusion
 
