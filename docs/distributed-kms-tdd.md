@@ -351,10 +351,13 @@ On-chain fraud proof system enables cryptographic detection of protocol violatio
 
 ### Application Developer Perspective
 
+**Important**: The transition from centralized to distributed KMS is **completely transparent** to application developers. The developer experience remains identical to the current status quo.
+
 From an application developer's perspective using EigenX:
 
 ```go
 // Inside TEE container (developers write this code)
+// This code works identically with centralized or distributed KMS
 package main
 
 import (
@@ -365,6 +368,7 @@ import (
 
 func main() {
     // KMS injects this via environment variable
+    // (Same interface whether centralized or distributed KMS)
     mnemonic := os.Getenv("MNEMONIC")
 
     // Generate wallet seed from mnemonic
@@ -387,11 +391,17 @@ func main() {
 ```
 
 **Developer Benefits**:
-1. No key management code required
-2. Deterministic identity (can publish addresses, receive funds)
-3. Hardware isolation (keys never leave TEE)
-4. Automatic secret injection (database passwords, API keys)
-5. Multi-chain support (derive keys for any BIP-44 chain)
+1. **No code changes required** (migration is transparent)
+2. No key management code required
+3. Deterministic identity (can publish addresses, receive funds)
+4. Hardware isolation (keys never leave TEE)
+5. Automatic secret injection (database passwords, API keys)
+6. Multi-chain support (derive keys for any BIP-44 chain)
+
+**What Changes Under the Hood**:
+- **Before**: Single KMS operator provides mnemonic (trusted party)
+- **After**: ⌈2n/3⌉ operators collectively generate mnemonic (trustless)
+- **Developer Impact**: None - same `MNEMONIC` environment variable, same deterministic value
 
 ## Architecture Overview
 
@@ -677,24 +687,27 @@ This model ensures that operator identity is:
 
 **DKG/Reshare Protocol Flow:**
 ```
-Scheduler (500ms loop)
+Block Monitor
     │
-    ├─→ Detect interval boundary
+    ├─→ Poll for latest finalized block
     │
-    ├─→ Fetch operators from peering system
+    ├─→ Check if blockNumber % reshareInterval == 0
+    │
+    ├─→ If trigger block: Fetch operators from blockchain
     │
     ├─→ Determine protocol: DKG vs Reshare
     │
-    └─→ Execute protocol (goroutine)
+    └─→ Execute protocol (goroutine, session = blockNumber)
            │
            ├─→ Phase 1: Share distribution
            │   └─→ POST /dkg/share, /dkg/commitment
+           │       (messages include SessionBlock field)
            │
            ├─→ Phase 2: Verification & acknowledgement
            │   └─→ POST /dkg/ack
            │
            └─→ Phase 3: Finalization
-               └─→ Store KeyShareVersion
+               └─→ Store KeyShareVersion(version = blockNumber)
 ```
 
 **Application Encrypt/Decrypt Flow:**
@@ -2189,7 +2202,7 @@ See `docs/003_fraudProofs.md` for detailed implementation specification.
 
 ```go
 type KeyShareVersion struct {
-    Version        int64           // Session timestamp (epoch)
+    Version        uint64          // Block number when DKG/reshare occurred
     PrivateShare   *fr.Element     // This operator's secret share
     Commitments    []G2Point       // Polynomial commitments (public)
     IsActive       bool            // Currently used for signing
@@ -2199,170 +2212,103 @@ type KeyShareVersion struct {
 ```
 
 **Version Semantics:**
-- `Version`: Unix timestamp of interval boundary when DKG/reshare occurred
-- Serves as epoch identifier for time-based key lookups
-- Globally consistent across all operators (interval-synchronized)
+- `Version`: Block number when DKG/reshare was triggered
+- Serves as epoch identifier for block-based key lookups
+- Globally consistent across all operators (blockchain consensus)
 
-**Storage** (`pkg/keystore/keystore.go`):
+**Storage Interface**:
 
 ```go
 type KeyStore struct {
     mu            sync.RWMutex
-    keyVersions   map[int64]*KeyShareVersion  // version → KeyShareVersion
-    activeVersion int64                        // Currently active version
+    keyVersions   map[uint64]*KeyShareVersion  // blockNumber → KeyShareVersion
+    activeVersion uint64                        // Currently active block version
 }
 
-func (ks *KeyStore) StoreKeyShareVersion(version *KeyShareVersion) error {
-    ks.mu.Lock()
-    defer ks.mu.Unlock()
-
-    // Mark previous active version as inactive
-    if ks.activeVersion != 0 {
-        if prev, exists := ks.keyVersions[ks.activeVersion]; exists {
-            prev.IsActive = false
-        }
-    }
-
-    // Store new version as active
-    version.IsActive = true
-    ks.keyVersions[version.Version] = version
-    ks.activeVersion = version.Version
-
-    log.Printf("Stored key version: %d (active)", version.Version)
-    return nil
-}
-
-func (ks *KeyStore) GetActiveKeyShare() *KeyShareVersion {
-    ks.mu.RLock()
-    defer ks.mu.RUnlock()
-
-    if ks.activeVersion == 0 {
-        return nil
-    }
-
-    return ks.keyVersions[ks.activeVersion]
-}
-
-func (ks *KeyStore) GetKeyVersionAtTime(attestationTime int64) *KeyShareVersion {
-    ks.mu.RLock()
-    defer ks.mu.RUnlock()
-
-    // Find latest version at or before attestation time
-    var latestVersion int64
-    for version := range ks.keyVersions {
-        if version <= attestationTime && version > latestVersion {
-            latestVersion = version
-        }
-    }
-
-    if latestVersion == 0 {
-        return nil
-    }
-
-    return ks.keyVersions[latestVersion]
-}
+// Core operations
+StoreKeyShareVersion(version *KeyShareVersion) → error
+GetActiveKeyShare() → *KeyShareVersion
+GetKeyVersionAtBlock(blockNumber uint64) → *KeyShareVersion
+ListVersions() → []uint64
 ```
+
+**Key Operations**:
+- `StoreKeyShareVersion`: Stores new version, marks previous as inactive
+- `GetActiveKeyShare`: Returns currently active key share
+- `GetKeyVersionAtBlock`: Finds appropriate version for attestation block number
 
 ### Version Lifecycle
 
 ```
-Lifecycle:
+Lifecycle (Mainnet Example):
 
-Genesis (t=0):
+Genesis (block 18,000,000):
   │
   ├─→ DKG execution
-  │   Version: 1640995200 (session timestamp)
+  │   Version: 18000000 (trigger block number)
   │   IsActive: true
   │
-Interval 1 (t=600):
+Interval 1 (block 18,000,050):
   │
   ├─→ Reshare execution
-  │   Version: 1640995800
+  │   Version: 18000050
   │   IsActive: true
-  │   Previous version (1640995200) marked IsActive: false
+  │   Previous version (18000000) marked IsActive: false
   │
-Interval 2 (t=1200):
+Interval 2 (block 18,000,100):
   │
   ├─→ Reshare execution
-  │   Version: 1641000400
+  │   Version: 18000100
   │   IsActive: true
-  │   Previous version (1640995800) marked IsActive: false
+  │   Previous version (18000050) marked IsActive: false
   │
 Historical Lookups:
   │
-  ├─→ App requests signature with attestationTime = 1640995500
-  │   GetKeyVersionAtTime(1640995500) → version 1640995200
+  ├─→ App requests signature with attestationBlock = 18000025
+  │   GetKeyVersionAtBlock(18000025) → version 18000000
   │
-  └─→ App requests signature with attestationTime = 1641000500
-      GetKeyVersionAtTime(1641000500) → version 1641000400
+  └─→ App requests signature with attestationBlock = 18000075
+      GetKeyVersionAtBlock(18000075) → version 18000050
 ```
 
-### Time-Based Key Lookup
+### Block-Based Key Lookup
 
-**Use Case**: TEE applications with attestation timestamps
+**Use Case**: TEE applications with attestation block numbers
 
-**Flow:**
-
-```go
-// Application handler (pkg/node/handlers.go)
-func (n *Node) handleApplicationSign(w http.ResponseWriter, r *http.Request) {
-    var req ApplicationSignRequest
-    json.NewDecoder(r.Body).Decode(&req)
-
-    // Get appropriate key version for attestation time
-    var keyVersion *KeyShareVersion
-    if req.AttestationTime != 0 {
-        // Historical key lookup
-        keyVersion = n.keystore.GetKeyVersionAtTime(req.AttestationTime)
-    } else {
-        // Use active key
-        keyVersion = n.keystore.GetActiveKeyShare()
-    }
-
-    if keyVersion == nil {
-        http.Error(w, "no key available", http.StatusNotFound)
-        return
-    }
-
-    // Generate partial signature with appropriate version
-    partialSig := crypto.GeneratePartialSignature(
-        req.AppID,
-        keyVersion.PrivateShare,
-    )
-
-    response := PartialSignatureResponse{
-        OperatorAddress:  n.operatorAddress,
-        PartialSignature: partialSig,
-        Version:          keyVersion.Version,
-    }
-
-    json.NewEncoder(w).Encode(response)
-}
-```
-
-**Attestation Time Semantics:**
+**Lookup Algorithm**:
 
 ```
-Example:
-  - DKG at t=1000, active until t=1600
-  - Reshare at t=1600, new keys active
-  - TEE application started at t=1200, generates attestation
+GetKeyVersionAtBlock(attestationBlock uint64) → KeyShareVersion:
+  1. Compute version block: versionBlock = (attestationBlock / interval) × interval
+  2. Lookup keyVersions[versionBlock]
+  3. If not found, find latest version where version ≤ attestationBlock
+  4. Return version or nil if none exists
+```
 
-Client request:
+**Attestation Block Semantics:**
+
+```
+Example (Mainnet, 50-block intervals):
+  - DKG at block 18,000,000, active until block 18,000,050
+  - Reshare at block 18,000,050, new keys active
+  - TEE application started at block 18,000,025, generates attestation
+
+Application request:
   {
     "appID": "my-app",
-    "attestationTime": 1200  // TEE start time
+    "attestationBlock": 18000025  // Block when TEE started
   }
 
-Operator response:
-  - Looks up key version at t=1200 → version 1000
-  - Generates partial signature with v1000 share
-  - Returns signature with version=1000
+Operator lookup:
+  - Computes: versionBlock = (18000025 / 50) × 50 = 18000000
+  - Looks up key version at block 18000000
+  - Generates partial signature with that version's share
+  - Returns signature with version=18000000
 
 Client aggregation:
   - Collects partial signatures from threshold operators
-  - All should have version=1000 for attestationTime=1200
-  - Aggregates to recover app private key from v1000 master key
+  - All should have version=18000000 for attestationBlock=18000025
+  - Aggregates to recover app private key from v18000000 master key
   - Decrypts secrets with that key
 ```
 
@@ -2769,6 +2715,449 @@ TEE Application (Intel TDX)          KMS Operators (≥ ⌈2n/3⌉)          Blo
 - **Ephemeral Encryption**: RSA key used once, discarded after mnemonic recovery
 - **Threshold Security**: No single operator can generate mnemonic alone
 
+## Monitoring and Observability
+
+### Overview
+
+The KMS implements comprehensive monitoring using Prometheus metrics and OpenTelemetry distributed tracing to provide operational visibility into protocol health, performance, and security events.
+
+### Prometheus Metrics
+
+**Protocol Health Metrics**:
+
+```
+# DKG Protocol
+kms_dkg_executions_total{status="success|failure|timeout"}
+  - Counter: Total DKG executions by outcome
+  - Labels: status, trigger_block
+
+kms_dkg_duration_seconds{phase="share_distribution|verification|finalization"}
+  - Histogram: Duration of each DKG phase
+  - Buckets: [0.1, 0.5, 1, 5, 10, 30, 60, 120]
+
+kms_dkg_shares_received_total{dealer_address}
+  - Counter: Total shares received per dealer
+  - Labels: dealer_address, session_block
+
+kms_dkg_shares_verified_total{dealer_address, valid="true|false"}
+  - Counter: Share verification outcomes
+  - Labels: dealer_address, valid, session_block
+
+kms_dkg_acknowledgements_sent_total{dealer_address}
+  - Counter: Acknowledgements sent to dealers
+  - Labels: dealer_address, session_block
+
+# Reshare Protocol
+kms_reshare_executions_total{status="success|failure|timeout"}
+  - Counter: Total reshare executions by outcome
+  - Labels: status, trigger_block, operator_set_change="true|false"
+
+kms_reshare_duration_seconds{phase}
+  - Histogram: Duration of each reshare phase
+  - Buckets: [0.1, 0.5, 1, 5, 10, 30, 60, 120]
+
+kms_reshare_operator_count
+  - Gauge: Number of operators in current reshare
+  - Labels: session_block
+
+kms_reshare_threshold
+  - Gauge: Current threshold (⌈2n/3⌉)
+  - Labels: session_block
+
+# Key Management
+kms_active_key_version
+  - Gauge: Current active key version (block number)
+
+kms_key_versions_total
+  - Gauge: Total key versions stored
+
+kms_last_successful_reshare_block
+  - Gauge: Block number of last successful reshare
+```
+
+**Application Request Metrics**:
+
+```
+# Application Signing
+kms_app_sign_requests_total{app_id, status="success|failure"}
+  - Counter: Application signature requests
+  - Labels: app_id, status
+
+kms_app_sign_duration_seconds
+  - Histogram: Latency to serve signature requests
+  - Buckets: [0.01, 0.05, 0.1, 0.5, 1, 5]
+
+kms_app_sign_key_version{app_id}
+  - Gauge: Key version used for app signature
+  - Labels: app_id
+
+# TEE Secret Delivery
+kms_tee_secrets_requests_total{app_id, status="success|attestation_failed|image_mismatch"}
+  - Counter: TEE secret requests by outcome
+  - Labels: app_id, status
+
+kms_tee_attestation_verification_duration_seconds
+  - Histogram: Intel Trust Authority API call latency
+  - Buckets: [0.1, 0.5, 1, 2, 5, 10]
+
+kms_tee_image_digest_matches_total{app_id, match="true|false"}
+  - Counter: Image digest validation outcomes
+  - Labels: app_id, match
+```
+
+**Fraud Detection Metrics**:
+
+```
+# Fraud Proofs
+kms_fraud_detected_total{fraud_type, dealer_address}
+  - Counter: Fraud detections by type
+  - Labels: fraud_type=["invalid_share", "equivocation", "commitment_inconsistency"]
+  - Labels: dealer_address, session_block
+
+kms_fraud_proofs_submitted_total{fraud_type, status="success|failure"}
+  - Counter: Fraud proof submissions to slashing contract
+  - Labels: fraud_type, status
+
+kms_operators_slashed_total{reason}
+  - Counter: Operators slashed
+  - Labels: reason, slashed_address
+
+# P2P Communication
+kms_p2p_messages_sent_total{message_type, recipient_address}
+  - Counter: P2P messages sent
+  - Labels: message_type=["share", "commitment", "ack"], recipient_address
+
+kms_p2p_messages_received_total{message_type, sender_address, auth_valid="true|false"}
+  - Counter: P2P messages received
+  - Labels: message_type, sender_address, auth_valid
+
+kms_p2p_signature_verification_failures_total{sender_address}
+  - Counter: BN254 signature verification failures
+  - Labels: sender_address
+```
+
+**System Health Metrics**:
+
+```
+kms_operator_active{operator_address}
+  - Gauge: 1 if operator in current set, 0 otherwise
+  - Labels: operator_address
+
+kms_blockchain_latest_finalized_block
+  - Gauge: Latest finalized block number seen
+
+kms_blockchain_rpc_errors_total{rpc_url, method}
+  - Counter: Blockchain RPC errors
+  - Labels: rpc_url, method=["eth_getBlockByNumber", "eth_call"]
+
+kms_uptime_seconds
+  - Counter: Node uptime in seconds
+```
+
+---
+
+### OpenTelemetry Distributed Tracing
+
+**Trace Context Propagation**:
+
+All protocol messages include OpenTelemetry trace context for end-to-end visibility:
+
+```
+AuthenticatedMessage {
+    payload: []byte
+    hash: [32]byte
+    signature: []byte
+    traceContext: {          // OpenTelemetry context
+        traceID: string
+        spanID: string
+        traceFlags: byte
+    }
+}
+```
+
+**Traced Operations**:
+
+1. **DKG Execution Trace**:
+```
+Span: dkg.execution (root)
+  ├─ Span: dkg.generate_shares
+  ├─ Span: dkg.broadcast_commitments
+  ├─ Span: dkg.send_shares (parallel spans, one per recipient)
+  ├─ Span: dkg.wait_for_shares
+  ├─ Span: dkg.verify_shares (parallel spans, one per dealer)
+  ├─ Span: dkg.send_acknowledgements (parallel spans)
+  ├─ Span: dkg.wait_for_acknowledgements
+  └─ Span: dkg.finalize
+
+Attributes:
+  - session_block: uint64
+  - operator_count: int
+  - threshold: int
+  - operator_address: string
+```
+
+2. **Reshare Execution Trace**:
+```
+Span: reshare.execution (root)
+  ├─ Span: reshare.load_current_share
+  ├─ Span: reshare.generate_reshare_polynomial
+  ├─ Span: reshare.broadcast_commitments
+  ├─ Span: reshare.send_shares
+  ├─ Span: reshare.wait_for_shares
+  ├─ Span: reshare.verify_shares
+  ├─ Span: reshare.compute_lagrange_coefficients
+  ├─ Span: reshare.compute_new_share
+  └─ Span: reshare.store_key_version
+
+Attributes:
+  - session_block: uint64
+  - operator_role: "existing|new"
+  - previous_version: uint64
+  - new_version: uint64
+```
+
+3. **Application Sign Request Trace**:
+```
+Span: app.sign_request (root)
+  ├─ Span: app.parse_request
+  ├─ Span: app.lookup_key_version
+  │   └─ Attribute: attestation_block, resolved_version
+  ├─ Span: app.generate_partial_signature
+  └─ Span: app.encode_response
+
+Attributes:
+  - app_id: string
+  - attestation_block: uint64
+  - key_version: uint64
+  - operator_address: string
+```
+
+4. **TEE Secret Delivery Trace**:
+```
+Span: tee.secrets_delivery (root)
+  ├─ Span: tee.parse_attestation
+  ├─ Span: tee.verify_intel_quote
+  │   └─ Span: intel_api.verify_quote (external call)
+  ├─ Span: tee.query_image_digest (blockchain call)
+  ├─ Span: tee.validate_rtmr
+  ├─ Span: tee.lookup_key_version
+  ├─ Span: tee.generate_partial_signature
+  ├─ Span: tee.encrypt_with_ephemeral_rsa
+  └─ Span: tee.encode_response
+
+Attributes:
+  - app_id: string
+  - attestation_block: uint64
+  - rtmr0: string (hex)
+  - expected_image_digest: string
+  - image_match: bool
+```
+
+**Trace Sampling**:
+- **Protocol Traces**: 100% (always trace DKG/Reshare for debugging)
+- **Application Requests**: 10% (sample to reduce overhead)
+- **Health Checks**: 0% (no tracing for health endpoint)
+
+**Trace Export**:
+- Export to OpenTelemetry Collector
+- Backends: Jaeger, Zipkin, or cloud providers (Honeycomb, Datadog, New Relic)
+- Retention: 30 days for protocol traces, 7 days for app request traces
+
+---
+
+### Alerting Rules
+
+**Critical Alerts** (PagerDuty, immediate response):
+
+```yaml
+# Protocol Failures
+- alert: ConsecutiveReshareFailures
+  expr: increase(kms_reshare_executions_total{status="failure"}[30m]) >= 3
+  severity: critical
+  description: "3+ reshare failures in 30 minutes"
+
+- alert: InsufficientOperators
+  expr: kms_operator_active < kms_threshold + 1
+  severity: critical
+  description: "Operator count below threshold+1 (no fault tolerance)"
+
+- alert: FraudDetected
+  expr: increase(kms_fraud_detected_total[5m]) > 0
+  severity: critical
+  description: "Protocol fraud detected and reported"
+
+- alert: BlockchainRPCDown
+  expr: rate(kms_blockchain_rpc_errors_total[5m]) > 0.5
+  severity: critical
+  description: "Blockchain RPC error rate > 50%"
+```
+
+**Warning Alerts** (Slack, investigate within hours):
+
+```yaml
+# Performance Degradation
+- alert: HighDKGLatency
+  expr: histogram_quantile(0.95, kms_dkg_duration_seconds) > 120
+  severity: warning
+  description: "DKG p95 latency > 2 minutes"
+
+- alert: HighAppSignLatency
+  expr: histogram_quantile(0.99, kms_app_sign_duration_seconds) > 5
+  severity: warning
+  description: "App signature p99 latency > 5 seconds"
+
+# Security Events
+- alert: SignatureVerificationFailures
+  expr: increase(kms_p2p_signature_verification_failures_total[10m]) > 10
+  severity: warning
+  description: "Multiple signature verification failures (potential attack)"
+
+- alert: ImageDigestMismatches
+  expr: increase(kms_tee_image_digest_matches_total{match="false"}[10m]) > 5
+  severity: warning
+  description: "Multiple image digest mismatches (unauthorized code attempts)"
+
+# Operational
+- alert: MissedReshareInterval
+  expr: (kms_blockchain_latest_finalized_block - kms_last_successful_reshare_block)
+        > 2 * on(chain_id) reshare_interval
+  severity: warning
+  description: "Missed reshare interval (should trigger every 50 blocks)"
+```
+
+---
+
+### Monitoring Dashboards
+
+**Operator Dashboard** (Grafana):
+
+1. **Protocol Health Panel**:
+   - DKG/Reshare success rate (last 24h)
+   - Current operator count vs threshold
+   - Time since last successful reshare
+   - Active key version (block number)
+
+2. **Performance Panel**:
+   - DKG/Reshare latency (p50, p95, p99)
+   - App signature latency histogram
+   - TEE attestation verification latency
+   - Message throughput (messages/sec)
+
+3. **Security Panel**:
+   - Fraud detections (count by type)
+   - Signature verification failure rate
+   - Image digest mismatch rate
+   - Slashing events timeline
+
+4. **Blockchain Panel**:
+   - Latest finalized block
+   - Blocks until next reshare trigger
+   - RPC error rate by endpoint
+   - Operator set size over time
+
+**Application Integration Dashboard**:
+
+1. **App Request Panel**:
+   - Requests by app_id (top 10)
+   - Success rate per app
+   - Latency distribution
+   - Key version usage distribution
+
+2. **TEE Attestation Panel**:
+   - Attestation verification success rate
+   - RTMR validation failures by app
+   - Image digest match rate
+   - Intel API latency
+
+---
+
+### Log Aggregation
+
+**Structured Logging Format** (JSON):
+
+```json
+{
+  "timestamp": "2024-01-15T10:30:45Z",
+  "level": "info",
+  "component": "dkg",
+  "event": "share_verified",
+  "session_block": 18000050,
+  "dealer_address": "0x1234...",
+  "operator_address": "0x5678...",
+  "trace_id": "abc123...",
+  "span_id": "def456..."
+}
+```
+
+**Key Events to Log**:
+
+- **Protocol Events**: DKG/Reshare start, phase transitions, completion
+- **Security Events**: Fraud detection, signature failures, slashing submissions
+- **Application Events**: Signature requests, attestation verifications, key deliveries
+- **System Events**: Operator set changes, block triggers, RPC errors
+
+**Log Aggregation**:
+- Export to: Loki, Elasticsearch, or cloud providers (CloudWatch, Stackdriver)
+- Retention: 90 days for security events, 30 days for operational logs
+- Correlation: Use trace_id to link logs across operators
+
+---
+
+### Operational Runbooks
+
+**Runbook 1: Reshare Failure**
+
+**Symptoms**: `kms_reshare_executions_total{status="failure"}` incrementing
+
+**Investigation**:
+1. Check operator logs for errors during reshare
+2. Verify all operators in current set are reachable
+3. Check blockchain RPC connectivity
+4. Review trace for failed reshare session
+5. Validate operator set matches on-chain state
+
+**Resolution**:
+- If < t operators responsive: Scale up operators or wait for recovery
+- If operator set mismatch: Restart operators to refresh peering data
+- If network partition: Wait for next interval (automatic retry)
+
+---
+
+**Runbook 2: Fraud Detected**
+
+**Symptoms**: `kms_fraud_detected_total` increments
+
+**Investigation**:
+1. Identify fraud type and dealer address from metrics
+2. Review logs for fraud detection event details
+3. Check if fraud proof submitted successfully
+4. Verify slashing contract state (fraud counter incremented)
+5. Investigate dealer's recent protocol participation
+
+**Resolution**:
+- Monitor for threshold fraud count (automatic slashing)
+- If repeated violations: Coordinate operator ejection via governance
+- Document incident for post-mortem analysis
+
+---
+
+**Runbook 3: High Application Signature Latency**
+
+**Symptoms**: `kms_app_sign_duration_seconds` p99 > 5 seconds
+
+**Investigation**:
+1. Check operator CPU/memory utilization
+2. Review keystore lookup performance
+3. Check for disk I/O bottlenecks (if persistence enabled)
+4. Analyze concurrent request patterns
+5. Review traces for slow spans
+
+**Resolution**:
+- Scale operator resources (CPU, memory)
+- Optimize keystore implementation (caching)
+- Add rate limiting if request volume excessive
+- Investigate slow cryptographic operations
+
 ## Implementation Timeline
 
 ### Phase 1: Alpha Testnet with Feldman-VSS
@@ -2991,25 +3380,34 @@ During the initial design phase of EigenX KMS, a key decision was made to implem
 - **Benefits**: Purpose-built for distributed systems, strong memory safety guarantees, growing ecosystem
 - **Challenges**: Requires Rust expertise, less mature tooling for threshold cryptography
 
-**Option 2: Go + Native Libraries (gnark-crypto, eigensdk-go)**
+**Option 2: Go + Native Libraries**
 - **gnark-crypto**: Production-grade elliptic curve cryptography library by Consensys
-- **eigensdk-go**: Official EigenLayer SDK for AVS development
-- **Benefits**: Excellent library support, team expertise, mature ecosystem
-- **Challenges**: Manual protocol implementation required
+- **Hourglass/Sidecar Code Reuse**: Leverage audited code from EigenLayer's Hourglass framework and Sidecar
+- **Benefits**: Excellent library support, team expertise, mature ecosystem, proven patterns
+- **Challenges**: Manual threshold cryptography protocol implementation required
 
 ### Decision: Go + Native Libraries
 
 **Primary Factors:**
 
-1. **Team Expertise**
+1. **Team Expertise and Development Velocity**
    - **Sean (Lead Developer)**: Expert-level Go experience, limited Rust experience
    - **Development Velocity**: Immediate productivity vs. learning curve
    - **Debugging Efficiency**: Familiar tooling and debugging workflows
    - **Code Review**: Easier review process with team's Go background
 
-   **Impact**: Estimated 2-3x faster development time with Go vs. learning Rust + Commonware
+   **Impact**: Estimated 3-4x faster development time with Go vs. learning Rust + Commonware
 
-2. **Cryptographic Library Maturity: gnark-crypto**
+2. **Go's Design for This Use Case**
+   - **Network/Async Heavy**: Go designed for concurrent network services (goroutines, channels)
+   - **Service APIs**: Standard library excels at HTTP servers and REST APIs
+   - **Container Deployment**: Optimized for Linux runtime environments
+   - **"Batteries Included"**: Standard library handles most backend service needs without external dependencies
+   - **Build Philosophy**: Go encourages building directly rather than composing complex library stacks
+
+   **Perfect Fit**: KMS is exactly the type of distributed network service Go was designed for
+
+3. **Cryptographic Library Maturity: gnark-crypto**
    - **Battle-Tested**: Used in production by major projects (Polygon zkEVM, Scroll, Linea)
    - **Audit Status**: Extensively audited by Trail of Bits, Consensys Diligence, and others
    - **BLS12-381 Support**: Complete implementation with pairing operations
@@ -3017,133 +3415,87 @@ During the initial design phase of EigenX KMS, a key decision was made to implem
    - **Performance**: Highly optimized assembly implementations for critical operations
    - **Documentation**: Comprehensive docs and examples
 
-   **Example Performance** (Apple M1):
-   ```
-   BLS12-381 Operations (gnark-crypto):
-   - G1 scalar multiplication: ~1.2ms
-   - G2 scalar multiplication: ~3.5ms
-   - Pairing operation: ~8ms
-   - Share verification: ~4ms
-
-   Sufficient for KMS use case (not latency-critical)
-   ```
-
    **Commonware Status** (at decision time):
    - Emerging library with less battle-testing
-   - Smaller audit history
+   - **No security audits** (major concern for cryptographic systems)
    - Growing but less comprehensive documentation
-   - Excellent for consensus protocols, less focused on threshold cryptography
 
-3. **EigenLayer Ecosystem Compatibility**
-   - **eigensdk-go**: Official AVS SDK with contract bindings, operator utilities
-   - **Reference Implementations**: Multiple production AVSs written in Go
-   - **Tooling**: Established patterns for operator registration, contract interaction
-   - **Community Support**: Larger Go-based AVS developer community
+4. **Proven EigenLayer Patterns via Code Reuse**
+   - **Hourglass Framework**: Reuse audited code for protocol integration, operator peering, KeyRegistrar interaction
+   - **Sidecar**: Battle-tested block indexing logic for monitoring blockchain state
+   - **Both Audited**: Security-reviewed code provides solid foundation
+   - **Established Patterns**: Proven approaches for AVS development
 
-   **Rust/Commonware Status**:
-   - EigenLayer Rust SDK exists but less mature
-   - Fewer reference implementations
-   - Smaller community of Rust AVS developers
+   **Benefit**: Building on audited, production-tested code rather than starting from scratch
 
-4. **Development Ecosystem**
+5. **Development Ecosystem**
    - **Go Benefits**:
      - Mature testing frameworks (testify, mock, integration test patterns)
-     - Rich HTTP ecosystem (net/http, chi, gin)
+     - Rich HTTP ecosystem (net/http standard library)
      - Excellent profiling and debugging tools (pprof, delve)
-     - Fast compilation times
+     - Fast compilation times (sub-second rebuilds)
      - Simple dependency management (go modules)
+     - Garbage collection appropriate for service workloads
 
    - **Rust Tradeoffs**:
      - Longer compilation times (impacts iteration speed)
      - More complex dependency resolution
      - Steeper learning curve for contributors
 
-5. **Threshold Cryptography Implementation**
-   - **Go Approach**: Manual DKG/reshare implementation using gnark-crypto primitives
-     - Full control over protocol details
-     - Transparent implementation for auditing
-     - Customizable for EigenLayer-specific requirements
+### Implementation Requirements (Language-Agnostic)
 
-   - **Commonware Approach**: Would provide higher-level abstractions
-     - Less flexibility for custom protocol requirements
-     - Potential overhead from generalized framework
+Regardless of language choice, the following would need to be implemented:
 
-### What Commonware Excels At
+**Threshold Cryptography Protocols**:
+- Pedersen/Feldman VSS implementation
+- Share verification logic
+- Lagrange interpolation for recovery
+- Polynomial commitment schemes
 
-It's important to note that Commonware is **excellent for certain use cases**:
+**Note**: Limited prior art exists for production threshold cryptography in either Go or Rust. However, Go has more reference implementations in adjacent domains (distributed systems, cryptographic services).
 
-1. **Consensus-Heavy Applications**: Raft, PBFT, or other consensus protocols are first-class
-2. **Generic Distributed State Machines**: Framework abstractions handle replication elegantly
-3. **Rust Performance-Critical Systems**: Memory safety + performance for systems programming
-4. **Novel Protocol Research**: Quick prototyping of new distributed protocols
+---
 
-**EigenX KMS Fit**: Our system uses **interval-based scheduling** rather than consensus, and **threshold cryptography** rather than state machine replication. This doesn't align with Commonware's sweet spot.
+### Technical Trade-offs
 
-### Technical Trade-offs Accepted
+**By choosing Go:**
 
-**By choosing Go, we accepted:**
+**Accepted Limitations**:
+- Manual threshold protocol implementation (no existing framework)
+- However: Same requirement for Rust/Commonware (no threshold crypto support)
 
-1. **Manual Protocol Implementation**: Had to implement DKG/reshare from scratch
-   - **Mitigation**: Comprehensive integration tests, formal verification (future), external audits
+**Benefits Gained**:
 
-2. **No Built-in Consensus**: Using interval-based timing instead
-   - **Mitigation**: Blockchain provides truth for operator discovery, deterministic scheduling
-
-3. **Memory Safety via Convention**: Go's GC vs. Rust's compile-time guarantees
-   - **Mitigation**: Careful code review, static analysis (golangci-lint), fuzzing
-
-**Benefits Gained:**
-
-1. **Faster Time-to-Market**: 3-4 month timeline vs. estimated 6-9 months with Rust learning curve
+1. **Faster Time-to-Market**: 1-3 month timeline vs. estimated 3-5 months with Rust learning curve
 2. **Code Confidence**: Deep understanding of Go idioms and pitfalls
-3. **Library Confidence**: gnark-crypto's audit trail and production usage
-4. **Team Scalability**: Easier to onboard future Go developers than Rust experts
-5. **Debugging Efficiency**: Familiar tools significantly reduce bug investigation time
+3. **Library Confidence**: gnark-crypto's extensive audit trail and production usage
+4. **Audited Code Reuse**: Hourglass (protocol integration) and Sidecar (block indexing) already security-reviewed
+5. **Team Scalability**: Easier to onboard future Go developers than Rust experts
+6. **Debugging Efficiency**: Familiar tools significantly reduce bug investigation time
+7. **No Audit Debt**: Commonware lacks security audits (critical gap for crypto systems)
 
 ### Architectural Validation
 
 **Indicators this was the right choice:**
 
-1. **Rapid Prototyping**: Proof-of-concept completed in 4 weeks
-2. **Integration Success**: EigenLayer integration worked first-try with eigensdk-go
+1. **Rapid Prototyping**: Proof-of-concept completed in 2-3 days
+2. **Integration Success**: EigenLayer integration leveraged existing Hourglass/Sidecar patterns
 3. **Testing Coverage**: Comprehensive integration tests with testutil patterns
 4. **Performance**: Threshold cryptography operations complete in acceptable timeframes:
    - DKG (7 operators): ~2-3 seconds
    - Reshare (7 operators): ~1-2 seconds
    - App signature collection: ~500-800ms
 
-5. **Code Quality**: Maintainable, reviewable codebase with clear separation of concerns
-
-### Future Considerations
-
-**If we were to reconsider Rust/Commonware:**
-
-1. **Consensus Requirement**: If we added leader election or Byzantine agreement
-2. **Ultra-Low Latency**: If signature collection needed <100ms latencies
-3. **Memory-Critical Deployment**: Embedded systems or resource-constrained environments
-4. **Team Evolution**: If team gained significant Rust expertise
-5. **Commonware Maturity**: If Commonware added robust threshold crypto primitives with audits
-
-**Current Recommendation**: **Stick with Go** unless one of the above scenarios materializes.
+5. **Code Quality**: Maintainable, tested, reviewable codebase with clear separation of concerns
 
 ### Conclusion
 
-The decision to use **Go with gnark-crypto and eigensdk-go** was driven by:
+The decision to use **Go with gnark-crypto and Hourglass/Sidecar patterns** was driven by:
 - Team expertise and development velocity
-- Production-ready, audited cryptographic libraries
-- Strong EigenLayer ecosystem fit
+- Production-ready, audited cryptographic libraries (gnark-crypto)
+- Reusable audited code from Hourglass and Sidecar
+- Go's design alignment with network service workloads
+- "Batteries included" standard library reducing external dependencies
 - Appropriate performance characteristics for the use case
 
-While **Commonware/Rust offers compelling benefits** for consensus-heavy or performance-critical systems, the EigenX KMS architecture (interval-based scheduling + threshold cryptography) is well-served by Go's mature ecosystem and the team's existing expertise.
-
-This decision can be revisited as the team, tools, and requirements evolve, but the current implementation validates that Go was the pragmatic and effective choice for this project.
-
----
-
-**Contributors to this decision**:
-- Sean McGary (Lead Developer, Go expert)
-- EigenX Team (Architecture review)
-
-**Date**: Q4 2023
-
-**Reviewed**: Ongoing (reassess annually or when requirements change significantly)
+While **Commonware/Rust offers compelling benefits** for consensus-heavy systems, the EigenX KMS architecture (block-based coordination + threshold cryptography) is well-served by Go's mature ecosystem, proven patterns, and the team's existing expertise. The lack of security audits for Commonware made it unsuitable for a cryptographic system requiring high assurance.
