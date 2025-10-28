@@ -721,37 +721,101 @@ Application
             └─→ plaintext = IBE.Decrypt(sk_app, ciphertext)
 ```
 
-### Automatic Scheduling
+### Block-Based Protocol Coordination
 
-The system uses **interval-based scheduling** to coordinate protocol execution without requiring consensus. Operators independently detect interval boundaries and initiate DKG/Reshare protocols, using blockchain time as coordination mechanism.
+The system uses **block-based scheduling** to coordinate protocol execution without requiring consensus or trusted time sources. Operators monitor finalized blockchain blocks and trigger DKG/Reshare protocols at deterministic block intervals.
 
-**Scheduling Mechanism**:
+#### Scheduling Mechanism
 
 ```
-Every 500ms check loop:
-  1. Compute next interval boundary: roundedTime = (now / interval) × interval
-  2. Skip if already processed this boundary
-  3. Fetch current operator set from blockchain
-  4. Determine protocol type:
+Block monitoring loop:
+  1. Poll for latest finalized block from Ethereum RPC
+  2. Check if blockNumber % reshareInterval == 0
+  3. Skip if already processed this block number
+  4. Fetch current operator set from blockchain
+  5. Determine protocol type:
      - No local shares + no cluster keys → Genesis DKG
      - No local shares + cluster has keys → Join via Reshare
      - Has local shares → Routine Reshare
-  5. Execute protocol in background
-  6. Mark interval as processed
+  6. Execute protocol in background with session = blockNumber
+  7. Mark block number as processed
 ```
 
-**Interval Configuration**:
+**Reshare Intervals by Chain**:
 
-| Chain    | Interval | Rationale                                    |
-|----------|----------|----------------------------------------------|
-| Mainnet  | 10 min   | Balance security (regular rotation) with cost |
-| Sepolia  | 2 min    | Faster testing without excessive load         |
-| Anvil    | 30 sec   | Rapid development and integration testing     |
+| Chain          | Chain ID | Reshare Interval | Block Time | Real Time |
+|----------------|----------|------------------|------------|-----------|
+| Ethereum Mainnet | 1      | 50 blocks        | ~12s       | ~10 min   |
+| Sepolia Testnet  | 11155111 | 10 blocks      | ~12s       | ~2 min    |
+| Anvil Devnet     | 31337  | 5 blocks         | ~1s        | ~5 sec    |
+
+#### Why Block-Based vs Time-Based Scheduling
+
+**Time-Based Approach (Rejected)**:
+```
+Problem: Using cron jobs or interval tickers (e.g., every 10 minutes)
+
+Issues:
+  1. Clock Drift: Operator clocks drift independently over time
+     → Different operators trigger at slightly different times
+     → Protocol messages arrive out of sync
+
+  2. No Global Truth: No authoritative time source all operators trust
+     → Operators might disagree on "current time"
+     → Leads to session confusion and failed protocols
+
+  3. Sybil Attacks: Malicious operator can lie about time
+     → Can claim "it's time to reshare" when it's not
+     → Other operators cannot verify the claim
+```
+
+**Block-Based Approach (Implemented)**:
+```
+Solution: Use blockchain block numbers as coordination source
+
+Benefits:
+  1. Blockchain Consensus: All operators see same block numbers
+     → Ethereum consensus guarantees global agreement
+     → No clock synchronization required
+
+  2. Authoritative Source: Blockchain is single source of truth
+     → Operators query same canonical chain state
+     → No ambiguity about "current block"
+
+  3. Sybil-Resistant: Block numbers cannot be forged
+     → Operators cannot lie about trigger conditions
+     → Cryptographically verifiable via block headers
+
+  4. Reorg-Safe: Use finalized blocks (not head)
+     → Finality ensures block numbers never change
+     → Prevents protocol confusion during chain reorgs
+
+  5. Auditable: Sessions tied to on-chain block numbers
+     → Anyone can verify when reshare should have occurred
+     → Transparent accountability for protocol execution
+
+  6. No External Dependencies: Only requires Ethereum RPC
+     → No NTP, no external time services
+     → Reduced attack surface
+```
+
+**Finality Considerations**:
+
+| Chain          | Finality Mechanism | Finality Time |
+|----------------|-------------------|---------------|
+| Ethereum Mainnet | 2 epoch confirmation | ~13 minutes |
+| Sepolia Testnet  | 2 epoch confirmation | ~13 minutes |
+| Anvil Devnet     | Immediate (single node) | < 1 second |
+
+**Implementation**: Operators query `eth_getBlockByNumber("finalized")` to get latest finalized block, ensuring reshare triggers are reorg-proof.
 
 **Key Properties**:
-- **Deterministic**: All operators trigger at same timestamp (no leader election)
+- **Deterministic**: All operators trigger at same block number (blockchain consensus)
+- **Sybil-Resistant**: Block numbers cannot be manipulated by operators
 - **Decentralized**: No coordinator or master node required
-- **Resilient**: Operators can miss intervals and catch up at next boundary
+- **Reorg-Safe**: Uses finalized blocks to prevent reorganization issues
+- **Globally Consistent**: All operators see identical block numbers
+- **Trustless**: No reliance on external time sources or synchronization protocols
 - **Churn-tolerant**: Operator set queried fresh each interval (handles joins/leaves)
 
 ### DKG Process
