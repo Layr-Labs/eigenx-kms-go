@@ -1,4 +1,4 @@
-# Distributed KMS Technical Design Document
+# TDD: Distributed KMS
 
 ## Summary
 
@@ -3162,206 +3162,179 @@ Attributes:
 
 ### Phase 1: Alpha Testnet with Feldman-VSS
 
-**Milestone**: Production-ready Feldman-VSS with fraud detection, deployed to public testnet
+**Milestone**: Alpha testnet ready with Feldman-VSS, basic fraud detection, and persistence
 
-**Duration**: 8 weeks
+**Target Date**: November 7, 2024
 
-**Week 1-2: Fraud Proof System**
-- [ ] Design and deploy `EigenKMSSlashing.sol` smart contract
-- [ ] Implement fraud detection in DKG/Reshare protocol handlers
-- [ ] Add fraud proof construction and submission logic
-- [ ] Configure slashing thresholds (3 invalid shares, 1 equivocation)
-- [ ] Unit tests for fraud proof verification
-- **Deliverable**: Working fraud detection on Anvil local testnet
+**Duration**: ~2 weeks (from current state)
 
-**Week 3-4: Protocol Hardening**
-- [ ] Comprehensive integration test suite (100+ test cases)
-- [ ] Fuzz testing for DKG/Reshare message handling
-- [ ] Performance benchmarking (3, 5, 7, 10, 15 operator sets)
-- [ ] Load testing (sustained reshare cycles)
-- [ ] Monitoring and alerting infrastructure (Prometheus + Grafana)
-- **Deliverable**: Battle-tested Feldman-VSS implementation
-
-**Week 5-6: TEE Integration**
-- [ ] Intel Trust Authority API integration (quote verification)
-- [ ] Attestation verification implementation with RTMR validation
-- [ ] Image digest validation against blockchain registry
-- [ ] `/secrets` endpoint with full attestation checks
-- [ ] TEE integration testing with mock TDX quotes
-- **Deliverable**: End-to-end EigenX platform authentication
-
-**Week 7-8: Alpha Testnet Deployment**
+**Objectives**:
+- [ ] Migrate from time-based to block-based scheduling
+- [ ] Implement block monitoring with finalized block polling
+- [ ] Update session identification and key versioning to use block numbers
+- [ ] Basic BadgerDB persistence with encrypted key shares at rest
+- [ ] Crash recovery support
+- [ ] Define KeyBackend interface for pluggable key management
+- [ ] Implement AWS KMS backend for operator key signing
+- [ ] Support both local keys (file-based) and AWS KMS keys
+- [ ] Configuration system for backend selection
 - [ ] Deploy contracts to Sepolia testnet
-- [ ] Onboard 5-7 test operators (distributed geographically)
-- [ ] Execute genesis DKG with testnet operators
-- [ ] Run continuous reshare cycles (2 min intervals)
-- [ ] Monitor for fraud attempts, performance metrics
-- [ ] Public documentation and operator guides
-- **Deliverable**: Public alpha testnet (sepolia.eigenx-kms.io)
+- [ ] Basic fraud detection (invalid share detection)
+- [ ] Deploy EigenKMSSlashing contract (basic version)
+- [ ] Onboard 3-5 test operators (mix of local and AWS KMS keys)
+- [ ] Execute genesis DKG on Sepolia
+- [ ] Run continuous reshare cycles (10 blocks = ~2 min)
+- [ ] Basic monitoring (Prometheus metrics)
+
+**Deliverable**: Public alpha testnet on Sepolia with block-based coordination, persistence, and AWS KMS support
 
 ---
 
-### Phase 2: Pedersen-VSS Migration
+### Phase 2: Mainnet Beta with Pedersen-VSS
 
-**Milestone**: Information-theoretically secure DKG protocol ready for audit
+**Milestone**: Mainnet beta ready with Pedersen-VSS and audit completion
 
-**Duration**: 8 weeks
+**Target Date**: December 12, 2024
 
-**Week 9-10: Pedersen-VSS Core Implementation**
+**Duration**: ~5 weeks (November 7 - December 12)
+
+**Pedersen-VSS Core Implementation**:
 - [ ] Implement dual-polynomial VSS (f_i, f'_i)
 - [ ] Distributed coin flip protocol for H₂ generation
-- [ ] Two-phase DKG protocol (commit, extract)
+- [ ] Two-phase DKG protocol (commit phase, extract phase)
 - [ ] Phase 1 verification: `s·G₂ + s'·H₂ = Σ(C_k · j^k)`
 - [ ] Phase 2 verification: `s·G₂ = Σ(A_k · j^k)`
-- [ ] Unit tests for Pedersen primitives
-- **Deliverable**: Complete Pedersen-VSS implementation with tests
+- [ ] Comprehensive unit tests for Pedersen primitives
+- **Deliverable**: Pedersen-VSS implementation complete
 
-**Week 11-12: Integration and Migration**
-- [ ] Protocol version negotiation (operators signal Pedersen support)
-- [ ] Parallel testnet deployment (Feldman + Pedersen operator sets)
-- [ ] Migration testing: Feldman → Pedersen upgrade path
-- [ ] Performance comparison (Pedersen overhead < 20%)
-- [ ] Integration tests with both protocols
-- **Deliverable**: Proven migration path with backward compatibility
+**Enhanced Fraud Proofs & Additional Key Backends**:
+- [ ] Complete fraud proof system (all violation types)
+- [ ] Equivocation detection and proof construction
+- [ ] Commitment inconsistency detection
+- [ ] On-chain verification gas optimization
+- [ ] Slashing threshold configuration
+- [ ] Implement GCP KMS backend
+- [ ] Implement Azure Key Vault backend
+- [ ] Implement HashiCorp Vault backend
+- [ ] Backend integration tests (all providers)
+- **Deliverable**: Production-ready fraud detection + multi-cloud key management
 
-**Week 13-14: Code Quality and Documentation**
+**Hardening and Testing**:
+- [ ] Persistence testing and optimization
+- [ ] Integration test suite (>90% coverage)
+- [ ] Performance benchmarking (all key backends)
+- [ ] Load testing with sustained reshare cycles
+- [ ] Security hardening review
+- **Deliverable**: Production-grade reliability
+
+**Audit Preparation and Deployment**:
 - [ ] Code freeze for audit scope
-- [ ] Security-focused code review (internal)
-- [ ] TDD update with Pedersen-VSS details
-- [ ] Threat model formalization
-- [ ] Test coverage > 90% (unit + integration)
-- [ ] Static analysis and linter fixes (golangci-lint)
-- **Deliverable**: Audit-ready codebase with comprehensive documentation
-
-**Week 15-16: Security Audit Preparation**
-- [ ] Prepare audit scope document
-- [ ] Create attack scenario test suite
-- [ ] Document all assumptions and trust boundaries
-- [ ] Set up audit communication channels
-- [ ] Pre-audit internal security review
-- **Deliverable**: Ready for external security audit
+- [ ] Security-focused code review
+- [ ] Threat model documentation finalization
+- [ ] Deploy to mainnet beta environment
+- [ ] Onboard mainnet beta operators (5-7)
+- [ ] Begin external security audit
+- **Deliverable**: Mainnet beta live, audit in progress (December 12)
 
 ---
 
-### Phase 3: Production Readiness
+### Phase 3: Mainnet Production Launch
 
-**Milestone**: Mainnet-ready system with external audit completion
+**Milestone**: Audit complete, mainnet production ready
 
-**Duration**: 8 weeks
+**Target Date**: Q1 2025 (post-audit)
 
-**Week 17-19: External Security Audit**
-- [ ] Contract audit (EigenKMSSlashing, KeyRegistrar)
-- [ ] Protocol audit (Pedersen-VSS, fraud proofs)
-- [ ] Cryptographic implementation review
-- [ ] Address audit findings (critical and high severity)
+**Duration**: Dependent on audit findings
+
+**Audit Completion**:
+- [ ] Address all audit findings (critical, high, medium)
 - [ ] Re-audit if significant changes required
-- **Deliverable**: Clean audit report (no critical/high findings)
+- [ ] Final security review and sign-off
+- **Deliverable**: Clean audit report
 
-**Week 20-21: Persistence Layer Implementation**
-- [ ] Implement BadgerDB persistence backend
-- [ ] Key share encryption at rest (AES-256-GCM)
-- [ ] Crash recovery and integrity testing
-- [ ] Backup/restore procedures
-- [ ] Migration from in-memory to persistent (zero-downtime)
-- [ ] Performance validation (persistence overhead < 10ms)
-- **Deliverable**: Durable key storage with encrypted backups
-
-**Week 22-23: Operator Tooling and Infrastructure**
-- [ ] Operator deployment playbooks (Docker, Kubernetes)
-- [ ] Monitoring dashboards (DKG success rate, reshare latency)
-- [ ] Alert rules (fraud detection, protocol failures)
-- [ ] Incident response runbooks
-- [ ] Operator onboarding documentation
-- [ ] CLI tools for operator management
-- **Deliverable**: Production-grade operator infrastructure
-
-**Week 24: Mainnet Launch Preparation**
-- [ ] Mainnet deployment plan and timeline
-- [ ] Contract deployment to Ethereum mainnet
-- [ ] Security checklist validation
-- [ ] Backup operator coordination
-- [ ] Communication plan (announcements, docs)
-- [ ] Monitoring setup (PagerDuty integration)
-- **Deliverable**: Ready for mainnet genesis DKG
+**Production Launch**:
+- [ ] Mainnet contract deployment (production)
+- [ ] Onboard production operator set (10-15 operators)
+- [ ] Execute mainnet genesis DKG
+- [ ] 48-hour monitoring period (24/7 on-call)
+- [ ] Public announcement and documentation
+- **Deliverable**: Production KMS AVS on Ethereum mainnet
 
 ---
 
-### Phase 4: Mainnet Launch and Iteration
+### Phase 4: Post-Launch and Advanced Features
 
-**Milestone**: Live production system serving EigenX platform
+**Milestone**: Stable production operation with enhanced features
 
-**Duration**: Ongoing (weeks 25+)
+**Timeline**: Q1-Q2 2025 (ongoing)
 
-**Week 25-26: Mainnet Genesis**
-- [ ] Deploy contracts to Ethereum mainnet
-- [ ] Onboard initial operator set (7-10 operators)
-- [ ] Execute genesis DKG ceremony (coordinated)
-- [ ] Monitor first 48 hours (24/7 on-call)
-- [ ] Validate first reshare cycle (10 min after genesis)
-- [ ] Announce mainnet launch publicly
-- **Deliverable**: Live KMS AVS on Ethereum mainnet
-
-**Week 27-30: Post-Launch Stabilization**
+**Post-Launch Stabilization**:
 - [ ] Monitor protocol health (DKG/reshare success rates)
 - [ ] Track fraud proof submissions (expect zero)
-- [ ] Optimize performance based on real data
+- [ ] Optimize performance based on production data
 - [ ] Operator feedback incorporation
 - [ ] Bug fixes and minor improvements
 - **Deliverable**: Stable production operation
 
-**Week 31+: Advanced Features**
-- [ ] Backend keystore integration (AWS KMS, Vault, HSMs)
+**Advanced Features**:
+- [ ] Hardware Security Module (HSM) backend support (PKCS#11)
 - [ ] Cross-chain deployment (Arbitrum, Optimism, Base)
-- [ ] Advanced monitoring and analytics
+- [ ] Advanced monitoring and analytics dashboards
 - [ ] Operator reputation system
 - [ ] Governance mechanisms (parameter voting)
 - [ ] Master secret rotation (periodic full DKG)
-- **Deliverable**: Enhanced production features
+- **Deliverable**: Enhanced production features and multi-chain support
 
 ---
 
-### Critical Path Dependencies
+### Critical Path
 
 ```
-Genesis DKG Support (Weeks 1-4)
+Block-Based Scheduling (Sprint 1)
     ↓
-Fraud Proofs (Weeks 1-2) ──→ Alpha Testnet (Weeks 7-8)
-    ↓                              ↓
-Pedersen-VSS (Weeks 9-12) ──→ Audit Prep (Weeks 13-16)
-    ↓                              ↓
-Security Audit (Weeks 17-19) ──→ Mainnet Launch (Week 25)
+Alpha Testnet (November 7)
     ↓
-Persistence (Weeks 20-21)
+Pedersen-VSS Implementation (Weeks 1-2)
+    ↓
+Fraud Proofs + Persistence (Weeks 3-4)
+    ↓
+Mainnet Beta + Audit Start (December 12)
+    ↓
+Audit Completion (Q1 2025)
+    ↓
+Mainnet Production (Q1 2025)
 ```
 
 ### Resource Requirements
 
 **Development Team**:
 - 1 Lead Engineer (Sean - full time)
-- 1 Smart Contract Engineer (weeks 1-2, 17-19)
-- 1 Security Engineer (weeks 13-19, ongoing)
-- 1 DevOps Engineer (weeks 20-24)
+- 1 Smart Contract Engineer (Phase 1-2, audit period)
+- 1 Security Engineer (Phase 2-3, ongoing)
 
 **External Services**:
-- Security audit firm (weeks 17-19): ~$50-80k
+- Security audit firm: ~$50-80k
 - Intel Trust Authority API keys (production)
 - Ethereum testnet ETH (Sepolia faucet)
-- Infrastructure (7-10 operator nodes): ~$500/month testnet, ~$2k/month mainnet
+- Infrastructure: ~$500/month testnet, ~$2k/month mainnet (10-15 operators)
 
 ### Risk Mitigation
 
 **High-Risk Items**:
-1. **Pedersen-VSS complexity** (Weeks 9-12)
-   - Mitigation: Parallel Feldman testnet as fallback
-2. **Audit timeline** (Weeks 17-19)
-   - Mitigation: Pre-audit with trusted security researchers
-3. **Mainnet genesis coordination** (Week 25)
-   - Mitigation: Extensive testnet rehearsal, operator coordination protocol
+1. **Aggressive Timeline** (November 7 - 2 weeks)
+   - Mitigation: Focus on core functionality, defer non-critical features
+   - Fallback: Delay alpha by 1 week if block-based migration takes longer
+2. **Pedersen-VSS Implementation** (5 weeks for mainnet beta)
+   - Mitigation: Parallel Feldman testnet continues during Pedersen development
+   - Fallback: Launch mainnet beta with Feldman if Pedersen delayed
+3. **Audit Findings** (Unknown timeline impact)
+   - Mitigation: Pre-audit security review, conservative code practices
+   - Contingency: Budget 2-4 weeks for addressing findings
 
 **Contingency Plans**:
-- If audit finds critical issues: Delay mainnet, fix and re-audit
-- If Pedersen performance issues: Optimize or fallback to Feldman + enhanced slashing
-- If operator onboarding slow: Launch with 5 operators, expand to 10+ over time
+- If November 7 deadline at risk: Deploy alpha with time-based scheduling, migrate to blocks in Phase 2
+- If Pedersen complexity high: Maintain Feldman with enhanced fraud proofs for mainnet beta
+- If audit finds critical issues: Delay production launch, prioritize fixes, re-audit as needed
 
 ## Conclusion
 
