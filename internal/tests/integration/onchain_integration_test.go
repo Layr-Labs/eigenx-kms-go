@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Layr-Labs/chain-indexer/pkg/clients/ethereum"
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/ethereum"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"

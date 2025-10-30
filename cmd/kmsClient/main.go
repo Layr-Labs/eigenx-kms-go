@@ -10,7 +10,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/ethereum"
+	"github.com/Layr-Labs/chain-indexer/pkg/clients/ethereum"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/urfave/cli/v2"
 

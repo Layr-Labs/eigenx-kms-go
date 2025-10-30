@@ -10,6 +10,9 @@ import (
 	"sync"
 	"time"
 
+	chainPoller "github.com/Layr-Labs/chain-indexer/pkg/chainPollers"
+	"github.com/Layr-Labs/chain-indexer/pkg/clients/ethereum"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"go.uber.org/zap"
@@ -21,7 +24,6 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/keystore"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/registry"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/reshare"
@@ -81,10 +83,13 @@ type Node struct {
 	sessionMutex   sync.RWMutex
 
 	// Scheduling
-	enableAutoReshare      bool
-	reshareInterval        time.Duration
-	lastProcessedBoundary  int64
-	cancelFunc             context.CancelFunc
+	enableAutoReshare     bool
+	reshareInterval       time.Duration
+	lastProcessedBoundary int64
+	cancelFunc            context.CancelFunc
+
+	blockHandler blockHandler.IBlockHandler
+	poller       chainPoller.IChainPoller
 
 	mu sync.RWMutex
 }
@@ -107,57 +112,58 @@ type ProtocolSession struct {
 
 // Config holds node configuration
 type Config struct {
-	OperatorAddress string         // Ethereum address of the operator (hex string)
+	OperatorAddress string // Ethereum address of the operator (hex string)
 	Port            int
 	BN254PrivateKey string         // BN254 private key (hex string)
 	ChainID         config.ChainId // Ethereum chain ID
 	AVSAddress      string         // AVS contract address (hex string)
 	OperatorSetId   uint32         // Operator set ID
-	Logger          *zap.Logger    // Optional logger, will create default if nil
 }
 
 // NewNode creates a new node instance with dependency injection
-func NewNode(cfg Config, pdf peering.IPeeringDataFetcher) *Node {
-	// Create logger if not provided
-	nodeLogger := cfg.Logger
-	if nodeLogger == nil {
-		nodeLogger, _ = logger.NewLogger(&logger.LoggerConfig{Debug: false})
-	}
-
+func NewNode(
+	cfg Config,
+	pdf peering.IPeeringDataFetcher,
+	bh blockHandler.IBlockHandler,
+	cp chainPoller.IChainPoller,
+	l *zap.Logger,
+) *Node {
 	// Parse operator address
 	operatorAddress := common.HexToAddress(cfg.OperatorAddress)
 
 	// Parse BN254 private key
 	bn254PrivKey, err := bn254.NewPrivateKeyFromHexString(cfg.BN254PrivateKey)
 	if err != nil {
-		nodeLogger.Sugar().Fatalw("Invalid BN254 private key", "error", err)
+		l.Sugar().Fatalw("Invalid BN254 private key", "error", err)
 	}
 
 	// Use operator address hash as transport client ID (for consistency)
 	transportClientID := addressToNodeID(operatorAddress)
 
 	n := &Node{
-		OperatorAddress:     operatorAddress,
-		Port:                cfg.Port,
-		BN254PrivateKey:     bn254PrivKey,
-		ChainID:             cfg.ChainID,
-		AVSAddress:          cfg.AVSAddress,
-		OperatorSetId:       cfg.OperatorSetId,
-		keyStore:            keystore.NewKeyStore(),
-		server:              NewServer(nil, cfg.Port), // Will set node reference later
-		attestationVerifier: attestation.NewStubVerifier(),
-		releaseRegistry:     registry.NewStubClient(),
-		rsaEncryption:       encryption.NewRSAEncryption(),
-		peeringDataFetcher:  pdf,
-		logger:              nodeLogger,
-		receivedShares:      make(map[int]*fr.Element),
-		receivedCommitments: make(map[int][]types.G2Point),
-		receivedAcks:        make(map[int]map[int]*types.Acknowledgement),
-		reshareComplete:     make(map[int]*types.CompletionSignature),
-		activeSessions:         make(map[int64]*ProtocolSession),
-		enableAutoReshare:      true, // Always enabled
-		reshareInterval:        config.GetReshareIntervalForChain(cfg.ChainID),
-		lastProcessedBoundary:  0,
+		OperatorAddress:       operatorAddress,
+		Port:                  cfg.Port,
+		BN254PrivateKey:       bn254PrivKey,
+		ChainID:               cfg.ChainID,
+		AVSAddress:            cfg.AVSAddress,
+		OperatorSetId:         cfg.OperatorSetId,
+		keyStore:              keystore.NewKeyStore(),
+		server:                NewServer(nil, cfg.Port), // Will set node reference later
+		attestationVerifier:   attestation.NewStubVerifier(),
+		releaseRegistry:       registry.NewStubClient(),
+		rsaEncryption:         encryption.NewRSAEncryption(),
+		peeringDataFetcher:    pdf,
+		logger:                l,
+		receivedShares:        make(map[int]*fr.Element),
+		receivedCommitments:   make(map[int][]types.G2Point),
+		receivedAcks:          make(map[int]map[int]*types.Acknowledgement),
+		reshareComplete:       make(map[int]*types.CompletionSignature),
+		activeSessions:        make(map[int64]*ProtocolSession),
+		enableAutoReshare:     true, // Always enabled
+		reshareInterval:       config.GetReshareIntervalForChain(cfg.ChainID),
+		blockHandler:          bh,
+		poller:                cp,
+		lastProcessedBoundary: 0,
 	}
 
 	// Set node reference in server
@@ -171,29 +177,11 @@ func NewNode(cfg Config, pdf peering.IPeeringDataFetcher) *Node {
 
 // startScheduler starts the automatic protocol scheduler with context
 func (n *Node) startScheduler(ctx context.Context) {
-	go func() {
-		ticker := time.NewTicker(500 * time.Millisecond)
-		defer ticker.Stop()
-
-		n.logger.Sugar().Infow("Protocol scheduler started",
-			"operator_address", n.OperatorAddress.Hex(),
-			"auto_reshare", n.enableAutoReshare,
-			"reshare_interval", n.reshareInterval)
-
-		for {
-			select {
-			case <-ticker.C:
-				n.checkScheduledOperations()
-			case <-ctx.Done():
-				n.logger.Sugar().Infow("Protocol scheduler stopped", "operator_address", n.OperatorAddress.Hex())
-				return
-			}
-		}
-	}()
+	go n.blockHandler.ListenToChannel(ctx, n.checkScheduledOperations)
 }
 
 // checkScheduledOperations checks for interval boundaries and executes appropriate protocol
-func (n *Node) checkScheduledOperations() {
+func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 	now := time.Now()
 
 	// Step 1: Calculate rounded interval boundary
@@ -287,8 +275,13 @@ func (n *Node) Start() error {
 	ctx, cancel := context.WithCancel(context.Background())
 	n.cancelFunc = cancel
 
+	// start the poller
+	if err := n.poller.Start(ctx); err != nil {
+		return fmt.Errorf("failed to start chain poller: %w", err)
+	}
+
 	// Start scheduler in goroutine
-	n.startScheduler(ctx)
+	go n.startScheduler(ctx)
 
 	// Start HTTP server in goroutine
 	go func() {
@@ -523,7 +516,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 
 			// Create acknowledgement for verified share
 			ack := dkg.CreateAcknowledgement(thisNodeID, dealerID, commitments, n.signAcknowledgement)
-			
+
 			// Find dealer's peer info for transport
 			var dealerPeer *peering.OperatorSetPeer
 			for _, op := range operators {
@@ -532,18 +525,18 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 					break
 				}
 			}
-			
+
 			if dealerPeer != nil {
 				// Send acknowledgement to dealer
 				err := n.transport.SendDKGAcknowledgement(ack, dealerPeer, session.SessionTimestamp)
 				if err != nil {
-					n.logger.Sugar().Warnw("Failed to send acknowledgement", 
-						"operator_address", n.OperatorAddress.Hex(), 
-						"dealer_address", dealerPeer.OperatorAddress.Hex(), 
+					n.logger.Sugar().Warnw("Failed to send acknowledgement",
+						"operator_address", n.OperatorAddress.Hex(),
+						"dealer_address", dealerPeer.OperatorAddress.Hex(),
 						"error", err)
 				} else {
-					n.logger.Sugar().Debugw("Sent acknowledgement", 
-						"operator_address", n.OperatorAddress.Hex(), 
+					n.logger.Sugar().Debugw("Sent acknowledgement",
+						"operator_address", n.OperatorAddress.Hex(),
 						"dealer_address", dealerPeer.OperatorAddress.Hex(),
 						"dealer_id", dealerID)
 				}
@@ -588,7 +581,6 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 		"version", keyVersion.Version)
 	return nil
 }
-
 
 // RunReshareAsExistingOperator executes the reshare protocol as an existing operator with shares
 func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
@@ -681,7 +673,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	n.mu.RLock()
 	allCommitments := make([][]types.G2Point, 0, len(n.receivedCommitments))
 	participantIDs := make([]int, 0, len(n.receivedCommitments))
-	
+
 	for _, op := range operators {
 		opNodeID := addressToNodeID(op.OperatorAddress)
 		if comm, ok := n.receivedCommitments[opNodeID]; ok {
@@ -689,7 +681,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 			participantIDs = append(participantIDs, opNodeID)
 		}
 	}
-	
+
 	receivedShares := make(map[int]*fr.Element)
 	for k, v := range n.receivedShares {
 		receivedShares[k] = v
@@ -699,7 +691,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	// Compute new key share using Lagrange interpolation
 	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDs, receivedShares, allCommitments)
 	newKeyVersion.Version = sessionTimestamp // Use session timestamp as version
-	newKeyVersion.IsActive = true // Activate immediately (all operators must participate)
+	newKeyVersion.IsActive = true            // Activate immediately (all operators must participate)
 
 	// Add new version to keystore
 	n.keyStore.AddVersion(newKeyVersion)
@@ -766,7 +758,7 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	// Compute new key share using Lagrange interpolation
 	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDs, receivedShares, allCommitments)
 	newKeyVersion.Version = sessionTimestamp // Use session timestamp as version
-	newKeyVersion.IsActive = true // First key version becomes active immediately
+	newKeyVersion.IsActive = true            // First key version becomes active immediately
 
 	// Add new version to keystore
 	n.keyStore.AddVersion(newKeyVersion)
@@ -860,9 +852,9 @@ func (n *Node) waitForAcknowledgements(threshold int, timeout time.Duration) err
 		n.mu.RUnlock()
 
 		if count >= threshold {
-			n.logger.Sugar().Infow("Received sufficient acknowledgements", 
-				"operator_address", n.OperatorAddress.Hex(), 
-				"received", count, 
+			n.logger.Sugar().Infow("Received sufficient acknowledgements",
+				"operator_address", n.OperatorAddress.Hex(),
+				"received", count,
 				"threshold", threshold)
 			return nil
 		}
@@ -956,7 +948,7 @@ func (n *Node) verifyMessage(authMsg *types.AuthenticatedMessage, senderPeer *pe
 	if !bytes.Equal(actualHash, authMsg.Hash[:]) {
 		return fmt.Errorf("payload digest mismatch")
 	}
-	
+
 	// Verify signature using BN254 (must use VerifySolidityCompatible to match SignSolidityCompatible)
 	sig, err := bn254.NewSignatureFromBytes(authMsg.Signature)
 	if err != nil {
@@ -976,7 +968,7 @@ func (n *Node) verifyMessage(authMsg *types.AuthenticatedMessage, senderPeer *pe
 	if !isValid {
 		return fmt.Errorf("signature verification failed")
 	}
-	
+
 	return nil
 }
 
@@ -986,13 +978,13 @@ func (n *Node) CreateAuthenticatedMessage(payload interface{}) (*types.Authentic
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal payload: %w", err)
 	}
-	
+
 	payloadHash := crypto.Keccak256(payloadBytes)
 	signature, err := n.signMessage(payloadBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign message: %w", err)
 	}
-	
+
 	return &types.AuthenticatedMessage{
 		Payload:   payloadBytes,
 		Hash:      [32]byte(payloadHash),
@@ -1012,12 +1004,12 @@ func (n *Node) findPeerByAddress(address common.Address, peers []*peering.Operat
 
 // signAcknowledgement signs an acknowledgement using BN254 private key
 func (n *Node) signAcknowledgement(dealerID int, commitmentHash [32]byte) []byte {
-	// Create message: dealerID || commitmentHash 
+	// Create message: dealerID || commitmentHash
 	dealerBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(dealerBytes, uint32(dealerID))
 	message := append(dealerBytes, commitmentHash[:]...)
 	messageHash := crypto.Keccak256(message)
-	
+
 	var hash32 [32]byte
 	copy(hash32[:], messageHash)
 	signature, err := n.BN254PrivateKey.SignSolidityCompatible(hash32)

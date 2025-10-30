@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/ethereum"
+	"github.com/Layr-Labs/chain-indexer/pkg/clients/ethereum"
 )
 
 type AnvilConfig struct {
@@ -67,7 +67,7 @@ func WaitForAnvil(
 	anvilWg *sync.WaitGroup,
 	ctx context.Context,
 	t *testing.T,
-	ethereumClient *ethereum.Client,
+	ethereumClient ethereum.Client,
 	errorsChan chan error,
 ) {
 	defer anvilWg.Done()

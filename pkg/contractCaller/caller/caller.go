@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"math/big"
 
+	"github.com/Layr-Labs/chain-indexer/pkg/clients/ethereum"
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
 	"github.com/Layr-Labs/eigenlayer-contracts/pkg/bindings/IAllocationManager"
 	"github.com/Layr-Labs/eigenlayer-contracts/pkg/bindings/IDelegationManager"
 	"github.com/Layr-Labs/eigenlayer-contracts/pkg/bindings/IKeyRegistrar"
 	"github.com/Layr-Labs/eigenlayer-contracts/pkg/bindings/IReleaseManager"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/ethereum"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/middleware-bindings/IEigenKMSRegistrar"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"

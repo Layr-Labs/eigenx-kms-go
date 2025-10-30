@@ -11,6 +11,7 @@ import (
 
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
@@ -77,11 +78,11 @@ func testSecretsEndpointFlow(t *testing.T) {
 		ChainID:         config.ChainId_EthereumAnvil,
 		AVSAddress:      "0x1234567890123456789012345678901234567890",
 		OperatorSetId:   1,
-		Logger:          testLogger,
 	}
 
+	bh := blockHandler.NewBlockHandler(testLogger)
 	peeringDataFetcher := createTestPeeringDataFetcher(t)
-	node := NewNode(cfg, peeringDataFetcher)
+	node := NewNode(cfg, peeringDataFetcher, bh, nil, testLogger)
 
 	// Add a test key share
 	testShare := new(fr.Element).SetInt64(42)
@@ -190,7 +191,7 @@ func testSecretsEndpointFlow(t *testing.T) {
 // testSecretsEndpointValidation tests various validation scenarios
 func testSecretsEndpointValidation(t *testing.T) {
 	peeringDataFetcher := createTestPeeringDataFetcher(t)
-	
+
 	projectRoot := tests.GetProjectRootPath()
 	chainConfig, err := tests.ReadChainConfig(projectRoot)
 	if err != nil {
@@ -207,7 +208,8 @@ func testSecretsEndpointValidation(t *testing.T) {
 		OperatorSetId:   1,
 		Logger:          testLogger,
 	}
-	node := NewNode(cfg, peeringDataFetcher)
+	bh := blockHandler.NewBlockHandler(testLogger)
+	node := NewNode(cfg, peeringDataFetcher, bh)
 
 	// Test missing AppID
 	req := types.SecretsRequestV1{
@@ -227,10 +229,10 @@ func testSecretsEndpointValidation(t *testing.T) {
 	}
 }
 
-// testSecretsEndpointImageDigestMismatch tests image digest validation  
+// testSecretsEndpointImageDigestMismatch tests image digest validation
 func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 	peeringDataFetcher := createTestPeeringDataFetcher(t)
-	
+
 	projectRoot := tests.GetProjectRootPath()
 	chainConfig, err := tests.ReadChainConfig(projectRoot)
 	if err != nil {
@@ -247,7 +249,8 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 		OperatorSetId:   1,
 		Logger:          testLogger,
 	}
-	node := NewNode(cfg, peeringDataFetcher)
+	bh := blockHandler.NewBlockHandler(testLogger)
+	node := NewNode(cfg, peeringDataFetcher, bh)
 
 	// Add test release with specific digest
 	testRelease := &types.Release{
@@ -261,7 +264,7 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 
 	// Create attestation with DIFFERENT digest
 	testClaims := types.AttestationClaims{
-		AppID:       "test-app", 
+		AppID:       "test-app",
 		ImageDigest: "sha256:wrong-digest", // Different from release
 		IssuedAt:    time.Now().Unix(),
 		PublicKey:   []byte("dummy-key"),

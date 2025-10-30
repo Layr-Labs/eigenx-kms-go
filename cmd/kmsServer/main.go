@@ -5,16 +5,19 @@ import (
 	"log"
 	"os"
 
-	"github.com/urfave/cli/v2"
-	"go.uber.org/zap"
-
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/ethereum"
+	EVMChainPoller "github.com/Layr-Labs/chain-indexer/pkg/chainPollers/evm"
+	"github.com/Layr-Labs/chain-indexer/pkg/chainPollers/persistence/memory"
+	"github.com/Layr-Labs/chain-indexer/pkg/clients/ethereum"
+	chainIndexerConfig "github.com/Layr-Labs/chain-indexer/pkg/config"
+	"github.com/Layr-Labs/chain-indexer/pkg/contractStore/inMemoryContractStore"
+	"github.com/Layr-Labs/chain-indexer/pkg/transactionLogParser"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/node"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering/peeringDataFetcher"
+	"github.com/urfave/cli/v2"
 )
 
 func main() {
@@ -98,11 +101,11 @@ func runKMSServer(c *cli.Context) error {
 	loggerConfig := &logger.LoggerConfig{
 		Debug: c.Bool("verbose"),
 	}
-	appLogger, err := logger.NewLogger(loggerConfig)
+	l, err := logger.NewLogger(loggerConfig)
 	if err != nil {
 		return fmt.Errorf("failed to create logger: %w", err)
 	}
-	defer func() { _ = appLogger.Sync() }()
+	defer func() { _ = l.Sync() }()
 
 	// Parse configuration from flags/environment
 	kmsConfig, err := parseKMSConfig(c)
@@ -115,7 +118,7 @@ func runKMSServer(c *cli.Context) error {
 		return fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	appLogger.Sugar().Infow("Using chain", "name", kmsConfig.ChainName, "chain_id", kmsConfig.ChainID)
+	l.Sugar().Infow("Using chain", "name", kmsConfig.ChainName, "chain_id", kmsConfig.ChainID)
 
 	// Create node config from KMS config (operators fetched dynamically when needed)
 	nodeConfig := node.Config{
@@ -125,17 +128,53 @@ func runKMSServer(c *cli.Context) error {
 		ChainID:         kmsConfig.ChainID,
 		AVSAddress:      kmsConfig.AVSAddress,
 		OperatorSetId:   kmsConfig.OperatorSetId,
-		Logger:          appLogger,
 	}
 
-	// Create peering data fetcher for dynamic operator fetching
-	peeringDataFetcher := createPeeringDataFetcher(kmsConfig, appLogger)
+	// Create Ethereum client
+	ethClient := ethereum.NewEthereumClient(&ethereum.EthereumClientConfig{
+		BaseUrl:   kmsConfig.RpcUrl,
+		BlockType: ethereum.BlockType_Latest,
+	}, l)
+
+	// Get contract caller
+	l1Client, err := ethClient.GetEthereumContractCaller()
+	if err != nil {
+		l.Sugar().Fatalw("Failed to get Ethereum contract caller", "error", err)
+	}
+
+	// Create contract caller (no signer needed for read operations)
+	contractCaller, err := caller.NewContractCaller(l1Client, nil, l)
+	if err != nil {
+		l.Sugar().Fatalw("Failed to create contract caller", "error", err)
+	}
+
+	bh := blockHandler.NewBlockHandler(l)
+
+	// we're not going to parse logs, but these are required for the chain poller
+	cs := inMemoryContractStore.NewInMemoryContractStore(nil, l)
+	logParser := transactionLogParser.NewTransactionLogParser(cs, l)
+
+	// TODO(seanmcgary): This persistence should be swapped out for a more permanent solution that will also hold the node's state
+	pollerStore := memory.NewInMemoryChainPollerPersistence()
+
+	poller, err := EVMChainPoller.NewEVMChainPoller(
+		ethClient,
+		logParser,
+		&EVMChainPoller.EVMChainPollerConfig{
+			ChainId: chainIndexerConfig.ChainId(kmsConfig.ChainID),
+		},
+		pollerStore, bh, l)
+	if err != nil {
+		l.Sugar().Fatalw("Failed to create EVM chain poller", "error", err)
+	}
+
+	pdf := peeringDataFetcher.NewPeeringDataFetcher(contractCaller, l)
 
 	// Create and configure the node
-	n := node.NewNode(nodeConfig, peeringDataFetcher)
+	n := node.NewNode(nodeConfig, pdf, bh, poller, l)
 
 	if c.Bool("verbose") {
-		appLogger.Sugar().Infow("KMS Server Configuration",
+		l.Sugar().Infow("KMS Server Configuration",
 			"operator_address", kmsConfig.OperatorAddress,
 			"port", kmsConfig.Port,
 			"chain", kmsConfig.ChainName,
@@ -143,20 +182,20 @@ func runKMSServer(c *cli.Context) error {
 	}
 
 	// Start the node server
-	appLogger.Sugar().Infow("Starting KMS Server", "operator_address", kmsConfig.OperatorAddress, "port", kmsConfig.Port)
+	l.Sugar().Infow("Starting KMS Server", "operator_address", kmsConfig.OperatorAddress, "port", kmsConfig.Port)
 
 	if err := n.Start(); err != nil {
 		return fmt.Errorf("failed to start node: %w", err)
 	}
 
 	// Node scheduler handles DKG and reshare automatically based on config
-	appLogger.Sugar().Infow("KMS Server running", "operator_address", kmsConfig.OperatorAddress, "port", kmsConfig.Port)
-	appLogger.Sugar().Infow("Available endpoints",
+	l.Sugar().Infow("KMS Server running", "operator_address", kmsConfig.OperatorAddress, "port", kmsConfig.Port)
+	l.Sugar().Infow("Available endpoints",
 		"secrets", "POST /secrets",
 		"app_sign", "POST /app/sign",
 		"dkg", "POST /dkg/*",
 		"reshare", "POST /reshare/*")
-	appLogger.Sugar().Info("Press Ctrl+C to stop")
+	l.Sugar().Info("Press Ctrl+C to stop")
 
 	// Keep the server running
 	select {}
@@ -174,35 +213,4 @@ func parseKMSConfig(c *cli.Context) (*config.KMSServerConfig, error) {
 		Debug:           c.Bool("verbose"),
 		Verbose:         c.Bool("verbose"),
 	}, nil
-}
-
-// Note: Operator fetching now handled dynamically by peering data fetcher
-
-// createPeeringDataFetcher creates a peering data fetcher that queries the blockchain
-func createPeeringDataFetcher(kmsConfig *config.KMSServerConfig, logger *zap.Logger) peering.IPeeringDataFetcher {
-	logger.Sugar().Infow("Creating peering data fetcher",
-		"chain_id", kmsConfig.ChainID,
-		"rpc_url", kmsConfig.RpcUrl,
-		"avs_address", kmsConfig.AVSAddress)
-
-	// Create Ethereum client
-	ethClient := ethereum.NewEthereumClient(&ethereum.EthereumClientConfig{
-		BaseUrl:   kmsConfig.RpcUrl,
-		BlockType: ethereum.BlockType_Latest,
-	}, logger)
-
-	// Get contract caller
-	l1Client, err := ethClient.GetEthereumContractCaller()
-	if err != nil {
-		logger.Sugar().Fatalw("Failed to get Ethereum contract caller", "error", err)
-	}
-
-	// Create contract caller (no signer needed for read operations)
-	contractCaller, err := caller.NewContractCaller(l1Client, nil, logger)
-	if err != nil {
-		logger.Sugar().Fatalw("Failed to create contract caller", "error", err)
-	}
-
-	// Return the existing peeringDataFetcher implementation
-	return peeringDataFetcher.NewPeeringDataFetcher(contractCaller, logger)
 }
