@@ -76,42 +76,12 @@ var ChainNameToId = map[ChainName]ChainId{
 	ChainName_EthereumAnvil:   ChainId_EthereumAnvil,
 }
 
-func GetChainIdFromName(name ChainName) (ChainId, error) {
-	chainId, ok := ChainNameToId[name]
-	if !ok {
-		return 0, fmt.Errorf("unsupported chain name: %s", name)
-	}
-	return chainId, nil
-}
-
-// Reshare interval constants by chain (time-based, deprecated)
-const (
-	ReshareInterval_Mainnet = 10 * time.Minute
-	ReshareInterval_Sepolia = 2 * time.Minute
-	ReshareInterval_Anvil   = 30 * time.Second // Fast interval for testing
-)
-
 // Block interval constants by chain (block-based scheduling)
 const (
 	ReshareBlockInterval_Mainnet = 50 // 50 blocks ~10 minutes (12s per block)
 	ReshareBlockInterval_Sepolia = 10 // 10 blocks ~2 minutes (12s per block)
 	ReshareBlockInterval_Anvil   = 5  // 5 blocks for fast testing
 )
-
-// GetReshareIntervalForChain returns the reshare interval for a given chain
-// Deprecated: Use GetReshareBlockIntervalForChain for block-based scheduling
-func GetReshareIntervalForChain(chainId ChainId) time.Duration {
-	switch chainId {
-	case ChainId_EthereumMainnet:
-		return ReshareInterval_Mainnet
-	case ChainId_EthereumSepolia:
-		return ReshareInterval_Sepolia
-	case ChainId_EthereumAnvil:
-		return ReshareInterval_Anvil
-	default:
-		return 10 * time.Minute // Default to mainnet interval
-	}
-}
 
 // GetReshareBlockIntervalForChain returns the block interval for reshares on a given chain
 func GetReshareBlockIntervalForChain(chainId ChainId) int64 {
@@ -124,6 +94,24 @@ func GetReshareBlockIntervalForChain(chainId ChainId) int64 {
 		return ReshareBlockInterval_Anvil
 	default:
 		return ReshareBlockInterval_Mainnet // Default to mainnet interval
+	}
+}
+
+// GetProtocolTimeoutForChain returns the timeout for protocol operations
+// The timeout should be less than one block interval to prevent overlap
+func GetProtocolTimeoutForChain(chainId ChainId) time.Duration {
+	switch chainId {
+	case ChainId_EthereumMainnet:
+		// 50 blocks * 12s = 10 minutes, use 8 minutes for protocol timeout
+		return 8 * time.Minute
+	case ChainId_EthereumSepolia:
+		// 10 blocks * 12s = 2 minutes, use 90 seconds for protocol timeout
+		return 90 * time.Second
+	case ChainId_EthereumAnvil:
+		// 5 blocks * 1s = 5 seconds, use 4 seconds for protocol timeout
+		return 4 * time.Second
+	default:
+		return 8 * time.Minute // Default to mainnet timeout
 	}
 }
 

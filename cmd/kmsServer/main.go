@@ -178,7 +178,8 @@ func runKMSServer(c *cli.Context) error {
 			"operator_address", kmsConfig.OperatorAddress,
 			"port", kmsConfig.Port,
 			"chain", kmsConfig.ChainName,
-			"reshare_interval", config.GetReshareIntervalForChain(kmsConfig.ChainID))
+			"reshare_block_interval", config.GetReshareBlockIntervalForChain(kmsConfig.ChainID),
+			"protocol_timeout", config.GetProtocolTimeoutForChain(kmsConfig.ChainID))
 	}
 
 	// Start the node server

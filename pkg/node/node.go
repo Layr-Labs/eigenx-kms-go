@@ -42,10 +42,9 @@ func addressToNodeID(address common.Address) int {
 }
 
 const (
-	// ReshareFrequency is the frequency of resharing in seconds
+	// ReshareFrequency is the frequency of resharing in seconds (deprecated)
+	// Deprecated: Use block-based intervals via config.GetReshareBlockIntervalForChain
 	ReshareFrequency = 10 * 60 // 10 minutes
-	// ReshareTimeout is the timeout for reshare operations
-	ReshareTimeout = 2 * 60 // 2 minutes
 )
 
 // Node represents a KMS node
@@ -84,7 +83,6 @@ type Node struct {
 
 	// Scheduling
 	enableAutoReshare     bool
-	reshareInterval       time.Duration
 	lastProcessedBoundary int64
 	cancelFunc            context.CancelFunc
 
@@ -160,7 +158,6 @@ func NewNode(
 		reshareComplete:       make(map[int]*types.CompletionSignature),
 		activeSessions:        make(map[int64]*ProtocolSession),
 		enableAutoReshare:     true, // Always enabled
-		reshareInterval:       config.GetReshareIntervalForChain(cfg.ChainID),
 		blockHandler:          bh,
 		poller:                cp,
 		lastProcessedBoundary: 0,
@@ -491,11 +488,12 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 		}
 	}
 
-	// Wait for all shares and commitments (timeout must be less than interval)
-	if err := n.waitForSharesWithRetry(len(operators), 15*time.Second); err != nil {
+	// Wait for all shares and commitments (timeout must be less than block interval)
+	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
+	if err := n.waitForSharesWithRetry(len(operators), protocolTimeout); err != nil {
 		return err
 	}
-	if err := n.waitForCommitmentsWithRetry(len(operators), 15*time.Second); err != nil {
+	if err := n.waitForCommitmentsWithRetry(len(operators), protocolTimeout); err != nil {
 		return err
 	}
 
@@ -558,7 +556,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	n.mu.Unlock()
 
 	// Wait for acknowledgements (as a dealer) - need ALL operators for DKG
-	if err := n.waitForAcknowledgements(len(operators), 15*time.Second); err != nil {
+	if err := n.waitForAcknowledgements(len(operators), protocolTimeout); err != nil {
 		return fmt.Errorf("insufficient acknowledgements: %v", err)
 	}
 
@@ -663,11 +661,12 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		}
 	}
 
-	// Wait for shares and commitments (timeout must be less than interval)
-	if err := n.waitForSharesWithRetry(len(operators), 15*time.Second); err != nil {
+	// Wait for shares and commitments (timeout must be less than block interval)
+	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
+	if err := n.waitForSharesWithRetry(len(operators), protocolTimeout); err != nil {
 		return err
 	}
-	if err := n.waitForCommitmentsWithRetry(len(operators), 15*time.Second); err != nil {
+	if err := n.waitForCommitmentsWithRetry(len(operators), protocolTimeout); err != nil {
 		return err
 	}
 
@@ -734,10 +733,11 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		"expected_operators", len(operators))
 
 	// Wait for shares and commitments from existing operators
-	if err := n.waitForSharesWithRetry(len(operators), 15*time.Second); err != nil {
+	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
+	if err := n.waitForSharesWithRetry(len(operators), protocolTimeout); err != nil {
 		return fmt.Errorf("failed to receive shares: %w", err)
 	}
-	if err := n.waitForCommitmentsWithRetry(len(operators), 15*time.Second); err != nil {
+	if err := n.waitForCommitmentsWithRetry(len(operators), protocolTimeout); err != nil {
 		return fmt.Errorf("failed to receive commitments: %w", err)
 	}
 
