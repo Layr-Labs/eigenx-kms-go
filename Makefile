@@ -12,7 +12,6 @@ all: deps/go build/cmd
 # Dependencies
 # -----------------------------------------------------------------------------
 deps: deps/go
-	./scripts/installDeps.sh
 
 
 .PHONY: deps/go
