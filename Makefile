@@ -13,7 +13,6 @@ all: deps/go build/cmd
 # -----------------------------------------------------------------------------
 deps: deps/go
 	./scripts/installDeps.sh
-	cd protos && buf dep update
 
 
 .PHONY: deps/go
