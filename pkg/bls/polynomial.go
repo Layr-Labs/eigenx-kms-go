@@ -69,37 +69,37 @@ func RecoverSecret(shares map[int]*fr.Element) *fr.Element {
 // GeneratePolynomial generates a random polynomial with given secret and degree
 func GeneratePolynomial(secret *fr.Element, degree int) polynomial.Polynomial {
 	poly := make(polynomial.Polynomial, degree+1)
-	
+
 	// Set the constant term to the secret
 	poly[0].Set(secret)
-	
+
 	// Generate random coefficients for higher degree terms
 	for i := 1; i <= degree; i++ {
 		_, _ = poly[i].SetRandom()
 	}
-	
+
 	return poly
 }
 
 // GenerateShares generates shares for participants using polynomial secret sharing
 func GenerateShares(poly polynomial.Polynomial, participantIDs []int) map[int]*fr.Element {
 	shares := make(map[int]*fr.Element)
-	
+
 	for _, id := range participantIDs {
 		shares[id] = EvaluatePolynomial(poly, id)
 	}
-	
+
 	return shares
 }
 
 // CreateCommitments creates polynomial commitments in G2
 func CreateCommitments(poly polynomial.Polynomial) []*G2Point {
 	commitments := make([]*G2Point, len(poly))
-	
+
 	for i, coeff := range poly {
 		commitments[i] = ScalarMulG2(G2Generator, &coeff)
 	}
-	
+
 	return commitments
 }
 
@@ -107,20 +107,20 @@ func CreateCommitments(poly polynomial.Polynomial) []*G2Point {
 func VerifyShare(nodeID int, share *fr.Element, commitments []*G2Point) bool {
 	// Compute share * G2
 	shareCommitment := ScalarMulG2(G2Generator, share)
-	
+
 	// Compute expected commitment from polynomial commitments
 	// C_expected = Σ commitments[k] * nodeID^k
 	expectedCommitment := commitments[0] // Start with constant term
-	
+
 	nodeFr := new(fr.Element).SetInt64(int64(nodeID))
 	nodePower := new(fr.Element).SetOne()
-	
+
 	for k := 1; k < len(commitments); k++ {
 		nodePower.Mul(nodePower, nodeFr)
 		term := ScalarMulG2(commitments[k], nodePower)
 		expectedCommitment = AddG2(expectedCommitment, term)
 	}
-	
+
 	// Check if share * G2 == expected commitment
 	return shareCommitment.Equal(expectedCommitment)
 }

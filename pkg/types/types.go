@@ -6,7 +6,6 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
 
-
 // KeyShareVersion represents a versioned set of key shares
 type KeyShareVersion struct {
 	Version        int64       // Unix timestamp epoch of when this version was created
@@ -50,16 +49,16 @@ type AppSignRequest struct {
 
 // AppSignResponse contains a partial signature from a node
 type AppSignResponse struct {
-	OperatorAddress  string  // Operator address instead of NodeID
+	OperatorAddress  string // Operator address instead of NodeID
 	PartialSignature G1Point
 }
 
 // SecretsRequestV1 represents a request for application secrets
 type SecretsRequestV1 struct {
 	AppID        string `json:"app_id"`
-	Attestation  []byte `json:"attestation"`     // GoogleCS attestation (stubbed)
-	RSAPubKeyTmp []byte `json:"rsa_pubkey_tmp"`  // Ephemeral RSA public key
-	AttestTime   int64  `json:"attest_time"`     // For key versioning
+	Attestation  []byte `json:"attestation"`    // GoogleCS attestation (stubbed)
+	RSAPubKeyTmp []byte `json:"rsa_pubkey_tmp"` // Ephemeral RSA public key
+	AttestTime   int64  `json:"attest_time"`    // For key versioning
 }
 
 // SecretsResponseV1 represents the response with encrypted secrets

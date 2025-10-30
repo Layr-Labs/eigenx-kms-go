@@ -29,13 +29,13 @@ func NewStubClient() *StubClient {
 			Timestamp:    time.Now().Unix(),
 		},
 		"demo-app": {
-			ImageDigest:  "sha256:demo456", 
+			ImageDigest:  "sha256:demo456",
 			EncryptedEnv: "encrypted-env-data-for-demo-app",
 			PublicEnv:    "DEMO_MODE=true",
 			Timestamp:    time.Now().Unix(),
 		},
 	}
-	
+
 	return &StubClient{releases: releases}
 }
 
@@ -46,12 +46,12 @@ func (c *StubClient) GetLatestRelease(appID string) (*types.Release, error) {
 	// 2. Call IReleaseRegistry.getLatestRelease(appId)
 	// 3. Parse the returned Release struct
 	// 4. Verify the release data integrity
-	
+
 	release, exists := c.releases[appID]
 	if !exists {
 		return nil, fmt.Errorf("no release found for app_id: %s", appID)
 	}
-	
+
 	fmt.Printf("Found release for app_id: %s, image: %s\n", appID, release.ImageDigest)
 	return release, nil
 }
@@ -63,14 +63,14 @@ func (c *StubClient) AddTestRelease(appID string, release *types.Release) {
 
 // ProductionClient would implement the real on-chain client
 type ProductionClient struct {
-	chainClient interface{} // Would be an Ethereum client
-	contractAddr string     // Release registry contract address
+	chainClient  interface{} // Would be an Ethereum client
+	contractAddr string      // Release registry contract address
 }
 
 // NewProductionClient creates a production release registry client
 func NewProductionClient(chainClient interface{}, contractAddr string) *ProductionClient {
 	return &ProductionClient{
-		chainClient: chainClient,
+		chainClient:  chainClient,
 		contractAddr: contractAddr,
 	}
 }

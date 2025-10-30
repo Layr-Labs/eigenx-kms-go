@@ -57,8 +57,8 @@ func (p *G1Point) Marshal() []byte {
 	if p.point == nil {
 		return make([]byte, 48)
 	}
-	bytes := p.point.Bytes()  // Returns [48]byte
-	return bytes[:]  // Convert to slice
+	bytes := p.point.Bytes() // Returns [48]byte
+	return bytes[:]          // Convert to slice
 }
 
 // Unmarshal deserializes bytes to G1Point
@@ -66,7 +66,7 @@ func (p *G1Point) Unmarshal(data []byte) error {
 	if p.point == nil {
 		p.point = new(bls12381.G1Affine)
 	}
-	_, err := p.point.SetBytes(data)  // Use SetBytes for compressed format
+	_, err := p.point.SetBytes(data) // Use SetBytes for compressed format
 	return err
 }
 
@@ -75,8 +75,8 @@ func (p *G2Point) Marshal() []byte {
 	if p.point == nil {
 		return make([]byte, 96)
 	}
-	bytes := p.point.Bytes()  // Returns [96]byte
-	return bytes[:]  // Convert to slice
+	bytes := p.point.Bytes() // Returns [96]byte
+	return bytes[:]          // Convert to slice
 }
 
 // Unmarshal deserializes bytes to G2Point
@@ -84,7 +84,7 @@ func (p *G2Point) Unmarshal(data []byte) error {
 	if p.point == nil {
 		p.point = new(bls12381.G2Affine)
 	}
-	_, err := p.point.SetBytes(data)  // Use SetBytes for compressed format
+	_, err := p.point.SetBytes(data) // Use SetBytes for compressed format
 	return err
 }
 
@@ -152,11 +152,11 @@ func G1PointFromBigInt(x, y *big.Int) (*G1Point, error) {
 		p := new(bls12381.G1Affine).SetInfinity()
 		return NewG1Point(p), nil
 	}
-	
+
 	// X should contain exactly the marshaled bytes
 	xBytes := x.Bytes()
 	var bytes []byte
-	
+
 	if len(xBytes) == 48 {
 		// Already correct length
 		bytes = xBytes
@@ -168,7 +168,7 @@ func G1PointFromBigInt(x, y *big.Int) (*G1Point, error) {
 		// Too long, use as-is (might be compressed format)
 		bytes = xBytes
 	}
-	
+
 	point := new(bls12381.G1Affine)
 	_, err := point.SetBytes(bytes)
 	if err != nil {
@@ -185,11 +185,11 @@ func G2PointFromBigInt(x, y *big.Int) (*G2Point, error) {
 		p := new(bls12381.G2Affine).SetInfinity()
 		return NewG2Point(p), nil
 	}
-	
+
 	// X should contain exactly the marshaled bytes
 	xBytes := x.Bytes()
 	var bytes []byte
-	
+
 	if len(xBytes) == 96 {
 		// Already correct length
 		bytes = xBytes
@@ -201,7 +201,7 @@ func G2PointFromBigInt(x, y *big.Int) (*G2Point, error) {
 		// Too long, use as-is (might be compressed format)
 		bytes = xBytes
 	}
-	
+
 	point := new(bls12381.G2Affine)
 	_, err := point.SetBytes(bytes)
 	if err != nil {

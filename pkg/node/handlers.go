@@ -11,7 +11,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
-
 // validateAuthenticatedMessage validates an incoming authenticated message
 func (s *Server) validateAuthenticatedMessage(r *http.Request, expectedRecipient common.Address) (*types.AuthenticatedMessage, *peering.OperatorSetPeer, interface{}, error) {
 	// Parse authenticated message wrapper
@@ -226,7 +225,7 @@ func (s *Server) handleDKGCommitment(w http.ResponseWriter, r *http.Request) {
 		"sender_node_id", senderNodeID,
 		"session_timestamp", commitMsg.SessionTimestamp,
 		"count", len(commitMsg.Commitments))
-	
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -281,7 +280,7 @@ func (s *Server) handleDKGShare(w http.ResponseWriter, r *http.Request) {
 		"from_address", senderPeer.OperatorAddress.Hex(),
 		"sender_node_id", senderNodeID,
 		"session_timestamp", shareMsg.SessionTimestamp)
-	
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -343,7 +342,7 @@ func (s *Server) handleDKGAck(w http.ResponseWriter, r *http.Request) {
 		"from_player", senderNodeID,
 		"for_dealer", thisNodeID,
 		"session_timestamp", ackMsg.SessionTimestamp)
-	
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -363,7 +362,7 @@ func (s *Server) handleReshareCommitment(w http.ResponseWriter, r *http.Request)
 
 	// TODO: Store received commitments
 	s.node.logger.Sugar().Debugw("Received reshare commitments", "node_id", s.node.OperatorAddress.Hex(), "count", len(commitments))
-	
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -376,7 +375,7 @@ func (s *Server) handleReshareShare(w http.ResponseWriter, r *http.Request) {
 
 	// TODO: Parse and store received share
 	s.node.logger.Sugar().Debugw("Received reshare share", "node_id", s.node.OperatorAddress.Hex())
-	
+
 	w.WriteHeader(http.StatusOK)
 }
 

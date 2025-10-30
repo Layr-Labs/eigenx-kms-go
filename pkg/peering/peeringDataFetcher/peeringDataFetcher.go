@@ -2,7 +2,7 @@ package peeringDataFetcher
 
 import (
 	"context"
-	
+
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"go.uber.org/zap"

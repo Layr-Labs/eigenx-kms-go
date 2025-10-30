@@ -22,7 +22,7 @@ func (s *StubPeeringDataFetcher) ListKMSOperators(ctx context.Context, avsAddres
 	if s.operators != nil {
 		return s.operators, nil
 	}
-	
+
 	// Return empty operator set if none provided
 	return &OperatorSetPeers{
 		OperatorSetId: operatorSetId,
