@@ -6,8 +6,11 @@ import (
 	"testing"
 	"time"
 
+	chainPoller "github.com/Layr-Labs/chain-indexer/pkg/chainPollers"
 	"github.com/Layr-Labs/chain-indexer/pkg/clients/ethereum"
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
@@ -21,12 +24,16 @@ const (
 	L1RpcUrl = "http://127.0.0.1:8545"
 )
 
+//nolint:unused // Used in skipped test, will be needed when test is re-enabled
 func createNode(
 	operatorAddress string,
 	privateKey string,
 	avsAddress string,
+	chainID config.ChainId,
 	port int,
 	cc contractCaller.IContractCaller,
+	bh blockHandler.IBlockHandler,
+	cp chainPoller.IChainPoller,
 	l *zap.Logger,
 ) *node.Node {
 	pdf := peeringDataFetcher.NewPeeringDataFetcher(cc, l)
@@ -35,13 +42,15 @@ func createNode(
 		OperatorAddress: operatorAddress,
 		Port:            port,
 		BN254PrivateKey: privateKey,
+		ChainID:         chainID,
 		AVSAddress:      avsAddress,
 		OperatorSetId:   0,
-		Logger:          l,
-	}, pdf)
+	}, pdf, bh, cp, l)
 }
 
 func Test_OnChainIntegration(t *testing.T) {
+	// TODO: Update this test to use MockChainPoller and BlockHandler
+	// See pkg/testutil/test_cluster.go for reference implementation
 	t.Skip()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -104,16 +113,17 @@ func Test_OnChainIntegration(t *testing.T) {
 
 	hasErrors := false
 
-	cc, err := caller.NewContractCaller(ethClient, nil, l)
+	_, err = caller.NewContractCaller(ethClient, nil, l)
 	if err != nil {
 		t.Fatalf("Failed to create contract caller: %v", err)
 	}
 	// ------------------------------------------------------------------------
 	// Create nodes
 	// ------------------------------------------------------------------------
-	_ = createNode(chainConfig.OperatorAccountAddress1, chainConfig.OperatorAccountPrivateKey1, chainConfig.AVSAccountAddress, 7501, cc, l)
-	_ = createNode(chainConfig.OperatorAccountAddress2, chainConfig.OperatorAccountPrivateKey2, chainConfig.AVSAccountAddress, 7502, cc, l)
-	_ = createNode(chainConfig.OperatorAccountAddress3, chainConfig.OperatorAccountPrivateKey3, chainConfig.AVSAccountAddress, 7503, cc, l)
+	// TODO: Update these calls to include chainID, blockHandler, and chainPoller
+	// _ = createNode(chainConfig.OperatorAccountAddress1, chainConfig.OperatorAccountPrivateKey1, chainConfig.AVSAccountAddress, config.ChainId_EthereumAnvil, 7501, cc, bh, poller, l)
+	// _ = createNode(chainConfig.OperatorAccountAddress2, chainConfig.OperatorAccountPrivateKey2, chainConfig.AVSAccountAddress, config.ChainId_EthereumAnvil, 7502, cc, bh, poller, l)
+	// _ = createNode(chainConfig.OperatorAccountAddress3, chainConfig.OperatorAccountPrivateKey3, chainConfig.AVSAccountAddress, config.ChainId_EthereumAnvil, 7503, cc, bh, poller, l)
 
 	// ------------------------------------------------------------------------
 	// Wait and cleanup

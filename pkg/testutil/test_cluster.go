@@ -9,6 +9,7 @@ import (
 
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
@@ -26,6 +27,7 @@ type TestCluster struct {
 	ServerURLs   []string
 	NumNodes     int
 	MasterPubKey types.G2Point
+	MockPoller   *MockChainPoller // Exposed for test control
 }
 
 // NewTestCluster creates a test cluster of KMS nodes with completed DKG
@@ -80,6 +82,15 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 	// Now create peering data fetcher with actual server URLs
 	peeringDataFetcher := createTestPeeringDataFetcherWithURLs(t, addresses, privateKeys, cluster.ServerURLs, numNodes)
 
+	// Create one block handler per node
+	nodeBlockHandlers := make([]blockHandler.IBlockHandler, numNodes)
+	for i := 0; i < numNodes; i++ {
+		nodeBlockHandlers[i] = blockHandler.NewBlockHandler(testLogger)
+	}
+
+	// Create mock poller that broadcasts to all node handlers
+	cluster.MockPoller = NewMockChainPoller(nodeBlockHandlers, 5, testLogger)
+
 	// Create nodes with proper configuration
 	for i := 0; i < numNodes; i++ {
 		portNumber, _ := strconv.Atoi(fmt.Sprintf("750%d", i))
@@ -87,13 +98,12 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 			OperatorAddress: addresses[i],
 			Port:            portNumber,
 			BN254PrivateKey: privateKeys[i],
-			ChainID:         config.ChainId_EthereumAnvil, // Use anvil for tests (1 minute reshare)
+			ChainID:         config.ChainId_EthereumAnvil, // Use anvil for tests (5 block reshare)
 			AVSAddress:      "0x1234567890123456789012345678901234567890",
 			OperatorSetId:   1,
-			Logger:          testLogger,
 		}
 
-		cluster.Nodes[i] = node.NewNode(cfg, peeringDataFetcher)
+		cluster.Nodes[i] = node.NewNode(cfg, peeringDataFetcher, nodeBlockHandlers[i], cluster.MockPoller, testLogger)
 
 		// Replace placeholder server with actual server
 		server := node.NewServer(cluster.Nodes[i], 0)
@@ -105,18 +115,37 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 		}
 	}
 
-	// Nodes now have automatic schedulers running
-	// Wait for automatic DKG to complete (30 second intervals for anvil)
-	t.Logf("Waiting for automatic DKG to complete (interval: 30s, timeout: 45s)...")
-	if !WaitForDKGCompletion(cluster, 45*time.Second) {
+	// Give all nodes time to start their schedulers
+	time.Sleep(200 * time.Millisecond)
+
+	// Emit initial block to initialize the scheduler (block 5)
+	t.Logf("Emitting block 5 to initialize scheduler...")
+	if err := cluster.MockPoller.EmitBlockAtNumber(5); err != nil {
+		t.Fatalf("Failed to emit initial block: %v", err)
+	}
+
+	// Give nodes a moment to initialize
+	time.Sleep(100 * time.Millisecond)
+
+	// Now emit block 10 to trigger DKG (next interval boundary)
+	t.Logf("Emitting block 10 to trigger DKG...")
+	if err := cluster.MockPoller.EmitBlockAtNumber(10); err != nil {
+		t.Fatalf("Failed to emit trigger block: %v", err)
+	}
+
+	// Wait for automatic DKG to complete
+	t.Logf("Waiting for automatic DKG to complete...")
+	if !WaitForDKGCompletion(cluster, 10*time.Second) {
 		t.Fatalf("DKG did not complete within timeout")
 	}
 
 	// Compute master public key from commitments
 	cluster.MasterPubKey = ComputeMasterPublicKey(cluster)
 
-	t.Logf("✓ Test cluster ready with automatic DKG complete")
+	t.Logf("✓ Test cluster ready with DKG complete")
 	t.Logf("  - Nodes: %d", numNodes)
+	t.Logf("  - Block interval: 5 blocks")
+	t.Logf("  - Current block: %d", cluster.MockPoller.GetCurrentBlock())
 	t.Logf("  - Master Public Key: X=%s", cluster.MasterPubKey.X.String()[:20]+"...")
 
 	return cluster
@@ -178,7 +207,13 @@ func WaitForDKGCompletion(cluster *TestCluster, timeout time.Duration) bool {
 }
 
 // WaitForReshare waits for nodes to complete a reshare (key version change)
+// It automatically emits a block to trigger the reshare
 func WaitForReshare(cluster *TestCluster, initialVersions map[int]int64, timeout time.Duration) bool {
+	// Emit next block to trigger reshare (next interval boundary)
+	if err := cluster.MockPoller.EmitBlock(); err != nil {
+		return false
+	}
+
 	deadline := time.Now().Add(timeout)
 	checkInterval := 500 * time.Millisecond
 

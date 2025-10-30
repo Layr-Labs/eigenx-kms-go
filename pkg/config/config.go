@@ -84,14 +84,22 @@ func GetChainIdFromName(name ChainName) (ChainId, error) {
 	return chainId, nil
 }
 
-// Reshare interval constants by chain
+// Reshare interval constants by chain (time-based, deprecated)
 const (
 	ReshareInterval_Mainnet = 10 * time.Minute
 	ReshareInterval_Sepolia = 2 * time.Minute
 	ReshareInterval_Anvil   = 30 * time.Second // Fast interval for testing
 )
 
+// Block interval constants by chain (block-based scheduling)
+const (
+	ReshareBlockInterval_Mainnet = 50  // 50 blocks ~10 minutes (12s per block)
+	ReshareBlockInterval_Sepolia = 10  // 10 blocks ~2 minutes (12s per block)
+	ReshareBlockInterval_Anvil   = 5   // 5 blocks for fast testing
+)
+
 // GetReshareIntervalForChain returns the reshare interval for a given chain
+// Deprecated: Use GetReshareBlockIntervalForChain for block-based scheduling
 func GetReshareIntervalForChain(chainId ChainId) time.Duration {
 	switch chainId {
 	case ChainId_EthereumMainnet:
@@ -102,6 +110,20 @@ func GetReshareIntervalForChain(chainId ChainId) time.Duration {
 		return ReshareInterval_Anvil
 	default:
 		return 10 * time.Minute // Default to mainnet interval
+	}
+}
+
+// GetReshareBlockIntervalForChain returns the block interval for reshares on a given chain
+func GetReshareBlockIntervalForChain(chainId ChainId) int64 {
+	switch chainId {
+	case ChainId_EthereumMainnet:
+		return ReshareBlockInterval_Mainnet
+	case ChainId_EthereumSepolia:
+		return ReshareBlockInterval_Sepolia
+	case ChainId_EthereumAnvil:
+		return ReshareBlockInterval_Anvil
+	default:
+		return ReshareBlockInterval_Mainnet // Default to mainnet interval
 	}
 }
 

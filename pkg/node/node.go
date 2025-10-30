@@ -180,37 +180,42 @@ func (n *Node) startScheduler(ctx context.Context) {
 	go n.blockHandler.ListenToChannel(ctx, n.checkScheduledOperations)
 }
 
-// checkScheduledOperations checks for interval boundaries and executes appropriate protocol
+// checkScheduledOperations checks for block interval boundaries and executes appropriate protocol
 func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
-	now := time.Now()
+	blockNumber := int64(block.Number.Value())
 
-	// Step 1: Calculate rounded interval boundary
-	intervalSeconds := int64(n.reshareInterval.Seconds())
-	roundedTime := (now.Unix() / intervalSeconds) * intervalSeconds
+	// Step 1: Get block interval for this chain
+	blockInterval := config.GetReshareBlockIntervalForChain(n.ChainID)
 
-	// Step 2: Initialize lastProcessedBoundary on first run
+	// Step 2: Check if this block is an interval boundary
+	if blockNumber%blockInterval != 0 {
+		// Not an interval boundary, skip
+		return
+	}
+
+	// Step 3: Initialize on first run (check BEFORE duplicate check to avoid block 0 issue)
 	if n.lastProcessedBoundary == 0 {
-		n.lastProcessedBoundary = roundedTime
-		n.logger.Sugar().Debugw("Initialized interval boundary tracking",
+		n.lastProcessedBoundary = blockNumber
+		n.logger.Sugar().Infow("Initialized block boundary tracking",
 			"operator_address", n.OperatorAddress.Hex(),
-			"rounded_time", roundedTime)
-		return // Don't trigger on first tick
+			"block_number", blockNumber)
+		return // Don't trigger on first block
 	}
 
-	// Step 3: Check if we've already processed this boundary
-	if roundedTime == n.lastProcessedBoundary {
-		return // Already handled this interval
+	// Step 4: Check if we've already processed this block number
+	if blockNumber == n.lastProcessedBoundary {
+		return // Already handled this block
 	}
 
-	// Step 4: Update last processed boundary
-	n.lastProcessedBoundary = roundedTime
+	// Step 5: Update last processed boundary
+	n.lastProcessedBoundary = blockNumber
 
-	n.logger.Sugar().Debugw("Interval boundary reached",
+	n.logger.Sugar().Infow("Block interval boundary reached",
 		"operator_address", n.OperatorAddress.Hex(),
-		"rounded_time", roundedTime,
-		"interval", n.reshareInterval)
+		"block_number", blockNumber,
+		"block_interval", blockInterval)
 
-	// Step 4: Fetch current operators
+	// Step 6: Fetch current operators
 	ctx := context.Background()
 	operators, err := n.fetchCurrentOperators(ctx, n.AVSAddress, n.OperatorSetId)
 	if err != nil {
@@ -220,19 +225,19 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 		return
 	}
 
-	// Step 5: Determine if I'm a new or existing operator
+	// Step 7: Determine if I'm a new or existing operator
 	if !n.hasExistingShares() {
 		// I'm a new operator - need to determine cluster state
 		clusterState := n.detectClusterState(operators)
 
 		if clusterState == "genesis" {
 			// No master key exists - run genesis DKG
-			n.logger.Sugar().Infow("Triggering genesis DKG at interval boundary",
+			n.logger.Sugar().Infow("Triggering genesis DKG at block boundary",
 				"operator_address", n.OperatorAddress.Hex(),
-				"session_timestamp", roundedTime)
+				"block_number", blockNumber)
 
 			go func() {
-				if err := n.RunDKG(roundedTime); err != nil {
+				if err := n.RunDKG(blockNumber); err != nil {
 					n.logger.Sugar().Errorw("Genesis DKG failed",
 						"operator_address", n.OperatorAddress.Hex(),
 						"error", err)
@@ -242,10 +247,10 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 			// Existing cluster - join via reshare
 			n.logger.Sugar().Infow("Joining existing cluster via reshare",
 				"operator_address", n.OperatorAddress.Hex(),
-				"session_timestamp", roundedTime)
+				"block_number", blockNumber)
 
 			go func() {
-				if err := n.RunReshareAsNewOperator(roundedTime); err != nil {
+				if err := n.RunReshareAsNewOperator(blockNumber); err != nil {
 					n.logger.Sugar().Errorw("Failed to join cluster via reshare",
 						"operator_address", n.OperatorAddress.Hex(),
 						"error", err)
@@ -256,11 +261,11 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 		// I'm an existing operator - run normal reshare
 		n.logger.Sugar().Infow("Triggering automatic reshare",
 			"operator_address", n.OperatorAddress.Hex(),
-			"session_timestamp", roundedTime,
-			"interval", n.reshareInterval)
+			"block_number", blockNumber,
+			"block_interval", blockInterval)
 
 		go func() {
-			if err := n.RunReshareAsExistingOperator(roundedTime); err != nil {
+			if err := n.RunReshareAsExistingOperator(blockNumber); err != nil {
 				n.logger.Sugar().Errorw("Automatic reshare failed",
 					"operator_address", n.OperatorAddress.Hex(),
 					"error", err)

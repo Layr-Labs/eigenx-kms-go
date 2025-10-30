@@ -2,6 +2,7 @@ package node
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -22,6 +23,13 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 )
+
+// mockChainPoller is a no-op chain poller for testing
+type mockChainPoller struct{}
+
+func (m *mockChainPoller) Start(ctx context.Context) error {
+	return nil
+}
 
 func Test_SecretsEndpoint(t *testing.T) {
 	t.Run("Flow", func(t *testing.T) { testSecretsEndpointFlow(t) })
@@ -206,10 +214,10 @@ func testSecretsEndpointValidation(t *testing.T) {
 		ChainID:         config.ChainId_EthereumAnvil,
 		AVSAddress:      "0x1234567890123456789012345678901234567890",
 		OperatorSetId:   1,
-		Logger:          testLogger,
 	}
 	bh := blockHandler.NewBlockHandler(testLogger)
-	node := NewNode(cfg, peeringDataFetcher, bh)
+	mockPoller := &mockChainPoller{}
+	node := NewNode(cfg, peeringDataFetcher, bh, mockPoller, testLogger)
 
 	// Test missing AppID
 	req := types.SecretsRequestV1{
@@ -247,10 +255,10 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 		ChainID:         config.ChainId_EthereumAnvil,
 		AVSAddress:      "0x1234567890123456789012345678901234567890",
 		OperatorSetId:   1,
-		Logger:          testLogger,
 	}
 	bh := blockHandler.NewBlockHandler(testLogger)
-	node := NewNode(cfg, peeringDataFetcher, bh)
+	mockPoller := &mockChainPoller{}
+	node := NewNode(cfg, peeringDataFetcher, bh, mockPoller, testLogger)
 
 	// Add test release with specific digest
 	testRelease := &types.Release{
