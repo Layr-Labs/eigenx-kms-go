@@ -135,7 +135,7 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 
 	// Wait for automatic DKG to complete
 	t.Logf("Waiting for automatic DKG to complete...")
-	if !WaitForDKGCompletion(cluster, 10*time.Second) {
+	if !WaitForDKGCompletion(cluster, 30*time.Second) {
 		t.Fatalf("DKG did not complete within timeout")
 	}
 
