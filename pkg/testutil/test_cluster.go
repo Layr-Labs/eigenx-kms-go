@@ -294,12 +294,20 @@ func (c *TestCluster) Close() {
 		return
 	}
 
-	for i, server := range c.Servers {
-		if server != nil {
-			server.Close()
-		}
-		if i < len(c.Nodes) && c.Nodes[i] != nil {
+	// Stop all nodes
+	for i := range c.Nodes {
+		if c.Nodes[i] != nil {
 			_ = c.Nodes[i].Stop()
 		}
 	}
+
+	// Stop httptest servers
+	for _, server := range c.Servers {
+		if server != nil {
+			server.Close()
+		}
+	}
+
+	// Give OS time to release ports (prevents "address already in use" in next test)
+	time.Sleep(100 * time.Millisecond)
 }
