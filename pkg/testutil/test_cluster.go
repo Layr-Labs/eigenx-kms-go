@@ -129,7 +129,7 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 		t.Fatalf("Failed to emit initial block: %v", err)
 	}
 
-	// Give nodes a moment to initialize
+	// Give nodes time to initialize
 	time.Sleep(100 * time.Millisecond)
 
 	// Now emit block 20 to trigger DKG (next interval boundary)

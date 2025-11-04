@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
@@ -196,13 +197,13 @@ func (s *Server) handleDKGCommitment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get or create session for this message
-	session := s.node.getSession(commitMsg.SessionTimestamp)
+	// Get session for this message, wait if not ready yet
+	session := s.node.waitForSession(commitMsg.SessionTimestamp, 5*time.Second)
 	if session == nil {
-		s.node.logger.Sugar().Warnw("Received commitment for unknown session",
+		s.node.logger.Sugar().Warnw("Session not created within timeout",
 			"session_timestamp", commitMsg.SessionTimestamp,
 			"from", senderPeer.OperatorAddress.Hex())
-		http.Error(w, "Unknown session", http.StatusBadRequest)
+		http.Error(w, "Session timeout", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -251,13 +252,13 @@ func (s *Server) handleDKGShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get or create session for this message
-	session := s.node.getSession(shareMsg.SessionTimestamp)
+	// Get session for this message, wait if not ready yet
+	session := s.node.waitForSession(shareMsg.SessionTimestamp, 5*time.Second)
 	if session == nil {
-		s.node.logger.Sugar().Warnw("Received share for unknown session",
+		s.node.logger.Sugar().Warnw("Session not created within timeout",
 			"session_timestamp", shareMsg.SessionTimestamp,
 			"from", senderPeer.OperatorAddress.Hex())
-		http.Error(w, "Unknown session", http.StatusBadRequest)
+		http.Error(w, "Session timeout", http.StatusServiceUnavailable)
 		return
 	}
 
@@ -306,10 +307,10 @@ func (s *Server) handleDKGAck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get or create session for this message
-	session := s.node.getSession(ackMsg.SessionTimestamp)
+	// Get session for this message, wait if not ready yet
+	session := s.node.waitForSession(ackMsg.SessionTimestamp, 5*time.Second)
 	if session == nil {
-		s.node.logger.Sugar().Warnw("Received ack for unknown session",
+		s.node.logger.Sugar().Warnw("Session not created within timeout",
 			"session_timestamp", ackMsg.SessionTimestamp,
 			"from", senderPeer.OperatorAddress.Hex())
 		http.Error(w, "Unknown session", http.StatusBadRequest)

@@ -78,8 +78,10 @@ type Node struct {
 	reshareComplete     map[int]*types.CompletionSignature
 
 	// Session management
-	activeSessions map[int64]*ProtocolSession
-	sessionMutex   sync.RWMutex
+	activeSessions    map[int64]*ProtocolSession
+	sessionMutex      sync.RWMutex
+	sessionNotify     map[int64]chan struct{} // Notifies when session is created
+	sessionNotifyLock sync.Mutex
 
 	// Scheduling
 	enableAutoReshare     bool
@@ -157,6 +159,7 @@ func NewNode(
 		receivedAcks:          make(map[int]map[int]*types.Acknowledgement),
 		reshareComplete:       make(map[int]*types.CompletionSignature),
 		activeSessions:        make(map[int64]*ProtocolSession),
+		sessionNotify:         make(map[int64]chan struct{}),
 		enableAutoReshare:     true, // Always enabled
 		blockHandler:          bh,
 		poller:                cp,
@@ -374,6 +377,14 @@ func (n *Node) createSession(sessionType string, operators []*peering.OperatorSe
 	n.activeSessions[sessionTimestamp] = session
 	n.sessionMutex.Unlock()
 
+	// Notify any waiters that this session is now available
+	n.sessionNotifyLock.Lock()
+	if ch, exists := n.sessionNotify[sessionTimestamp]; exists {
+		close(ch) // Broadcast to all waiters
+		delete(n.sessionNotify, sessionTimestamp)
+	}
+	n.sessionNotifyLock.Unlock()
+
 	n.logger.Sugar().Infow("Created protocol session",
 		"operator_address", n.OperatorAddress.Hex(),
 		"session_timestamp", sessionTimestamp,
@@ -387,6 +398,41 @@ func (n *Node) getSession(sessionTimestamp int64) *ProtocolSession {
 	n.sessionMutex.RLock()
 	defer n.sessionMutex.RUnlock()
 	return n.activeSessions[sessionTimestamp]
+}
+
+// waitForSession waits for a session to be created, with timeout
+// This handles the race condition where a node receives protocol messages
+// before it has created the session (e.g., slower node in block processing)
+func (n *Node) waitForSession(sessionTimestamp int64, timeout time.Duration) *ProtocolSession {
+	// Check if session already exists
+	session := n.getSession(sessionTimestamp)
+	if session != nil {
+		return session
+	}
+
+	// Session doesn't exist yet, get or create notification channel
+	n.sessionNotifyLock.Lock()
+	notifyCh, exists := n.sessionNotify[sessionTimestamp]
+	if !exists {
+		notifyCh = make(chan struct{})
+		n.sessionNotify[sessionTimestamp] = notifyCh
+	}
+	n.sessionNotifyLock.Unlock()
+
+	// Wait for session to be created or timeout
+	select {
+	case <-notifyCh:
+		// Session was created, retrieve it
+		return n.getSession(sessionTimestamp)
+	case <-time.After(timeout):
+		// Timeout - clean up notify channel
+		n.sessionNotifyLock.Lock()
+		if ch, exists := n.sessionNotify[sessionTimestamp]; exists && ch == notifyCh {
+			delete(n.sessionNotify, sessionTimestamp)
+		}
+		n.sessionNotifyLock.Unlock()
+		return nil
+	}
 }
 
 // cleanupSession removes a completed or failed session
