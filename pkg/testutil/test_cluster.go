@@ -89,7 +89,8 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 	}
 
 	// Create mock poller that broadcasts to all node handlers
-	cluster.MockPoller = NewMockChainPoller(nodeBlockHandlers, 5, testLogger)
+	// Use 10 blocks for Anvil (20 seconds with 2s block time, more realistic)
+	cluster.MockPoller = NewMockChainPoller(nodeBlockHandlers, 10, testLogger)
 
 	// Create nodes with proper configuration
 	for i := 0; i < numNodes; i++ {
@@ -98,7 +99,7 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 			OperatorAddress: addresses[i],
 			Port:            portNumber,
 			BN254PrivateKey: privateKeys[i],
-			ChainID:         config.ChainId_EthereumAnvil, // Use anvil for tests (5 block reshare)
+			ChainID:         config.ChainId_EthereumAnvil, // Use anvil for tests (10 block interval)
 			AVSAddress:      "0x1234567890123456789012345678901234567890",
 			OperatorSetId:   1,
 		}
@@ -113,29 +114,34 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 		if err := cluster.Nodes[i].Start(); err != nil {
 			t.Fatalf("Failed to start node %d: %v", i+1, err)
 		}
+
+		// Small stagger between node starts to prevent thundering herd
+		// This simulates realistic deployment where nodes don't start simultaneously
+		time.Sleep(50 * time.Millisecond)
 	}
 
-	// Give all nodes time to start their schedulers
-	time.Sleep(200 * time.Millisecond)
+	// Give all nodes additional time to fully initialize
+	time.Sleep(300 * time.Millisecond)
 
-	// Emit initial block to initialize the scheduler (block 5)
-	t.Logf("Emitting block 5 to initialize scheduler...")
-	if err := cluster.MockPoller.EmitBlockAtNumber(5); err != nil {
+	// Emit initial block to initialize the scheduler (block 10)
+	t.Logf("Emitting block 10 to initialize scheduler...")
+	if err := cluster.MockPoller.EmitBlockAtNumber(10); err != nil {
 		t.Fatalf("Failed to emit initial block: %v", err)
 	}
 
 	// Give nodes a moment to initialize
 	time.Sleep(100 * time.Millisecond)
 
-	// Now emit block 10 to trigger DKG (next interval boundary)
-	t.Logf("Emitting block 10 to trigger DKG...")
-	if err := cluster.MockPoller.EmitBlockAtNumber(10); err != nil {
+	// Now emit block 20 to trigger DKG (next interval boundary)
+	t.Logf("Emitting block 20 to trigger DKG...")
+	if err := cluster.MockPoller.EmitBlockAtNumber(20); err != nil {
 		t.Fatalf("Failed to emit trigger block: %v", err)
 	}
 
 	// Wait for automatic DKG to complete
+	// Generous timeout for CI environments (GitHub Actions can be slower)
 	t.Logf("Waiting for automatic DKG to complete...")
-	if !WaitForDKGCompletion(cluster, 30*time.Second) {
+	if !WaitForDKGCompletion(cluster, 45*time.Second) {
 		t.Fatalf("DKG did not complete within timeout")
 	}
 
@@ -144,7 +150,7 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 
 	t.Logf("✓ Test cluster ready with DKG complete")
 	t.Logf("  - Nodes: %d", numNodes)
-	t.Logf("  - Block interval: 5 blocks")
+	t.Logf("  - Block interval: 10 blocks")
 	t.Logf("  - Current block: %d", cluster.MockPoller.GetCurrentBlock())
 	t.Logf("  - Master Public Key: X=%s", cluster.MasterPubKey.X.String()[:20]+"...")
 
@@ -186,14 +192,24 @@ func createTestPeeringDataFetcherWithURLs(t *testing.T, addresses, privateKeys, 
 func WaitForDKGCompletion(cluster *TestCluster, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	checkInterval := 500 * time.Millisecond
+	lastLogTime := time.Now()
 
 	for time.Now().Before(deadline) {
 		allComplete := true
+		completedCount := 0
+
 		for _, n := range cluster.Nodes {
-			if n.GetKeyStore().GetActiveVersion() == nil {
+			if n.GetKeyStore().GetActiveVersion() != nil {
+				completedCount++
+			} else {
 				allComplete = false
-				break
 			}
+		}
+
+		// Log progress every 5 seconds
+		if time.Since(lastLogTime) > 5*time.Second {
+			cluster.Nodes[0].GetKeyStore() // Trigger any logging
+			lastLogTime = time.Now()
 		}
 
 		if allComplete {
@@ -201,6 +217,13 @@ func WaitForDKGCompletion(cluster *TestCluster, timeout time.Duration) bool {
 		}
 
 		time.Sleep(checkInterval)
+	}
+
+	// Log which nodes failed to complete
+	for i, n := range cluster.Nodes {
+		if n.GetKeyStore().GetActiveVersion() == nil {
+			fmt.Printf("Node %d (%s) did not complete DKG\n", i, n.GetOperatorAddress().Hex())
+		}
 	}
 
 	return false

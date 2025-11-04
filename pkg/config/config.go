@@ -80,7 +80,7 @@ var ChainNameToId = map[ChainName]ChainId{
 const (
 	ReshareBlockInterval_Mainnet = 50 // 50 blocks ~10 minutes (12s per block)
 	ReshareBlockInterval_Sepolia = 10 // 10 blocks ~2 minutes (12s per block)
-	ReshareBlockInterval_Anvil   = 5  // 5 blocks for fast testing
+	ReshareBlockInterval_Anvil   = 10 // 10 blocks for testing (20 seconds with 2s blocks)
 )
 
 // GetReshareBlockIntervalForChain returns the block interval for reshares on a given chain
@@ -108,8 +108,8 @@ func GetProtocolTimeoutForChain(chainId ChainId) time.Duration {
 		// 10 blocks * 12s = 2 minutes, use 90 seconds for protocol timeout
 		return 90 * time.Second
 	case ChainId_EthereumAnvil:
-		// 5 blocks * 1s = 5 seconds, use 4 seconds for protocol timeout
-		return 4 * time.Second
+		// 10 blocks * 2s = 20 seconds, use 15 seconds for protocol timeout
+		return 15 * time.Second
 	default:
 		return 8 * time.Minute // Default to mainnet timeout
 	}
