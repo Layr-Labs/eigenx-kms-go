@@ -27,7 +27,7 @@ func (v *StubVerifier) VerifyAttestation(attestation []byte) (*types.Attestation
 	// 2. Verify the attestation signature
 	// 3. Verify the attestation chain back to Google's root
 	// 4. Extract claims from the attestation JWT
-	
+
 	// For now, parse as JSON for testing
 	var claims types.AttestationClaims
 	if err := json.Unmarshal(attestation, &claims); err != nil {
@@ -39,16 +39,16 @@ func (v *StubVerifier) VerifyAttestation(attestation []byte) (*types.Attestation
 			PublicKey:   []byte("test-pubkey"),
 		}, nil
 	}
-	
+
 	// Basic validation
 	if claims.AppID == "" {
 		return nil, fmt.Errorf("invalid attestation: missing app_id")
 	}
-	
+
 	if claims.ImageDigest == "" {
 		return nil, fmt.Errorf("invalid attestation: missing image_digest")
 	}
-	
+
 	fmt.Printf("Verified attestation for app_id: %s, image: %s\n", claims.AppID, claims.ImageDigest)
 	return &claims, nil
 }

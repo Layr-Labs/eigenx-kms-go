@@ -40,13 +40,13 @@ func testFullReshareProtocol(t *testing.T) {
 	// Create initial cluster
 	cluster := testutil.NewTestCluster(t, 5)
 	defer cluster.Close()
-	
+
 	// Verify initial DKG setup
 	initialMasterPubKey := cluster.GetMasterPublicKey()
 	if initialMasterPubKey.X.Sign() == 0 {
 		t.Fatal("Initial master public key should not be zero")
 	}
-	
+
 	// Verify all nodes have active key shares
 	for i, node := range cluster.Nodes {
 		activeVersion := node.GetKeyStore().GetActiveVersion()
@@ -54,10 +54,10 @@ func testFullReshareProtocol(t *testing.T) {
 			t.Fatalf("Node %d should have valid key share after DKG", i+1)
 		}
 	}
-	
+
 	// Test app ID for reshare testing
 	appID := "reshare-test-app"
-	
+
 	// Verify all nodes can generate partial signatures before reshare
 	for i, node := range cluster.Nodes {
 		partialSig := node.SignAppID(appID, time.Now().Unix())
@@ -65,7 +65,7 @@ func testFullReshareProtocol(t *testing.T) {
 			t.Errorf("Node %d should generate valid partial signature", i+1)
 		}
 	}
-	
+
 	t.Logf("✓ Full reshare protocol test passed - cluster ready for reshare")
 	t.Logf("  - Initial cluster: %d nodes, threshold: %d", cluster.NumNodes, dkg.CalculateThreshold(cluster.NumNodes))
 	t.Logf("  - All nodes have valid DKG key shares")
@@ -122,30 +122,30 @@ func testReshareWithThresholdChange(t *testing.T) {
 	// Test changing from 3-of-5 to 4-of-7 threshold conceptually
 	initialNodes := 5
 	initialThreshold := dkg.CalculateThreshold(initialNodes)
-	
+
 	newNodes := 7
 	newThreshold := dkg.CalculateThreshold(newNodes)
-	
+
 	// Create cluster for initial setup
 	cluster := testutil.NewTestCluster(t, initialNodes)
 	defer cluster.Close()
-	
+
 	// Verify initial threshold
-	expectedThreshold := (2*initialNodes+2)/3
+	expectedThreshold := (2*initialNodes + 2) / 3
 	if initialThreshold != expectedThreshold {
 		t.Errorf("Initial threshold mismatch: expected %d, got %d", expectedThreshold, initialThreshold)
 	}
-	
+
 	// Test that reshare module can handle threshold change
 	// Create test operators for new set (using ChainConfig pattern)
 	newOperators := createTestOperatorsForReshare(t, newNodes)
-	
+
 	// Get a current share from an existing node
 	activeVersion := cluster.Nodes[0].GetKeyStore().GetActiveVersion()
 	if activeVersion == nil {
 		t.Fatal("Should have active version from DKG")
 	}
-	
+
 	// Test that reshare module can generate new shares with new threshold
 	firstNodeAddr := cluster.Nodes[0].GetOperatorAddress()
 	firstNodeID := int(ethcrypto.Keccak256(firstNodeAddr.Bytes())[0])
@@ -154,17 +154,17 @@ func testReshareWithThresholdChange(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to generate new shares with threshold change: %v", err)
 	}
-	
+
 	// Verify new threshold is reflected
 	if len(commitments) != newThreshold {
 		t.Errorf("Expected %d commitments for new threshold, got %d", newThreshold, len(commitments))
 	}
-	
+
 	// Verify shares for all new operators
 	if len(newShares) != len(newOperators) {
 		t.Errorf("Expected %d shares for new operators, got %d", len(newOperators), len(newShares))
 	}
-	
+
 	t.Logf("✓ Threshold change test passed")
 	t.Logf("  - Initial: %d nodes, threshold %d", initialNodes, initialThreshold)
 	t.Logf("  - New: %d nodes, threshold %d", newNodes, newThreshold)
@@ -263,13 +263,13 @@ func addressToNodeID(address common.Address) int {
 func createTestOperatorsForReshare(t *testing.T, numOperators int) []*peering.OperatorSetPeer {
 	// Use the same pattern as other tests to create operators
 	operators := make([]*peering.OperatorSetPeer, numOperators)
-	
+
 	for i := 0; i < numOperators; i++ {
 		operators[i] = &peering.OperatorSetPeer{
 			OperatorAddress: common.HexToAddress(fmt.Sprintf("0x%040d", i+1)),
 			SocketAddress:   fmt.Sprintf("http://localhost:%d", 8080+i),
 		}
 	}
-	
+
 	return operators
 }

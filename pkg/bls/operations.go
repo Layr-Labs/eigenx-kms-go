@@ -27,10 +27,10 @@ func ScalarMulG1(point *G1Point, scalar *fr.Element) *G1Point {
 	if point == nil || point.point == nil || scalar == nil {
 		return NewG1Point(new(bls12381.G1Affine).SetInfinity())
 	}
-	
+
 	scalarBig := new(big.Int)
 	scalar.BigInt(scalarBig)
-	
+
 	result := new(bls12381.G1Affine).ScalarMultiplication(point.point, scalarBig)
 	return NewG1Point(result)
 }
@@ -40,10 +40,10 @@ func ScalarMulG2(point *G2Point, scalar *fr.Element) *G2Point {
 	if point == nil || point.point == nil || scalar == nil {
 		return NewG2Point(new(bls12381.G2Affine).SetInfinity())
 	}
-	
+
 	scalarBig := new(big.Int)
 	scalar.BigInt(scalarBig)
-	
+
 	result := new(bls12381.G2Affine).ScalarMultiplication(point.point, scalarBig)
 	return NewG2Point(result)
 }
@@ -59,7 +59,7 @@ func AddG1(a, b *G1Point) *G1Point {
 	if b == nil || b.point == nil {
 		return a
 	}
-	
+
 	result := new(bls12381.G1Affine).Add(a.point, b.point)
 	return NewG1Point(result)
 }
@@ -75,7 +75,7 @@ func AddG2(a, b *G2Point) *G2Point {
 	if b == nil || b.point == nil {
 		return a
 	}
-	
+
 	result := new(bls12381.G2Affine).Add(a.point, b.point)
 	return NewG2Point(result)
 }
@@ -106,15 +106,15 @@ func GeneratePrivateKeyFromSeed(seed []byte) (*PrivateKey, error) {
 	if len(seed) < 32 {
 		return nil, fmt.Errorf("seed must be at least 32 bytes")
 	}
-	
+
 	// Use the seed to generate a scalar in the field
 	frOrder := fr.Modulus()
 	sk := new(big.Int).SetBytes(seed[:32])
 	sk.Mod(sk, frOrder)
-	
+
 	scalar := new(fr.Element)
 	scalar.SetBigInt(sk)
-	
+
 	return &PrivateKey{scalar: scalar}, nil
 }
 
@@ -150,14 +150,14 @@ func VerifyG1(pubkey *PublicKeyG2, msg []byte, sig *SignatureG1) bool {
 	if pubkey == nil || sig == nil {
 		return false
 	}
-	
+
 	msgPoint := HashToG1(msg)
-	
+
 	// Pairing check: e(sig, G2Gen) == e(H(msg), pubkey)
 	var left, right bls12381.GT
 	left, _ = bls12381.Pair([]bls12381.G1Affine{*sig.point}, []bls12381.G2Affine{*G2Generator.point})
 	right, _ = bls12381.Pair([]bls12381.G1Affine{*msgPoint.point}, []bls12381.G2Affine{*pubkey.point})
-	
+
 	return left.Equal(&right)
 }
 
@@ -167,14 +167,14 @@ func VerifyG2(pubkey *PublicKeyG1, msg []byte, sig *SignatureG2) bool {
 	if pubkey == nil || sig == nil {
 		return false
 	}
-	
+
 	msgPoint := HashToG2(msg)
-	
+
 	// Pairing check: e(G1Gen, sig) == e(pubkey, H(msg))
 	var left, right bls12381.GT
 	left, _ = bls12381.Pair([]bls12381.G1Affine{*G1Generator.point}, []bls12381.G2Affine{*sig.point})
 	right, _ = bls12381.Pair([]bls12381.G1Affine{*pubkey.point}, []bls12381.G2Affine{*msgPoint.point})
-	
+
 	return left.Equal(&right)
 }
 
@@ -183,14 +183,14 @@ func AggregateG1(sigs []*SignatureG1) *SignatureG1 {
 	if len(sigs) == 0 {
 		return &SignatureG1{point: new(bls12381.G1Affine).SetInfinity()}
 	}
-	
+
 	result := NewG1Point(new(bls12381.G1Affine).SetInfinity())
 	for _, sig := range sigs {
 		if sig != nil {
 			result = AddG1(result, NewG1Point(sig.point))
 		}
 	}
-	
+
 	return &SignatureG1{point: result.point}
 }
 
@@ -199,14 +199,14 @@ func AggregateG2(sigs []*SignatureG2) *SignatureG2 {
 	if len(sigs) == 0 {
 		return &SignatureG2{point: new(bls12381.G2Affine).SetInfinity()}
 	}
-	
+
 	result := NewG2Point(new(bls12381.G2Affine).SetInfinity())
 	for _, sig := range sigs {
 		if sig != nil {
 			result = AddG2(result, NewG2Point(sig.point))
 		}
 	}
-	
+
 	return &SignatureG2{point: result.point}
 }
 

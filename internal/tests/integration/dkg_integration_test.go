@@ -38,7 +38,7 @@ func testFullDKGProtocol(t *testing.T) {
 	}
 
 	// Verify threshold properties
-	expectedThreshold := (2*5+2)/3
+	expectedThreshold := (2*5 + 2) / 3
 	if expectedThreshold != 4 {
 		t.Errorf("Expected threshold 4 for 5 nodes, got %d", expectedThreshold)
 	}

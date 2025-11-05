@@ -177,3 +177,4 @@ The `kmsClient` CLI provides application developers with tools to encrypt/decryp
 3. **Encryption**: Uses IBE encryption with computed master public key
 4. **Decryption**: Collects partial signatures via `/app/sign` endpoint and recovers app private key
 5. **Threshold Security**: Requires ⌈2n/3⌉ operator signatures for decryption
+- dont create useless test results files

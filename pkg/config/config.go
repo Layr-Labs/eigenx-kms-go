@@ -76,32 +76,42 @@ var ChainNameToId = map[ChainName]ChainId{
 	ChainName_EthereumAnvil:   ChainId_EthereumAnvil,
 }
 
-func GetChainIdFromName(name ChainName) (ChainId, error) {
-	chainId, ok := ChainNameToId[name]
-	if !ok {
-		return 0, fmt.Errorf("unsupported chain name: %s", name)
-	}
-	return chainId, nil
-}
-
-// Reshare interval constants by chain
+// Block interval constants by chain (block-based scheduling)
 const (
-	ReshareInterval_Mainnet = 10 * time.Minute
-	ReshareInterval_Sepolia = 2 * time.Minute
-	ReshareInterval_Anvil   = 30 * time.Second // Fast interval for testing
+	ReshareBlockInterval_Mainnet = 50 // 50 blocks ~10 minutes (12s per block)
+	ReshareBlockInterval_Sepolia = 10 // 10 blocks ~2 minutes (12s per block)
+	ReshareBlockInterval_Anvil   = 10 // 10 blocks for testing (20 seconds with 2s blocks)
 )
 
-// GetReshareIntervalForChain returns the reshare interval for a given chain
-func GetReshareIntervalForChain(chainId ChainId) time.Duration {
+// GetReshareBlockIntervalForChain returns the block interval for reshares on a given chain
+func GetReshareBlockIntervalForChain(chainId ChainId) int64 {
 	switch chainId {
 	case ChainId_EthereumMainnet:
-		return ReshareInterval_Mainnet
+		return ReshareBlockInterval_Mainnet
 	case ChainId_EthereumSepolia:
-		return ReshareInterval_Sepolia
+		return ReshareBlockInterval_Sepolia
 	case ChainId_EthereumAnvil:
-		return ReshareInterval_Anvil
+		return ReshareBlockInterval_Anvil
 	default:
-		return 10 * time.Minute // Default to mainnet interval
+		return ReshareBlockInterval_Mainnet // Default to mainnet interval
+	}
+}
+
+// GetProtocolTimeoutForChain returns the timeout for protocol operations
+// The timeout should be less than one block interval to prevent overlap
+func GetProtocolTimeoutForChain(chainId ChainId) time.Duration {
+	switch chainId {
+	case ChainId_EthereumMainnet:
+		// 50 blocks * 12s = 10 minutes, use 8 minutes for protocol timeout
+		return 8 * time.Minute
+	case ChainId_EthereumSepolia:
+		// 10 blocks * 12s = 2 minutes, use 90 seconds for protocol timeout
+		return 90 * time.Second
+	case ChainId_EthereumAnvil:
+		// 10 blocks * 2s = 20 seconds, use 15 seconds for protocol timeout
+		return 15 * time.Second
+	default:
+		return 8 * time.Minute // Default to mainnet timeout
 	}
 }
 
@@ -143,23 +153,23 @@ type KMSServerConfig struct {
 	// Node identity
 	OperatorAddress string `json:"operator_address"` // Ethereum address of the operator
 	Port            int    `json:"port"`
-	
+
 	// Chain configuration
 	ChainID   ChainId   `json:"chain_id"`
 	ChainName ChainName `json:"chain_name"`
-	
+
 	// Cryptographic keys
 	BN254PrivateKey string `json:"bn254_private_key"` // BN254 private key for threshold crypto and P2P
-	
+
 	// Blockchain configuration
 	RpcUrl        string `json:"rpc_url"`         // Ethereum RPC endpoint
 	AVSAddress    string `json:"avs_address"`     // AVS contract address
 	OperatorSetId uint32 `json:"operator_set_id"` // Operator set ID
-	
+
 	// Operational settings
 	Debug   bool `json:"debug"`
 	Verbose bool `json:"verbose"`
-	
+
 	// Contract addresses (populated from chain)
 	CoreContracts *CoreContractAddresses `json:"core_contracts,omitempty"`
 }
@@ -185,27 +195,27 @@ func (c *KMSServerConfig) Validate() error {
 	if len(bn254Key) != 66 { // 0x + 64 hex chars
 		return fmt.Errorf("BN254 private key must be 32 bytes (64 hex chars), got %d chars", len(bn254Key)-2)
 	}
-	
+
 	if c.Port < 1 || c.Port > 65535 {
 		return fmt.Errorf("port must be between 1-65535, got %d", c.Port)
 	}
-	
+
 	// Validate chain ID
 	chainName, exists := ChainIdToName[c.ChainID]
 	if !exists {
-		return fmt.Errorf("unsupported chain ID %d. Supported: %d (mainnet), %d (sepolia), %d (anvil)", 
+		return fmt.Errorf("unsupported chain ID %d. Supported: %d (mainnet), %d (sepolia), %d (anvil)",
 			c.ChainID, ChainId_EthereumMainnet, ChainId_EthereumSepolia, ChainId_EthereumAnvil)
 	}
-	
+
 	c.ChainName = chainName
-	
+
 	// Get core contracts for this chain
 	coreContracts, err := GetCoreContractsForChainId(c.ChainID)
 	if err != nil {
 		return fmt.Errorf("failed to get core contracts: %w", err)
 	}
 	c.CoreContracts = coreContracts
-	
+
 	return nil
 }
 
@@ -220,6 +230,6 @@ func GetSupportedChainIDs() []ChainId {
 
 // GetSupportedChainIDsString returns supported chain IDs as strings for CLI help
 func GetSupportedChainIDsString() string {
-	return fmt.Sprintf("%d (mainnet), %d (sepolia), %d (anvil)", 
+	return fmt.Sprintf("%d (mainnet), %d (sepolia), %d (anvil)",
 		ChainId_EthereumMainnet, ChainId_EthereumSepolia, ChainId_EthereumAnvil)
 }

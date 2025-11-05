@@ -54,7 +54,7 @@ func (c *KMSClient) RetrieveSecrets(appID, imageDigest string) (*SecretsResult, 
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate RSA key pair: %w", err)
 	}
-	
+
 	fmt.Printf("KMS Client: Generated ephemeral RSA key pair\n")
 
 	// Step 2: Create runtime attestation (simulated)

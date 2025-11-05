@@ -58,7 +58,7 @@ jobs:
           export PATH=$PATH:$(go env GOPATH)/bin
           
           echo "Running tests"
-          make ci-test
+          make test
   build-binaries:
     runs-on: ubuntu-24.04
     needs: [lint, test]
