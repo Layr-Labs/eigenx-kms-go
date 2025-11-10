@@ -19,9 +19,11 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering/localPeeringDataFetcher"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/registry"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner/inMemoryTransportSigner"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 )
 
 // mockChainPoller is a no-op chain poller for testing
@@ -90,7 +92,17 @@ func testSecretsEndpointFlow(t *testing.T) {
 
 	bh := blockHandler.NewBlockHandler(testLogger)
 	peeringDataFetcher := createTestPeeringDataFetcher(t)
-	node := NewNode(cfg, peeringDataFetcher, bh, nil, testLogger)
+
+	pkBytes, err := hexutil.Decode(chainConfig.OperatorAccountPrivateKey1)
+	if err != nil {
+		t.Fatalf("Failed to decode BN254 private key: %v", err)
+	}
+	imts, err := inMemoryTransportSigner.NewBn254InMemoryTransportSigner(pkBytes, testLogger)
+	if err != nil {
+		t.Fatalf("Failed to create in-memory transport signer: %v", err)
+	}
+
+	node := NewNode(cfg, peeringDataFetcher, bh, nil, imts, testLogger)
 
 	// Add a test key share
 	testShare := new(fr.Element).SetInt64(42)
@@ -217,7 +229,17 @@ func testSecretsEndpointValidation(t *testing.T) {
 	}
 	bh := blockHandler.NewBlockHandler(testLogger)
 	mockPoller := &mockChainPoller{}
-	node := NewNode(cfg, peeringDataFetcher, bh, mockPoller, testLogger)
+
+	pkBytes, err := hexutil.Decode(chainConfig.OperatorAccountPrivateKey1)
+	if err != nil {
+		t.Fatalf("Failed to decode BN254 private key: %v", err)
+	}
+	imts, err := inMemoryTransportSigner.NewBn254InMemoryTransportSigner(pkBytes, testLogger)
+	if err != nil {
+		t.Fatalf("Failed to create in-memory transport signer: %v", err)
+	}
+
+	node := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, testLogger)
 
 	// Test missing AppID
 	req := types.SecretsRequestV1{
@@ -258,7 +280,17 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 	}
 	bh := blockHandler.NewBlockHandler(testLogger)
 	mockPoller := &mockChainPoller{}
-	node := NewNode(cfg, peeringDataFetcher, bh, mockPoller, testLogger)
+
+	pkBytes, err := hexutil.Decode(chainConfig.OperatorAccountPrivateKey1)
+	if err != nil {
+		t.Fatalf("Failed to decode BN254 private key: %v", err)
+	}
+	imts, err := inMemoryTransportSigner.NewBn254InMemoryTransportSigner(pkBytes, testLogger)
+	if err != nil {
+		t.Fatalf("Failed to create in-memory transport signer: %v", err)
+	}
+
+	node := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, testLogger)
 
 	// Add test release with specific digest
 	testRelease := &types.Release{

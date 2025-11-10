@@ -16,6 +16,8 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/node"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering/peeringDataFetcher"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner/inMemoryTransportSigner"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 )
@@ -27,7 +29,7 @@ const (
 //nolint:unused // Used in skipped test, will be needed when test is re-enabled
 func createNode(
 	operatorAddress string,
-	privateKey string,
+	privateKeyHexString string,
 	avsAddress string,
 	chainID config.ChainId,
 	port int,
@@ -37,15 +39,23 @@ func createNode(
 	l *zap.Logger,
 ) *node.Node {
 	pdf := peeringDataFetcher.NewPeeringDataFetcher(cc, l)
+	pkBytes, err := hexutil.Decode(privateKeyHexString)
+	if err != nil {
+		l.Sugar().Fatalf("failed to decode private key: %v", err)
+	}
+	imts, err := inMemoryTransportSigner.NewBn254InMemoryTransportSigner(pkBytes, l)
+	if err != nil {
+		l.Sugar().Fatalf("failed to create in-memory transport signer: %v", err)
+	}
 
 	return node.NewNode(node.Config{
 		OperatorAddress: operatorAddress,
 		Port:            port,
-		BN254PrivateKey: privateKey,
+		BN254PrivateKey: privateKeyHexString,
 		ChainID:         chainID,
 		AVSAddress:      avsAddress,
 		OperatorSetId:   0,
-	}, pdf, bh, cp, l)
+	}, pdf, bh, cp, imts, l)
 }
 
 func Test_OnChainIntegration(t *testing.T) {

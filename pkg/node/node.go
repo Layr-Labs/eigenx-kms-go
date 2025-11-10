@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
-	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
@@ -12,7 +11,9 @@ import (
 
 	chainPoller "github.com/Layr-Labs/chain-indexer/pkg/chainPollers"
 	"github.com/Layr-Labs/chain-indexer/pkg/clients/ethereum"
+	"github.com/Layr-Labs/crypto-libs/pkg/ecdsa"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"go.uber.org/zap"
@@ -66,6 +67,7 @@ type Node struct {
 	rsaEncryption       *encryption.RSAEncryption
 	peeringDataFetcher  peering.IPeeringDataFetcher
 	logger              *zap.Logger
+	transportSigner     transportSigner.ITransportSigner
 
 	// Dynamic components (created when needed)
 	dkg      *dkg.DKG
@@ -126,6 +128,7 @@ func NewNode(
 	pdf peering.IPeeringDataFetcher,
 	bh blockHandler.IBlockHandler,
 	cp chainPoller.IChainPoller,
+	tps transportSigner.ITransportSigner,
 	l *zap.Logger,
 ) *Node {
 	// Parse operator address
@@ -164,13 +167,15 @@ func NewNode(
 		blockHandler:          bh,
 		poller:                cp,
 		lastProcessedBoundary: 0,
+		transportSigner:       tps,
 	}
 
 	// Set node reference in server
 	n.server.node = n
 
 	// Initialize transport with authenticated messaging
-	n.transport = transport.NewClient(transportClientID, operatorAddress, n)
+	// TODO(seanmcgary): this should be injected, not created here
+	n.transport = transport.NewClient(transportClientID, operatorAddress, tps)
 
 	return n
 }
@@ -1006,47 +1011,44 @@ func (n *Node) verifyMessage(authMsg *types.AuthenticatedMessage, senderPeer *pe
 		return fmt.Errorf("payload digest mismatch")
 	}
 
-	// Verify signature using BN254 (must use VerifySolidityCompatible to match SignSolidityCompatible)
-	sig, err := bn254.NewSignatureFromBytes(authMsg.Signature)
-	if err != nil {
-		return fmt.Errorf("invalid signature format: %w", err)
-	}
+	//nolint:staticcheck
+	if senderPeer.CurveType == config.CurveTypeBN254 {
+		// Verify signature using BN254 (must use VerifySolidityCompatible to match SignSolidityCompatible)
+		sig, err := bn254.NewSignatureFromBytes(authMsg.Signature)
+		if err != nil {
+			return fmt.Errorf("invalid signature format: %w", err)
+		}
 
-	// Type assert to BN254 public key
-	bn254PubKey, ok := senderPeer.WrappedPublicKey.PublicKey.(*bn254.PublicKey)
-	if !ok {
-		return fmt.Errorf("sender public key is not BN254 type")
-	}
+		// Type assert to BN254 public key
+		bn254PubKey, ok := senderPeer.WrappedPublicKey.PublicKey.(*bn254.PublicKey)
+		if !ok {
+			return fmt.Errorf("sender public key is not BN254 type")
+		}
 
-	isValid, err := sig.VerifySolidityCompatible(bn254PubKey, authMsg.Hash)
-	if err != nil {
-		return fmt.Errorf("signature verification error: %w", err)
-	}
-	if !isValid {
-		return fmt.Errorf("signature verification failed")
-	}
+		isValid, err := sig.VerifySolidityCompatible(bn254PubKey, authMsg.Hash)
+		if err != nil {
+			return fmt.Errorf("signature verification error: %w", err)
+		}
+		if !isValid {
+			return fmt.Errorf("signature verification failed")
+		}
+	} else if senderPeer.CurveType == config.CurveTypeECDSA {
+		sig, err := ecdsa.NewSignatureFromBytes(authMsg.Signature)
+		if err != nil {
+			return fmt.Errorf("invalid ECDSA signature format: %w", err)
+		}
+		verified, err := sig.VerifyWithAddress(actualHash, senderPeer.WrappedPublicKey.ECDSAAddress)
+		if err != nil {
+			return fmt.Errorf("ECDSA signature verification error: %w", err)
+		}
+		if !verified {
+			return fmt.Errorf("ECDSA signature verification failed")
+		}
 
+	} else {
+		return fmt.Errorf("unsupported curve type for sender: %v", senderPeer.CurveType)
+	}
 	return nil
-}
-
-// CreateAuthenticatedMessage creates an authenticated message wrapper for any payload
-func (n *Node) CreateAuthenticatedMessage(payload interface{}) (*types.AuthenticatedMessage, error) {
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal payload: %w", err)
-	}
-
-	payloadHash := crypto.Keccak256(payloadBytes)
-	signature, err := n.signMessage(payloadBytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to sign message: %w", err)
-	}
-
-	return &types.AuthenticatedMessage{
-		Payload:   payloadBytes,
-		Hash:      [32]byte(payloadHash),
-		Signature: signature,
-	}, nil
 }
 
 // findPeerByAddress finds a peer by their operator address
