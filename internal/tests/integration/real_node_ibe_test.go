@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/client"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/client/kmsClient"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/testutil"
 )
@@ -18,7 +18,7 @@ func Test_IBEIntegration(t *testing.T) {
 	clientLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	// Create KMS client with operator URLs (like a real application would)
-	kmsClient := client.NewKMSClient(cluster.GetServerURLs(), clientLogger)
+	kmsClient := kmsClient.NewKMSClient(cluster.GetServerURLs(), clientLogger)
 
 	// Test Identity-Based Encryption for an application
 	appID := "test-app-ibe"
