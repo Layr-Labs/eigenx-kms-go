@@ -985,18 +985,6 @@ func (n *Node) FinalizeDKG(allCommitments [][]types.G2Point, participantIDs []in
 	return nil
 }
 
-// signMessage signs a message payload using the node's BN254 private key
-func (n *Node) signMessage(payloadBytes []byte) ([]byte, error) {
-	payloadHash := crypto.Keccak256(payloadBytes)
-	var hash32 [32]byte
-	copy(hash32[:], payloadHash)
-	signature, err := n.BN254PrivateKey.SignSolidityCompatible(hash32)
-	if err != nil {
-		return nil, fmt.Errorf("failed to sign message: %w", err)
-	}
-	return signature.Bytes(), nil
-}
-
 // verifyMessage verifies an authenticated message using the sender's BN254 public key
 func (n *Node) verifyMessage(authMsg *types.AuthenticatedMessage, senderPeer *peering.OperatorSetPeer) error {
 	// Verify payload hash
