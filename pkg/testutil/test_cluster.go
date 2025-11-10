@@ -16,8 +16,10 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/node"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering/localPeeringDataFetcher"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner/inMemoryTransportSigner"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 )
 
 // TestCluster represents a cluster of KMS nodes for testing
@@ -104,7 +106,16 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 			OperatorSetId:   1,
 		}
 
-		cluster.Nodes[i] = node.NewNode(cfg, peeringDataFetcher, nodeBlockHandlers[i], cluster.MockPoller, testLogger)
+		pkBytes, err := hexutil.Decode(privateKeys[i])
+		if err != nil {
+			t.Fatalf("Failed to decode BN254 private key: %v", err)
+		}
+		imts, err := inMemoryTransportSigner.NewBn254InMemoryTransportSigner(pkBytes, testLogger)
+		if err != nil {
+			t.Fatalf("Failed to create in-memory transport signer: %v", err)
+		}
+
+		cluster.Nodes[i] = node.NewNode(cfg, peeringDataFetcher, nodeBlockHandlers[i], cluster.MockPoller, imts, testLogger)
 
 		// Replace placeholder server with actual server
 		server := node.NewServer(cluster.Nodes[i], 0)

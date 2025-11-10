@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
@@ -29,21 +30,16 @@ var DefaultRetryConfig = RetryConfig{
 	BackoffMultiple: 2.0,
 }
 
-// MessageSigner interface for signing messages
-type MessageSigner interface {
-	CreateAuthenticatedMessage(payload interface{}) (*types.AuthenticatedMessage, error)
-}
-
 // Client handles network communication
 type Client struct {
 	nodeID       int
 	operatorAddr common.Address
-	signer       MessageSigner
+	signer       transportSigner.ITransportSigner
 	retryConfig  RetryConfig
 }
 
 // NewClient creates a new transport client
-func NewClient(nodeID int, operatorAddr common.Address, signer MessageSigner) *Client {
+func NewClient(nodeID int, operatorAddr common.Address, signer transportSigner.ITransportSigner) *Client {
 	return &Client{
 		nodeID:       nodeID,
 		operatorAddr: operatorAddr,
@@ -89,8 +85,13 @@ func (c *Client) SendDKGShare(toOperator *peering.OperatorSetPeer, share *fr.Ele
 		Share:               types.SerializeFr(share),
 	}
 
+	msgBytes, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
 	// Create authenticated message
-	authMsg, err := c.signer.CreateAuthenticatedMessage(msg)
+	authMsg, err := c.signer.CreateAuthenticatedMessage(msgBytes)
 	if err != nil {
 		return fmt.Errorf("failed to create authenticated message: %w", err)
 	}
@@ -130,8 +131,13 @@ func (c *Client) SendReshareShare(toOperator *peering.OperatorSetPeer, share *fr
 		Share:               types.SerializeFr(share),
 	}
 
+	msgBytes, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
 	// Create authenticated message
-	authMsg, err := c.signer.CreateAuthenticatedMessage(msg)
+	authMsg, err := c.signer.CreateAuthenticatedMessage(msgBytes)
 	if err != nil {
 		return fmt.Errorf("failed to create authenticated message: %w", err)
 	}
@@ -172,8 +178,13 @@ func (c *Client) BroadcastDKGCommitments(operators []*peering.OperatorSetPeer, c
 		Commitments:         commitments,
 	}
 
+	msgBytes, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
 	// Create authenticated message
-	authMsg, err := c.signer.CreateAuthenticatedMessage(msg)
+	authMsg, err := c.signer.CreateAuthenticatedMessage(msgBytes)
 	if err != nil {
 		return fmt.Errorf("failed to create authenticated message: %w", err)
 	}
@@ -204,8 +215,13 @@ func (c *Client) BroadcastReshareCommitments(operators []*peering.OperatorSetPee
 		Commitments:         commitments,
 	}
 
+	msgBytes, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
 	// Create authenticated message
-	authMsg, err := c.signer.CreateAuthenticatedMessage(msg)
+	authMsg, err := c.signer.CreateAuthenticatedMessage(msgBytes)
 	if err != nil {
 		return fmt.Errorf("failed to create authenticated message: %w", err)
 	}
@@ -235,8 +251,13 @@ func (c *Client) SendDKGAcknowledgement(ack *types.Acknowledgement, toOperator *
 		Ack:                 ack,
 	}
 
+	msgBytes, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
 	// Create authenticated message
-	authMsg, err := c.signer.CreateAuthenticatedMessage(msg)
+	authMsg, err := c.signer.CreateAuthenticatedMessage(msgBytes)
 	if err != nil {
 		return fmt.Errorf("failed to create authenticated message: %w", err)
 	}
@@ -264,8 +285,13 @@ func (c *Client) SendReshareAcknowledgement(ack *types.Acknowledgement, toOperat
 		Ack:                 ack,
 	}
 
+	msgBytes, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
 	// Create authenticated message
-	authMsg, err := c.signer.CreateAuthenticatedMessage(msg)
+	authMsg, err := c.signer.CreateAuthenticatedMessage(msgBytes)
 	if err != nil {
 		return fmt.Errorf("failed to create authenticated message: %w", err)
 	}
@@ -293,8 +319,13 @@ func (c *Client) BroadcastCompletionSignature(operators []*peering.OperatorSetPe
 		Completion:          completion,
 	}
 
+	msgBytes, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal payload: %w", err)
+	}
+
 	// Create authenticated message
-	authMsg, err := c.signer.CreateAuthenticatedMessage(msg)
+	authMsg, err := c.signer.CreateAuthenticatedMessage(msgBytes)
 	if err != nil {
 		return fmt.Errorf("failed to create authenticated message: %w", err)
 	}
