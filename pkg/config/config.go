@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
+	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
 type CurveType string
@@ -232,4 +233,27 @@ func GetSupportedChainIDs() []ChainId {
 func GetSupportedChainIDsString() string {
 	return fmt.Sprintf("%d (mainnet), %d (sepolia), %d (anvil)",
 		ChainId_EthereumMainnet, ChainId_EthereumSepolia, ChainId_EthereumAnvil)
+}
+
+type RemoteSignerConfig struct {
+	Url         string `json:"url" yaml:"url"`
+	CACert      string `json:"caCert" yaml:"caCert"`
+	Cert        string `json:"cert" yaml:"cert"`
+	Key         string `json:"key" yaml:"key"`
+	FromAddress string `json:"fromAddress" yaml:"fromAddress"`
+	PublicKey   string `json:"publicKey" yaml:"publicKey"`
+}
+
+func (rsc *RemoteSignerConfig) Validate() error {
+	var allErrors field.ErrorList
+	if rsc.FromAddress == "" {
+		allErrors = append(allErrors, field.Required(field.NewPath("fromAddress"), "fromAddress is required"))
+	}
+	if rsc.PublicKey == "" {
+		allErrors = append(allErrors, field.Required(field.NewPath("publicKey"), "publicKey is required"))
+	}
+	if len(allErrors) > 0 {
+		return allErrors.ToAggregate()
+	}
+	return nil
 }
