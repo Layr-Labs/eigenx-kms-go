@@ -9,9 +9,9 @@ import (
 )
 
 var (
-	// G1Generator is the generator point for G1
+	// G1Generator is the generator point for G1 in affine form
 	G1Generator *G1Point
-	// G2Generator is the generator point for G2
+	// G2Generator is the generator point for G2 in affine form
 	G2Generator *G2Point
 )
 
@@ -23,77 +23,107 @@ func init() {
 }
 
 // ScalarMulG1 performs scalar multiplication on G1
-func ScalarMulG1(point *G1Point, scalar *fr.Element) *G1Point {
+// Warning: This does not check if the point is at infinity or generator. The caller should validate these conditions first if needed.
+func ScalarMulG1(point *G1Point, scalar *fr.Element) (*G1Point, error) {
+
+	// check if the point is in subgroup and on curve else return an error
+	// even though the function is called IsInSubGroup, it checks if the point is on curve and in subgroup
+	if !point.point.IsInSubGroup() {
+		return nil, fmt.Errorf("point is not in subgroup or curve")
+	}
+
 	if point == nil || point.point == nil || scalar == nil {
-		return NewG1Point(new(bls12381.G1Affine).SetInfinity())
+		return nil, fmt.Errorf("invalid point or scalar")
 	}
 
 	scalarBig := new(big.Int)
 	scalar.BigInt(scalarBig)
 
 	result := new(bls12381.G1Affine).ScalarMultiplication(point.point, scalarBig)
-	return NewG1Point(result)
+	return NewG1Point(result), nil
 }
 
 // ScalarMulG2 performs scalar multiplication on G2
-func ScalarMulG2(point *G2Point, scalar *fr.Element) *G2Point {
+// Warning: This does not check if the point is at infinity or generator. The caller should validate these conditions first if needed.
+func ScalarMulG2(point *G2Point, scalar *fr.Element) (*G2Point, error) {
+	// audit: point should be checked if it's on curve and in subgroup and not generator or infinity
+	//        and make sure they are valid cases
+
+	if !point.point.IsInSubGroup() {
+		return nil, fmt.Errorf("point is not in subgroup or curve")
+	}
+
 	if point == nil || point.point == nil || scalar == nil {
-		return NewG2Point(new(bls12381.G2Affine).SetInfinity())
+		return nil, fmt.Errorf("invalid point or scalar")
 	}
 
 	scalarBig := new(big.Int)
 	scalar.BigInt(scalarBig)
 
 	result := new(bls12381.G2Affine).ScalarMultiplication(point.point, scalarBig)
-	return NewG2Point(result)
+	return NewG2Point(result), nil
 }
 
 // AddG1 adds two G1 points
-func AddG1(a, b *G1Point) *G1Point {
-	if a == nil || a.point == nil {
-		if b == nil || b.point == nil {
-			return NewG1Point(new(bls12381.G1Affine).SetInfinity())
-		}
-		return b
+// Warning: This does not check if the point is at infinity or generator. The caller should validate these conditions first if needed.
+func AddG1(a, b *G1Point) (*G1Point, error) {
+
+	if a == nil || a.point == nil || b == nil || b.point == nil {
+		return nil, fmt.Errorf("a or b G1 point passed in was nil")
 	}
-	if b == nil || b.point == nil {
-		return a
+
+	if !a.point.IsInSubGroup() {
+		return nil, fmt.Errorf("a is not in subgroup or curve")
+	}
+	if !b.point.IsInSubGroup() {
+		return nil, fmt.Errorf("b is not in subgroup or curve")
 	}
 
 	result := new(bls12381.G1Affine).Add(a.point, b.point)
-	return NewG1Point(result)
+	return NewG1Point(result), nil
 }
 
 // AddG2 adds two G2 points
-func AddG2(a, b *G2Point) *G2Point {
-	if a == nil || a.point == nil {
-		if b == nil || b.point == nil {
-			return NewG2Point(new(bls12381.G2Affine).SetInfinity())
-		}
-		return b
+// Warning: This does not check if the point is at infinity or generator. The caller should validate these conditions first if needed.
+func AddG2(a, b *G2Point) (*G2Point, error) {
+
+	if a == nil || a.point == nil || b == nil || b.point == nil {
+		return nil, fmt.Errorf("a or b G2 point passed in was nil")
 	}
-	if b == nil || b.point == nil {
-		return a
+
+	if !a.point.IsInSubGroup() {
+		return nil, fmt.Errorf("a is not in subgroup or curve")
+	}
+	if !b.point.IsInSubGroup() {
+		return nil, fmt.Errorf("b is not in subgroup or curve")
 	}
 
 	result := new(bls12381.G2Affine).Add(a.point, b.point)
-	return NewG2Point(result)
+	return NewG2Point(result), nil
 }
 
 // HashToG1 hashes a message to a G1 point using proper hash-to-curve
-func HashToG1(msg []byte) *G1Point {
-	g1Point, _ := bls12381.HashToG1(msg, []byte("BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_"))
-	return NewG1Point(&g1Point)
+func HashToG1(msg []byte) (*G1Point, error) {
+	g1Point, err := bls12381.HashToG1(msg, []byte("BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash to G1: %w", err)
+	}
+	return NewG1Point(&g1Point), nil
 }
 
 // HashToG2 hashes a message to a G2 point using proper hash-to-curve
-func HashToG2(msg []byte) *G2Point {
-	g2Point, _ := bls12381.HashToG2(msg, []byte("BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_"))
-	return NewG2Point(&g2Point)
+func HashToG2(msg []byte) (*G2Point, error) {
+	g2Point, err := bls12381.HashToG2(msg, []byte("BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_NUL_"))
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash to G2: %w", err)
+	}
+	return NewG2Point(&g2Point), nil
 }
 
 // GeneratePrivateKey generates a random private key
 func GeneratePrivateKey() (*PrivateKey, error) {
+	// audit: use the gomodule to keep this either only in memory or avoid writing to file system in swap stages.
+	//        there is a library for this.
 	scalar := new(fr.Element)
 	if _, err := scalar.SetRandom(); err != nil {
 		return nil, fmt.Errorf("failed to generate random scalar: %w", err)
@@ -103,6 +133,8 @@ func GeneratePrivateKey() (*PrivateKey, error) {
 
 // GeneratePrivateKeyFromSeed generates a deterministic private key from seed
 func GeneratePrivateKeyFromSeed(seed []byte) (*PrivateKey, error) {
+	// audit: use the gomodule to keep this either only in memory or avoid writing to file system in swap stages.
+	//        there is a library for this.
 	if len(seed) < 32 {
 		return nil, fmt.Errorf("seed must be at least 32 bytes")
 	}
@@ -112,6 +144,7 @@ func GeneratePrivateKeyFromSeed(seed []byte) (*PrivateKey, error) {
 	sk := new(big.Int).SetBytes(seed[:32])
 	sk.Mod(sk, frOrder)
 
+	// audit: check to make sure that the sk is not some basic element like 0 or 1 or -1 or other basic elements.
 	scalar := new(fr.Element)
 	scalar.SetBigInt(sk)
 
@@ -120,62 +153,80 @@ func GeneratePrivateKeyFromSeed(seed []byte) (*PrivateKey, error) {
 
 // GetPublicKeyG1 derives the G1 public key from private key
 func (sk *PrivateKey) GetPublicKeyG1() *PublicKeyG1 {
-	pk := ScalarMulG1(G1Generator, sk.scalar)
+	pk, _ := ScalarMulG1(G1Generator, sk.scalar)
 	return &PublicKeyG1{point: pk.point}
 }
 
 // GetPublicKeyG2 derives the G2 public key from private key
 func (sk *PrivateKey) GetPublicKeyG2() *PublicKeyG2 {
-	pk := ScalarMulG2(G2Generator, sk.scalar)
+	pk, _ := ScalarMulG2(G2Generator, sk.scalar)
 	return &PublicKeyG2{point: pk.point}
 }
 
 // SignG1 signs a message by hashing to G1 and multiplying by private key
-func (sk *PrivateKey) SignG1(msg []byte) *SignatureG1 {
-	msgPoint := HashToG1(msg)
-	sig := ScalarMulG1(msgPoint, sk.scalar)
-	return &SignatureG1{point: sig.point}
+func (sk *PrivateKey) SignG1(msg []byte) (*SignatureG1, error) {
+	msgPoint, err := HashToG1(msg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash to G1: %w", err)
+	}
+	sig, err := ScalarMulG1(msgPoint, sk.scalar)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign G1: %w", err)
+	}
+	return &SignatureG1{point: sig.point}, nil
 }
 
 // SignG2 signs a message by hashing to G2 and multiplying by private key
-func (sk *PrivateKey) SignG2(msg []byte) *SignatureG2 {
-	msgPoint := HashToG2(msg)
-	sig := ScalarMulG2(msgPoint, sk.scalar)
-	return &SignatureG2{point: sig.point}
+func (sk *PrivateKey) SignG2(msg []byte) (*SignatureG2, error) {
+	msgPoint, err := HashToG2(msg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash to G2: %w", err)
+	}
+	sig, err := ScalarMulG2(msgPoint, sk.scalar)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign G2: %w", err)
+	}
+	return &SignatureG2{point: sig.point}, nil
 }
 
 // VerifyG1 verifies a G1 signature using pairing check
 // e(sig, G2Generator) == e(H(msg), pubkey)
-func VerifyG1(pubkey *PublicKeyG2, msg []byte, sig *SignatureG1) bool {
+func VerifyG1(pubkey *PublicKeyG2, msg []byte, sig *SignatureG1) (bool, error) {
 	if pubkey == nil || sig == nil {
-		return false
+		return false, fmt.Errorf("pubkey or sig is nil")
 	}
 
-	msgPoint := HashToG1(msg)
+	msgPoint, err := HashToG1(msg)
+	if err != nil {
+		return false, fmt.Errorf("failed to hash to G1: %w", err)
+	}
 
 	// Pairing check: e(sig, G2Gen) == e(H(msg), pubkey)
 	var left, right bls12381.GT
 	left, _ = bls12381.Pair([]bls12381.G1Affine{*sig.point}, []bls12381.G2Affine{*G2Generator.point})
 	right, _ = bls12381.Pair([]bls12381.G1Affine{*msgPoint.point}, []bls12381.G2Affine{*pubkey.point})
 
-	return left.Equal(&right)
+	return left.Equal(&right), nil
 }
 
 // VerifyG2 verifies a G2 signature using pairing check
 // e(G1Generator, sig) == e(pubkey, H(msg))
-func VerifyG2(pubkey *PublicKeyG1, msg []byte, sig *SignatureG2) bool {
+func VerifyG2(pubkey *PublicKeyG1, msg []byte, sig *SignatureG2) (bool, error) {
 	if pubkey == nil || sig == nil {
-		return false
+		return false, fmt.Errorf("pubkey or sig is nil")
 	}
 
-	msgPoint := HashToG2(msg)
+	msgPoint, err := HashToG2(msg)
+	if err != nil {
+		return false, fmt.Errorf("failed to hash to G2: %w", err)
+	}
 
 	// Pairing check: e(G1Gen, sig) == e(pubkey, H(msg))
 	var left, right bls12381.GT
 	left, _ = bls12381.Pair([]bls12381.G1Affine{*G1Generator.point}, []bls12381.G2Affine{*sig.point})
 	right, _ = bls12381.Pair([]bls12381.G1Affine{*pubkey.point}, []bls12381.G2Affine{*msgPoint.point})
 
-	return left.Equal(&right)
+	return left.Equal(&right), nil
 }
 
 // AggregateG1 aggregates multiple G1 signatures
@@ -187,7 +238,7 @@ func AggregateG1(sigs []*SignatureG1) *SignatureG1 {
 	result := NewG1Point(new(bls12381.G1Affine).SetInfinity())
 	for _, sig := range sigs {
 		if sig != nil {
-			result = AddG1(result, NewG1Point(sig.point))
+			result, _ = AddG1(result, NewG1Point(sig.point))
 		}
 	}
 
@@ -203,7 +254,7 @@ func AggregateG2(sigs []*SignatureG2) *SignatureG2 {
 	result := NewG2Point(new(bls12381.G2Affine).SetInfinity())
 	for _, sig := range sigs {
 		if sig != nil {
-			result = AddG2(result, NewG2Point(sig.point))
+			result, _ = AddG2(result, NewG2Point(sig.point))
 		}
 	}
 

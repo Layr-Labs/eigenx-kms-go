@@ -197,7 +197,7 @@ func testReshareSecretConsistency(t *testing.T) {
 	// Generate shares by evaluating polynomial at actual node IDs
 	shares := make(map[int]*fr.Element)
 	for i := 0; i < 5; i++ {
-		shares[nodeIDs[i]] = eigenxcrypto.EvaluatePolynomial(poly, nodeIDs[i])
+		shares[nodeIDs[i]] = eigenxcrypto.EvaluatePolynomial(poly, int64(nodeIDs[i]))
 	}
 
 	// Each node reshares preserving their share

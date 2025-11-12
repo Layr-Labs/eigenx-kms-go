@@ -22,27 +22,42 @@ func testPointOperations(t *testing.T) {
 	// Test scalar multiplication
 	scalar := new(fr.Element).SetInt64(42)
 
-	g1Result := ScalarMulG1(G1Generator, scalar)
+	g1Result, err := ScalarMulG1(G1Generator, scalar)
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G1: %v", err)
+	}
 	if g1Result.IsZero() {
 		t.Error("ScalarMulG1 should not return zero for non-zero scalar")
 	}
 
-	g2Result := ScalarMulG2(G2Generator, scalar)
+	g2Result, err := ScalarMulG2(G2Generator, scalar)
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G2: %v", err)
+	}
 	if g2Result.IsZero() {
 		t.Error("ScalarMulG2 should not return zero for non-zero scalar")
 	}
 
 	// Test addition
 	scalar2 := new(fr.Element).SetInt64(7)
-	g1Point2 := ScalarMulG1(G1Generator, scalar2)
+	g1Point2, err := ScalarMulG1(G1Generator, scalar2)
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G1: %v", err)
+	}
 
-	sum := AddG1(g1Result, g1Point2)
+	sum, err := AddG1(g1Result, g1Point2)
+	if err != nil {
+		t.Fatalf("Failed to add G1: %v", err)
+	}
 	if sum.IsZero() {
 		t.Error("AddG1 should not return zero for non-zero points")
 	}
 
 	// Test commutativity
-	sum2 := AddG1(g1Point2, g1Result)
+	sum2, err := AddG1(g1Point2, g1Result)
+	if err != nil {
+		t.Fatalf("Failed to add G1: %v", err)
+	}
 	if !sum.Equal(sum2) {
 		t.Error("Addition should be commutative")
 	}
@@ -51,20 +66,29 @@ func testPointOperations(t *testing.T) {
 func testHashToPoint(t *testing.T) {
 	msg := []byte("test message")
 
-	g1Point := HashToG1(msg)
+	g1Point, err := HashToG1(msg)
+	if err != nil {
+		t.Fatalf("Failed to hash to G1: %v", err)
+	}
 	if g1Point.IsZero() {
 		t.Error("HashToG1 should not return zero")
 	}
 
 	// Test deterministic
-	g1Point2 := HashToG1(msg)
+	g1Point2, err := HashToG1(msg)
+	if err != nil {
+		t.Fatalf("Failed to hash to G1: %v", err)
+	}
 	if !g1Point.Equal(g1Point2) {
 		t.Error("HashToG1 should be deterministic")
 	}
 
 	// Different messages should give different points
 	msg2 := []byte("different message")
-	g1Point3 := HashToG1(msg2)
+	g1Point3, err := HashToG1(msg2)
+	if err != nil {
+		t.Fatalf("Failed to hash to G1: %v", err)
+	}
 	if g1Point.Equal(g1Point3) {
 		t.Error("Different messages should hash to different points")
 	}
@@ -83,22 +107,37 @@ func testSignatureScheme(t *testing.T) {
 	msg := []byte("message to sign")
 
 	// Test G1 signature
-	sigG1 := sk.SignG1(msg)
-	valid := VerifyG1(pkG2, msg, sigG1)
+	sigG1, err := sk.SignG1(msg)
+	if err != nil {
+		t.Fatalf("Failed to sign G1: %v", err)
+	}
+	valid, err := VerifyG1(pkG2, msg, sigG1)
+	if err != nil {
+		t.Fatalf("Failed to verify G1: %v", err)
+	}
 	if !valid {
 		t.Error("Valid G1 signature should verify")
 	}
 
 	// Test with wrong message
 	wrongMsg := []byte("wrong message")
-	valid = VerifyG1(pkG2, wrongMsg, sigG1)
+	valid, err = VerifyG1(pkG2, wrongMsg, sigG1)
+	if err != nil {
+		t.Fatalf("Failed to verify G1: %v", err)
+	}
 	if valid {
 		t.Error("Signature should not verify with wrong message")
 	}
 
 	// Test G2 signature
-	sigG2 := sk.SignG2(msg)
-	valid = VerifyG2(pkG1, msg, sigG2)
+	sigG2, err := sk.SignG2(msg)
+	if err != nil {
+		t.Fatalf("Failed to sign G2: %v", err)
+	}
+	valid, err = VerifyG2(pkG1, msg, sigG2)
+	if err != nil {
+		t.Fatalf("Failed to verify G2: %v", err)
+	}
 	if !valid {
 		t.Error("Valid G2 signature should verify")
 	}
@@ -154,14 +193,20 @@ func testShareVerification(t *testing.T) {
 	poly := GeneratePolynomial(secret, 2)
 
 	// Create commitments
-	commitments := CreateCommitments(poly)
+	commitments, err := CreateCommitments(poly)
+	if err != nil {
+		t.Fatalf("Failed to create commitments: %v", err)
+	}
 
 	// Generate shares
 	shares := GenerateShares(poly, []int{1, 2, 3, 4, 5})
 
 	// Verify all shares
 	for nodeID, share := range shares {
-		valid := VerifyShare(nodeID, share, commitments)
+		valid, err := VerifyShare(nodeID, share, commitments)
+		if err != nil {
+			t.Fatalf("Failed to verify share: %v", err)
+		}
 		if !valid {
 			t.Errorf("Valid share for node %d should verify", nodeID)
 		}
@@ -169,7 +214,10 @@ func testShareVerification(t *testing.T) {
 
 	// Test with invalid share
 	invalidShare := new(fr.Element).SetInt64(999999)
-	valid := VerifyShare(1, invalidShare, commitments)
+	valid, err := VerifyShare(1, invalidShare, commitments)
+	if err != nil {
+		t.Fatalf("Failed to verify share: %v", err)
+	}
 	if valid {
 		t.Error("Invalid share should not verify")
 	}
@@ -194,7 +242,10 @@ func testLagrangeInterpolation(t *testing.T) {
 func testBigIntConversion(t *testing.T) {
 	// Test G1 conversion
 	scalar := new(fr.Element).SetInt64(123)
-	g1Point := ScalarMulG1(G1Generator, scalar)
+	g1Point, err := ScalarMulG1(G1Generator, scalar)
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G1: %v", err)
+	}
 
 	x, y := g1Point.ToBigInt()
 	t.Logf("G1 X bytes length: %d", len(x.Bytes()))
@@ -210,7 +261,10 @@ func testBigIntConversion(t *testing.T) {
 	}
 
 	// Test G2 conversion
-	g2Point := ScalarMulG2(G2Generator, scalar)
+	g2Point, err := ScalarMulG2(G2Generator, scalar)
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G2: %v", err)
+	}
 
 	x2, y2 := g2Point.ToBigInt()
 	g2Recovered, err := G2PointFromBigInt(x2, y2)
@@ -235,8 +289,14 @@ func testPolynomialCommitments(t *testing.T) {
 	poly2[1].SetInt64(25) // Different
 	poly2[2].SetInt64(30)
 
-	commitments1 := CreateCommitments(poly1)
-	commitments2 := CreateCommitments(poly2)
+	commitments1, err := CreateCommitments(poly1)
+	if err != nil {
+		t.Fatalf("Failed to create commitments: %v", err)
+	}
+	commitments2, err := CreateCommitments(poly2)
+	if err != nil {
+		t.Fatalf("Failed to create commitments: %v", err)
+	}
 
 	// Same constant terms should have same first commitment
 	if !commitments1[0].Equal(commitments2[0]) {

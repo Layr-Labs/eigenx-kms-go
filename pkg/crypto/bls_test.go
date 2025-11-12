@@ -166,7 +166,7 @@ func testEvaluatePolynomial(t *testing.T) {
 	poly[2].SetInt64(3) // x^2 coefficient
 
 	tests := []struct {
-		x        int
+		x        int64
 		expected int64
 	}{
 		{0, 1},  // f(0) = 1
@@ -220,7 +220,7 @@ func testRecoverSecret(t *testing.T) {
 	// Generate shares
 	shares := make(map[int]*fr.Element)
 	for i := 1; i <= 3; i++ {
-		shares[i] = EvaluatePolynomial(poly, i)
+		shares[i] = EvaluatePolynomial(poly, int64(i))
 	}
 
 	// Recover secret
@@ -286,7 +286,7 @@ func testRecoverAppPrivateKey(t *testing.T) {
 	// Create shares by evaluating polynomial
 	shares := make(map[int]*fr.Element)
 	for i := 1; i <= 5; i++ {
-		shares[i] = EvaluatePolynomial(poly, i)
+		shares[i] = EvaluatePolynomial(poly, int64(i))
 	}
 
 	// Create partial signatures using the shares
