@@ -3,8 +3,12 @@ package integration
 import (
 	"testing"
 
+<<<<<<< HEAD
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/client/kmsClient"
+=======
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/kmsClient"
+>>>>>>> 14788c7 (feat: add support for web3signer)
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/testutil"
 )
