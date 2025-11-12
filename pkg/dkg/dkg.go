@@ -56,7 +56,7 @@ func (d *DKG) GenerateShares() (map[int]*fr.Element, []types.G2Point, error) {
 	shares := make(map[int]*fr.Element)
 	for _, op := range d.operators {
 		opNodeID := addressToNodeID(op.OperatorAddress)
-		share := crypto.EvaluatePolynomial(d.poly, opNodeID)
+		share := crypto.EvaluatePolynomial(d.poly, int64(opNodeID))
 		shares[opNodeID] = share
 	}
 

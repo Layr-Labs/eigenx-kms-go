@@ -1,23 +1,17 @@
 package bls
 
 import (
+	"fmt"
+
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
 )
 
 // EvaluatePolynomial evaluates a polynomial at point x
-func EvaluatePolynomial(poly polynomial.Polynomial, x int) *fr.Element {
-	xFr := new(fr.Element).SetInt64(int64(x))
-	result := new(fr.Element).Set(&poly[0])
-
-	xPower := new(fr.Element).SetOne()
-	for k := 1; k < len(poly); k++ {
-		xPower.Mul(xPower, xFr)
-		term := new(fr.Element).Mul(&poly[k], xPower)
-		result.Add(result, term)
-	}
-
-	return result
+func EvaluatePolynomial(poly polynomial.Polynomial, x int64) *fr.Element {
+	xFr := new(fr.Element).SetInt64(x)
+	result := poly.Eval(xFr)
+	return &result
 }
 
 // ComputeLagrangeCoefficient computes the Lagrange coefficient for participant i at x=0
@@ -86,27 +80,34 @@ func GenerateShares(poly polynomial.Polynomial, participantIDs []int) map[int]*f
 	shares := make(map[int]*fr.Element)
 
 	for _, id := range participantIDs {
-		shares[id] = EvaluatePolynomial(poly, id)
+		shares[id] = EvaluatePolynomial(poly, int64(id))
 	}
 
 	return shares
 }
 
 // CreateCommitments creates polynomial commitments in G2
-func CreateCommitments(poly polynomial.Polynomial) []*G2Point {
+func CreateCommitments(poly polynomial.Polynomial) ([]*G2Point, error) {
 	commitments := make([]*G2Point, len(poly))
 
 	for i, coeff := range poly {
-		commitments[i] = ScalarMulG2(G2Generator, &coeff)
+		commitment, err := ScalarMulG2(G2Generator, &coeff)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create commitment: %w", err)
+		}
+		commitments[i] = commitment
 	}
 
-	return commitments
+	return commitments, nil
 }
 
 // VerifyShare verifies a share against polynomial commitments
-func VerifyShare(nodeID int, share *fr.Element, commitments []*G2Point) bool {
+func VerifyShare(nodeID int, share *fr.Element, commitments []*G2Point) (bool, error) {
 	// Compute share * G2
-	shareCommitment := ScalarMulG2(G2Generator, share)
+	shareCommitment, err := ScalarMulG2(G2Generator, share)
+	if err != nil {
+		return false, fmt.Errorf("failed to compute share commitment: %w", err)
+	}
 
 	// Compute expected commitment from polynomial commitments
 	// C_expected = Σ commitments[k] * nodeID^k
@@ -117,10 +118,16 @@ func VerifyShare(nodeID int, share *fr.Element, commitments []*G2Point) bool {
 
 	for k := 1; k < len(commitments); k++ {
 		nodePower.Mul(nodePower, nodeFr)
-		term := ScalarMulG2(commitments[k], nodePower)
-		expectedCommitment = AddG2(expectedCommitment, term)
+		term, err := ScalarMulG2(commitments[k], nodePower)
+		if err != nil {
+			return false, fmt.Errorf("failed to compute term: %w", err)
+		}
+		expectedCommitment, err = AddG2(expectedCommitment, term)
+		if err != nil {
+			return false, fmt.Errorf("failed to compute expected commitment: %w", err)
+		}
 	}
 
 	// Check if share * G2 == expected commitment
-	return shareCommitment.Equal(expectedCommitment)
+	return shareCommitment.Equal(expectedCommitment), nil
 }

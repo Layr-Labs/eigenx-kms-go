@@ -62,7 +62,7 @@ func (r *Reshare) GenerateNewShares(currentShare *fr.Element, newThreshold int) 
 	newShares := make(map[int]*fr.Element)
 	for _, op := range r.operators {
 		opNodeID := addressToNodeID(op.OperatorAddress)
-		share := crypto.EvaluatePolynomial(r.poly, opNodeID)
+		share := crypto.EvaluatePolynomial(r.poly, int64(opNodeID))
 		newShares[opNodeID] = share
 	}
 

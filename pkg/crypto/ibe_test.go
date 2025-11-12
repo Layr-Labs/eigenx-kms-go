@@ -162,7 +162,7 @@ func testEncryptionPersistenceAcrossReshare(t *testing.T) {
 	// Generate initial key shares
 	initialShares := make([]*fr.Element, initialNodes)
 	for i := 0; i < initialNodes; i++ {
-		initialShares[i] = EvaluatePolynomial(masterPoly, i+1)
+		initialShares[i] = EvaluatePolynomial(masterPoly, int64(i+1))
 	}
 
 	// Create master public key and encrypt data
@@ -208,7 +208,7 @@ func testEncryptionPersistenceAcrossReshare(t *testing.T) {
 
 		// Generate new shares for all new operators
 		for _, newNodeID := range newOperators {
-			newShare := EvaluatePolynomial(newPoly, newNodeID)
+			newShare := EvaluatePolynomial(newPoly, int64(newNodeID))
 			if newShares[newNodeID] == nil {
 				newShares[newNodeID] = new(fr.Element).SetZero()
 			}
@@ -263,7 +263,7 @@ func testThresholdSignatureRecovery(t *testing.T) {
 	// Generate key shares
 	keyShares := make(map[int]*fr.Element)
 	for i := 1; i <= numNodes; i++ {
-		keyShares[i] = EvaluatePolynomial(poly, i)
+		keyShares[i] = EvaluatePolynomial(poly, int64(i))
 	}
 
 	// Generate partial signatures (what each KMS node would compute)

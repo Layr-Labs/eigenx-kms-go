@@ -37,7 +37,10 @@ func ScalarMulG1(point types.G1Point, scalar *fr.Element) types.G1Point {
 	}
 
 	// Perform scalar multiplication
-	result := bls.ScalarMulG1(g1Point, scalar)
+	result, err := bls.ScalarMulG1(g1Point, scalar)
+	if err != nil {
+		return types.G1Point{X: big.NewInt(0), Y: big.NewInt(0)}
+	}
 
 	// Convert back to types.G1Point
 	x, y := result.ToBigInt()
@@ -54,7 +57,10 @@ func ScalarMulG2(point types.G2Point, scalar *fr.Element) types.G2Point {
 	}
 
 	// Perform scalar multiplication
-	result := bls.ScalarMulG2(g2Point, scalar)
+	result, err := bls.ScalarMulG2(g2Point, scalar)
+	if err != nil {
+		return types.G2Point{X: big.NewInt(0), Y: big.NewInt(0)}
+	}
 
 	// Convert back to types.G2Point
 	x, y := result.ToBigInt()
@@ -75,7 +81,10 @@ func AddG1(a, b types.G1Point) types.G1Point {
 	}
 
 	// Perform addition
-	result := bls.AddG1(aPoint, bPoint)
+	result, err := bls.AddG1(aPoint, bPoint)
+	if err != nil {
+		return types.G1Point{X: big.NewInt(0), Y: big.NewInt(0)}
+	}
 
 	// Convert back to types.G1Point
 	x, y := result.ToBigInt()
@@ -96,7 +105,10 @@ func AddG2(a, b types.G2Point) types.G2Point {
 	}
 
 	// Perform addition
-	result := bls.AddG2(aPoint, bPoint)
+	result, err := bls.AddG2(aPoint, bPoint)
+	if err != nil {
+		return types.G2Point{X: big.NewInt(0), Y: big.NewInt(0)}
+	}
 
 	// Convert back to types.G2Point
 	x, y := result.ToBigInt()
@@ -119,7 +131,10 @@ func PointsEqualG2(a, b types.G2Point) bool {
 
 // HashToG1 hashes a string to a G1 point using proper hash-to-curve
 func HashToG1(appID string) types.G1Point {
-	g1Point := bls.HashToG1([]byte(appID))
+	g1Point, err := bls.HashToG1([]byte(appID))
+	if err != nil {
+		return types.G1Point{X: big.NewInt(0), Y: big.NewInt(0)}
+	}
 	x, y := g1Point.ToBigInt()
 	return types.G1Point{X: x, Y: y}
 }
@@ -135,7 +150,7 @@ func HashCommitment(commitments []types.G2Point) [32]byte {
 }
 
 // EvaluatePolynomial evaluates a polynomial at point x
-func EvaluatePolynomial(poly polynomial.Polynomial, x int) *fr.Element {
+func EvaluatePolynomial(poly polynomial.Polynomial, x int64) *fr.Element {
 	return bls.EvaluatePolynomial(poly, x)
 }
 
@@ -196,7 +211,11 @@ func VerifyShareWithCommitments(nodeID int, share *fr.Element, commitments []typ
 	}
 
 	// Use the BLS module's verification
-	return bls.VerifyShare(nodeID, share, blsCommitments)
+	valid, err := bls.VerifyShare(nodeID, share, blsCommitments)
+	if err != nil {
+		return false
+	}
+	return valid
 }
 
 // GetAppPublicKey computes the public key for an application given the master public key
