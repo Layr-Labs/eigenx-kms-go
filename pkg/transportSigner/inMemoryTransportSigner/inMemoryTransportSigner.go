@@ -5,7 +5,6 @@ import (
 
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
 	"github.com/Layr-Labs/crypto-libs/pkg/ecdsa"
-	"github.com/Layr-Labs/crypto-libs/pkg/signing"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -14,7 +13,7 @@ import (
 
 type InMemoryTransportSigner struct {
 	logger     *zap.Logger
-	privateKey signing.PrivateKey
+	privateKey interface{}
 	curveType  config.CurveType
 }
 
@@ -22,8 +21,7 @@ func NewBn254InMemoryTransportSigner(
 	privateKey []byte,
 	logger *zap.Logger,
 ) (*InMemoryTransportSigner, error) {
-	scheme := bn254.NewScheme()
-	key, err := scheme.NewPrivateKeyFromBytes(privateKey)
+	key, err := bn254.NewPrivateKeyFromBytes(privateKey)
 	if err != nil {
 		return nil, fmt.Errorf("error loading private key: %w", err)
 	}
@@ -35,8 +33,7 @@ func NewECDSAInMemoryTransportSigner(
 	privateKey []byte,
 	logger *zap.Logger,
 ) (*InMemoryTransportSigner, error) {
-	scheme := ecdsa.NewScheme()
-	key, err := scheme.NewPrivateKeyFromBytes(privateKey)
+	key, err := ecdsa.NewPrivateKeyFromBytes(privateKey)
 	if err != nil {
 		return nil, fmt.Errorf("error loading private key: %w", err)
 	}
@@ -45,7 +42,7 @@ func NewECDSAInMemoryTransportSigner(
 }
 
 func NewInMemoryTransportSigner(
-	key signing.PrivateKey,
+	key interface{},
 	curveType config.CurveType,
 	logger *zap.Logger,
 ) *InMemoryTransportSigner {
@@ -56,38 +53,35 @@ func NewInMemoryTransportSigner(
 	}
 }
 
-func (its *InMemoryTransportSigner) signBN254Message(hash [32]byte) (*bn254.Signature, error) {
-	pkBytes := its.privateKey.Bytes()
-	bn254Key, err := bn254.NewPrivateKeyFromBytes(pkBytes)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create BN254 private key: %w", err)
+// data is the raw message bytes to sign
+func (its *InMemoryTransportSigner) SignMessage(data []byte) ([]byte, error) {
+	var sigBytes []byte
+	hashedData := crypto.Keccak256Hash(data)
+	if its.curveType == config.CurveTypeBN254 {
+		pk := its.privateKey.(*bn254.PrivateKey)
+		sig, err := pk.SignSolidityCompatible(hashedData)
+		if err != nil {
+			return nil, err
+		}
+		return sig.Bytes(), nil
 	}
-
-	sig, err := bn254Key.SignSolidityCompatible(hash)
-	if err != nil {
-		return nil, fmt.Errorf("failed to sign message with BN254 key: %w", err)
+	if its.curveType == config.CurveTypeECDSA {
+		pk := its.privateKey.(*ecdsa.PrivateKey)
+		sig, err := pk.Sign(hashedData[:])
+		if err != nil {
+			return nil, err
+		}
+		return sig.Bytes(), nil
 	}
-	return sig, nil
+	return sigBytes, nil
 }
 
 func (its *InMemoryTransportSigner) CreateAuthenticatedMessage(data []byte) (*transportSigner.SignedMessage, error) {
 	hash := crypto.Keccak256Hash(data)
 
-	var sigBytes []byte
-	if its.curveType == config.CurveTypeBN254 {
-		// the BN254 library's .Sign() function doesnt currently use the solidity-compatible signing,
-		// so we cant use the generic scheme.Sign() interface
-		sig, err := its.signBN254Message(hash)
-		if err != nil {
-			return nil, fmt.Errorf("failed to sign message with BN254 key: %w", err)
-		}
-		sigBytes = sig.Bytes()
-	} else {
-		sig, err := its.privateKey.Sign(hash.Bytes())
-		if err != nil {
-			return nil, fmt.Errorf("failed to sign message: %w", err)
-		}
-		sigBytes = sig.Bytes()
+	sigBytes, err := its.SignMessage(data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign authenticated message: %w", err)
 	}
 
 	return &transportSigner.SignedMessage{

@@ -228,6 +228,12 @@ function lowercaseAddress() {
 
 avsAccountPublicKey=$(cast wallet public-key --private-key $avsAccountPk)
 
+operatorAccountPublicKey_1=$(cast wallet public-key --private-key "$operatorAccountPk_1")
+operatorAccountPublicKey_2=$(cast wallet public-key --private-key "$operatorAccountPk_2")
+operatorAccountPublicKey_3=$(cast wallet public-key --private-key "$operatorAccountPk_3")
+operatorAccountPublicKey_4=$(cast wallet public-key --private-key "$operatorAccountPk_4")
+operatorAccountPublicKey_5=$(cast wallet public-key --private-key "$operatorAccountPk_5")
+
 # create a heredoc json file and dump it to internal/testData/chain-config.json
 cat <<EOF > internal/testData/chain-config.json
 {
@@ -236,14 +242,19 @@ cat <<EOF > internal/testData/chain-config.json
       "avsAccountPublicKey": "$avsAccountPublicKey",
       "operatorAccountAddress_1": "$operatorAccountAddress_1",
       "operatorAccountPk_1": "$operatorAccountPk_1",
+      "operatorAccountPublicKey_1": "$operatorAccountPublicKey_1",
       "operatorAccountAddress_2": "$operatorAccountAddress_2",
       "operatorAccountPk_2": "$operatorAccountPk_2",
+      "operatorAccountPublicKey_2": "$operatorAccountPublicKey_2",
       "operatorAccountAddress_3": "$operatorAccountAddress_3",
       "operatorAccountPk_3": "$operatorAccountPk_3",
+      "operatorAccountPublicKey_3": "$operatorAccountPublicKey_3",
       "operatorAccountAddress_4": "$operatorAccountAddress_4",
       "operatorAccountPk_4": "$operatorAccountPk_4",
+      "operatorAccountPublicKey_4": "$operatorAccountPublicKey_4",
       "operatorAccountAddress_5": "$operatorAccountAddress_5",
       "operatorAccountPk_5": "$operatorAccountPk_5",
+      "operatorAccountPublicKey_5": "$operatorAccountPublicKey_5",
       "forkL1Block": "$anvilL1StartBlock"
 }
 EOF
