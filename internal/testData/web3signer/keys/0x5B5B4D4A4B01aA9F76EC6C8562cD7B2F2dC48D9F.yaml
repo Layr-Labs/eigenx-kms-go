@@ -1,0 +1,3 @@
+type: "file-raw"
+keyType: "SECP256K1"  # For ETH1
+privateKey: "0x0xf977ed3eb4c222aaf3c54a2e912c89b2015015e95e994ad0c2d42f7ac590a775"
