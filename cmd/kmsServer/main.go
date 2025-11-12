@@ -17,6 +17,8 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/node"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering/peeringDataFetcher"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner/inMemoryTransportSigner"
+	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/urfave/cli/v2"
 )
 
@@ -170,8 +172,17 @@ func runKMSServer(c *cli.Context) error {
 
 	pdf := peeringDataFetcher.NewPeeringDataFetcher(contractCaller, l)
 
+	pkBytes, err := hexutil.Decode(kmsConfig.BN254PrivateKey)
+	if err != nil {
+		l.Sugar().Fatalw("Failed to decode private key", "error", err)
+	}
+	imts, err := inMemoryTransportSigner.NewBn254InMemoryTransportSigner(pkBytes, l)
+	if err != nil {
+		l.Sugar().Fatalw("Failed to create in-memory transport signer", "error", err)
+	}
+
 	// Create and configure the node
-	n := node.NewNode(nodeConfig, pdf, bh, poller, l)
+	n := node.NewNode(nodeConfig, pdf, bh, poller, imts, l)
 
 	if c.Bool("verbose") {
 		l.Sugar().Infow("KMS Server Configuration",
