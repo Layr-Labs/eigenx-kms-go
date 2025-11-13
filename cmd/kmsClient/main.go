@@ -266,10 +266,13 @@ func decryptCommand(c *cli.Context) error {
 	}
 
 	// Step 2: Recover application private key
-	appPrivateKey := crypto.RecoverAppPrivateKey(appID, partialSigs, threshold)
+	appPrivateKey, err := crypto.RecoverAppPrivateKey(appID, partialSigs, threshold)
+	if err != nil {
+		return fmt.Errorf("failed to recover application private key: %w", err)
+	}
 
 	// Step 3: Decrypt data
-	decryptedData, err := crypto.DecryptForApp(appID, appPrivateKey, encryptedData)
+	decryptedData, err := crypto.DecryptForApp(appID, *appPrivateKey, encryptedData)
 	if err != nil {
 		return fmt.Errorf("failed to decrypt data: %w", err)
 	}
@@ -372,7 +375,7 @@ func getMasterPublicKey(appID string, operators *peering.OperatorSetPeers) (type
 	fmt.Printf("🔑 Computing master public key from %d operator commitments...\n", successful)
 	masterPubKey := crypto.ComputeMasterPublicKey(allCommitments)
 
-	return masterPubKey, nil
+	return *masterPubKey, nil
 }
 
 // collectPartialSignatures collects partial signatures from threshold number of operators

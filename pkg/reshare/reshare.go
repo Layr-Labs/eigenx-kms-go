@@ -69,7 +69,11 @@ func (r *Reshare) GenerateNewShares(currentShare *fr.Element, newThreshold int) 
 	// Create commitments in G2
 	commitments := make([]types.G2Point, newThreshold)
 	for k := 0; k < newThreshold; k++ {
-		commitments[k] = crypto.ScalarMulG2(crypto.G2Generator, &coeffs[k])
+		commitment, err := crypto.ScalarMulG2(crypto.G2Generator, &coeffs[k])
+		if err != nil {
+			return nil, nil, err
+		}
+		commitments[k] = *commitment
 	}
 
 	return newShares, commitments, nil
@@ -78,7 +82,10 @@ func (r *Reshare) GenerateNewShares(currentShare *fr.Element, newThreshold int) 
 // VerifyNewShare verifies a reshared share against commitments
 func (r *Reshare) VerifyNewShare(fromID int, share *fr.Element, commitments []types.G2Point) bool {
 	// Same verification as DKG
-	leftSide := crypto.ScalarMulG2(crypto.G2Generator, share)
+	leftSide, err := crypto.ScalarMulG2(crypto.G2Generator, share)
+	if err != nil {
+		return false
+	}
 
 	jFr := new(fr.Element).SetInt64(int64(r.nodeID))
 	jPower := new(fr.Element).SetOne()
@@ -86,11 +93,22 @@ func (r *Reshare) VerifyNewShare(fromID int, share *fr.Element, commitments []ty
 
 	for k := 1; k < len(commitments); k++ {
 		jPower.Mul(jPower, jFr)
-		term := crypto.ScalarMulG2(commitments[k], jPower)
-		rightSide = crypto.AddG2(rightSide, term)
+		term, err := crypto.ScalarMulG2(commitments[k], jPower)
+		if err != nil {
+			return false
+		}
+		tmpRightSide, err := crypto.AddG2(rightSide, *term)
+		if err != nil {
+			return false
+		}
+		rightSide = *tmpRightSide
 	}
 
-	return crypto.PointsEqualG2(leftSide, rightSide)
+	equal, err := crypto.PointsEqualG2(*leftSide, rightSide)
+	if err != nil {
+		return false
+	}
+	return equal
 }
 
 // ComputeNewKeyShare computes the new key share using Lagrange interpolation
