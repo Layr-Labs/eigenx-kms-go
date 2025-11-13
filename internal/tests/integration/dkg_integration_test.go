@@ -3,6 +3,7 @@ package integration
 import (
 	"testing"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/testutil"
 )
 
@@ -33,7 +34,11 @@ func testFullDKGProtocol(t *testing.T) {
 
 	// Verify master public key was computed
 	masterPubKey := cluster.GetMasterPublicKey()
-	if masterPubKey.X.Sign() == 0 {
+	masterPubKeyG2, err := bls.NewG2PointFromCompressedBytes(masterPubKey.CompressedBytes)
+	if err != nil {
+		t.Fatalf("Failed to convert master public key to G2 point: %v", err)
+	}
+	if masterPubKeyG2.IsZero() {
 		t.Fatal("Master public key should not be zero after DKG")
 	}
 

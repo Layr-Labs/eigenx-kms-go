@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
@@ -111,7 +112,13 @@ func ExampleAppClient() {
 	}
 
 	fmt.Printf("Successfully recovered application private key!\n")
-	fmt.Printf("Private key X coordinate: %x\n", appPrivateKey.X.Bytes()[:8])
+	appPrivateKeyG1, err := bls.NewG1PointFromCompressedBytes(appPrivateKey.CompressedBytes)
+	if err != nil {
+		fmt.Printf("Failed to convert application private key to G1 point: %v\n", err)
+		return
+	}
+	appPrivateKeyAffine := appPrivateKeyG1.ToAffine()
+	fmt.Printf("Private key X coordinate: %x\n", appPrivateKeyAffine.X.Bytes())
 
 	// Step 8: Use the private key to decrypt environment variables
 	// In a real application, you would:

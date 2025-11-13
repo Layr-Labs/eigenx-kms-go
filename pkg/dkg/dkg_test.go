@@ -2,7 +2,6 @@ package dkg
 
 import (
 	"fmt"
-	"math/big"
 	"testing"
 
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
@@ -216,8 +215,8 @@ func testCreateAcknowledgement(t *testing.T) {
 
 	// Create test commitments
 	commitments := []types.G2Point{
-		{X: big.NewInt(1), Y: big.NewInt(2)},
-		{X: big.NewInt(3), Y: big.NewInt(4)},
+		{CompressedBytes: []byte{1, 2}},
+		{CompressedBytes: []byte{3, 4}},
 	}
 
 	// Mock signer function

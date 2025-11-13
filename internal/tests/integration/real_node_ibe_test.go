@@ -3,6 +3,7 @@ package integration
 import (
 	"testing"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/client"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/testutil"
@@ -31,7 +32,11 @@ func Test_IBEIntegration(t *testing.T) {
 		t.Fatalf("Failed to get master public key: %v", err)
 	}
 
-	if masterPubKey.X.Sign() == 0 {
+	masterPubKeyG2, err := bls.NewG2PointFromCompressedBytes(masterPubKey.CompressedBytes)
+	if err != nil {
+		t.Fatalf("Failed to convert master public key to G2 point: %v", err)
+	}
+	if masterPubKeyG2.IsZero() {
 		t.Fatal("Master public key should not be zero")
 	}
 

@@ -14,6 +14,7 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/urfave/cli/v2"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
@@ -307,9 +308,14 @@ func getPubkeyCommand(c *cli.Context) error {
 		return fmt.Errorf("failed to get master public key: %w", err)
 	}
 
+	masterPubKeyG2, err := bls.NewG2PointFromCompressedBytes(masterPubKey.CompressedBytes)
+	if err != nil {
+		return fmt.Errorf("failed to convert master public key to G2 point: %w", err)
+	}
+	masterPubKeyAffine := masterPubKeyG2.ToAffine()
 	fmt.Printf("✅ Master Public Key:\n")
-	fmt.Printf("  X: %s\n", masterPubKey.X.String())
-	fmt.Printf("  Y: %s\n", masterPubKey.Y.String())
+	fmt.Printf("  X: %s\n", masterPubKeyAffine.X.String())
+	fmt.Printf("  Y: %s\n", masterPubKeyAffine.Y.String())
 
 	return nil
 }
@@ -373,7 +379,10 @@ func getMasterPublicKey(appID string, operators *peering.OperatorSetPeers) (type
 
 	// Step 2: Compute master public key from commitments
 	fmt.Printf("🔑 Computing master public key from %d operator commitments...\n", successful)
-	masterPubKey := crypto.ComputeMasterPublicKey(allCommitments)
+	masterPubKey, err := crypto.ComputeMasterPublicKey(allCommitments)
+	if err != nil {
+		return types.G2Point{}, fmt.Errorf("failed to compute master public key: %w", err)
+	}
 
 	return *masterPubKey, nil
 }

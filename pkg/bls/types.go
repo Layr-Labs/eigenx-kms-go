@@ -147,6 +147,36 @@ func (p *G2Point) ToBigInt() (*big.Int, *big.Int) {
 	return new(big.Int).SetBytes(bytes), big.NewInt(0)
 }
 
+// ToAffine converts G1Point to a G1Affine point
+func (p *G1Point) ToAffine() *bls12381.G1Affine {
+	return p.point
+}
+
+// ToAffine converts G2Point to a G2Affine point
+func (p *G2Point) ToAffine() *bls12381.G2Affine {
+	return p.point
+}
+
+// NewG1PointFromCompressedBytes creates a G1Point from compressed bytes
+func NewG1PointFromCompressedBytes(compressedBytes []byte) (*G1Point, error) {
+	point := new(bls12381.G1Affine)
+	_, err := point.SetBytes(compressedBytes)
+	if err != nil {
+		return nil, err
+	}
+	return NewG1Point(point), nil
+}
+
+// NewG2PointFromCompressedBytes creates a G2Point from compressed bytes
+func NewG2PointFromCompressedBytes(compressedBytes []byte) (*G2Point, error) {
+	point := new(bls12381.G2Affine)
+	_, err := point.SetBytes(compressedBytes)
+	if err != nil {
+		return nil, err
+	}
+	return NewG2Point(point), nil
+}
+
 // G1PointFromBigInt creates a G1Point from big integers (for legacy compatibility)
 // audit: this function is weird, we should probably split it to requiring only x and both x and y.
 func G1PointFromBigInt(x, y *big.Int) (*G1Point, error) {

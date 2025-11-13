@@ -2,8 +2,8 @@ package crypto
 
 import (
 	"crypto/sha256"
+	"errors"
 	"fmt"
-	"math/big"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
@@ -20,17 +20,14 @@ var (
 
 func init() {
 	// Initialize generators from the BLS module
-	g1X, g1Y := bls.G1Generator.ToBigInt()
-	G1Generator = types.G1Point{X: g1X, Y: g1Y}
-
-	g2X, g2Y := bls.G2Generator.ToBigInt()
-	G2Generator = types.G2Point{X: g2X, Y: g2Y}
+	G1Generator = types.G1Point{CompressedBytes: bls.G1Generator.Marshal()}
+	G2Generator = types.G2Point{CompressedBytes: bls.G2Generator.Marshal()}
 }
 
 // ScalarMulG1 performs scalar multiplication on G1
 func ScalarMulG1(point types.G1Point, scalar *fr.Element) (*types.G1Point, error) {
 	// Convert to BLS module point
-	g1Point, err := bls.G1PointFromBigInt(point.X, point.Y)
+	g1Point, err := bls.NewG1PointFromCompressedBytes(point.CompressedBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -42,14 +39,13 @@ func ScalarMulG1(point types.G1Point, scalar *fr.Element) (*types.G1Point, error
 	}
 
 	// Convert back to types.G1Point
-	x, y := result.ToBigInt()
-	return &types.G1Point{X: x, Y: y}, nil
+	return &types.G1Point{CompressedBytes: result.Marshal()}, nil
 }
 
 // ScalarMulG2 performs scalar multiplication on G2
 func ScalarMulG2(point types.G2Point, scalar *fr.Element) (*types.G2Point, error) {
 	// Convert to BLS module point
-	g2Point, err := bls.G2PointFromBigInt(point.X, point.Y)
+	g2Point, err := bls.NewG2PointFromCompressedBytes(point.CompressedBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -61,8 +57,7 @@ func ScalarMulG2(point types.G2Point, scalar *fr.Element) (*types.G2Point, error
 	}
 
 	// Convert back to types.G2Point
-	x, y := result.ToBigInt()
-	return &types.G2Point{X: x, Y: y}, nil
+	return &types.G2Point{CompressedBytes: result.Marshal()}, nil
 }
 
 // AddG1 adds two G1 points
@@ -71,8 +66,8 @@ func AddG1(a, b types.G1Point) (*types.G1Point, error) {
 	// Convert to BLS module points
 	// audit: this function is weird, we should probably split it to requiring only x and both x and y.
 	//        this function by default will be on curve due to is current working. After checking, check subgroup.
-	aPoint, err1 := bls.G1PointFromBigInt(a.X, a.Y)
-	bPoint, err2 := bls.G1PointFromBigInt(b.X, b.Y)
+	aPoint, err1 := bls.NewG1PointFromCompressedBytes(a.CompressedBytes)
+	bPoint, err2 := bls.NewG1PointFromCompressedBytes(b.CompressedBytes)
 
 	if err1 != nil {
 		return nil, err1
@@ -88,15 +83,14 @@ func AddG1(a, b types.G1Point) (*types.G1Point, error) {
 	}
 
 	// Convert back to types.G1Point
-	x, y := result.ToBigInt()
-	return &types.G1Point{X: x, Y: y}, nil
+	return &types.G1Point{CompressedBytes: result.Marshal()}, nil
 }
 
 // AddG2 adds two G2 points
 func AddG2(a, b types.G2Point) (*types.G2Point, error) {
 	// Convert to BLS module points
-	aPoint, err1 := bls.G2PointFromBigInt(a.X, a.Y)
-	bPoint, err2 := bls.G2PointFromBigInt(b.X, b.Y)
+	aPoint, err1 := bls.NewG2PointFromCompressedBytes(a.CompressedBytes)
+	bPoint, err2 := bls.NewG2PointFromCompressedBytes(b.CompressedBytes)
 
 	if err1 != nil {
 		return nil, err1
@@ -112,15 +106,14 @@ func AddG2(a, b types.G2Point) (*types.G2Point, error) {
 	}
 
 	// Convert back to types.G2Point
-	x, y := result.ToBigInt()
-	return &types.G2Point{X: x, Y: y}, nil
+	return &types.G2Point{CompressedBytes: result.Marshal()}, nil
 }
 
 // PointsEqualG2 checks if two G2 points are equal
 func PointsEqualG2(a, b types.G2Point) (bool, error) {
 	// Convert to BLS module points
-	aPoint, err1 := bls.G2PointFromBigInt(a.X, a.Y)
-	bPoint, err2 := bls.G2PointFromBigInt(b.X, b.Y)
+	aPoint, err1 := bls.NewG2PointFromCompressedBytes(a.CompressedBytes)
+	bPoint, err2 := bls.NewG2PointFromCompressedBytes(b.CompressedBytes)
 
 	if err1 != nil || err2 != nil {
 		// If either conversion fails, compare the big ints directly
@@ -136,16 +129,14 @@ func HashToG1(appID string) (*types.G1Point, error) {
 	if err != nil {
 		return nil, err
 	}
-	x, y := g1Point.ToBigInt()
-	return &types.G1Point{X: x, Y: y}, nil
+	return &types.G1Point{CompressedBytes: g1Point.Marshal()}, nil
 }
 
 // HashCommitment hashes commitments
 func HashCommitment(commitments []types.G2Point) [32]byte {
 	h := sha256.New()
 	for _, c := range commitments {
-		h.Write(c.X.Bytes())
-		// Y is not used in our encoding
+		h.Write(c.CompressedBytes)
 	}
 	return [32]byte(h.Sum(nil))
 }
@@ -176,7 +167,7 @@ func RecoverAppPrivateKey(appID string, partialSigs map[int]types.G1Point, thres
 	}
 
 	// audit: don't return zero point
-	result := &types.G1Point{X: big.NewInt(0), Y: big.NewInt(0)}
+	result := types.G1PointZero()
 
 	for _, id := range participants {
 		lambda := ComputeLagrangeCoefficient(id, participants)
@@ -190,19 +181,33 @@ func RecoverAppPrivateKey(appID string, partialSigs map[int]types.G1Point, thres
 		}
 	}
 
+	isZero, err := result.IsZero()
+	if err != nil {
+		return nil, err
+	}
+	if isZero {
+		return nil, errors.New("result is zero")
+	}
 	return result, nil
 }
 
 // ComputeMasterPublicKey computes the master public key from commitments
-func ComputeMasterPublicKey(allCommitments [][]types.G2Point) *types.G2Point {
-	masterPK := &types.G2Point{X: big.NewInt(0), Y: big.NewInt(0)}
+func ComputeMasterPublicKey(allCommitments [][]types.G2Point) (*types.G2Point, error) {
+	masterPK := types.G2PointZero()
 	for _, commitments := range allCommitments {
 		if len(commitments) > 0 {
 			masterPK, _ = AddG2(*masterPK, commitments[0])
 		}
 	}
 
-	return masterPK
+	isZero, err := masterPK.IsZero()
+	if err != nil {
+		return nil, err
+	}
+	if isZero {
+		return nil, errors.New("master public key is zero")
+	}
+	return masterPK, nil
 }
 
 // VerifyShareWithCommitments verifies a share against polynomial commitments
@@ -210,7 +215,7 @@ func VerifyShareWithCommitments(nodeID int, share *fr.Element, commitments []typ
 	// Convert commitments to BLS module points
 	blsCommitments := make([]*bls.G2Point, len(commitments))
 	for i, c := range commitments {
-		g2Point, err := bls.G2PointFromBigInt(c.X, c.Y)
+		g2Point, err := bls.NewG2PointFromCompressedBytes(c.CompressedBytes)
 		if err != nil {
 			return false
 		}
@@ -271,7 +276,7 @@ func EncryptForApp(appID string, masterPublicKey types.G2Point, plaintext []byte
 	if err != nil {
 		return nil, err
 	}
-	keyBytes := appHash.X.Bytes()
+	keyBytes := appHash.CompressedBytes
 
 	// Simple XOR encryption (NOT secure, just for testing)
 	encrypted := make([]byte, len(plaintext))
@@ -293,10 +298,7 @@ func DecryptForApp(appID string, appPrivateKey types.G1Point, ciphertext []byte)
 	if err != nil {
 		return nil, err
 	}
-	keyBytes := appHash.X.Bytes()
-	if err != nil {
-		return nil, err
-	}
+	keyBytes := appHash.CompressedBytes
 
 	// Simple XOR decryption
 	decrypted := make([]byte, len(ciphertext))

@@ -2,7 +2,6 @@ package reshare
 
 import (
 	"fmt"
-	"math/big"
 	"testing"
 
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
@@ -180,7 +179,7 @@ func testComputeNewKeyShare(t *testing.T) {
 
 	// Create test commitments
 	allCommitments := [][]types.G2Point{
-		{{X: big.NewInt(1), Y: big.NewInt(2)}},
+		{{CompressedBytes: []byte{1, 2}}},
 	}
 
 	keyVersion := r.ComputeNewKeyShare(dealerIDs, shares, allCommitments)

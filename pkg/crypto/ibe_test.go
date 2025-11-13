@@ -43,7 +43,11 @@ func testGetAppPublicKey(t *testing.T) {
 	}
 
 	// Verify it's not zero
-	if appPubKey.X.Sign() == 0 {
+	isZero, err := appPubKey.IsZero()
+	if err != nil {
+		t.Fatalf("Failed to check if G1 point is zero: %v", err)
+	}
+	if isZero {
 		t.Error("App public key should not be zero")
 	}
 
@@ -52,7 +56,7 @@ func testGetAppPublicKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get app public key: %v", err)
 	}
-	if !PointsEqualG1(*appPubKey, *appPubKey2) {
+	if !appPubKey.Equal(appPubKey2) {
 		t.Error("App public key should be deterministic")
 	}
 
@@ -61,7 +65,7 @@ func testGetAppPublicKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get app public key: %v", err)
 	}
-	if PointsEqualG1(*appPubKey, *differentApp) {
+	if appPubKey.Equal(differentApp) {
 		t.Error("Different apps should have different public keys")
 	}
 }
@@ -94,10 +98,17 @@ func testMasterPublicKeyDerivation(t *testing.T) {
 	}
 
 	// Compute master public key
-	masterPubKey := ComputeMasterPublicKey(allCommitments)
+	masterPubKey, err := ComputeMasterPublicKey(allCommitments)
+	if err != nil {
+		t.Fatalf("Failed to compute master public key: %v", err)
+	}
 
 	// Verify it's not zero/identity
-	if masterPubKey.X.Sign() == 0 {
+	isZero, err := masterPubKey.IsZero()
+	if err != nil {
+		t.Fatalf("Failed to check if G2 point is zero: %v", err)
+	}
+	if isZero {
 		t.Error("Master public key should not be zero")
 	}
 
@@ -371,7 +382,11 @@ func testThresholdSignatureRecovery(t *testing.T) {
 	}
 
 	// Verify the key is not zero
-	if recoveredKey.X.Sign() == 0 {
+	isZero, err := recoveredKey.IsZero()
+	if err != nil {
+		t.Fatalf("Failed to check if G1 point is zero: %v", err)
+	}
+	if isZero {
 		t.Error("Recovered key should not be zero")
 	}
 
@@ -388,16 +403,15 @@ func testThresholdSignatureRecovery(t *testing.T) {
 	}
 
 	// Should recover equivalent keys (both should be non-zero)
-	if recoveredKey2.X.Sign() == 0 {
+	isZero, err = recoveredKey2.IsZero()
+	if err != nil {
+		t.Fatalf("Failed to check if G1 point is zero: %v", err)
+	}
+	if isZero {
 		t.Error("Second recovered key should not be zero")
 	}
 
 	fmt.Printf("✓ Threshold signature recovery test passed!\n")
 	fmt.Printf("  - Recovered keys from different threshold subsets\n")
 	fmt.Printf("  - Both keys are valid and non-zero\n")
-}
-
-// PointsEqualG1 checks if two G1 points are equal (helper function)
-func PointsEqualG1(a, b types.G1Point) bool {
-	return a.X.Cmp(b.X) == 0 && a.Y.Cmp(b.Y) == 0
 }

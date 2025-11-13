@@ -1,7 +1,6 @@
 package crypto
 
 import (
-	"math/big"
 	"testing"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
@@ -53,7 +52,11 @@ func testScalarMulG1(t *testing.T) {
 
 			// Verify result is not zero (unless scalar is zero)
 			// Note: Y is always 0 in our encoding, X contains the marshaled point
-			if !tt.scalar.IsZero() && result.X.Cmp(big.NewInt(0)) == 0 {
+			resultIsZero, err := result.IsZero()
+			if err != nil {
+				t.Fatalf("Failed to check if G1 point is zero: %v", err)
+			}
+			if !tt.scalar.IsZero() && resultIsZero {
 				t.Error("Expected non-zero result for non-zero scalar")
 			}
 
@@ -62,7 +65,7 @@ func testScalarMulG1(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to scalar multiply G1: %v", err)
 			}
-			if result.X.Cmp(result2.X) != 0 {
+			if !result2.Equal(result) {
 				t.Error("Scalar multiplication should be deterministic")
 			}
 		})
@@ -80,7 +83,11 @@ func testScalarMulG2(t *testing.T) {
 
 	// Verify result is not zero
 	// Note: Y is always 0 in our encoding, X contains the marshaled point
-	if result.X.Cmp(big.NewInt(0)) == 0 {
+	resultIsZero, err := result.IsZero()
+	if err != nil {
+		t.Fatalf("Failed to check if G2 point is zero: %v", err)
+	}
+	if resultIsZero {
 		t.Error("Expected non-zero result")
 	}
 
@@ -124,17 +131,17 @@ func testAddG1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to add G1: %v", err)
 	}
-	if result.X.Cmp(result2.X) != 0 {
+	if !result.Equal(result2) {
 		t.Error("Addition should be commutative")
 	}
 
 	// Verify adding identity
-	identity := types.G1Point{X: big.NewInt(0), Y: big.NewInt(0)}
-	result3, err := AddG1(*point1, identity)
+	identity := types.G1PointZero()
+	result3, err := AddG1(*point1, *identity)
 	if err != nil {
 		t.Fatalf("Failed to add G1: %v", err)
 	}
-	if result3.X.Cmp(point1.X) != 0 {
+	if !result3.Equal(point1) {
 		t.Error("Adding identity should return original point")
 	}
 }
@@ -195,7 +202,7 @@ func testHashToG1(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to hash to G1: %v", err)
 			}
-			if result.X.Cmp(result2.X) != 0 {
+			if !result.Equal(result2) {
 				t.Error("Hash should be deterministic")
 			}
 
@@ -205,7 +212,7 @@ func testHashToG1(t *testing.T) {
 				if err != nil {
 					t.Fatalf("Failed to hash to G1: %v", err)
 				}
-				if result.X.Cmp(different.X) == 0 {
+				if result.Equal(different) {
 					t.Error("Different inputs should give different outputs")
 				}
 			}
@@ -308,8 +315,8 @@ func testRecoverSecret(t *testing.T) {
 func testHashCommitment(t *testing.T) {
 	// Create some test commitments
 	commitments := []types.G2Point{
-		{X: big.NewInt(1), Y: big.NewInt(2)},
-		{X: big.NewInt(3), Y: big.NewInt(4)},
+		{CompressedBytes: []byte{1, 2}},
+		{CompressedBytes: []byte{3, 4}},
 	}
 
 	hash1 := HashCommitment(commitments)
@@ -322,7 +329,7 @@ func testHashCommitment(t *testing.T) {
 
 	// Verify different inputs give different outputs
 	commitments2 := []types.G2Point{
-		{X: big.NewInt(5), Y: big.NewInt(6)},
+		{CompressedBytes: []byte{5, 6}},
 	}
 	hash3 := HashCommitment(commitments2)
 
@@ -379,7 +386,7 @@ func testRecoverAppPrivateKey(t *testing.T) {
 		t.Fatalf("Failed to scalar multiply G1: %v", err)
 	}
 
-	if recovered.X.Cmp(expected.X) != 0 {
+	if !recovered.Equal(expected) {
 		t.Error("Recovered key doesn't match expected")
 	}
 
@@ -388,7 +395,7 @@ func testRecoverAppPrivateKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to recover app private key: %v", err)
 	}
-	if recovered.X.Cmp(recovered2.X) != 0 {
+	if !recovered.Equal(recovered2) {
 		t.Error("Recovery should be deterministic")
 	}
 }
@@ -419,7 +426,10 @@ func testComputeMasterPublicKey(t *testing.T) {
 		{*commitment3},
 	}
 
-	masterPK := ComputeMasterPublicKey(allCommitments)
+	masterPK, err := ComputeMasterPublicKey(allCommitments)
+	if err != nil {
+		t.Fatalf("Failed to compute master public key: %v", err)
+	}
 
 	// Verify it's the sum of first commitments
 	expected := allCommitments[0][0]

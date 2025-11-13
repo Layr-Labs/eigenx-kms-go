@@ -10,6 +10,7 @@ import (
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
@@ -158,12 +159,15 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 
 	// Compute master public key from commitments
 	cluster.MasterPubKey = ComputeMasterPublicKey(cluster)
-
+	masterPubKeyG2, err := bls.NewG2PointFromCompressedBytes(cluster.MasterPubKey.CompressedBytes)
+	if err != nil {
+		t.Fatalf("Failed to convert master public key to G2 point: %v", err)
+	}
 	t.Logf("✓ Test cluster ready with DKG complete")
 	t.Logf("  - Nodes: %d", numNodes)
 	t.Logf("  - Block interval: 10 blocks")
 	t.Logf("  - Current block: %d", cluster.MockPoller.GetCurrentBlock())
-	t.Logf("  - Master Public Key: X=%s", cluster.MasterPubKey.X.String()[:20]+"...")
+	t.Logf("  - Master Public Key: X=%s", masterPubKeyG2.ToAffine().X.String()[:20]+"...")
 
 	return cluster
 }
@@ -286,7 +290,11 @@ func ComputeMasterPublicKey(cluster *TestCluster) types.G2Point {
 		return types.G2Point{}
 	}
 
-	return *crypto.ComputeMasterPublicKey(allCommitments)
+	masterPubKey, err := crypto.ComputeMasterPublicKey(allCommitments)
+	if err != nil {
+		return types.G2Point{}
+	}
+	return *masterPubKey
 }
 
 // GetMasterPublicKey returns the master public key

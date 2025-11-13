@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
 	eigenxcrypto "github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
@@ -43,7 +44,11 @@ func testFullReshareProtocol(t *testing.T) {
 
 	// Verify initial DKG setup
 	initialMasterPubKey := cluster.GetMasterPublicKey()
-	if initialMasterPubKey.X.Sign() == 0 {
+	initialMasterPubKeyG2, err := bls.NewG2PointFromCompressedBytes(initialMasterPubKey.CompressedBytes)
+	if err != nil {
+		t.Fatalf("Failed to convert initial master public key to G2 point: %v", err)
+	}
+	if initialMasterPubKeyG2.IsZero() {
 		t.Fatal("Initial master public key should not be zero")
 	}
 
@@ -61,7 +66,11 @@ func testFullReshareProtocol(t *testing.T) {
 	// Verify all nodes can generate partial signatures before reshare
 	for i, node := range cluster.Nodes {
 		partialSig := node.SignAppID(appID, time.Now().Unix())
-		if partialSig.X.Sign() == 0 {
+		partialSigG1, err := bls.NewG1PointFromCompressedBytes(partialSig.CompressedBytes)
+		if err != nil {
+			t.Fatalf("Failed to convert partial signature to G1 point: %v", err)
+		}
+		if partialSigG1.IsZero() {
 			t.Errorf("Node %d should generate valid partial signature", i+1)
 		}
 	}
