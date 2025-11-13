@@ -239,7 +239,10 @@ func testReshareSecretConsistency(t *testing.T) {
 		thresholdShares[nodeIDs[i]] = newFinalShares[nodeIDs[i]]
 	}
 
-	recoveredSecret := eigenxcrypto.RecoverSecret(thresholdShares)
+	recoveredSecret, err := eigenxcrypto.RecoverSecret(thresholdShares)
+	if err != nil {
+		t.Fatalf("Failed to recover secret: %v", err)
+	}
 
 	// The recovered secret should equal the original
 	if !recoveredSecret.Equal(secret) {

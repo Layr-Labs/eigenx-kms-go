@@ -1,6 +1,7 @@
 package bls
 
 import (
+	"errors"
 	"math/big"
 
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
@@ -62,6 +63,7 @@ func (p *G1Point) Marshal() []byte {
 }
 
 // Unmarshal deserializes bytes to G1Point
+// This is in the compressed format.
 func (p *G1Point) Unmarshal(data []byte) error {
 	if p.point == nil {
 		p.point = new(bls12381.G1Affine)
@@ -80,6 +82,7 @@ func (p *G2Point) Marshal() []byte {
 }
 
 // Unmarshal deserializes bytes to G2Point
+// This is in the compressed format.
 func (p *G2Point) Unmarshal(data []byte) error {
 	if p.point == nil {
 		p.point = new(bls12381.G2Affine)
@@ -107,7 +110,7 @@ func (p *G2Point) IsZero() bool {
 // Equal checks if two G1Points are equal
 func (p *G1Point) Equal(other *G1Point) bool {
 	if p.point == nil && other.point == nil {
-		return true
+		return false
 	}
 	if p.point == nil || other.point == nil {
 		return false
@@ -118,7 +121,7 @@ func (p *G1Point) Equal(other *G1Point) bool {
 // Equal checks if two G2Points are equal
 func (p *G2Point) Equal(other *G2Point) bool {
 	if p.point == nil && other.point == nil {
-		return true
+		return false
 	}
 	if p.point == nil || other.point == nil {
 		return false
@@ -145,9 +148,14 @@ func (p *G2Point) ToBigInt() (*big.Int, *big.Int) {
 }
 
 // G1PointFromBigInt creates a G1Point from big integers (for legacy compatibility)
+// audit: this function is weird, we should probably split it to requiring only x and both x and y.
 func G1PointFromBigInt(x, y *big.Int) (*G1Point, error) {
 	// X contains the full marshaled bytes in our encoding
-	if x == nil || x.Sign() == 0 {
+	if x == nil {
+		return nil, errors.New("x is nil or zero")
+	}
+
+	if x.Sign() == 0 {
 		// Return identity point
 		p := new(bls12381.G1Affine).SetInfinity()
 		return NewG1Point(p), nil
@@ -157,11 +165,9 @@ func G1PointFromBigInt(x, y *big.Int) (*G1Point, error) {
 	xBytes := x.Bytes()
 	var bytes []byte
 
-	if len(xBytes) == 48 {
-		// Already correct length
-		bytes = xBytes
-	} else if len(xBytes) < 48 {
+	if len(xBytes) < 48 {
 		// Pad with zeros at the beginning
+		// big.int strips leading zeros, so we need to pad with zeros at the beginning
 		bytes = make([]byte, 48)
 		copy(bytes[48-len(xBytes):], xBytes)
 	} else {
@@ -178,9 +184,14 @@ func G1PointFromBigInt(x, y *big.Int) (*G1Point, error) {
 }
 
 // G2PointFromBigInt creates a G2Point from big integers (for legacy compatibility)
+// audit: this function is weird, we should probably split it to requiring only x and both x and y.
 func G2PointFromBigInt(x, y *big.Int) (*G2Point, error) {
 	// X contains the full marshaled bytes in our encoding
-	if x == nil || x.Sign() == 0 {
+	if x == nil {
+		return nil, errors.New("x is nil or zero")
+	}
+
+	if x.Sign() == 0 {
 		// Return identity point
 		p := new(bls12381.G2Affine).SetInfinity()
 		return NewG2Point(p), nil
@@ -190,10 +201,7 @@ func G2PointFromBigInt(x, y *big.Int) (*G2Point, error) {
 	xBytes := x.Bytes()
 	var bytes []byte
 
-	if len(xBytes) == 96 {
-		// Already correct length
-		bytes = xBytes
-	} else if len(xBytes) < 96 {
+	if len(xBytes) < 96 {
 		// Pad with zeros at the beginning
 		bytes = make([]byte, 96)
 		copy(bytes[96-len(xBytes):], xBytes)

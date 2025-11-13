@@ -834,9 +834,15 @@ func (n *Node) SignAppID(appID string, attestationTime int64) types.G1Point {
 	}
 
 	privateShare := new(fr.Element).Set(keyVersion.PrivateShare)
-	qID := eigenxcrypto.HashToG1(appID)
-	partialSig := eigenxcrypto.ScalarMulG1(qID, privateShare)
-	return partialSig
+	qID, err := eigenxcrypto.HashToG1(appID)
+	if err != nil {
+		return types.G1Point{}
+	}
+	partialSig, err := eigenxcrypto.ScalarMulG1(*qID, privateShare)
+	if err != nil {
+		return types.G1Point{}
+	}
+	return *partialSig
 }
 
 // Wait functions
