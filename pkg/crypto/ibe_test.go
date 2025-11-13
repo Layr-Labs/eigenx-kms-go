@@ -52,7 +52,7 @@ func testGetAppPublicKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get app public key: %v", err)
 	}
-	if !PointsEqualG1(*appPubKey, *appPubKey2) {
+	if !appPubKey.Equal(appPubKey2) {
 		t.Error("App public key should be deterministic")
 	}
 
@@ -61,7 +61,7 @@ func testGetAppPublicKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get app public key: %v", err)
 	}
-	if PointsEqualG1(*appPubKey, *differentApp) {
+	if appPubKey.Equal(differentApp) {
 		t.Error("Different apps should have different public keys")
 	}
 }
