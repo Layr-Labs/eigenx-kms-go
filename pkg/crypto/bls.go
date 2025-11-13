@@ -258,7 +258,7 @@ func EncryptForApp(appID string, masterPublicKey types.G2Point, plaintext []byte
 	// Real implementation would follow the IBE encryption scheme from the design docs
 
 	// Step 1: Compute Q_ID = H_1(app_id)
-	appHash, err := HashToG1(appID)
+	_, err := HashToG1(appID)
 	if err != nil {
 		return nil, err
 	}
@@ -267,7 +267,7 @@ func EncryptForApp(appID string, masterPublicKey types.G2Point, plaintext []byte
 	// In production: Choose random α, compute r = H_3(α, M), etc.
 
 	// For testing, we'll use a simple XOR with the app's hash
-	appHash, err = HashToG1(appID + "-encryption-key")
+	appHash, err := HashToG1(appID + "-encryption-key")
 	if err != nil {
 		return nil, err
 	}
