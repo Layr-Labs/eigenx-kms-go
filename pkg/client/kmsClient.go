@@ -130,16 +130,15 @@ func (c *KMSClient) RetrieveSecrets(appID, imageDigest string) (*SecretsResult, 
 		partialSigMap[i+1] = sig // Node IDs are 1-indexed
 	}
 
-	appPrivateKey := crypto.RecoverAppPrivateKey(appID, partialSigMap, c.threshold)
-
-	if appPrivateKey.X.Sign() == 0 {
-		return nil, fmt.Errorf("recovered application private key is invalid")
+	appPrivateKey, err := crypto.RecoverAppPrivateKey(appID, partialSigMap, c.threshold)
+	if err != nil {
+		return nil, fmt.Errorf("failed to recover app private key: %w", err)
 	}
 
 	fmt.Printf("KMS Client: ✓ Successfully recovered application private key\n")
 
 	return &SecretsResult{
-		AppPrivateKey:   appPrivateKey,
+		AppPrivateKey:   *appPrivateKey,
 		EncryptedEnv:    responses[0].EncryptedEnv,
 		PublicEnv:       responses[0].PublicEnv,
 		PartialSigs:     partialSigMap,
@@ -220,7 +219,7 @@ func (c *KMSClient) GetMasterPublicKey() (types.G2Point, error) {
 	masterPubKey := crypto.ComputeMasterPublicKey(allCommitments)
 	c.logger.Sugar().Infow("Computed master public key", "commitment_count", len(allCommitments))
 
-	return masterPubKey, nil
+	return *masterPubKey, nil
 }
 
 // CollectPartialSignatures collects partial signatures from threshold operators for an app
@@ -295,8 +294,11 @@ func (c *KMSClient) DecryptForApp(appID string, ciphertext []byte, attestationTi
 	}
 
 	// Recover application private key
-	appPrivateKey := crypto.RecoverAppPrivateKey(appID, partialSigs, c.threshold)
+	appPrivateKey, err := crypto.RecoverAppPrivateKey(appID, partialSigs, c.threshold)
+	if err != nil {
+		return nil, fmt.Errorf("failed to recover app private key: %w", err)
+	}
 
 	// Decrypt using recovered key
-	return crypto.DecryptForApp(appID, appPrivateKey, ciphertext)
+	return crypto.DecryptForApp(appID, *appPrivateKey, ciphertext)
 }

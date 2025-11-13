@@ -206,7 +206,10 @@ func TestEvaluatePolynomial_Integration(t *testing.T) {
 		degree := 3
 
 		// Use GeneratePolynomial to create a random polynomial with the secret
-		poly := GeneratePolynomial(secret, degree)
+		poly, err := GeneratePolynomial(secret, degree)
+		if err != nil {
+			t.Fatalf("Failed to generate polynomial: %v", err)
+		}
 
 		// Secret should be at x=0
 		result := EvaluatePolynomial(poly, 0)
