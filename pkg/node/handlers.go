@@ -70,6 +70,8 @@ func (s *Server) validateAuthenticatedMessage(r *http.Request, expectedRecipient
 }
 
 // handleSecretsRequest handles the /secrets endpoint for application secret retrieval
+// audit: this has a replay attack vector, we need to add a nonce/timestamp validation to the request
+// unless the communication channel is encrypted via TLS.
 func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
