@@ -18,6 +18,7 @@ import (
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
+	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	"golang.org/x/crypto/hkdf"
 )
 
@@ -594,4 +595,59 @@ func deriveKeyMaterial(gIDBytes []byte, version byte, appID string) ([]byte, err
 	}
 
 	return keyMaterial, nil
+}
+
+// HashShareForAck creates a keccak256 hash of a share for use in acknowledgements (Phase 3)
+// This commits the player to the specific share they received
+func HashShareForAck(share *fr.Element) [32]byte {
+	// Import keccak256 from ethereum crypto package
+	// Need to add this import at the top of the file
+	shareBytes := share.Bytes()
+
+	// Use ethereum's Keccak256 for Solidity compatibility
+	hash := keccak256Hash(shareBytes[:])
+	return hash
+}
+
+// HashAcknowledgementForMerkle creates a keccak256 hash of an acknowledgement for merkle leaf (Phase 3)
+// The hash format matches the Solidity implementation for cross-validation
+// keccak256(abi.encodePacked(playerID, dealerID, epoch, shareHash, commitmentHash))
+func HashAcknowledgementForMerkle(ack *types.Acknowledgement) [32]byte {
+	// Pack all fields in the same order as Solidity
+	// Note: We use playerID and dealerID as integers for now
+	// In production, these should be Ethereum addresses
+
+	data := make([]byte, 0, 8+8+32+32+32) // playerID + dealerID + epoch + shareHash + commitmentHash
+
+	// Encode playerID (8 bytes, big endian)
+	playerBytes := make([]byte, 8)
+	playerBig := big.NewInt(int64(ack.PlayerID))
+	playerBig.FillBytes(playerBytes)
+	data = append(data, playerBytes...)
+
+	// Encode dealerID (8 bytes, big endian)
+	dealerBytes := make([]byte, 8)
+	dealerBig := big.NewInt(int64(ack.DealerID))
+	dealerBig.FillBytes(dealerBytes)
+	data = append(data, dealerBytes...)
+
+	// Encode epoch (32 bytes, big endian)
+	epochBytes := make([]byte, 32)
+	epochBig := big.NewInt(ack.Epoch)
+	epochBig.FillBytes(epochBytes)
+	data = append(data, epochBytes...)
+
+	// Append shareHash and commitmentHash
+	data = append(data, ack.ShareHash[:]...)
+	data = append(data, ack.CommitmentHash[:]...)
+
+	// Compute keccak256 hash
+	hash := keccak256Hash(data)
+	return hash
+}
+
+// keccak256Hash is a helper function that uses ethereum's Keccak256 for Solidity compatibility
+func keccak256Hash(data []byte) [32]byte {
+	hash := ethcrypto.Keccak256Hash(data)
+	return [32]byte(hash)
 }

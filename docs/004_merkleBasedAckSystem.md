@@ -7,11 +7,11 @@ This document provides a detailed, step-by-step execution plan for implementing 
 
 ## Implementation Status
 
-**Overall Progress:** 2/7 phases complete (29%)
+**Overall Progress:** 3/7 phases complete (43%)
 
-**Current Phase:** Phase 3 - Data Structure Updates
+**Current Phase:** Phase 4 - DKG/Reshare Protocol Modifications
 
-**Last Updated:** Phase 2 completed with all quality gates passed
+**Last Updated:** Phase 3 completed with all quality gates passed
 
 ---
 
@@ -195,7 +195,7 @@ Phase 4: Finalize (sum shares)
 
 - [x] **Phase 1**: Core Merkle Tree Infrastructure ✅
 - [x] **Phase 2**: Smart Contract Extensions ✅
-- [ ] **Phase 3**: Data Structure Updates
+- [x] **Phase 3**: Data Structure Updates ✅
 - [ ] **Phase 4**: DKG/Reshare Protocol Modifications
 - [ ] **Phase 5**: Transport Layer Enhancements
 - [ ] **Phase 6**: Verification Flow
@@ -287,35 +287,38 @@ make lint
 
 ---
 
-### Phase 3: Data Structure Updates (1 day) ⏳ PENDING
+### Phase 3: Data Structure Updates (1 day) ✅ COMPLETE
 
 **Goal:** Extend acknowledgement structures to support merkle system
 
 **Deliverables:**
-- [ ] Updated `pkg/types/types.go`
-- [ ] Updated hashing functions in `pkg/crypto/`
-- [ ] New message types for commitment broadcasts
+- [x] Updated `pkg/types/types.go`
+- [x] Updated hashing functions in `pkg/crypto/bls.go`
+- [x] New message types for commitment broadcasts
+- [x] Updated merkle package to use new fields
 
 **Changes:**
-- [ ] Add `ShareHash [32]byte` to `Acknowledgement`
-- [ ] Add `Epoch int64` to `Acknowledgement`
-- [ ] Create `CommitmentBroadcast` message type
-- [ ] Update signature generation to include shareHash
+- [x] Add `ShareHash [32]byte` to `Acknowledgement`
+- [x] Add `Epoch int64` to `Acknowledgement`
+- [x] Create `CommitmentBroadcast` message type
+- [x] Create `CommitmentBroadcastMessage` wrapper type
+- [x] Update signature comment to reflect new fields
 
 **Completion Criteria:**
-- [ ] `Acknowledgement` struct updated with `ShareHash` and `Epoch` fields
-- [ ] `CommitmentBroadcast` and `CommitmentBroadcastMessage` types created
-- [ ] `HashAcknowledgementForMerkle()` function implemented in `pkg/crypto/bls.go`
-- [ ] `HashShareForAck()` function implemented in `pkg/crypto/bls.go`
-- [ ] Unit tests for new hash functions
-- [ ] Test hash output matches expected keccak256 format
-- [ ] Test hash determinism (same input = same output)
-- [ ] Existing acknowledgement tests updated for new fields
-- [ ] `go test ./pkg/types/... -v` passes
-- [ ] `go test ./pkg/crypto/... -v` passes
-- [ ] No regression in existing tests
-- [ ] `make lint` passes
-- [ ] All new structs and functions have godoc comments
+- [x] `Acknowledgement` struct updated with `ShareHash` and `Epoch` fields
+- [x] `CommitmentBroadcast` and `CommitmentBroadcastMessage` types created
+- [x] `HashAcknowledgementForMerkle()` function implemented in `pkg/crypto/bls.go`
+- [x] `HashShareForAck()` function implemented in `pkg/crypto/bls.go`
+- [x] Unit tests for new hash functions (8 test functions in hash_test.go)
+- [x] Test hash output uses keccak256 (Solidity-compatible)
+- [x] Test hash determinism (same input = same output)
+- [x] Merkle package updated to hash all fields (player, dealer, epoch, shareHash, commitmentHash)
+- [x] Merkle tests updated for new fields
+- [x] `./scripts/goTest.sh ./pkg/crypto/...` passes (all hash tests passing)
+- [x] `./scripts/goTest.sh ./pkg/merkle/...` passes (no regressions)
+- [x] No regression in existing tests (make test passes)
+- [x] `make lint` passes (0 issues)
+- [x] All new structs and functions have godoc comments
 
 **Quality Gate:**
 ```bash
