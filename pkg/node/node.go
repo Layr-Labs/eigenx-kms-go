@@ -25,6 +25,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/keystore"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/merkle"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/registry"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/reshare"
@@ -100,7 +101,7 @@ type Node struct {
 type ProtocolSession struct {
 	SessionTimestamp int64
 	Type             string // "dkg" or "reshare"
-	Phase            int    // 1, 2, 3
+	Phase            int    // 1, 2, 3, 4 (Phase 4 adds merkle tree building and contract submission)
 	StartTime        time.Time
 	Operators        []*peering.OperatorSetPeer
 
@@ -108,6 +109,14 @@ type ProtocolSession struct {
 	shares      map[int]*fr.Element
 	commitments map[int][]types.G2Point
 	acks        map[int]map[int]*types.Acknowledgement
+
+	// Phase 4: Merkle tree state (will be used in Phase 5-6)
+	myAckMerkleTree   *merkle.MerkleTree //nolint:unused // Tree built from acks I collected as dealer
+	myCommitmentHash  [32]byte           //nolint:unused // Hash of my commitments
+	contractSubmitted bool               //nolint:unused // Whether I submitted to contract
+
+	// Phase 4: Verification state (will be used in Phase 6)
+	verifiedOperators map[int]bool //nolint:unused // Operators whose broadcasts I verified
 
 	mu sync.RWMutex
 }
@@ -368,14 +377,15 @@ func (n *Node) detectClusterState(operators []*peering.OperatorSetPeer) string {
 // createSession creates a new protocol session with the provided timestamp
 func (n *Node) createSession(sessionType string, operators []*peering.OperatorSetPeer, sessionTimestamp int64) *ProtocolSession {
 	session := &ProtocolSession{
-		SessionTimestamp: sessionTimestamp, // Use provided timestamp for coordination
-		Type:             sessionType,
-		Phase:            1,
-		StartTime:        time.Now(),
-		Operators:        operators,
-		shares:           make(map[int]*fr.Element),
-		commitments:      make(map[int][]types.G2Point),
-		acks:             make(map[int]map[int]*types.Acknowledgement),
+		SessionTimestamp:  sessionTimestamp, // Use provided timestamp for coordination
+		Type:              sessionType,
+		Phase:             1,
+		StartTime:         time.Now(),
+		Operators:         operators,
+		shares:            make(map[int]*fr.Element),
+		commitments:       make(map[int][]types.G2Point),
+		acks:              make(map[int]map[int]*types.Acknowledgement),
+		verifiedOperators: make(map[int]bool), // Phase 4
 	}
 
 	n.sessionMutex.Lock()
@@ -568,8 +578,8 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 		if n.dkg.VerifyShare(dealerID, share, commitments) {
 			validShares[dealerID] = share
 
-			// Create acknowledgement for verified share
-			ack := dkg.CreateAcknowledgement(thisNodeID, dealerID, commitments, n.signAcknowledgement)
+			// Create acknowledgement for verified share (Phase 4: added epoch and share)
+			ack := dkg.CreateAcknowledgement(thisNodeID, dealerID, sessionTimestamp, share, commitments, n.signAcknowledgement)
 
 			// Find dealer's peer info for transport
 			var dealerPeer *peering.OperatorSetPeer

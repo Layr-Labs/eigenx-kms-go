@@ -7,6 +7,7 @@ import (
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
@@ -222,5 +223,93 @@ func testCreateCompletionSignature(t *testing.T) {
 	}
 	if len(sig.Signature) == 0 {
 		t.Error("Signature should not be empty")
+	}
+}
+
+// Test_CreateAcknowledgement tests acknowledgement creation for reshare (Phase 4)
+func Test_CreateAcknowledgement(t *testing.T) {
+	nodeID := 1
+	dealerID := 2
+	epoch := int64(54321)
+
+	// Create test share
+	share := fr.NewElement(789)
+
+	// Create test commitments
+	commitments := []types.G2Point{
+		{X: big.NewInt(1), Y: big.NewInt(2)},
+		{X: big.NewInt(3), Y: big.NewInt(4)},
+	}
+
+	// Mock signer function
+	signer := func(dealer int, hash [32]byte) []byte {
+		return []byte("mock-signature")
+	}
+
+	ack := CreateAcknowledgement(nodeID, dealerID, epoch, &share, commitments, signer)
+
+	if ack == nil {
+		t.Fatal("Expected non-nil acknowledgement")
+	}
+	if ack.PlayerID != nodeID {
+		t.Errorf("Expected PlayerID %d, got %d", nodeID, ack.PlayerID)
+	}
+	if ack.DealerID != dealerID {
+		t.Errorf("Expected DealerID %d, got %d", dealerID, ack.DealerID)
+	}
+	if ack.Epoch != epoch {
+		t.Errorf("Expected Epoch %d, got %d", epoch, ack.Epoch)
+	}
+	if ack.ShareHash == [32]byte{} {
+		t.Error("ShareHash should not be empty")
+	}
+	if len(ack.Signature) == 0 {
+		t.Error("Signature should not be empty")
+	}
+
+	// Verify hashes are computed correctly
+	expectedCommitmentHash := crypto.HashCommitment(commitments)
+	if ack.CommitmentHash != expectedCommitmentHash {
+		t.Error("Commitment hash mismatch")
+	}
+
+	expectedShareHash := crypto.HashShareForAck(&share)
+	if ack.ShareHash != expectedShareHash {
+		t.Error("ShareHash mismatch")
+	}
+}
+
+// Test_BuildAcknowledgementMerkleTree_Reshare tests merkle tree building for reshare (Phase 4)
+func Test_BuildAcknowledgementMerkleTree_Reshare(t *testing.T) {
+	// Create test acknowledgements
+	acks := make([]*types.Acknowledgement, 3)
+	for i := 0; i < 3; i++ {
+		share := fr.NewElement(uint64(200 + i))
+		acks[i] = &types.Acknowledgement{
+			PlayerID:       i + 1,
+			DealerID:       50,
+			Epoch:          10,
+			ShareHash:      crypto.HashShareForAck(&share),
+			CommitmentHash: [32]byte{byte(i * 2), byte(i*2 + 1)},
+			Signature:      []byte("sig"),
+		}
+	}
+
+	// Build merkle tree
+	tree, err := BuildAcknowledgementMerkleTree(acks)
+	if err != nil {
+		t.Fatalf("Failed to build merkle tree: %v", err)
+	}
+
+	if tree == nil {
+		t.Fatal("Expected non-nil merkle tree")
+	}
+
+	if tree.Root == [32]byte{} {
+		t.Error("Merkle root should not be zero")
+	}
+
+	if len(tree.Leaves) != 3 {
+		t.Errorf("Expected 3 leaves, got %d", len(tree.Leaves))
 	}
 }

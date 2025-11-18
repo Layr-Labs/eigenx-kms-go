@@ -213,6 +213,7 @@ func testCreateAcknowledgement(t *testing.T) {
 	operators := createTestOperators(t, 3)
 	nodeID := addressToNodeID(operators[0].OperatorAddress)
 	dealerID := addressToNodeID(operators[1].OperatorAddress)
+	epoch := int64(12345)
 
 	// Create test commitments with random g2 points
 	var point1, point2 bls12381.G2Affine
@@ -225,12 +226,15 @@ func testCreateAcknowledgement(t *testing.T) {
 		{CompressedBytes: point2.Marshal()},
 	}
 
+	// Create test share
+	share := fr.NewElement(789)
+
 	// Mock signer function
 	signer := func(dealer int, hash [32]byte) []byte {
 		return []byte("mock-signature")
 	}
 
-	ack := CreateAcknowledgement(nodeID, dealerID, commitments, signer)
+	ack := CreateAcknowledgement(nodeID, dealerID, epoch, &share, commitments, signer)
 
 	if ack == nil {
 		t.Fatal("Expected non-nil acknowledgement")
@@ -241,6 +245,13 @@ func testCreateAcknowledgement(t *testing.T) {
 	if ack.DealerID != dealerID {
 		t.Errorf("Expected DealerID %d, got %d", dealerID, ack.DealerID)
 	}
+	// Phase 4: Verify new fields
+	if ack.Epoch != epoch {
+		t.Errorf("Expected Epoch %d, got %d", epoch, ack.Epoch)
+	}
+	if ack.ShareHash == [32]byte{} {
+		t.Error("ShareHash should not be empty")
+	}
 	if len(ack.Signature) == 0 {
 		t.Error("Signature should not be empty")
 	}
@@ -249,5 +260,60 @@ func testCreateAcknowledgement(t *testing.T) {
 	expectedHash := crypto.HashCommitment(commitments)
 	if ack.CommitmentHash != expectedHash {
 		t.Error("Commitment hash mismatch")
+	}
+
+	// Phase 4: Verify shareHash is properly computed
+	expectedShareHash := crypto.HashShareForAck(&share)
+	if ack.ShareHash != expectedShareHash {
+		t.Error("ShareHash mismatch")
+	}
+}
+
+// Test_BuildAcknowledgementMerkleTree tests merkle tree building (Phase 4)
+func Test_BuildAcknowledgementMerkleTree(t *testing.T) {
+	// Create test acknowledgements
+	acks := make([]*types.Acknowledgement, 4)
+	for i := 0; i < 4; i++ {
+		share := fr.NewElement(uint64(100 + i))
+		acks[i] = &types.Acknowledgement{
+			PlayerID:       i + 1,
+			DealerID:       99,
+			Epoch:          5,
+			ShareHash:      crypto.HashShareForAck(&share),
+			CommitmentHash: [32]byte{byte(i), byte(i + 1), byte(i + 2)},
+			Signature:      []byte("sig"),
+		}
+	}
+
+	// Build merkle tree
+	tree, err := BuildAcknowledgementMerkleTree(acks)
+	if err != nil {
+		t.Fatalf("Failed to build merkle tree: %v", err)
+	}
+
+	// Verify tree was created
+	if tree == nil {
+		t.Fatal("Expected non-nil merkle tree")
+	}
+
+	// Verify root is not zero
+	if tree.Root == [32]byte{} {
+		t.Error("Merkle root should not be zero")
+	}
+
+	// Verify tree has correct number of leaves
+	if len(tree.Leaves) != 4 {
+		t.Errorf("Expected 4 leaves, got %d", len(tree.Leaves))
+	}
+}
+
+// Test_BuildAcknowledgementMerkleTree_Empty tests empty acks (Phase 4)
+func Test_BuildAcknowledgementMerkleTree_Empty(t *testing.T) {
+	tree, err := BuildAcknowledgementMerkleTree([]*types.Acknowledgement{})
+	if err != nil {
+		t.Fatalf("Should handle empty acks: %v", err)
+	}
+	if tree != nil {
+		t.Error("Expected nil tree for empty acks")
 	}
 }
