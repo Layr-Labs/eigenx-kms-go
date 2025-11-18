@@ -63,4 +63,20 @@ type IContractCaller interface {
 		allocationDelay uint32,
 		metadataUri string,
 	) (*ethereumTypes.Receipt, error)
+
+	// Commitment registry functions (Phase 2)
+	SubmitCommitment(
+		ctx context.Context,
+		registryAddress common.Address,
+		epoch int64,
+		commitmentHash [32]byte,
+		ackMerkleRoot [32]byte,
+	) (*ethereumTypes.Receipt, error)
+
+	GetCommitment(
+		ctx context.Context,
+		registryAddress common.Address,
+		epoch int64,
+		operator common.Address,
+	) (commitmentHash [32]byte, ackMerkleRoot [32]byte, submittedAt uint64, err error)
 }

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: BUSL-1.1
 pragma solidity ^0.8.27;
 
-import {IEigenKMSRegistrar,IEigenKMSRegistrarTypes} from "./interfaces/IEigenKMSRegistrar.sol";
+import {IEigenKMSRegistrar, IEigenKMSRegistrarTypes} from "./interfaces/IEigenKMSRegistrar.sol";
 
 /**
  * @title IEigenKMSRegistrarStorage

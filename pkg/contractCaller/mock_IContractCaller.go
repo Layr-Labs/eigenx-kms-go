@@ -5,8 +5,13 @@
 package contractCaller
 
 import (
+	"context"
+
+	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/core/types"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -35,6 +40,504 @@ type MockIContractCaller_Expecter struct {
 
 func (_m *MockIContractCaller) EXPECT() *MockIContractCaller_Expecter {
 	return &MockIContractCaller_Expecter{mock: &_m.Mock}
+}
+
+// CreateOperatorAndRegisterWithAvs provides a mock function for the type MockIContractCaller
+func (_mock *MockIContractCaller) CreateOperatorAndRegisterWithAvs(ctx context.Context, avsAddress common.Address, operatorAddress common.Address, operatorSetIds []uint32, socket string, allocationDelay uint32, metadataUri string) (*types.Receipt, error) {
+	ret := _mock.Called(ctx, avsAddress, operatorAddress, operatorSetIds, socket, allocationDelay, metadataUri)
+
+	if len(ret) == 0 {
+		panic("no return value specified for CreateOperatorAndRegisterWithAvs")
+	}
+
+	var r0 *types.Receipt
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, common.Address, common.Address, []uint32, string, uint32, string) (*types.Receipt, error)); ok {
+		return returnFunc(ctx, avsAddress, operatorAddress, operatorSetIds, socket, allocationDelay, metadataUri)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, common.Address, common.Address, []uint32, string, uint32, string) *types.Receipt); ok {
+		r0 = returnFunc(ctx, avsAddress, operatorAddress, operatorSetIds, socket, allocationDelay, metadataUri)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*types.Receipt)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, common.Address, common.Address, []uint32, string, uint32, string) error); ok {
+		r1 = returnFunc(ctx, avsAddress, operatorAddress, operatorSetIds, socket, allocationDelay, metadataUri)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockIContractCaller_CreateOperatorAndRegisterWithAvs_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'CreateOperatorAndRegisterWithAvs'
+type MockIContractCaller_CreateOperatorAndRegisterWithAvs_Call struct {
+	*mock.Call
+}
+
+// CreateOperatorAndRegisterWithAvs is a helper method to define mock.On call
+//   - ctx context.Context
+//   - avsAddress common.Address
+//   - operatorAddress common.Address
+//   - operatorSetIds []uint32
+//   - socket string
+//   - allocationDelay uint32
+//   - metadataUri string
+func (_e *MockIContractCaller_Expecter) CreateOperatorAndRegisterWithAvs(ctx interface{}, avsAddress interface{}, operatorAddress interface{}, operatorSetIds interface{}, socket interface{}, allocationDelay interface{}, metadataUri interface{}) *MockIContractCaller_CreateOperatorAndRegisterWithAvs_Call {
+	return &MockIContractCaller_CreateOperatorAndRegisterWithAvs_Call{Call: _e.mock.On("CreateOperatorAndRegisterWithAvs", ctx, avsAddress, operatorAddress, operatorSetIds, socket, allocationDelay, metadataUri)}
+}
+
+func (_c *MockIContractCaller_CreateOperatorAndRegisterWithAvs_Call) Run(run func(ctx context.Context, avsAddress common.Address, operatorAddress common.Address, operatorSetIds []uint32, socket string, allocationDelay uint32, metadataUri string)) *MockIContractCaller_CreateOperatorAndRegisterWithAvs_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 common.Address
+		if args[1] != nil {
+			arg1 = args[1].(common.Address)
+		}
+		var arg2 common.Address
+		if args[2] != nil {
+			arg2 = args[2].(common.Address)
+		}
+		var arg3 []uint32
+		if args[3] != nil {
+			arg3 = args[3].([]uint32)
+		}
+		var arg4 string
+		if args[4] != nil {
+			arg4 = args[4].(string)
+		}
+		var arg5 uint32
+		if args[5] != nil {
+			arg5 = args[5].(uint32)
+		}
+		var arg6 string
+		if args[6] != nil {
+			arg6 = args[6].(string)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+			arg4,
+			arg5,
+			arg6,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIContractCaller_CreateOperatorAndRegisterWithAvs_Call) Return(receipt *types.Receipt, err error) *MockIContractCaller_CreateOperatorAndRegisterWithAvs_Call {
+	_c.Call.Return(receipt, err)
+	return _c
+}
+
+func (_c *MockIContractCaller_CreateOperatorAndRegisterWithAvs_Call) RunAndReturn(run func(ctx context.Context, avsAddress common.Address, operatorAddress common.Address, operatorSetIds []uint32, socket string, allocationDelay uint32, metadataUri string) (*types.Receipt, error)) *MockIContractCaller_CreateOperatorAndRegisterWithAvs_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// EncodeBN254KeyData provides a mock function for the type MockIContractCaller
+func (_mock *MockIContractCaller) EncodeBN254KeyData(pubKey *bn254.PublicKey) ([]byte, error) {
+	ret := _mock.Called(pubKey)
+
+	if len(ret) == 0 {
+		panic("no return value specified for EncodeBN254KeyData")
+	}
+
+	var r0 []byte
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(*bn254.PublicKey) ([]byte, error)); ok {
+		return returnFunc(pubKey)
+	}
+	if returnFunc, ok := ret.Get(0).(func(*bn254.PublicKey) []byte); ok {
+		r0 = returnFunc(pubKey)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]byte)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(*bn254.PublicKey) error); ok {
+		r1 = returnFunc(pubKey)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockIContractCaller_EncodeBN254KeyData_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'EncodeBN254KeyData'
+type MockIContractCaller_EncodeBN254KeyData_Call struct {
+	*mock.Call
+}
+
+// EncodeBN254KeyData is a helper method to define mock.On call
+//   - pubKey *bn254.PublicKey
+func (_e *MockIContractCaller_Expecter) EncodeBN254KeyData(pubKey interface{}) *MockIContractCaller_EncodeBN254KeyData_Call {
+	return &MockIContractCaller_EncodeBN254KeyData_Call{Call: _e.mock.On("EncodeBN254KeyData", pubKey)}
+}
+
+func (_c *MockIContractCaller_EncodeBN254KeyData_Call) Run(run func(pubKey *bn254.PublicKey)) *MockIContractCaller_EncodeBN254KeyData_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 *bn254.PublicKey
+		if args[0] != nil {
+			arg0 = args[0].(*bn254.PublicKey)
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIContractCaller_EncodeBN254KeyData_Call) Return(bytes []byte, err error) *MockIContractCaller_EncodeBN254KeyData_Call {
+	_c.Call.Return(bytes, err)
+	return _c
+}
+
+func (_c *MockIContractCaller_EncodeBN254KeyData_Call) RunAndReturn(run func(pubKey *bn254.PublicKey) ([]byte, error)) *MockIContractCaller_EncodeBN254KeyData_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetCommitment provides a mock function for the type MockIContractCaller
+func (_mock *MockIContractCaller) GetCommitment(ctx context.Context, registryAddress common.Address, epoch int64, operator common.Address) ([32]byte, [32]byte, uint64, error) {
+	ret := _mock.Called(ctx, registryAddress, epoch, operator)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetCommitment")
+	}
+
+	var r0 [32]byte
+	var r1 [32]byte
+	var r2 uint64
+	var r3 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, common.Address, int64, common.Address) ([32]byte, [32]byte, uint64, error)); ok {
+		return returnFunc(ctx, registryAddress, epoch, operator)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, common.Address, int64, common.Address) [32]byte); ok {
+		r0 = returnFunc(ctx, registryAddress, epoch, operator)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([32]byte)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, common.Address, int64, common.Address) [32]byte); ok {
+		r1 = returnFunc(ctx, registryAddress, epoch, operator)
+	} else {
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).([32]byte)
+		}
+	}
+	if returnFunc, ok := ret.Get(2).(func(context.Context, common.Address, int64, common.Address) uint64); ok {
+		r2 = returnFunc(ctx, registryAddress, epoch, operator)
+	} else {
+		r2 = ret.Get(2).(uint64)
+	}
+	if returnFunc, ok := ret.Get(3).(func(context.Context, common.Address, int64, common.Address) error); ok {
+		r3 = returnFunc(ctx, registryAddress, epoch, operator)
+	} else {
+		r3 = ret.Error(3)
+	}
+	return r0, r1, r2, r3
+}
+
+// MockIContractCaller_GetCommitment_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetCommitment'
+type MockIContractCaller_GetCommitment_Call struct {
+	*mock.Call
+}
+
+// GetCommitment is a helper method to define mock.On call
+//   - ctx context.Context
+//   - registryAddress common.Address
+//   - epoch int64
+//   - operator common.Address
+func (_e *MockIContractCaller_Expecter) GetCommitment(ctx interface{}, registryAddress interface{}, epoch interface{}, operator interface{}) *MockIContractCaller_GetCommitment_Call {
+	return &MockIContractCaller_GetCommitment_Call{Call: _e.mock.On("GetCommitment", ctx, registryAddress, epoch, operator)}
+}
+
+func (_c *MockIContractCaller_GetCommitment_Call) Run(run func(ctx context.Context, registryAddress common.Address, epoch int64, operator common.Address)) *MockIContractCaller_GetCommitment_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 common.Address
+		if args[1] != nil {
+			arg1 = args[1].(common.Address)
+		}
+		var arg2 int64
+		if args[2] != nil {
+			arg2 = args[2].(int64)
+		}
+		var arg3 common.Address
+		if args[3] != nil {
+			arg3 = args[3].(common.Address)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIContractCaller_GetCommitment_Call) Return(commitmentHash [32]byte, ackMerkleRoot [32]byte, submittedAt uint64, err error) *MockIContractCaller_GetCommitment_Call {
+	_c.Call.Return(commitmentHash, ackMerkleRoot, submittedAt, err)
+	return _c
+}
+
+func (_c *MockIContractCaller_GetCommitment_Call) RunAndReturn(run func(ctx context.Context, registryAddress common.Address, epoch int64, operator common.Address) ([32]byte, [32]byte, uint64, error)) *MockIContractCaller_GetCommitment_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetOperatorBN254KeyRegistrationMessageHash provides a mock function for the type MockIContractCaller
+func (_mock *MockIContractCaller) GetOperatorBN254KeyRegistrationMessageHash(ctx context.Context, operatorAddress common.Address, avsAddress common.Address, operatorSetId uint32, keyData []byte) ([32]byte, error) {
+	ret := _mock.Called(ctx, operatorAddress, avsAddress, operatorSetId, keyData)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetOperatorBN254KeyRegistrationMessageHash")
+	}
+
+	var r0 [32]byte
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, common.Address, common.Address, uint32, []byte) ([32]byte, error)); ok {
+		return returnFunc(ctx, operatorAddress, avsAddress, operatorSetId, keyData)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, common.Address, common.Address, uint32, []byte) [32]byte); ok {
+		r0 = returnFunc(ctx, operatorAddress, avsAddress, operatorSetId, keyData)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([32]byte)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, common.Address, common.Address, uint32, []byte) error); ok {
+		r1 = returnFunc(ctx, operatorAddress, avsAddress, operatorSetId, keyData)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockIContractCaller_GetOperatorBN254KeyRegistrationMessageHash_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetOperatorBN254KeyRegistrationMessageHash'
+type MockIContractCaller_GetOperatorBN254KeyRegistrationMessageHash_Call struct {
+	*mock.Call
+}
+
+// GetOperatorBN254KeyRegistrationMessageHash is a helper method to define mock.On call
+//   - ctx context.Context
+//   - operatorAddress common.Address
+//   - avsAddress common.Address
+//   - operatorSetId uint32
+//   - keyData []byte
+func (_e *MockIContractCaller_Expecter) GetOperatorBN254KeyRegistrationMessageHash(ctx interface{}, operatorAddress interface{}, avsAddress interface{}, operatorSetId interface{}, keyData interface{}) *MockIContractCaller_GetOperatorBN254KeyRegistrationMessageHash_Call {
+	return &MockIContractCaller_GetOperatorBN254KeyRegistrationMessageHash_Call{Call: _e.mock.On("GetOperatorBN254KeyRegistrationMessageHash", ctx, operatorAddress, avsAddress, operatorSetId, keyData)}
+}
+
+func (_c *MockIContractCaller_GetOperatorBN254KeyRegistrationMessageHash_Call) Run(run func(ctx context.Context, operatorAddress common.Address, avsAddress common.Address, operatorSetId uint32, keyData []byte)) *MockIContractCaller_GetOperatorBN254KeyRegistrationMessageHash_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 common.Address
+		if args[1] != nil {
+			arg1 = args[1].(common.Address)
+		}
+		var arg2 common.Address
+		if args[2] != nil {
+			arg2 = args[2].(common.Address)
+		}
+		var arg3 uint32
+		if args[3] != nil {
+			arg3 = args[3].(uint32)
+		}
+		var arg4 []byte
+		if args[4] != nil {
+			arg4 = args[4].([]byte)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+			arg4,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIContractCaller_GetOperatorBN254KeyRegistrationMessageHash_Call) Return(bytes [32]byte, err error) *MockIContractCaller_GetOperatorBN254KeyRegistrationMessageHash_Call {
+	_c.Call.Return(bytes, err)
+	return _c
+}
+
+func (_c *MockIContractCaller_GetOperatorBN254KeyRegistrationMessageHash_Call) RunAndReturn(run func(ctx context.Context, operatorAddress common.Address, avsAddress common.Address, operatorSetId uint32, keyData []byte) ([32]byte, error)) *MockIContractCaller_GetOperatorBN254KeyRegistrationMessageHash_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetOperatorECDSAKeyRegistrationMessageHash provides a mock function for the type MockIContractCaller
+func (_mock *MockIContractCaller) GetOperatorECDSAKeyRegistrationMessageHash(ctx context.Context, operatorAddress common.Address, avsAddress common.Address, operatorSetId uint32, signingKeyAddress common.Address) ([32]byte, error) {
+	ret := _mock.Called(ctx, operatorAddress, avsAddress, operatorSetId, signingKeyAddress)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetOperatorECDSAKeyRegistrationMessageHash")
+	}
+
+	var r0 [32]byte
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, common.Address, common.Address, uint32, common.Address) ([32]byte, error)); ok {
+		return returnFunc(ctx, operatorAddress, avsAddress, operatorSetId, signingKeyAddress)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, common.Address, common.Address, uint32, common.Address) [32]byte); ok {
+		r0 = returnFunc(ctx, operatorAddress, avsAddress, operatorSetId, signingKeyAddress)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([32]byte)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, common.Address, common.Address, uint32, common.Address) error); ok {
+		r1 = returnFunc(ctx, operatorAddress, avsAddress, operatorSetId, signingKeyAddress)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockIContractCaller_GetOperatorECDSAKeyRegistrationMessageHash_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetOperatorECDSAKeyRegistrationMessageHash'
+type MockIContractCaller_GetOperatorECDSAKeyRegistrationMessageHash_Call struct {
+	*mock.Call
+}
+
+// GetOperatorECDSAKeyRegistrationMessageHash is a helper method to define mock.On call
+//   - ctx context.Context
+//   - operatorAddress common.Address
+//   - avsAddress common.Address
+//   - operatorSetId uint32
+//   - signingKeyAddress common.Address
+func (_e *MockIContractCaller_Expecter) GetOperatorECDSAKeyRegistrationMessageHash(ctx interface{}, operatorAddress interface{}, avsAddress interface{}, operatorSetId interface{}, signingKeyAddress interface{}) *MockIContractCaller_GetOperatorECDSAKeyRegistrationMessageHash_Call {
+	return &MockIContractCaller_GetOperatorECDSAKeyRegistrationMessageHash_Call{Call: _e.mock.On("GetOperatorECDSAKeyRegistrationMessageHash", ctx, operatorAddress, avsAddress, operatorSetId, signingKeyAddress)}
+}
+
+func (_c *MockIContractCaller_GetOperatorECDSAKeyRegistrationMessageHash_Call) Run(run func(ctx context.Context, operatorAddress common.Address, avsAddress common.Address, operatorSetId uint32, signingKeyAddress common.Address)) *MockIContractCaller_GetOperatorECDSAKeyRegistrationMessageHash_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 common.Address
+		if args[1] != nil {
+			arg1 = args[1].(common.Address)
+		}
+		var arg2 common.Address
+		if args[2] != nil {
+			arg2 = args[2].(common.Address)
+		}
+		var arg3 uint32
+		if args[3] != nil {
+			arg3 = args[3].(uint32)
+		}
+		var arg4 common.Address
+		if args[4] != nil {
+			arg4 = args[4].(common.Address)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+			arg4,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIContractCaller_GetOperatorECDSAKeyRegistrationMessageHash_Call) Return(bytes [32]byte, err error) *MockIContractCaller_GetOperatorECDSAKeyRegistrationMessageHash_Call {
+	_c.Call.Return(bytes, err)
+	return _c
+}
+
+func (_c *MockIContractCaller_GetOperatorECDSAKeyRegistrationMessageHash_Call) RunAndReturn(run func(ctx context.Context, operatorAddress common.Address, avsAddress common.Address, operatorSetId uint32, signingKeyAddress common.Address) ([32]byte, error)) *MockIContractCaller_GetOperatorECDSAKeyRegistrationMessageHash_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// GetOperatorSetCurveType provides a mock function for the type MockIContractCaller
+func (_mock *MockIContractCaller) GetOperatorSetCurveType(avsAddress string, operatorSetId uint32, blockNumber uint64) (config.CurveType, error) {
+	ret := _mock.Called(avsAddress, operatorSetId, blockNumber)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetOperatorSetCurveType")
+	}
+
+	var r0 config.CurveType
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(string, uint32, uint64) (config.CurveType, error)); ok {
+		return returnFunc(avsAddress, operatorSetId, blockNumber)
+	}
+	if returnFunc, ok := ret.Get(0).(func(string, uint32, uint64) config.CurveType); ok {
+		r0 = returnFunc(avsAddress, operatorSetId, blockNumber)
+	} else {
+		r0 = ret.Get(0).(config.CurveType)
+	}
+	if returnFunc, ok := ret.Get(1).(func(string, uint32, uint64) error); ok {
+		r1 = returnFunc(avsAddress, operatorSetId, blockNumber)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockIContractCaller_GetOperatorSetCurveType_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetOperatorSetCurveType'
+type MockIContractCaller_GetOperatorSetCurveType_Call struct {
+	*mock.Call
+}
+
+// GetOperatorSetCurveType is a helper method to define mock.On call
+//   - avsAddress string
+//   - operatorSetId uint32
+//   - blockNumber uint64
+func (_e *MockIContractCaller_Expecter) GetOperatorSetCurveType(avsAddress interface{}, operatorSetId interface{}, blockNumber interface{}) *MockIContractCaller_GetOperatorSetCurveType_Call {
+	return &MockIContractCaller_GetOperatorSetCurveType_Call{Call: _e.mock.On("GetOperatorSetCurveType", avsAddress, operatorSetId, blockNumber)}
+}
+
+func (_c *MockIContractCaller_GetOperatorSetCurveType_Call) Run(run func(avsAddress string, operatorSetId uint32, blockNumber uint64)) *MockIContractCaller_GetOperatorSetCurveType_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 string
+		if args[0] != nil {
+			arg0 = args[0].(string)
+		}
+		var arg1 uint32
+		if args[1] != nil {
+			arg1 = args[1].(uint32)
+		}
+		var arg2 uint64
+		if args[2] != nil {
+			arg2 = args[2].(uint64)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIContractCaller_GetOperatorSetCurveType_Call) Return(curveType config.CurveType, err error) *MockIContractCaller_GetOperatorSetCurveType_Call {
+	_c.Call.Return(curveType, err)
+	return _c
+}
+
+func (_c *MockIContractCaller_GetOperatorSetCurveType_Call) RunAndReturn(run func(avsAddress string, operatorSetId uint32, blockNumber uint64) (config.CurveType, error)) *MockIContractCaller_GetOperatorSetCurveType_Call {
+	_c.Call.Return(run)
+	return _c
 }
 
 // GetOperatorSetDetailsForOperator provides a mock function for the type MockIContractCaller
@@ -243,6 +746,184 @@ func (_c *MockIContractCaller_GetOperatorSetMembersWithPeering_Call) Return(oper
 }
 
 func (_c *MockIContractCaller_GetOperatorSetMembersWithPeering_Call) RunAndReturn(run func(avsAddress string, operatorSetId uint32) (*peering.OperatorSetPeers, error)) *MockIContractCaller_GetOperatorSetMembersWithPeering_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// RegisterKeyWithKeyRegistrar provides a mock function for the type MockIContractCaller
+func (_mock *MockIContractCaller) RegisterKeyWithKeyRegistrar(ctx context.Context, operatorAddress common.Address, avsAddress common.Address, operatorSetId uint32, sigBytes []byte, keyData []byte) (*types.Receipt, error) {
+	ret := _mock.Called(ctx, operatorAddress, avsAddress, operatorSetId, sigBytes, keyData)
+
+	if len(ret) == 0 {
+		panic("no return value specified for RegisterKeyWithKeyRegistrar")
+	}
+
+	var r0 *types.Receipt
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, common.Address, common.Address, uint32, []byte, []byte) (*types.Receipt, error)); ok {
+		return returnFunc(ctx, operatorAddress, avsAddress, operatorSetId, sigBytes, keyData)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, common.Address, common.Address, uint32, []byte, []byte) *types.Receipt); ok {
+		r0 = returnFunc(ctx, operatorAddress, avsAddress, operatorSetId, sigBytes, keyData)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*types.Receipt)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, common.Address, common.Address, uint32, []byte, []byte) error); ok {
+		r1 = returnFunc(ctx, operatorAddress, avsAddress, operatorSetId, sigBytes, keyData)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockIContractCaller_RegisterKeyWithKeyRegistrar_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'RegisterKeyWithKeyRegistrar'
+type MockIContractCaller_RegisterKeyWithKeyRegistrar_Call struct {
+	*mock.Call
+}
+
+// RegisterKeyWithKeyRegistrar is a helper method to define mock.On call
+//   - ctx context.Context
+//   - operatorAddress common.Address
+//   - avsAddress common.Address
+//   - operatorSetId uint32
+//   - sigBytes []byte
+//   - keyData []byte
+func (_e *MockIContractCaller_Expecter) RegisterKeyWithKeyRegistrar(ctx interface{}, operatorAddress interface{}, avsAddress interface{}, operatorSetId interface{}, sigBytes interface{}, keyData interface{}) *MockIContractCaller_RegisterKeyWithKeyRegistrar_Call {
+	return &MockIContractCaller_RegisterKeyWithKeyRegistrar_Call{Call: _e.mock.On("RegisterKeyWithKeyRegistrar", ctx, operatorAddress, avsAddress, operatorSetId, sigBytes, keyData)}
+}
+
+func (_c *MockIContractCaller_RegisterKeyWithKeyRegistrar_Call) Run(run func(ctx context.Context, operatorAddress common.Address, avsAddress common.Address, operatorSetId uint32, sigBytes []byte, keyData []byte)) *MockIContractCaller_RegisterKeyWithKeyRegistrar_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 common.Address
+		if args[1] != nil {
+			arg1 = args[1].(common.Address)
+		}
+		var arg2 common.Address
+		if args[2] != nil {
+			arg2 = args[2].(common.Address)
+		}
+		var arg3 uint32
+		if args[3] != nil {
+			arg3 = args[3].(uint32)
+		}
+		var arg4 []byte
+		if args[4] != nil {
+			arg4 = args[4].([]byte)
+		}
+		var arg5 []byte
+		if args[5] != nil {
+			arg5 = args[5].([]byte)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+			arg4,
+			arg5,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIContractCaller_RegisterKeyWithKeyRegistrar_Call) Return(receipt *types.Receipt, err error) *MockIContractCaller_RegisterKeyWithKeyRegistrar_Call {
+	_c.Call.Return(receipt, err)
+	return _c
+}
+
+func (_c *MockIContractCaller_RegisterKeyWithKeyRegistrar_Call) RunAndReturn(run func(ctx context.Context, operatorAddress common.Address, avsAddress common.Address, operatorSetId uint32, sigBytes []byte, keyData []byte) (*types.Receipt, error)) *MockIContractCaller_RegisterKeyWithKeyRegistrar_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// SubmitCommitment provides a mock function for the type MockIContractCaller
+func (_mock *MockIContractCaller) SubmitCommitment(ctx context.Context, registryAddress common.Address, epoch int64, commitmentHash [32]byte, ackMerkleRoot [32]byte) (*types.Receipt, error) {
+	ret := _mock.Called(ctx, registryAddress, epoch, commitmentHash, ackMerkleRoot)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SubmitCommitment")
+	}
+
+	var r0 *types.Receipt
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, common.Address, int64, [32]byte, [32]byte) (*types.Receipt, error)); ok {
+		return returnFunc(ctx, registryAddress, epoch, commitmentHash, ackMerkleRoot)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, common.Address, int64, [32]byte, [32]byte) *types.Receipt); ok {
+		r0 = returnFunc(ctx, registryAddress, epoch, commitmentHash, ackMerkleRoot)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).(*types.Receipt)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, common.Address, int64, [32]byte, [32]byte) error); ok {
+		r1 = returnFunc(ctx, registryAddress, epoch, commitmentHash, ackMerkleRoot)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockIContractCaller_SubmitCommitment_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SubmitCommitment'
+type MockIContractCaller_SubmitCommitment_Call struct {
+	*mock.Call
+}
+
+// SubmitCommitment is a helper method to define mock.On call
+//   - ctx context.Context
+//   - registryAddress common.Address
+//   - epoch int64
+//   - commitmentHash [32]byte
+//   - ackMerkleRoot [32]byte
+func (_e *MockIContractCaller_Expecter) SubmitCommitment(ctx interface{}, registryAddress interface{}, epoch interface{}, commitmentHash interface{}, ackMerkleRoot interface{}) *MockIContractCaller_SubmitCommitment_Call {
+	return &MockIContractCaller_SubmitCommitment_Call{Call: _e.mock.On("SubmitCommitment", ctx, registryAddress, epoch, commitmentHash, ackMerkleRoot)}
+}
+
+func (_c *MockIContractCaller_SubmitCommitment_Call) Run(run func(ctx context.Context, registryAddress common.Address, epoch int64, commitmentHash [32]byte, ackMerkleRoot [32]byte)) *MockIContractCaller_SubmitCommitment_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 common.Address
+		if args[1] != nil {
+			arg1 = args[1].(common.Address)
+		}
+		var arg2 int64
+		if args[2] != nil {
+			arg2 = args[2].(int64)
+		}
+		var arg3 [32]byte
+		if args[3] != nil {
+			arg3 = args[3].([32]byte)
+		}
+		var arg4 [32]byte
+		if args[4] != nil {
+			arg4 = args[4].([32]byte)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+			arg4,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIContractCaller_SubmitCommitment_Call) Return(receipt *types.Receipt, err error) *MockIContractCaller_SubmitCommitment_Call {
+	_c.Call.Return(receipt, err)
+	return _c
+}
+
+func (_c *MockIContractCaller_SubmitCommitment_Call) RunAndReturn(run func(ctx context.Context, registryAddress common.Address, epoch int64, commitmentHash [32]byte, ackMerkleRoot [32]byte) (*types.Receipt, error)) *MockIContractCaller_SubmitCommitment_Call {
 	_c.Call.Return(run)
 	return _c
 }

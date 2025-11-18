@@ -7,13 +7,12 @@ import {IPermissionController} from "@eigenlayer-contracts/src/contracts/interfa
 import {AVSRegistrar} from "@eigenlayer-middleware/src/middlewareV2/registrar/AVSRegistrar.sol";
 import {SocketRegistry} from "@eigenlayer-middleware/src/middlewareV2/registrar/modules/SocketRegistry.sol";
 import {Allowlist} from "@eigenlayer-middleware/src/middlewareV2/registrar/modules/Allowlist.sol";
-import { IEigenKMSRegistrarTypes } from "./interfaces/IEigenKMSRegistrar.sol";
+import {IEigenKMSRegistrarTypes} from "./interfaces/IEigenKMSRegistrar.sol";
 import {EigenKMSRegistrarStorage} from "./EigenKMSRegistrarStorage.sol";
-
 
 contract EigenKMSRegistrar is AVSRegistrar, SocketRegistry, Allowlist, EigenKMSRegistrarStorage {
     /**
-      * @dev Constructor that passes parameters to parent
+     * @dev Constructor that passes parameters to parent
      * @param _allocationManager The AllocationManager contract address
      * @param _keyRegistrar The KeyRegistrar contract address
      * @param _permissionController The PermissionController contract address
@@ -65,7 +64,9 @@ contract EigenKMSRegistrar is AVSRegistrar, SocketRegistry, Allowlist, EigenKMSR
      * @notice Internal function to set AVS configuration
      * @param config Configuration for the AVS
      */
-    function _setAvsConfig(IEigenKMSRegistrarTypes.AvsConfig memory config) internal {
+    function _setAvsConfig(
+        IEigenKMSRegistrarTypes.AvsConfig memory config
+    ) internal {
         avsConfig = config;
     }
 
