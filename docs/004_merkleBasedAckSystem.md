@@ -5,6 +5,16 @@ This document provides a detailed, step-by-step execution plan for implementing 
 
 ---
 
+## Implementation Status
+
+**Overall Progress:** 1/7 phases complete (14%)
+
+**Current Phase:** Phase 2 - Smart Contract Extensions
+
+**Last Updated:** Phase 1 completed with all quality gates passed
+
+---
+
 ## Table of Contents
 1. [Development Guidelines](#development-guidelines)
 2. [Architecture Overview](#architecture-overview)
@@ -181,32 +191,45 @@ Phase 4: Finalize (sum shares)
 
 ## Implementation Phases
 
-### Phase 1: Core Merkle Tree Infrastructure (2-3 days)
+### Phase Progress Tracker
+
+- [x] **Phase 1**: Core Merkle Tree Infrastructure ✅
+- [ ] **Phase 2**: Smart Contract Extensions
+- [ ] **Phase 3**: Data Structure Updates
+- [ ] **Phase 4**: DKG/Reshare Protocol Modifications
+- [ ] **Phase 5**: Transport Layer Enhancements
+- [ ] **Phase 6**: Verification Flow
+- [ ] **Phase 7**: End-to-End Integration Testing
+- [ ] **Phase 8**: Fraud Detection (Future/Optional)
+
+---
+
+### Phase 1: Core Merkle Tree Infrastructure (2-3 days) ✅ COMPLETE
 
 **Goal:** Create production-ready merkle tree package with full test coverage
 
 **Deliverables:**
-- `pkg/merkle/merkle.go` - Core implementation
-- `pkg/merkle/merkle_test.go` - Comprehensive unit tests
-- `pkg/merkle/types.go` - Data structures
+- [x] `pkg/merkle/merkle.go` - Core implementation
+- [x] `pkg/merkle/merkle_test.go` - Comprehensive unit tests
+- [x] `pkg/merkle/types.go` - Data structures
 
 **Key Features:**
-- Binary merkle tree with keccak256 hashing
-- Deterministic ordering (sort by player address)
-- Efficient proof generation
-- Proof verification matching Solidity behavior
+- [x] Binary merkle tree with keccak256 hashing
+- [x] Deterministic ordering (sort by player address)
+- [x] Efficient proof generation
+- [x] Proof verification matching Solidity behavior
 
 **Completion Criteria:**
-- ✅ All merkle tree functions implemented (BuildMerkleTree, GenerateProof, VerifyProof, etc.)
-- ✅ Unit tests covering 1, 2, 3, 4, 7, 8, 15, 16 acknowledgements (power-of-2 and non-power-of-2)
-- ✅ Tests for sorting determinism
-- ✅ Tests for proof verification (valid and invalid proofs)
-- ✅ Tests for edge cases (empty list, single ack, etc.)
-- ✅ Benchmark tests for performance measurement
-- ✅ `go test ./pkg/merkle/... -v` passes with 100% tests passing
-- ✅ `make lint` passes with zero warnings in pkg/merkle/
-- ✅ All functions have godoc comments
-- ✅ No dependencies on other phases (Phase 1 is standalone)
+- [x] All merkle tree functions implemented (BuildMerkleTree, GenerateProof, VerifyProof, etc.)
+- [x] Unit tests covering 1, 2, 3, 4, 7, 8, 15, 16 acknowledgements (power-of-2 and non-power-of-2)
+- [x] Tests for sorting determinism
+- [x] Tests for proof verification (valid and invalid proofs)
+- [x] Tests for edge cases (empty list, single ack, etc.)
+- [x] Benchmark tests for performance measurement
+- [x] `go test ./pkg/merkle/... -v` passes with 100% tests passing
+- [x] `make lint` passes with zero warnings in pkg/merkle/
+- [x] All functions have godoc comments
+- [x] No dependencies on other phases (Phase 1 is standalone)
 
 **Quality Gate:**
 ```bash
@@ -217,39 +240,39 @@ make lint
 
 ---
 
-### Phase 2: Smart Contract Extensions (2-3 days)
+### Phase 2: Smart Contract Extensions (2-3 days) ⏳ PENDING
 
 **Goal:** Deploy commitment registry with submission and query capabilities
 
 **Deliverables:**
-- `contracts/src/EigenKMSCommitmentRegistry.sol` - Main contract
-- `contracts/test/EigenKMSCommitmentRegistry.t.sol` - Foundry tests
-- `pkg/contractCaller/commitmentRegistry.go` - Go bindings
-- Updated contract deployment scripts
+- [ ] `contracts/src/EigenKMSCommitmentRegistry.sol` - Main contract
+- [ ] `contracts/test/EigenKMSCommitmentRegistry.t.sol` - Foundry tests
+- [ ] `pkg/contractCaller/commitmentRegistry.go` - Go bindings
+- [ ] Updated contract deployment scripts
 
 **Key Features:**
-- Per-epoch, per-operator storage
-- Gas-optimized submission (~21,000 gas per operator)
-- Query functions for verification phase
-- Event emission for off-chain monitoring
+- [ ] Per-epoch, per-operator storage
+- [ ] Gas-optimized submission (~21,000 gas per operator)
+- [ ] Query functions for verification phase
+- [ ] Event emission for off-chain monitoring
 
 **Completion Criteria:**
-- ✅ Solidity contract implemented with all functions (submitCommitment, getCommitment)
-- ✅ Foundry tests covering all contract functions
-- ✅ Test for successful submission
-- ✅ Test for duplicate submission rejection
-- ✅ Test for invalid parameter rejection
-- ✅ Test for event emission
-- ✅ Gas cost measurement test (should be < 25,000 gas)
-- ✅ Go bindings generated using `abigen`
-- ✅ Go wrapper functions in `pkg/contractCaller/commitmentRegistry.go`
-- ✅ Go unit tests for contract caller functions
-- ✅ Contract deployed to local testnet (Anvil) for testing
-- ✅ `forge test` passes with 100% tests passing
-- ✅ `forge fmt` applied to all Solidity files
-- ✅ `go test ./pkg/contractCaller/... -v` passes
-- ✅ `make lint` passes for Go code
-- ✅ All contracts have NatSpec documentation
+- [ ] Solidity contract implemented with all functions (submitCommitment, getCommitment)
+- [ ] Foundry tests covering all contract functions
+- [ ] Test for successful submission
+- [ ] Test for duplicate submission rejection
+- [ ] Test for invalid parameter rejection
+- [ ] Test for event emission
+- [ ] Gas cost measurement test (should be < 25,000 gas)
+- [ ] Go bindings generated using `abigen`
+- [ ] Go wrapper functions in `pkg/contractCaller/commitmentRegistry.go`
+- [ ] Go unit tests for contract caller functions
+- [ ] Contract deployed to local testnet (Anvil) for testing
+- [ ] `forge test` passes with 100% tests passing
+- [ ] `forge fmt` applied to all Solidity files
+- [ ] `go test ./pkg/contractCaller/... -v` passes
+- [ ] `make lint` passes for Go code
+- [ ] All contracts have NatSpec documentation
 
 **Quality Gate:**
 ```bash
@@ -265,35 +288,35 @@ make lint
 
 ---
 
-### Phase 3: Data Structure Updates (1 day)
+### Phase 3: Data Structure Updates (1 day) ⏳ PENDING
 
 **Goal:** Extend acknowledgement structures to support merkle system
 
 **Deliverables:**
-- Updated `pkg/types/types.go`
-- Updated hashing functions in `pkg/crypto/`
-- New message types for commitment broadcasts
+- [ ] Updated `pkg/types/types.go`
+- [ ] Updated hashing functions in `pkg/crypto/`
+- [ ] New message types for commitment broadcasts
 
 **Changes:**
-- Add `ShareHash [32]byte` to `Acknowledgement`
-- Add `Epoch int64` to `Acknowledgement`
-- Create `CommitmentBroadcast` message type
-- Update signature generation to include shareHash
+- [ ] Add `ShareHash [32]byte` to `Acknowledgement`
+- [ ] Add `Epoch int64` to `Acknowledgement`
+- [ ] Create `CommitmentBroadcast` message type
+- [ ] Update signature generation to include shareHash
 
 **Completion Criteria:**
-- ✅ `Acknowledgement` struct updated with `ShareHash` and `Epoch` fields
-- ✅ `CommitmentBroadcast` and `CommitmentBroadcastMessage` types created
-- ✅ `HashAcknowledgementForMerkle()` function implemented in `pkg/crypto/bls.go`
-- ✅ `HashShareForAck()` function implemented in `pkg/crypto/bls.go`
-- ✅ Unit tests for new hash functions
-- ✅ Test hash output matches expected keccak256 format
-- ✅ Test hash determinism (same input = same output)
-- ✅ Existing acknowledgement tests updated for new fields
-- ✅ `go test ./pkg/types/... -v` passes
-- ✅ `go test ./pkg/crypto/... -v` passes
-- ✅ No regression in existing tests
-- ✅ `make lint` passes
-- ✅ All new structs and functions have godoc comments
+- [ ] `Acknowledgement` struct updated with `ShareHash` and `Epoch` fields
+- [ ] `CommitmentBroadcast` and `CommitmentBroadcastMessage` types created
+- [ ] `HashAcknowledgementForMerkle()` function implemented in `pkg/crypto/bls.go`
+- [ ] `HashShareForAck()` function implemented in `pkg/crypto/bls.go`
+- [ ] Unit tests for new hash functions
+- [ ] Test hash output matches expected keccak256 format
+- [ ] Test hash determinism (same input = same output)
+- [ ] Existing acknowledgement tests updated for new fields
+- [ ] `go test ./pkg/types/... -v` passes
+- [ ] `go test ./pkg/crypto/... -v` passes
+- [ ] No regression in existing tests
+- [ ] `make lint` passes
+- [ ] All new structs and functions have godoc comments
 
 **Quality Gate:**
 ```bash
@@ -310,43 +333,43 @@ make lint
 
 ---
 
-### Phase 4: DKG/Reshare Protocol Modifications (2-3 days)
+### Phase 4: DKG/Reshare Protocol Modifications (2-3 days) ⏳ PENDING
 
 **Goal:** Integrate merkle tree building and contract submission into protocols
 
 **Deliverables:**
-- Updated `pkg/dkg/dkg.go`
-- Updated `pkg/reshare/reshare.go`
-- Updated `pkg/node/node.go` orchestration
+- [ ] Updated `pkg/dkg/dkg.go`
+- [ ] Updated `pkg/reshare/reshare.go`
+- [ ] Updated `pkg/node/node.go` orchestration
 
 **Key Changes:**
-- Modify acknowledgement creation to include shareHash
-- Change ack collection to wait for ALL n-1 acks (not just threshold)
-- Add merkle tree building after ack collection
-- Add contract submission step
-- Update session state machine
+- [ ] Modify acknowledgement creation to include shareHash
+- [ ] Change ack collection to wait for ALL n-1 acks (not just threshold)
+- [ ] Add merkle tree building after ack collection
+- [ ] Add contract submission step
+- [ ] Update session state machine
 
 **Completion Criteria:**
-- ✅ `CreateAcknowledgement()` updated to include shareHash and epoch
-- ✅ `BuildAcknowledgementMerkleTree()` function added to DKG
-- ✅ Same functions added to reshare protocol
-- ✅ `ProtocolSession` struct updated with merkle tree state fields
-- ✅ `CollectAcknowledgements()` modified to wait for ALL n-1 acks
-- ✅ `BuildMerkleTreeAndSubmit()` function implemented in node orchestration
-- ✅ Session state machine updated to include contract submission phase
-- ✅ Unit tests for DKG acknowledgement creation with shareHash
-- ✅ Unit tests for merkle tree building in DKG
-- ✅ Unit tests for reshare with same functionality
-- ✅ Mock contract caller for testing (no real chain needed)
-- ✅ Test with 4 operators collecting all acks
-- ✅ Test merkle tree building from collected acks
-- ✅ Test contract submission (mocked)
-- ✅ `go test ./pkg/dkg/... -v` passes
-- ✅ `go test ./pkg/reshare/... -v` passes
-- ✅ `go test ./pkg/node/... -v` passes
-- ✅ No regression in existing DKG/reshare tests
-- ✅ `make lint` passes
-- ✅ All modified functions have updated godoc comments
+- [ ] `CreateAcknowledgement()` updated to include shareHash and epoch
+- [ ] `BuildAcknowledgementMerkleTree()` function added to DKG
+- [ ] Same functions added to reshare protocol
+- [ ] `ProtocolSession` struct updated with merkle tree state fields
+- [ ] `CollectAcknowledgements()` modified to wait for ALL n-1 acks
+- [ ] `BuildMerkleTreeAndSubmit()` function implemented in node orchestration
+- [ ] Session state machine updated to include contract submission phase
+- [ ] Unit tests for DKG acknowledgement creation with shareHash
+- [ ] Unit tests for merkle tree building in DKG
+- [ ] Unit tests for reshare with same functionality
+- [ ] Mock contract caller for testing (no real chain needed)
+- [ ] Test with 4 operators collecting all acks
+- [ ] Test merkle tree building from collected acks
+- [ ] Test contract submission (mocked)
+- [ ] `go test ./pkg/dkg/... -v` passes
+- [ ] `go test ./pkg/reshare/... -v` passes
+- [ ] `go test ./pkg/node/... -v` passes
+- [ ] No regression in existing DKG/reshare tests
+- [ ] `make lint` passes
+- [ ] All modified functions have updated godoc comments
 
 **Quality Gate:**
 ```bash
@@ -364,33 +387,33 @@ make lint
 
 ---
 
-### Phase 5: Transport Layer Enhancements (1 day)
+### Phase 5: Transport Layer Enhancements (1 day) ⏳ PENDING
 
 **Goal:** Enable broadcasting commitments with operator-specific merkle proofs
 
 **Deliverables:**
-- New `BroadcastCommitmentsWithProofs()` function
-- Updated message handling in `pkg/node/server.go`
+- [ ] New `BroadcastCommitmentsWithProofs()` function
+- [ ] Updated message handling in `pkg/node/server.go`
 
 **Key Features:**
-- Generate merkle proof for each recipient
-- Include proof in broadcast message
-- Reuse existing authentication wrapper
+- [ ] Generate merkle proof for each recipient
+- [ ] Include proof in broadcast message
+- [ ] Reuse existing authentication wrapper
 
 **Completion Criteria:**
-- ✅ `BroadcastCommitmentsWithProofs()` implemented in `pkg/transport/client.go`
-- ✅ Function generates unique merkle proof for each recipient
-- ✅ Broadcast message includes commitments + all acks + proof
-- ✅ Message handler in `pkg/node/server.go` updated to receive broadcasts
-- ✅ Handler extracts and stores broadcast data in session
-- ✅ Unit tests for broadcast function
-- ✅ Test proof generation for each operator
-- ✅ Test broadcast message construction
-- ✅ Mock transport tests (no real network needed)
-- ✅ `go test ./pkg/transport/... -v` passes
-- ✅ No regression in existing transport tests
-- ✅ `make lint` passes
-- ✅ All new functions have godoc comments
+- [ ] `BroadcastCommitmentsWithProofs()` implemented in `pkg/transport/client.go`
+- [ ] Function generates unique merkle proof for each recipient
+- [ ] Broadcast message includes commitments + all acks + proof
+- [ ] Message handler in `pkg/node/server.go` updated to receive broadcasts
+- [ ] Handler extracts and stores broadcast data in session
+- [ ] Unit tests for broadcast function
+- [ ] Test proof generation for each operator
+- [ ] Test broadcast message construction
+- [ ] Mock transport tests (no real network needed)
+- [ ] `go test ./pkg/transport/... -v` passes
+- [ ] No regression in existing transport tests
+- [ ] `make lint` passes
+- [ ] All new functions have godoc comments
 
 **Quality Gate:**
 ```bash
@@ -402,43 +425,43 @@ make lint
 
 ---
 
-### Phase 6: Verification Flow (1-2 days)
+### Phase 6: Verification Flow (1-2 days) ⏳ PENDING
 
 **Goal:** Implement full verification against on-chain commitment data
 
 **Deliverables:**
-- Verification logic in `pkg/node/node.go`
-- Contract query integration
-- Error handling and operator exclusion
+- [ ] Verification logic in `pkg/node/node.go`
+- [ ] Contract query integration
+- [ ] Error handling and operator exclusion
 
 **Verification Steps:**
-1. Query contract for operator's (commitmentHash, ackMerkleRoot)
-2. Verify: hash(broadcast commitments) == commitmentHash
-3. Find own ack in operator's ack list
-4. Verify: ack.shareHash == keccak256(received share)
-5. Verify: merkleProof(ack) validates against ackMerkleRoot
-6. Accept/reject operator's commitments
+1. [ ] Query contract for operator's (commitmentHash, ackMerkleRoot)
+2. [ ] Verify: hash(broadcast commitments) == commitmentHash
+3. [ ] Find own ack in operator's ack list
+4. [ ] Verify: ack.shareHash == keccak256(received share)
+5. [ ] Verify: merkleProof(ack) validates against ackMerkleRoot
+6. [ ] Accept/reject operator's commitments
 
 **Completion Criteria:**
-- ✅ `VerifyOperatorBroadcast()` function implemented
-- ✅ Function queries contract for commitment data
-- ✅ Function verifies commitment hash matches broadcast
-- ✅ Function finds and verifies own ack in broadcast
-- ✅ Function verifies shareHash matches received share
-- ✅ Function verifies merkle proof against on-chain root
-- ✅ `WaitForVerifications()` function implemented
-- ✅ Function waits for all operators to be verified
-- ✅ Operator exclusion logic for failed verifications
-- ✅ Unit tests for verification logic
-- ✅ Test successful verification path
-- ✅ Test rejection on commitment hash mismatch
-- ✅ Test rejection on shareHash mismatch
-- ✅ Test rejection on invalid merkle proof
-- ✅ Test with mock contract data
-- ✅ `go test ./pkg/node/... -v` passes
-- ✅ No regression in existing tests
-- ✅ `make lint` passes
-- ✅ All new functions have godoc comments
+- [ ] `VerifyOperatorBroadcast()` function implemented
+- [ ] Function queries contract for commitment data
+- [ ] Function verifies commitment hash matches broadcast
+- [ ] Function finds and verifies own ack in broadcast
+- [ ] Function verifies shareHash matches received share
+- [ ] Function verifies merkle proof against on-chain root
+- [ ] `WaitForVerifications()` function implemented
+- [ ] Function waits for all operators to be verified
+- [ ] Operator exclusion logic for failed verifications
+- [ ] Unit tests for verification logic
+- [ ] Test successful verification path
+- [ ] Test rejection on commitment hash mismatch
+- [ ] Test rejection on shareHash mismatch
+- [ ] Test rejection on invalid merkle proof
+- [ ] Test with mock contract data
+- [ ] `go test ./pkg/node/... -v` passes
+- [ ] No regression in existing tests
+- [ ] `make lint` passes
+- [ ] All new functions have godoc comments
 
 **Quality Gate:**
 ```bash
@@ -449,39 +472,39 @@ make lint
 
 ---
 
-### Phase 7: End-to-End Integration Testing (1-2 days)
+### Phase 7: End-to-End Integration Testing (1-2 days) ⏳ PENDING
 
 **Goal:** Comprehensive testing of complete merkle-based DKG/Reshare protocol
 
 **Deliverables:**
-- Integration tests in `internal/tests/integration/`
-- Test scenarios for fraud detection
-- Performance benchmarks
+- [ ] Integration tests in `internal/tests/integration/`
+- [ ] Test scenarios for fraud detection
+- [ ] Performance benchmarks
 
 **Test Cases:**
-- 4-node DKG with merkle acks
-- 10-node DKG (stress test)
-- Reshare protocol with merkle acks
-- Invalid proof rejection
-- Missing ack handling
-- Contract submission failures
+- [ ] 4-node DKG with merkle acks
+- [ ] 10-node DKG (stress test)
+- [ ] Reshare protocol with merkle acks
+- [ ] Invalid proof rejection
+- [ ] Missing ack handling
+- [ ] Contract submission failures
 
 **Completion Criteria:**
-- ✅ `TestDKGWithMerkleAcknowledgements` test implemented
-- ✅ Test runs full DKG with 4 operators
-- ✅ Test verifies all operators have same master public key
-- ✅ Test verifies contract submissions for all operators
-- ✅ `TestReshareWithMerkleAcknowledgements` test implemented
-- ✅ `TestDKGWithInvalidProof` test implemented (fraud detection)
-- ✅ Test verifies malicious operator is excluded
-- ✅ `TestDKGWithMissingAcks` test implemented (timeout handling)
-- ✅ Benchmark tests for merkle operations
-- ✅ All integration tests pass
-- ✅ `go test ./internal/tests/integration/... -v` passes
-- ✅ No regression in existing integration tests
-- ✅ `make test` passes for entire codebase
-- ✅ `make lint` passes for entire codebase
-- ✅ Performance benchmarks documented
+- [ ] `TestDKGWithMerkleAcknowledgements` test implemented
+- [ ] Test runs full DKG with 4 operators
+- [ ] Test verifies all operators have same master public key
+- [ ] Test verifies contract submissions for all operators
+- [ ] `TestReshareWithMerkleAcknowledgements` test implemented
+- [ ] `TestDKGWithInvalidProof` test implemented (fraud detection)
+- [ ] Test verifies malicious operator is excluded
+- [ ] `TestDKGWithMissingAcks` test implemented (timeout handling)
+- [ ] Benchmark tests for merkle operations
+- [ ] All integration tests pass
+- [ ] `go test ./internal/tests/integration/... -v` passes
+- [ ] No regression in existing integration tests
+- [ ] `make test` passes for entire codebase
+- [ ] `make lint` passes for entire codebase
+- [ ] Performance benchmarks documented
 
 **Quality Gate:**
 ```bash
@@ -502,7 +525,7 @@ make all
 
 ---
 
-### Phase 8: Fraud Detection (Future/Optional)
+### Phase 8: Fraud Detection (Future/Optional) 🔮 FUTURE
 
 **Goal:** Enable on-chain slashing for equivocation
 
