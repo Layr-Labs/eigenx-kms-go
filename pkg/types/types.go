@@ -73,8 +73,10 @@ func (p *G2Point) IsZero() bool {
 type Acknowledgement struct {
 	DealerID       int
 	PlayerID       int
+	Epoch          int64    // Which reshare round (Phase 3)
+	ShareHash      [32]byte // keccak256(share) - commits to received share (Phase 3)
 	CommitmentHash [32]byte
-	Signature      []byte // Sign(p2p_privkey, dealer_id || commitment_hash)
+	Signature      []byte // Sign(p2p_privkey, dealer_id || epoch || shareHash || commitment_hash)
 }
 
 // CompletionSignature signals reshare completion
@@ -126,4 +128,21 @@ type Release struct {
 	EncryptedEnv string `json:"encrypted_env"`
 	PublicEnv    string `json:"public_env"`
 	Timestamp    int64  `json:"timestamp"`
+}
+
+// CommitmentBroadcast represents a broadcast of commitments with acknowledgements and merkle proofs (Phase 3)
+type CommitmentBroadcast struct {
+	FromOperatorID   int                // Operator sending the broadcast
+	Epoch            int64              // Which reshare round
+	Commitments      []G2Point          // Dealer's polynomial commitments
+	Acknowledgements []*Acknowledgement // All n-1 acks collected as dealer
+	MerkleProof      [][32]byte         // Merkle proof for specific recipient
+}
+
+// CommitmentBroadcastMessage wraps CommitmentBroadcast for authenticated transport (Phase 3)
+type CommitmentBroadcastMessage struct {
+	FromOperatorID int
+	ToOperatorID   int
+	SessionID      int64 // Same as Epoch for correlation
+	Broadcast      *CommitmentBroadcast
 }

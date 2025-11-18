@@ -5,7 +5,6 @@ import (
 	"math/big"
 	"sort"
 
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
@@ -145,24 +144,35 @@ func VerifyProof(proof *MerkleProof, root [32]byte) bool {
 }
 
 // HashAcknowledgement creates a keccak256 hash of an acknowledgement for use as a merkle leaf.
-// The hash format will eventually match the Solidity implementation:
-// keccak256(abi.encodePacked(player, dealer, epoch, shareHash, commitmentHash))
+// The hash format matches the Solidity implementation:
+// keccak256(abi.encodePacked(playerID, dealerID, epoch, shareHash, commitmentHash))
 //
-// Note: Currently hashing only available fields (player, dealer, commitmentHash).
-// This will be updated in Phase 3 when Epoch and ShareHash fields are added to Acknowledgement.
+// Note: This uses integer IDs. For production Solidity compatibility, use Ethereum addresses.
 func HashAcknowledgement(ack *types.Acknowledgement) [32]byte {
-	// Convert player and dealer IDs to addresses
-	// Note: In the actual system, these should be real Ethereum addresses
-	// For now, we convert the integer IDs to addresses
-	playerAddr := common.BigToAddress(big.NewInt(int64(ack.PlayerID)))
-	dealerAddr := common.BigToAddress(big.NewInt(int64(ack.DealerID)))
+	// Pack all fields for hashing
+	// Format: playerID (8 bytes) || dealerID (8 bytes) || epoch (32 bytes) || shareHash (32 bytes) || commitmentHash (32 bytes)
+	data := make([]byte, 0, 8+8+32+32+32)
 
-	// Pack available fields for hashing
-	// Format: player (20 bytes) || dealer (20 bytes) || commitmentHash (32 bytes)
-	// TODO Phase 3: Add epoch (32 bytes) and shareHash (32 bytes) when fields are added
-	data := make([]byte, 0, 20+20+32)
-	data = append(data, playerAddr.Bytes()...)
-	data = append(data, dealerAddr.Bytes()...)
+	// Encode playerID (8 bytes, big endian)
+	playerBytes := make([]byte, 8)
+	playerBig := big.NewInt(int64(ack.PlayerID))
+	playerBig.FillBytes(playerBytes)
+	data = append(data, playerBytes...)
+
+	// Encode dealerID (8 bytes, big endian)
+	dealerBytes := make([]byte, 8)
+	dealerBig := big.NewInt(int64(ack.DealerID))
+	dealerBig.FillBytes(dealerBytes)
+	data = append(data, dealerBytes...)
+
+	// Encode epoch (32 bytes, big endian)
+	epochBytes := make([]byte, 32)
+	epochBig := big.NewInt(ack.Epoch)
+	epochBig.FillBytes(epochBytes)
+	data = append(data, epochBytes...)
+
+	// Append shareHash and commitmentHash
+	data = append(data, ack.ShareHash[:]...)
 	data = append(data, ack.CommitmentHash[:]...)
 
 	// Compute keccak256 hash
