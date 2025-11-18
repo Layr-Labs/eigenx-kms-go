@@ -41,10 +41,6 @@ func testGetAppPublicKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get app public key: %v", err)
 	}
-	appPubKey, err = GetAppPublicKey(appID)
-	if err != nil {
-		t.Fatalf("Failed to get app public key: %v", err)
-	}
 
 	// Verify it's not zero
 	isZero, err := appPubKey.IsZero()
