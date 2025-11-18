@@ -458,3 +458,37 @@ func (s *Server) handleGetCommitments(w http.ResponseWriter, r *http.Request) {
 
 	s.node.logger.Sugar().Debugw("Served public key commitments", "operator_address", s.node.OperatorAddress.Hex())
 }
+
+// handleCommitmentBroadcast handles commitment broadcasts with merkle proofs (Phase 5)
+func (s *Server) handleCommitmentBroadcast(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var msg types.CommitmentBroadcastMessage
+	if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Get session (should already exist from DKG/Reshare flow)
+	// The actual verification will happen in Phase 6
+	session := s.node.getSession(msg.SessionID)
+	if session == nil {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+
+	// Store the broadcast for later verification (Phase 6 will implement verification)
+	// For now, just acknowledge receipt
+	s.node.logger.Sugar().Debugw("Received commitment broadcast",
+		"from", msg.FromOperatorID,
+		"epoch", msg.Broadcast.Epoch,
+		"num_acks", len(msg.Broadcast.Acknowledgements),
+		"num_commitments", len(msg.Broadcast.Commitments),
+		"proof_length", len(msg.Broadcast.MerkleProof),
+	)
+
+	w.WriteHeader(http.StatusOK)
+}
