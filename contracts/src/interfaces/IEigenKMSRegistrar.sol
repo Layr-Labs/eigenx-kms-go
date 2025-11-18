@@ -16,12 +16,7 @@ interface IEigenKMSRegistrarTypes {
  * @author Layr Labs, Inc.
  * @notice Interface for TaskAVSRegistrarBase contract that manages AVS configuration
  */
-interface IEigenKMSRegistrar is
-    IAVSRegistrar,
-    IAVSRegistrarInternal,
-    ISocketRegistryV2,
-    IAllowlist
-{
+interface IEigenKMSRegistrar is IAVSRegistrar, IAVSRegistrarInternal, ISocketRegistryV2, IAllowlist {
     /**
      * @notice Sets the configuration for this AVS
      * @param config Configuration for the AVS
