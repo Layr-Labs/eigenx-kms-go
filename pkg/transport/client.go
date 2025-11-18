@@ -7,11 +7,13 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/merkle"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 // RetryConfig configures retry behavior
@@ -343,4 +345,108 @@ func (c *Client) BroadcastCompletionSignature(operators []*peering.OperatorSetPe
 		_, _ = http.Post(url, "application/json", bytes.NewReader(data))
 	}
 	return nil
+}
+
+// BroadcastCommitmentsWithProofs broadcasts commitments and acknowledgements with operator-specific merkle proofs (Phase 5)
+// Each operator receives a broadcast containing all acks and a merkle proof for their specific ack
+func (c *Client) BroadcastCommitmentsWithProofs(
+	operators []*peering.OperatorSetPeer,
+	epoch int64,
+	commitments []types.G2Point,
+	acks []*types.Acknowledgement,
+	merkleTree *merkle.MerkleTree,
+) error {
+	if merkleTree == nil {
+		return fmt.Errorf("merkle tree is nil")
+	}
+
+	// Send to each operator with their specific proof
+	for i, op := range operators {
+		if op.OperatorAddress == c.operatorAddr {
+			continue // Skip self
+		}
+
+		// Find the ack for this operator
+		var recipientAck *types.Acknowledgement
+		var leafIndex int
+		for idx, ack := range acks {
+			opNodeID := addressToNodeID(op.OperatorAddress)
+			if ack.PlayerID == opNodeID {
+				recipientAck = ack
+				leafIndex = idx
+				break
+			}
+		}
+
+		if recipientAck == nil {
+			return fmt.Errorf("no ack found for operator %s", op.OperatorAddress.Hex())
+		}
+
+		// Generate merkle proof for this specific operator
+		proof, err := merkleTree.GenerateProof(leafIndex)
+		if err != nil {
+			return fmt.Errorf("failed to generate proof for operator %d: %w", i, err)
+		}
+
+		// Create broadcast message with proof
+		broadcast := &types.CommitmentBroadcast{
+			FromOperatorID:   c.nodeID,
+			Epoch:            epoch,
+			Commitments:      commitments,
+			Acknowledgements: acks,
+			MerkleProof:      proof.Proof,
+		}
+
+		// Send to operator
+		if err := c.sendCommitmentBroadcast(op, broadcast, epoch); err != nil {
+			// Log error but continue to other operators
+			fmt.Printf("Failed to send commitment broadcast to %s: %v\n", op.OperatorAddress.Hex(), err)
+		}
+	}
+
+	return nil
+}
+
+// sendCommitmentBroadcast sends a commitment broadcast to a specific operator (Phase 5)
+func (c *Client) sendCommitmentBroadcast(
+	toOperator *peering.OperatorSetPeer,
+	broadcast *types.CommitmentBroadcast,
+	sessionTimestamp int64,
+) error {
+	toNodeID := addressToNodeID(toOperator.OperatorAddress)
+
+	// Create message wrapper
+	msg := types.CommitmentBroadcastMessage{
+		FromOperatorID: c.nodeID,
+		ToOperatorID:   toNodeID,
+		SessionID:      sessionTimestamp,
+		Broadcast:      broadcast,
+	}
+
+	// Serialize message
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal broadcast message: %w", err)
+	}
+
+	// Send to operator
+	url := buildRequestURL(toOperator.SocketAddress, "/dkg/broadcast")
+	resp, err := http.Post(url, "application/json", bytes.NewReader(data))
+	if err != nil {
+		return fmt.Errorf("failed to send broadcast: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("broadcast failed with status %d", resp.StatusCode)
+	}
+
+	return nil
+}
+
+// addressToNodeID converts an Ethereum address to a node ID using keccak256 hash
+func addressToNodeID(address common.Address) int {
+	hash := crypto.Keccak256(address.Bytes())
+	nodeID := int(common.BytesToHash(hash).Big().Uint64())
+	return nodeID
 }

@@ -92,6 +92,7 @@ func NewServer(node *Node, port int) *Server {
 	mux.HandleFunc("/dkg/share", s.handleDKGShare)
 	mux.HandleFunc("/dkg/commitment", s.handleDKGCommitment)
 	mux.HandleFunc("/dkg/ack", s.handleDKGAck)
+	mux.HandleFunc("/dkg/broadcast", s.handleCommitmentBroadcast) // Phase 5
 
 	// Reshare endpoints
 	mux.HandleFunc("/reshare/share", s.handleReshareShare)
