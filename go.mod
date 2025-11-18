@@ -6,12 +6,13 @@ require (
 	github.com/Layr-Labs/chain-indexer v0.1.1-0.20251030152338-0e3be49f2ac8
 	github.com/Layr-Labs/crypto-libs v0.0.5-0.20250813195719-721609a5aa3d
 	github.com/Layr-Labs/eigenlayer-contracts v1.8.1
-	github.com/consensys/gnark-crypto v0.19.0
+	github.com/consensys/gnark-crypto v0.19.1
 	github.com/ethereum/go-ethereum v1.16.5
 	github.com/stretchr/testify v1.11.1
 	github.com/urfave/cli/v2 v2.27.7
 	go.uber.org/zap v1.27.0
 	golang.org/x/crypto v0.39.0
+	k8s.io/apimachinery v0.34.1
 )
 
 require (
@@ -46,5 +47,4 @@ require (
 	golang.org/x/sys v0.36.0 // indirect
 	google.golang.org/protobuf v1.36.6 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
-	k8s.io/apimachinery v0.34.1 // indirect
 )
