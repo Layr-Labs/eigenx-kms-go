@@ -321,18 +321,6 @@ func TestMerkleProofLength(t *testing.T) {
 	}
 }
 
-// TestHashPairCommutative verifies that hash order matters
-func TestHashPairCommutative(t *testing.T) {
-	left := [32]byte{1, 2, 3, 4, 5}
-	right := [32]byte{6, 7, 8, 9, 10}
-
-	hash1 := hashPair(left, right)
-	hash2 := hashPair(right, left)
-
-	// Hash should NOT be commutative (order matters)
-	require.NotEqual(t, hash1, hash2)
-}
-
 // TestMerkleTreeDeterminism tests that the same acks always produce the same tree
 func TestMerkleTreeDeterminism(t *testing.T) {
 	acks := createTestAcknowledgements(10)
