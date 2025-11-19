@@ -1,5 +1,9 @@
 package merkle
 
+import (
+	merkletree "github.com/wealdtech/go-merkletree/v2"
+)
+
 // MerkleTree represents a binary merkle tree built from acknowledgements.
 // The tree uses keccak256 hashing for Solidity compatibility.
 type MerkleTree struct {
@@ -9,9 +13,8 @@ type MerkleTree struct {
 	// Root is the merkle root hash
 	Root [32]byte
 
-	// levels stores all tree levels for proof generation
-	// levels[0] = leaves, levels[len-1] = root
-	levels [][][32]byte
+	// internalTree stores the go-merkletree instance for proof generation
+	internalTree *merkletree.MerkleTree
 }
 
 // MerkleProof represents a proof that a leaf is included in the tree.

@@ -10,6 +10,7 @@ require (
 	github.com/ethereum/go-ethereum v1.16.5
 	github.com/stretchr/testify v1.11.1
 	github.com/urfave/cli/v2 v2.27.7
+	github.com/wealdtech/go-merkletree/v2 v2.6.1
 	go.uber.org/zap v1.27.0
 	k8s.io/apimachinery v0.34.1
 )
@@ -31,6 +32,7 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.0 // indirect
 	github.com/holiman/uint256 v1.3.2 // indirect
+	github.com/iden3/go-iden3-crypto v0.0.16 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/rs/cors v1.11.1 // indirect
