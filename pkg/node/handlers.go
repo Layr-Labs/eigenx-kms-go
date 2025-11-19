@@ -473,15 +473,12 @@ func (s *Server) handleCommitmentBroadcast(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Get session (should already exist from DKG/Reshare flow)
-	// The actual verification will happen in Phase 6
 	session := s.node.getSession(msg.SessionID)
 	if session == nil {
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
 	}
 
-	// Store the broadcast for later verification (Phase 6 will implement verification)
-	// For now, just acknowledge receipt
 	s.node.logger.Sugar().Debugw("Received commitment broadcast",
 		"from", msg.FromOperatorID,
 		"epoch", msg.Broadcast.Epoch,
@@ -489,6 +486,19 @@ func (s *Server) handleCommitmentBroadcast(w http.ResponseWriter, r *http.Reques
 		"num_commitments", len(msg.Broadcast.Commitments),
 		"proof_length", len(msg.Broadcast.MerkleProof),
 	)
+
+	// Phase 6: Verify the broadcast
+	// Note: Contract registry address should come from node config in production
+	// For now, using zero address as placeholder
+	contractRegistryAddr := common.Address{}
+	if err := s.node.VerifyOperatorBroadcast(msg.SessionID, msg.Broadcast, contractRegistryAddr); err != nil {
+		s.node.logger.Sugar().Warnw("Failed to verify operator broadcast",
+			"from", msg.FromOperatorID,
+			"error", err,
+		)
+		http.Error(w, fmt.Sprintf("Verification failed: %v", err), http.StatusBadRequest)
+		return
+	}
 
 	w.WriteHeader(http.StatusOK)
 }

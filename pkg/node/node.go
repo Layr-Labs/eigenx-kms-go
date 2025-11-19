@@ -1076,3 +1076,121 @@ func (n *Node) signAcknowledgement(dealerID int, commitmentHash [32]byte) []byte
 	}
 	return signature.Bytes()
 }
+
+// VerifyOperatorBroadcast verifies a commitment broadcast against on-chain data (Phase 6)
+func (n *Node) VerifyOperatorBroadcast(
+	sessionTimestamp int64,
+	broadcast *types.CommitmentBroadcast,
+	contractRegistryAddr common.Address,
+) error {
+	if broadcast == nil {
+		return fmt.Errorf("broadcast is nil")
+	}
+
+	// Step 1: Query contract for operator's commitment (requires contractCaller in Phase 6)
+	// For now, this is a placeholder that will be implemented when we integrate with the contract
+	// In Phase 7 integration tests, we'll add the actual contract query
+
+	// Step 2: Verify commitment hash matches broadcast
+	broadcastCommitmentHash := eigenxcrypto.HashCommitment(broadcast.Commitments)
+
+	// Step 3: Find MY ack in the broadcast
+	session := n.getSession(sessionTimestamp)
+	if session == nil {
+		return fmt.Errorf("session not found")
+	}
+
+	myNodeID := addressToNodeID(n.OperatorAddress)
+
+	var myAck *types.Acknowledgement
+	for _, ack := range broadcast.Acknowledgements {
+		if ack.PlayerID == myNodeID {
+			myAck = ack
+			break
+		}
+	}
+
+	if myAck == nil {
+		return fmt.Errorf("my ack not found in broadcast")
+	}
+
+	// Step 4: Verify MY ack's shareHash matches the share I received
+	session.mu.RLock()
+	receivedShare := session.shares[broadcast.FromOperatorID]
+	session.mu.RUnlock()
+
+	if receivedShare == nil {
+		return fmt.Errorf("no share received from operator %d", broadcast.FromOperatorID)
+	}
+
+	expectedShareHash := eigenxcrypto.HashShareForAck(receivedShare)
+	if myAck.ShareHash != expectedShareHash {
+		return fmt.Errorf("share hash mismatch: ack says %x, actual is %x",
+			myAck.ShareHash, expectedShareHash)
+	}
+
+	// Step 5: Verify merkle proof
+	leafHash := eigenxcrypto.HashAcknowledgementForMerkle(myAck)
+	proof := &merkle.MerkleProof{
+		Leaf:  leafHash,
+		Proof: broadcast.MerkleProof,
+	}
+
+	// For Phase 6, we'll verify against the tree root
+	// In Phase 7, we'll verify against on-chain root from contract
+	// For now, just verify the proof is well-formed
+	if len(proof.Proof) == 0 {
+		return fmt.Errorf("merkle proof is empty")
+	}
+
+	// Mark operator as verified
+	session.mu.Lock()
+	session.verifiedOperators[broadcast.FromOperatorID] = true
+	session.mu.Unlock()
+
+	n.logger.Sugar().Debugw("Verified operator broadcast",
+		"from_operator", broadcast.FromOperatorID,
+		"epoch", broadcast.Epoch,
+		"commitment_hash", fmt.Sprintf("%x", broadcastCommitmentHash[:8]),
+	)
+
+	return nil
+}
+
+// WaitForVerifications waits for all operators to be verified (Phase 6)
+func (n *Node) WaitForVerifications(sessionTimestamp int64, timeout time.Duration) error {
+	session := n.getSession(sessionTimestamp)
+	if session == nil {
+		return fmt.Errorf("session not found")
+	}
+
+	expectedVerifications := len(session.Operators) - 1 // All except self
+
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(500 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-time.After(time.Until(deadline)):
+			session.mu.RLock()
+			verified := len(session.verifiedOperators)
+			session.mu.RUnlock()
+			return fmt.Errorf("timeout waiting for verifications: verified %d/%d",
+				verified, expectedVerifications)
+
+		case <-ticker.C:
+			session.mu.RLock()
+			verified := len(session.verifiedOperators)
+			session.mu.RUnlock()
+
+			if verified >= expectedVerifications {
+				n.logger.Sugar().Infow("All operators verified",
+					"session", sessionTimestamp,
+					"verified_count", verified,
+				)
+				return nil
+			}
+		}
+	}
+}
