@@ -8,6 +8,8 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
 
+const KMSJWTAudience = "EigenX KMS"
+
 // KeyShareVersion represents a versioned set of key shares
 type KeyShareVersion struct {
 	Version        int64       // Unix timestamp epoch of when this version was created
