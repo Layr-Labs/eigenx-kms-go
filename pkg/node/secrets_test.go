@@ -102,7 +102,7 @@ func testSecretsEndpointFlow(t *testing.T) {
 		t.Fatalf("Failed to create in-memory transport signer: %v", err)
 	}
 
-	node := NewNode(cfg, peeringDataFetcher, bh, nil, imts, testLogger)
+	node := NewNode(cfg, peeringDataFetcher, bh, nil, imts, nil, testLogger)
 
 	// Add a test key share
 	testShare := new(fr.Element).SetInt64(42)
@@ -239,7 +239,7 @@ func testSecretsEndpointValidation(t *testing.T) {
 		t.Fatalf("Failed to create in-memory transport signer: %v", err)
 	}
 
-	node := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, testLogger)
+	node := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, nil, testLogger)
 
 	// Test missing AppID
 	req := types.SecretsRequestV1{
@@ -290,7 +290,7 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 		t.Fatalf("Failed to create in-memory transport signer: %v", err)
 	}
 
-	node := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, testLogger)
+	node := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, nil, testLogger)
 
 	// Add test release with specific digest
 	testRelease := &types.Release{

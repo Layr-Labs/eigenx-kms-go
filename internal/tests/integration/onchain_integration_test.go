@@ -55,7 +55,7 @@ func createNode(
 		ChainID:         chainID,
 		AVSAddress:      avsAddress,
 		OperatorSetId:   0,
-	}, pdf, bh, cp, imts, l)
+	}, pdf, bh, cp, imts, nil, l)
 }
 
 func Test_OnChainIntegration(t *testing.T) {

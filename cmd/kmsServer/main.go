@@ -182,7 +182,9 @@ func runKMSServer(c *cli.Context) error {
 	}
 
 	// Create and configure the node
-	n := node.NewNode(nodeConfig, pdf, bh, poller, imts, l)
+	// TODO: Initialize production attestation verifier here when ready for production
+	// For now, using nil defaults to StubVerifier
+	n := node.NewNode(nodeConfig, pdf, bh, poller, imts, nil, l)
 
 	if c.Bool("verbose") {
 		l.Sugar().Infow("KMS Server Configuration",

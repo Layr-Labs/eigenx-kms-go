@@ -1,6 +1,7 @@
 package attestation
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 
@@ -10,6 +11,46 @@ import (
 // Verifier defines the interface for attestation verification
 type Verifier interface {
 	VerifyAttestation(attestation []byte) (*types.AttestationClaims, error)
+}
+
+// ProductionVerifier wraps AttestationVerifier to implement the Verifier interface
+type ProductionVerifier struct {
+	attestationVerifier *AttestationVerifier
+	provider            AttestationProvider
+}
+
+// NewProductionVerifier creates a new production verifier
+func NewProductionVerifier(attestationVerifier *AttestationVerifier, provider AttestationProvider) *ProductionVerifier {
+	return &ProductionVerifier{
+		attestationVerifier: attestationVerifier,
+		provider:            provider,
+	}
+}
+
+// VerifyAttestation verifies a TEE attestation JWT token
+func (v *ProductionVerifier) VerifyAttestation(attestation []byte) (*types.AttestationClaims, error) {
+	// Parse attestation as JWT string
+	tokenString := string(attestation)
+	if tokenString == "" {
+		return nil, fmt.Errorf("empty attestation token")
+	}
+
+	// Verify the attestation using the production verifier
+	ctx := context.Background()
+	claims, err := v.attestationVerifier.VerifyAttestation(ctx, tokenString, v.provider)
+	if err != nil {
+		return nil, fmt.Errorf("attestation verification failed: %w", err)
+	}
+
+	// Map attestation.AttestationClaims to types.AttestationClaims
+	// Note: types.AttestationClaims has additional fields (IssuedAt, PublicKey)
+	// that aren't in attestation.AttestationClaims, so we leave them empty
+	return &types.AttestationClaims{
+		AppID:       claims.AppID,
+		ImageDigest: claims.ImageDigest,
+		IssuedAt:    0,        // Not available in JWT claims
+		PublicKey:   []byte{}, // Not available in JWT claims
+	}, nil
 }
 
 // StubVerifier is a stub implementation for testing
