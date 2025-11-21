@@ -172,17 +172,90 @@ contract EigenKMSCommitmentRegistryTest is Test {
         emit log_named_uint("Gas used for submitCommitment", gasUsed);
     }
 
-    /// @notice Test proveEquivocation reverts (not implemented yet)
-    function test_ProveEquivocation_Reverts() public {
+    /// @notice Test proveEquivocation with empty proofs (Phase 8)
+    function test_ProveEquivocation_EmptyProofs() public {
         uint64 epoch = 5;
-        address dealer = operator1;
-        bytes memory ack1 = "ack1";
-        bytes32[] memory proof1 = new bytes32[](2);
-        bytes memory ack2 = "ack2";
-        bytes32[] memory proof2 = new bytes32[](2);
+        bytes32 commitmentHash = keccak256("commitment");
+        bytes32 merkleRoot = keccak256("root");
 
-        vm.expectRevert("Not implemented - reserved for Phase 8");
-        registry.proveEquivocation(epoch, dealer, ack1, proof1, ack2, proof2);
+        vm.prank(operator1);
+        registry.submitCommitment(epoch, commitmentHash, merkleRoot);
+
+        bytes32[] memory emptyProof = new bytes32[](0);
+
+        EigenKMSCommitmentRegistry.AckData memory ack1 = EigenKMSCommitmentRegistry.AckData({
+            player: operator2,
+            dealerID: 1,
+            shareHash: keccak256("share1"),
+            commitmentHash: commitmentHash,
+            proof: emptyProof
+        });
+
+        EigenKMSCommitmentRegistry.AckData memory ack2 = EigenKMSCommitmentRegistry.AckData({
+            player: operator3,
+            dealerID: 1,
+            shareHash: keccak256("share2"),
+            commitmentHash: commitmentHash,
+            proof: emptyProof
+        });
+
+        vm.expectRevert("Ack1 invalid");
+        registry.proveEquivocation(epoch, operator1, ack1, ack2);
+    }
+
+    /// @notice Test proveEquivocation rejects same shareHashes
+    function test_ProveEquivocation_RejectSameShareHash() public {
+        uint64 epoch = 5;
+
+        vm.prank(operator1);
+        registry.submitCommitment(epoch, keccak256("commitment"), keccak256("root"));
+
+        bytes32 sameHash = keccak256("same");
+        bytes32[] memory emptyProof = new bytes32[](0);
+
+        EigenKMSCommitmentRegistry.AckData memory ack1 = EigenKMSCommitmentRegistry.AckData({
+            player: operator2,
+            dealerID: 1,
+            shareHash: sameHash,
+            commitmentHash: keccak256("commitment"),
+            proof: emptyProof
+        });
+
+        EigenKMSCommitmentRegistry.AckData memory ack2 = EigenKMSCommitmentRegistry.AckData({
+            player: operator3,
+            dealerID: 1,
+            shareHash: sameHash, // Same hash
+            commitmentHash: keccak256("commitment"),
+            proof: emptyProof
+        });
+
+        vm.expectRevert("ShareHashes must differ");
+        registry.proveEquivocation(epoch, operator1, ack1, ack2);
+    }
+
+    /// @notice Test proveEquivocation rejects when dealer has no commitment
+    function test_ProveEquivocation_NoCommitment() public {
+        uint64 epoch = 5;
+        bytes32[] memory emptyProof = new bytes32[](0);
+
+        EigenKMSCommitmentRegistry.AckData memory ack1 = EigenKMSCommitmentRegistry.AckData({
+            player: operator2,
+            dealerID: 1,
+            shareHash: keccak256("hash1"),
+            commitmentHash: keccak256("commitment"),
+            proof: emptyProof
+        });
+
+        EigenKMSCommitmentRegistry.AckData memory ack2 = EigenKMSCommitmentRegistry.AckData({
+            player: operator3,
+            dealerID: 1,
+            shareHash: keccak256("hash2"),
+            commitmentHash: keccak256("commitment"),
+            proof: emptyProof
+        });
+
+        vm.expectRevert("No commitment");
+        registry.proveEquivocation(epoch, operator1, ack1, ack2);
     }
 
     /// @notice Fuzz test for various epoch values
