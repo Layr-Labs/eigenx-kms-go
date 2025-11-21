@@ -43,8 +43,12 @@ build/cmd: build/cmd/kmsServer build/cmd/registerOperator build/cmd/kmsClient
 # -----------------------------------------------------------------------------
 # Tests and linting
 # -----------------------------------------------------------------------------
+.PHONY: forge-test
+forge-test:
+	forge test
+
 .PHONY: test
-test:
+test: forge-test
 	GOFLAGS="-count=1" ./scripts/goTest.sh -v -p 1 -parallel 1 ./...
 
 .PHONY: lint

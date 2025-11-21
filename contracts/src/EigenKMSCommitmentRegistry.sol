@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.12;
 
+import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
+
 /**
  * @title EigenKMSCommitmentRegistry
  * @notice Registry for storing operator commitments and acknowledgement merkle roots
@@ -64,32 +66,39 @@ contract EigenKMSCommitmentRegistry {
         return (c.commitmentHash, c.ackMerkleRoot, c.submittedAt);
     }
 
+    /// @notice Acknowledgement data for equivocation proof
+    struct AckData {
+        address player;
+        uint64 dealerID;
+        bytes32 shareHash;
+        bytes32 commitmentHash;
+        bytes32[] proof;
+    }
+
+    /// @notice Emitted when equivocation is proven
+    event EquivocationProven(uint64 indexed epoch, address indexed dealer, address player1, address player2);
+
     /**
-     * @notice Prove that an operator equivocated by submitting different shares with different acks
-     * @dev This function is reserved for future implementation (Phase 8)
+     * @notice Prove that an operator equivocated by sending different shares to different players
+     * @dev Verifies that both acks are in dealer's merkle tree but have different shareHashes
      * @param epoch The epoch in which equivocation occurred
      * @param dealer The operator who equivocated
      * @param ack1 First acknowledgement data
-     * @param proof1 Merkle proof for first acknowledgement
      * @param ack2 Second acknowledgement data
-     * @param proof2 Merkle proof for second acknowledgement
      */
-    function proveEquivocation(
-        uint64 epoch,
-        address dealer,
-        bytes calldata ack1,
-        bytes32[] calldata proof1,
-        bytes calldata ack2,
-        bytes32[] calldata proof2
-    ) external pure {
-        // Prevent unused variable warnings
-        epoch;
-        dealer;
-        ack1;
-        proof1;
-        ack2;
-        proof2;
+    function proveEquivocation(uint64 epoch, address dealer, AckData calldata ack1, AckData calldata ack2) external {
+        bytes32 root = commitments[epoch][dealer].ackMerkleRoot;
+        require(root != bytes32(0), "No commitment");
+        require(ack1.shareHash != ack2.shareHash, "ShareHashes must differ");
 
-        revert("Not implemented - reserved for Phase 8");
+        bytes32 hash1 =
+            keccak256(abi.encodePacked(ack1.player, ack1.dealerID, epoch, ack1.shareHash, ack1.commitmentHash));
+        bytes32 hash2 =
+            keccak256(abi.encodePacked(ack2.player, ack2.dealerID, epoch, ack2.shareHash, ack2.commitmentHash));
+
+        require(MerkleProof.verify(ack1.proof, root, hash1), "Ack1 invalid");
+        require(MerkleProof.verify(ack2.proof, root, hash2), "Ack2 invalid");
+
+        emit EquivocationProven(epoch, dealer, ack1.player, ack2.player);
     }
 }
