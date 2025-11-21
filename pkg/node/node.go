@@ -132,12 +132,14 @@ type Config struct {
 }
 
 // NewNode creates a new node instance with dependency injection
+// If attestationVerifier is nil, a stub verifier will be used
 func NewNode(
 	cfg Config,
 	pdf peering.IPeeringDataFetcher,
 	bh blockHandler.IBlockHandler,
 	cp chainPoller.IChainPoller,
 	tps transportSigner.ITransportSigner,
+	attestationVerifier attestation.Verifier,
 	l *zap.Logger,
 ) *Node {
 	// Parse operator address
@@ -152,6 +154,11 @@ func NewNode(
 	// Use operator address hash as transport client ID (for consistency)
 	transportClientID := addressToNodeID(operatorAddress)
 
+	// Use provided attestation verifier or default to stub
+	if attestationVerifier == nil {
+		attestationVerifier = attestation.NewStubVerifier()
+	}
+
 	n := &Node{
 		OperatorAddress:       operatorAddress,
 		Port:                  cfg.Port,
@@ -161,7 +168,7 @@ func NewNode(
 		OperatorSetId:         cfg.OperatorSetId,
 		keyStore:              keystore.NewKeyStore(),
 		server:                NewServer(nil, cfg.Port), // Will set node reference later
-		attestationVerifier:   attestation.NewStubVerifier(),
+		attestationVerifier:   attestationVerifier,
 		releaseRegistry:       registry.NewStubClient(),
 		rsaEncryption:         encryption.NewRSAEncryption(),
 		peeringDataFetcher:    pdf,

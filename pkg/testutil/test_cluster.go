@@ -116,7 +116,7 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 			t.Fatalf("Failed to create in-memory transport signer: %v", err)
 		}
 
-		cluster.Nodes[i] = node.NewNode(cfg, peeringDataFetcher, nodeBlockHandlers[i], cluster.MockPoller, imts, testLogger)
+		cluster.Nodes[i] = node.NewNode(cfg, peeringDataFetcher, nodeBlockHandlers[i], cluster.MockPoller, imts, nil, testLogger)
 
 		// Replace placeholder server with actual server
 		server := node.NewServer(cluster.Nodes[i], 0)
