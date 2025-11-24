@@ -1,5 +1,3 @@
-//go:generate mockgen -source=attestation.go -destination=mocks/mock_attestation.go -package=mocks AttestationVerifierInterface
-
 package attestation
 
 import (
