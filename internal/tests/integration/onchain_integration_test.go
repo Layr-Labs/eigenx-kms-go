@@ -9,6 +9,7 @@ import (
 	chainPoller "github.com/Layr-Labs/chain-indexer/pkg/chainPollers"
 	"github.com/Layr-Labs/chain-indexer/pkg/clients/ethereum"
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller"
@@ -48,14 +49,21 @@ func createNode(
 		l.Sugar().Fatalf("failed to create in-memory transport signer: %v", err)
 	}
 
-	return node.NewNode(node.Config{
+	// Use mock attestation verifier for tests
+	mockVerifier := attestation.NewStubVerifier()
+
+	n, err := node.NewNode(node.Config{
 		OperatorAddress: operatorAddress,
 		Port:            port,
 		BN254PrivateKey: privateKeyHexString,
 		ChainID:         chainID,
 		AVSAddress:      avsAddress,
 		OperatorSetId:   0,
-	}, pdf, bh, cp, imts, nil, l)
+	}, pdf, bh, cp, imts, mockVerifier, l)
+	if err != nil {
+		l.Sugar().Fatalf("failed to create node: %v", err)
+	}
+	return n
 }
 
 func Test_OnChainIntegration(t *testing.T) {

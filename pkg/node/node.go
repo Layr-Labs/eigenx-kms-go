@@ -132,7 +132,7 @@ type Config struct {
 }
 
 // NewNode creates a new node instance with dependency injection
-// If attestationVerifier is nil, a stub verifier will be used
+// attestationVerifier is required and must not be nil
 func NewNode(
 	cfg Config,
 	pdf peering.IPeeringDataFetcher,
@@ -141,23 +141,23 @@ func NewNode(
 	tps transportSigner.ITransportSigner,
 	attestationVerifier attestation.Verifier,
 	l *zap.Logger,
-) *Node {
+) (*Node, error) {
+	// Validate required dependencies
+	if attestationVerifier == nil {
+		return nil, fmt.Errorf("attestationVerifier is required and cannot be nil")
+	}
+
 	// Parse operator address
 	operatorAddress := common.HexToAddress(cfg.OperatorAddress)
 
 	// Parse BN254 private key
 	bn254PrivKey, err := bn254.NewPrivateKeyFromHexString(cfg.BN254PrivateKey)
 	if err != nil {
-		l.Sugar().Fatalw("Invalid BN254 private key", "error", err)
+		return nil, fmt.Errorf("invalid BN254 private key: %w", err)
 	}
 
 	// Use operator address hash as transport client ID (for consistency)
 	transportClientID := addressToNodeID(operatorAddress)
-
-	// Use provided attestation verifier or default to stub
-	if attestationVerifier == nil {
-		attestationVerifier = attestation.NewStubVerifier()
-	}
 
 	n := &Node{
 		OperatorAddress:       operatorAddress,
@@ -193,7 +193,7 @@ func NewNode(
 	// TODO(seanmcgary): this should be injected, not created here
 	n.transport = transport.NewClient(transportClientID, operatorAddress, tps)
 
-	return n
+	return n, nil
 }
 
 // startScheduler starts the automatic protocol scheduler with context

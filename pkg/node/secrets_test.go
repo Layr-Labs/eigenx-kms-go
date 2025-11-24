@@ -12,6 +12,7 @@ import (
 
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
@@ -102,7 +103,13 @@ func testSecretsEndpointFlow(t *testing.T) {
 		t.Fatalf("Failed to create in-memory transport signer: %v", err)
 	}
 
-	node := NewNode(cfg, peeringDataFetcher, bh, nil, imts, nil, testLogger)
+	// Use mock attestation verifier for tests
+	mockVerifier := attestation.NewStubVerifier()
+
+	node, err := NewNode(cfg, peeringDataFetcher, bh, nil, imts, mockVerifier, testLogger)
+	if err != nil {
+		t.Fatalf("Failed to create node: %v", err)
+	}
 
 	// Add a test key share
 	testShare := new(fr.Element).SetInt64(42)
@@ -243,7 +250,13 @@ func testSecretsEndpointValidation(t *testing.T) {
 		t.Fatalf("Failed to create in-memory transport signer: %v", err)
 	}
 
-	node := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, nil, testLogger)
+	// Use mock attestation verifier for tests
+	mockVerifier := attestation.NewStubVerifier()
+
+	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockVerifier, testLogger)
+	if err != nil {
+		t.Fatalf("Failed to create node: %v", err)
+	}
 
 	// Test missing AppID
 	req := types.SecretsRequestV1{
@@ -294,7 +307,13 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 		t.Fatalf("Failed to create in-memory transport signer: %v", err)
 	}
 
-	node := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, nil, testLogger)
+	// Use mock attestation verifier for tests
+	mockVerifier := attestation.NewStubVerifier()
+
+	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockVerifier, testLogger)
+	if err != nil {
+		t.Fatalf("Failed to create node: %v", err)
+	}
 
 	// Add test release with specific digest
 	testRelease := &types.Release{
