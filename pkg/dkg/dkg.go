@@ -63,7 +63,11 @@ func (d *DKG) GenerateShares() (map[int]*fr.Element, []types.G2Point, error) {
 	// Create commitments in G2
 	commitments := make([]types.G2Point, d.threshold)
 	for k := 0; k < d.threshold; k++ {
-		commitments[k] = crypto.ScalarMulG2(crypto.G2Generator, &coeffs[k])
+		commitment, err := crypto.ScalarMulG2(crypto.G2Generator, &coeffs[k])
+		if err != nil {
+			return nil, nil, err
+		}
+		commitments[k] = *commitment
 	}
 
 	return shares, commitments, nil
@@ -72,7 +76,10 @@ func (d *DKG) GenerateShares() (map[int]*fr.Element, []types.G2Point, error) {
 // VerifyShare verifies a share against commitments using polynomial commitment verification
 func (d *DKG) VerifyShare(fromID int, share *fr.Element, commitments []types.G2Point) bool {
 	// Verify: share * G2 == Σ(commitment_k * nodeID^k)
-	leftSide := crypto.ScalarMulG2(crypto.G2Generator, share)
+	leftSide, err := crypto.ScalarMulG2(crypto.G2Generator, share)
+	if err != nil {
+		return false
+	}
 
 	jFr := new(fr.Element).SetInt64(int64(d.nodeID))
 	jPower := new(fr.Element).SetOne()
@@ -80,11 +87,22 @@ func (d *DKG) VerifyShare(fromID int, share *fr.Element, commitments []types.G2P
 
 	for k := 1; k < len(commitments); k++ {
 		jPower.Mul(jPower, jFr)
-		term := crypto.ScalarMulG2(commitments[k], jPower)
-		rightSide = crypto.AddG2(rightSide, term)
+		term, err := crypto.ScalarMulG2(commitments[k], jPower)
+		if err != nil {
+			return false
+		}
+		tmpRightSide, err := crypto.AddG2(rightSide, *term)
+		if err != nil {
+			return false
+		}
+		rightSide = *tmpRightSide
 	}
 
-	return crypto.PointsEqualG2(leftSide, rightSide)
+	equal, err := crypto.PointsEqualG2(*leftSide, rightSide)
+	if err != nil {
+		return false
+	}
+	return equal
 }
 
 // FinalizeKeyShare computes the final key share from all received shares

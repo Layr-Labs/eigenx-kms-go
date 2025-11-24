@@ -46,7 +46,10 @@ func testScalarMulG1(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := ScalarMulG1(G1Generator, tt.scalar)
+			result, err := ScalarMulG1(G1Generator, tt.scalar)
+			if err != nil {
+				t.Fatalf("Failed to scalar multiply G1: %v", err)
+			}
 
 			// Verify result is not zero (unless scalar is zero)
 			// Note: Y is always 0 in our encoding, X contains the marshaled point
@@ -55,7 +58,10 @@ func testScalarMulG1(t *testing.T) {
 			}
 
 			// Verify deterministic results
-			result2 := ScalarMulG1(G1Generator, tt.scalar)
+			result2, err := ScalarMulG1(G1Generator, tt.scalar)
+			if err != nil {
+				t.Fatalf("Failed to scalar multiply G1: %v", err)
+			}
 			if result.X.Cmp(result2.X) != 0 {
 				t.Error("Scalar multiplication should be deterministic")
 			}
@@ -67,7 +73,10 @@ func testScalarMulG1(t *testing.T) {
 func testScalarMulG2(t *testing.T) {
 	scalar := new(fr.Element).SetInt64(42)
 
-	result := ScalarMulG2(G2Generator, scalar)
+	result, err := ScalarMulG2(G2Generator, scalar)
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G2: %v", err)
+	}
 
 	// Verify result is not zero
 	// Note: Y is always 0 in our encoding, X contains the marshaled point
@@ -76,8 +85,15 @@ func testScalarMulG2(t *testing.T) {
 	}
 
 	// Verify deterministic
-	result2 := ScalarMulG2(G2Generator, scalar)
-	if !PointsEqualG2(result, result2) {
+	result2, err := ScalarMulG2(G2Generator, scalar)
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G2: %v", err)
+	}
+	equal, err := PointsEqualG2(*result, *result2)
+	if err != nil {
+		t.Fatalf("Failed to compare G2 points: %v", err)
+	}
+	if !equal {
 		t.Error("Scalar multiplication should be deterministic")
 	}
 }
@@ -88,21 +104,36 @@ func testAddG1(t *testing.T) {
 	scalar1 := new(fr.Element).SetInt64(1)
 	scalar2 := new(fr.Element).SetInt64(2)
 
-	point1 := ScalarMulG1(G1Generator, scalar1)
-	point2 := ScalarMulG1(G1Generator, scalar2)
+	point1, err := ScalarMulG1(G1Generator, scalar1)
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G1: %v", err)
+	}
+	point2, err := ScalarMulG1(G1Generator, scalar2)
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G1: %v", err)
+	}
 
 	// Add them
-	result := AddG1(point1, point2)
+	result, err := AddG1(*point1, *point2)
+	if err != nil {
+		t.Fatalf("Failed to add G1: %v", err)
+	}
 
 	// Verify commutativity: a + b = b + a
-	result2 := AddG1(point2, point1)
+	result2, err := AddG1(*point2, *point1)
+	if err != nil {
+		t.Fatalf("Failed to add G1: %v", err)
+	}
 	if result.X.Cmp(result2.X) != 0 {
 		t.Error("Addition should be commutative")
 	}
 
 	// Verify adding identity
 	identity := types.G1Point{X: big.NewInt(0), Y: big.NewInt(0)}
-	result3 := AddG1(point1, identity)
+	result3, err := AddG1(*point1, identity)
+	if err != nil {
+		t.Fatalf("Failed to add G1: %v", err)
+	}
 	if result3.X.Cmp(point1.X) != 0 {
 		t.Error("Adding identity should return original point")
 	}
@@ -113,14 +144,30 @@ func testAddG2(t *testing.T) {
 	scalar1 := new(fr.Element).SetInt64(3)
 	scalar2 := new(fr.Element).SetInt64(5)
 
-	point1 := ScalarMulG2(G2Generator, scalar1)
-	point2 := ScalarMulG2(G2Generator, scalar2)
+	point1, err := ScalarMulG2(G2Generator, scalar1)
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G2: %v", err)
+	}
+	point2, err := ScalarMulG2(G2Generator, scalar2)
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G2: %v", err)
+	}
 
-	result := AddG2(point1, point2)
+	result, err := AddG2(*point1, *point2)
+	if err != nil {
+		t.Fatalf("Failed to add G2: %v", err)
+	}
 
 	// Verify commutativity
-	result2 := AddG2(point2, point1)
-	if !PointsEqualG2(result, result2) {
+	result2, err := AddG2(*point2, *point1)
+	if err != nil {
+		t.Fatalf("Failed to add G2: %v", err)
+	}
+	equal, err := PointsEqualG2(*result, *result2)
+	if err != nil {
+		t.Fatalf("Failed to compare G2 points: %v", err)
+	}
+	if !equal {
 		t.Error("Addition should be commutative")
 	}
 }
@@ -138,17 +185,26 @@ func testHashToG1(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.appID, func(t *testing.T) {
-			result := HashToG1(tt.appID)
+			result, err := HashToG1(tt.appID)
+			if err != nil {
+				t.Fatalf("Failed to hash to G1: %v", err)
+			}
 
 			// Verify deterministic
-			result2 := HashToG1(tt.appID)
+			result2, err := HashToG1(tt.appID)
+			if err != nil {
+				t.Fatalf("Failed to hash to G1: %v", err)
+			}
 			if result.X.Cmp(result2.X) != 0 {
 				t.Error("Hash should be deterministic")
 			}
 
 			// Verify different inputs give different outputs
 			if tt.appID != "" {
-				different := HashToG1(tt.appID + "-modified")
+				different, err := HashToG1(tt.appID + "-modified")
+				if err != nil {
+					t.Fatalf("Failed to hash to G1: %v", err)
+				}
 				if result.X.Cmp(different.X) == 0 {
 					t.Error("Different inputs should give different outputs")
 				}
@@ -224,7 +280,10 @@ func testRecoverSecret(t *testing.T) {
 	}
 
 	// Recover secret
-	recovered := RecoverSecret(shares)
+	recovered, err := RecoverSecret(shares)
+	if err != nil {
+		t.Fatalf("Failed to recover secret: %v", err)
+	}
 
 	if !recovered.Equal(secret) {
 		t.Errorf("Failed to recover secret: got %v, expected %v", recovered, secret)
@@ -236,7 +295,10 @@ func testRecoverSecret(t *testing.T) {
 	subset[2] = shares[2]
 	subset[3] = shares[3]
 
-	recoveredSubset := RecoverSecret(subset)
+	recoveredSubset, err := RecoverSecret(subset)
+	if err != nil {
+		t.Fatalf("Failed to recover secret: %v", err)
+	}
 	if !recoveredSubset.Equal(secret) {
 		t.Error("Failed to recover secret with threshold shares")
 	}
@@ -290,26 +352,42 @@ func testRecoverAppPrivateKey(t *testing.T) {
 	}
 
 	// Create partial signatures using the shares
-	msgPoint := HashToG1(appID)
+	msgPoint, err := HashToG1(appID)
+	if err != nil {
+		t.Fatalf("Failed to hash to G1: %v", err)
+	}
 	partialSigs := make(map[int]types.G1Point)
 
 	// Use first `threshold` shares
 	for i := 1; i <= threshold; i++ {
-		partialSigs[i] = ScalarMulG1(msgPoint, shares[i])
+		partialSig, err := ScalarMulG1(*msgPoint, shares[i])
+		if err != nil {
+			t.Fatalf("Failed to scalar multiply G1: %v", err)
+		}
+		partialSigs[i] = *partialSig
 	}
 
 	// Recover the key
-	recovered := RecoverAppPrivateKey(appID, partialSigs, threshold)
+	recovered, err := RecoverAppPrivateKey(appID, partialSigs, threshold)
+	if err != nil {
+		t.Fatalf("Failed to recover app private key: %v", err)
+	}
 
 	// The recovered key should be secret * H(appID)
-	expected := ScalarMulG1(msgPoint, secret)
+	expected, err := ScalarMulG1(*msgPoint, secret)
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G1: %v", err)
+	}
 
 	if recovered.X.Cmp(expected.X) != 0 {
 		t.Error("Recovered key doesn't match expected")
 	}
 
 	// Verify deterministic recovery
-	recovered2 := RecoverAppPrivateKey(appID, partialSigs, threshold)
+	recovered2, err := RecoverAppPrivateKey(appID, partialSigs, threshold)
+	if err != nil {
+		t.Fatalf("Failed to recover app private key: %v", err)
+	}
 	if recovered.X.Cmp(recovered2.X) != 0 {
 		t.Error("Recovery should be deterministic")
 	}
@@ -322,14 +400,23 @@ func testComputeMasterPublicKey(t *testing.T) {
 	scalar2 := new(fr.Element).SetInt64(20)
 	scalar3 := new(fr.Element).SetInt64(30)
 
-	commitment1 := ScalarMulG2(G2Generator, scalar1)
-	commitment2 := ScalarMulG2(G2Generator, scalar2)
-	commitment3 := ScalarMulG2(G2Generator, scalar3)
+	commitment1, err := ScalarMulG2(G2Generator, scalar1)
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G2: %v", err)
+	}
+	commitment2, err := ScalarMulG2(G2Generator, scalar2)
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G2: %v", err)
+	}
+	commitment3, err := ScalarMulG2(G2Generator, scalar3)
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G2: %v", err)
+	}
 
 	allCommitments := [][]types.G2Point{
-		{commitment1},
-		{commitment2},
-		{commitment3},
+		{*commitment1},
+		{*commitment2},
+		{*commitment3},
 	}
 
 	masterPK := ComputeMasterPublicKey(allCommitments)
@@ -337,10 +424,18 @@ func testComputeMasterPublicKey(t *testing.T) {
 	// Verify it's the sum of first commitments
 	expected := allCommitments[0][0]
 	for i := 1; i < len(allCommitments); i++ {
-		expected = AddG2(expected, allCommitments[i][0])
+		tmpExpected, err := AddG2(expected, allCommitments[i][0])
+		if err != nil {
+			t.Fatalf("Failed to add G2: %v", err)
+		}
+		expected = *tmpExpected
 	}
 
-	if !PointsEqualG2(masterPK, expected) {
+	equal, err := PointsEqualG2(*masterPK, expected)
+	if err != nil {
+		t.Fatalf("Failed to compare G2 points: %v", err)
+	}
+	if !equal {
 		t.Error("Master public key should be sum of first commitments")
 	}
 }

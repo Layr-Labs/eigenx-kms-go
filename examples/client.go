@@ -104,7 +104,11 @@ func ExampleAppClient() {
 		partialSigMap[i+1] = sig // Node IDs are 1-indexed
 	}
 
-	appPrivateKey := crypto.RecoverAppPrivateKey(appID, partialSigMap, threshold)
+	appPrivateKey, err := crypto.RecoverAppPrivateKey(appID, partialSigMap, threshold)
+	if err != nil {
+		fmt.Printf("Failed to recover application private key: %v\n", err)
+		return
+	}
 
 	fmt.Printf("Successfully recovered application private key!\n")
 	fmt.Printf("Private key X coordinate: %x\n", appPrivateKey.X.Bytes()[:8])

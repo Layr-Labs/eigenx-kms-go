@@ -149,7 +149,10 @@ func testPolynomialSecretSharing(t *testing.T) {
 	degree := 2 // threshold = degree + 1 = 3
 
 	// Generate polynomial with secret as constant term
-	poly := GeneratePolynomial(secret, degree)
+	poly, err := GeneratePolynomial(secret, degree)
+	if err != nil {
+		t.Fatalf("Failed to generate polynomial: %v", err)
+	}
 
 	// Verify constant term is the secret
 	if !poly[0].Equal(secret) {
@@ -170,7 +173,10 @@ func testPolynomialSecretSharing(t *testing.T) {
 	thresholdShares[3] = shares[3]
 	thresholdShares[5] = shares[5]
 
-	recoveredSecret := RecoverSecret(thresholdShares)
+	recoveredSecret, err := RecoverSecret(thresholdShares)
+	if err != nil {
+		t.Fatalf("Failed to recover secret: %v", err)
+	}
 	if !recoveredSecret.Equal(secret) {
 		t.Error("Failed to recover secret from threshold shares")
 	}
@@ -181,7 +187,10 @@ func testPolynomialSecretSharing(t *testing.T) {
 	thresholdShares2[4] = shares[4]
 	thresholdShares2[5] = shares[5]
 
-	recoveredSecret2 := RecoverSecret(thresholdShares2)
+	recoveredSecret2, err := RecoverSecret(thresholdShares2)
+	if err != nil {
+		t.Fatalf("Failed to recover secret: %v", err)
+	}
 	if !recoveredSecret2.Equal(secret) {
 		t.Error("Failed to recover secret from different threshold shares")
 	}
@@ -190,7 +199,10 @@ func testPolynomialSecretSharing(t *testing.T) {
 func testShareVerification(t *testing.T) {
 	// Create polynomial
 	secret := new(fr.Element).SetInt64(42)
-	poly := GeneratePolynomial(secret, 2)
+	poly, err := GeneratePolynomial(secret, 2)
+	if err != nil {
+		t.Fatalf("Failed to generate polynomial: %v", err)
+	}
 
 	// Create commitments
 	commitments, err := CreateCommitments(poly)

@@ -28,115 +28,116 @@ func init() {
 }
 
 // ScalarMulG1 performs scalar multiplication on G1
-func ScalarMulG1(point types.G1Point, scalar *fr.Element) types.G1Point {
+func ScalarMulG1(point types.G1Point, scalar *fr.Element) (*types.G1Point, error) {
 	// Convert to BLS module point
 	g1Point, err := bls.G1PointFromBigInt(point.X, point.Y)
 	if err != nil {
-		// Return identity on error
-		return types.G1Point{X: big.NewInt(0), Y: big.NewInt(0)}
+		return nil, err
 	}
 
 	// Perform scalar multiplication
 	result, err := bls.ScalarMulG1(g1Point, scalar)
 	if err != nil {
-		return types.G1Point{X: big.NewInt(0), Y: big.NewInt(0)}
+		return nil, err
 	}
 
 	// Convert back to types.G1Point
 	x, y := result.ToBigInt()
-	return types.G1Point{X: x, Y: y}
+	return &types.G1Point{X: x, Y: y}, nil
 }
 
 // ScalarMulG2 performs scalar multiplication on G2
-func ScalarMulG2(point types.G2Point, scalar *fr.Element) types.G2Point {
+func ScalarMulG2(point types.G2Point, scalar *fr.Element) (*types.G2Point, error) {
 	// Convert to BLS module point
 	g2Point, err := bls.G2PointFromBigInt(point.X, point.Y)
 	if err != nil {
-		// Return identity on error
-		return types.G2Point{X: big.NewInt(0), Y: big.NewInt(0)}
+		return nil, err
 	}
 
 	// Perform scalar multiplication
 	result, err := bls.ScalarMulG2(g2Point, scalar)
 	if err != nil {
-		return types.G2Point{X: big.NewInt(0), Y: big.NewInt(0)}
+		return nil, err
 	}
 
 	// Convert back to types.G2Point
 	x, y := result.ToBigInt()
-	return types.G2Point{X: x, Y: y}
+	return &types.G2Point{X: x, Y: y}, nil
 }
 
 // AddG1 adds two G1 points
-func AddG1(a, b types.G1Point) types.G1Point {
+// This allows any point as long as it's on the curve and in the subgroup.
+func AddG1(a, b types.G1Point) (*types.G1Point, error) {
 	// Convert to BLS module points
+	// audit: this function is weird, we should probably split it to requiring only x and both x and y.
+	//        this function by default will be on curve due to is current working. After checking, check subgroup.
 	aPoint, err1 := bls.G1PointFromBigInt(a.X, a.Y)
 	bPoint, err2 := bls.G1PointFromBigInt(b.X, b.Y)
 
 	if err1 != nil {
-		return b
+		return nil, err1
 	}
 	if err2 != nil {
-		return a
+		return nil, err2
 	}
 
 	// Perform addition
 	result, err := bls.AddG1(aPoint, bPoint)
 	if err != nil {
-		return types.G1Point{X: big.NewInt(0), Y: big.NewInt(0)}
+		return nil, err
 	}
 
 	// Convert back to types.G1Point
 	x, y := result.ToBigInt()
-	return types.G1Point{X: x, Y: y}
+	return &types.G1Point{X: x, Y: y}, nil
 }
 
 // AddG2 adds two G2 points
-func AddG2(a, b types.G2Point) types.G2Point {
+func AddG2(a, b types.G2Point) (*types.G2Point, error) {
 	// Convert to BLS module points
 	aPoint, err1 := bls.G2PointFromBigInt(a.X, a.Y)
 	bPoint, err2 := bls.G2PointFromBigInt(b.X, b.Y)
 
 	if err1 != nil {
-		return b
+		return nil, err1
 	}
 	if err2 != nil {
-		return a
+		return nil, err2
 	}
 
 	// Perform addition
 	result, err := bls.AddG2(aPoint, bPoint)
 	if err != nil {
-		return types.G2Point{X: big.NewInt(0), Y: big.NewInt(0)}
+		return nil, err
 	}
 
 	// Convert back to types.G2Point
 	x, y := result.ToBigInt()
-	return types.G2Point{X: x, Y: y}
+	return &types.G2Point{X: x, Y: y}, nil
 }
 
 // PointsEqualG2 checks if two G2 points are equal
-func PointsEqualG2(a, b types.G2Point) bool {
+func PointsEqualG2(a, b types.G2Point) (bool, error) {
 	// Convert to BLS module points
 	aPoint, err1 := bls.G2PointFromBigInt(a.X, a.Y)
 	bPoint, err2 := bls.G2PointFromBigInt(b.X, b.Y)
 
 	if err1 != nil || err2 != nil {
 		// If either conversion fails, compare the big ints directly
-		return a.X.Cmp(b.X) == 0 && a.Y.Cmp(b.Y) == 0
+		return false, fmt.Errorf("failed to convert one of the G2 points to BLS module points")
 	}
 
-	return aPoint.Equal(bPoint)
+	return aPoint.Equal(bPoint), nil
 }
 
 // HashToG1 hashes a string to a G1 point using proper hash-to-curve
-func HashToG1(appID string) types.G1Point {
+func HashToG1(appID string) (*types.G1Point, error) {
 	g1Point, err := bls.HashToG1([]byte(appID))
 	if err != nil {
-		return types.G1Point{X: big.NewInt(0), Y: big.NewInt(0)}
+		return nil, err
 	}
 	x, y := g1Point.ToBigInt()
-	return types.G1Point{X: x, Y: y}
+	return &types.G1Point{X: x, Y: y}, nil
 }
 
 // HashCommitment hashes commitments
@@ -160,12 +161,12 @@ func ComputeLagrangeCoefficient(i int, participants []int) *fr.Element {
 }
 
 // RecoverSecret recovers secret from shares using Lagrange interpolation
-func RecoverSecret(shares map[int]*fr.Element) *fr.Element {
+func RecoverSecret(shares map[int]*fr.Element) (*fr.Element, error) {
 	return bls.RecoverSecret(shares)
 }
 
 // RecoverAppPrivateKey recovers app private key from partial signatures
-func RecoverAppPrivateKey(appID string, partialSigs map[int]types.G1Point, threshold int) types.G1Point {
+func RecoverAppPrivateKey(appID string, partialSigs map[int]types.G1Point, threshold int) (*types.G1Point, error) {
 	participants := make([]int, 0, len(partialSigs))
 	for id := range partialSigs {
 		participants = append(participants, id)
@@ -174,24 +175,30 @@ func RecoverAppPrivateKey(appID string, partialSigs map[int]types.G1Point, thres
 		}
 	}
 
-	result := types.G1Point{X: big.NewInt(0), Y: big.NewInt(0)}
+	// audit: don't return zero point
+	result := &types.G1Point{X: big.NewInt(0), Y: big.NewInt(0)}
 
 	for _, id := range participants {
 		lambda := ComputeLagrangeCoefficient(id, participants)
-		scaledSig := ScalarMulG1(partialSigs[id], lambda)
-		result = AddG1(result, scaledSig)
+		scaledSig, err := ScalarMulG1(partialSigs[id], lambda)
+		if err != nil {
+			return nil, err
+		}
+		result, err = AddG1(*result, *scaledSig)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	return result
+	return result, nil
 }
 
 // ComputeMasterPublicKey computes the master public key from commitments
-func ComputeMasterPublicKey(allCommitments [][]types.G2Point) types.G2Point {
-	masterPK := types.G2Point{X: big.NewInt(0), Y: big.NewInt(0)}
-
+func ComputeMasterPublicKey(allCommitments [][]types.G2Point) *types.G2Point {
+	masterPK := &types.G2Point{X: big.NewInt(0), Y: big.NewInt(0)}
 	for _, commitments := range allCommitments {
 		if len(commitments) > 0 {
-			masterPK = AddG2(masterPK, commitments[0])
+			masterPK, _ = AddG2(*masterPK, commitments[0])
 		}
 	}
 
@@ -220,18 +227,26 @@ func VerifyShareWithCommitments(nodeID int, share *fr.Element, commitments []typ
 
 // GetAppPublicKey computes the public key for an application given the master public key
 // This implements Q_ID = H_1(app_id) for IBE encryption
-func GetAppPublicKey(appID string) types.G1Point {
+func GetAppPublicKey(appID string) (*types.G1Point, error) {
 	// For IBE, the "public key" is just the hash of the identity to G1
-	return HashToG1(appID)
+	appHash, err := HashToG1(appID)
+	if err != nil {
+		return nil, err
+	}
+	return appHash, nil
 }
 
 // ComputeAppPublicKeyFromMaster computes the application's public encryption key
 // using the master public key and pairing operations
-func ComputeAppPublicKeyFromMaster(appID string, masterPublicKey types.G2Point) types.G1Point {
+func ComputeAppPublicKeyFromMaster(appID string, masterPublicKey types.G2Point) (*types.G1Point, error) {
 	// In IBE, the app's "public key" for encryption is H_1(app_id)
 	// The actual encryption involves pairing with master public key
 	// For now, we return the hash-to-G1 result
-	return HashToG1(appID)
+	appHash, err := HashToG1(appID)
+	if err != nil {
+		return nil, err
+	}
+	return appHash, nil
 }
 
 // EncryptForApp encrypts data for an application using IBE
@@ -243,13 +258,19 @@ func EncryptForApp(appID string, masterPublicKey types.G2Point, plaintext []byte
 	// Real implementation would follow the IBE encryption scheme from the design docs
 
 	// Step 1: Compute Q_ID = H_1(app_id)
-	_ = HashToG1(appID)
+	_, err := HashToG1(appID)
+	if err != nil {
+		return nil, err
+	}
 
 	// Step 2-5: Full IBE encryption (simplified for now)
 	// In production: Choose random α, compute r = H_3(α, M), etc.
 
 	// For testing, we'll use a simple XOR with the app's hash
-	appHash := HashToG1(appID + "-encryption-key")
+	appHash, err := HashToG1(appID + "-encryption-key")
+	if err != nil {
+		return nil, err
+	}
 	keyBytes := appHash.X.Bytes()
 
 	// Simple XOR encryption (NOT secure, just for testing)
@@ -268,8 +289,14 @@ func DecryptForApp(appID string, appPrivateKey types.G1Point, ciphertext []byte)
 	// In production, this would use the full IBE decryption scheme
 
 	// Use the same "key" derivation as encryption
-	appHash := HashToG1(appID + "-encryption-key")
+	appHash, err := HashToG1(appID + "-encryption-key")
+	if err != nil {
+		return nil, err
+	}
 	keyBytes := appHash.X.Bytes()
+	if err != nil {
+		return nil, err
+	}
 
 	// Simple XOR decryption
 	decrypted := make([]byte, len(ciphertext))

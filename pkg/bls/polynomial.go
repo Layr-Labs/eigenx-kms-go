@@ -1,13 +1,17 @@
 package bls
 
 import (
+	"errors"
 	"fmt"
 
+	"github.com/consensys/gnark-crypto/ecc"
+	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
 )
 
 // EvaluatePolynomial evaluates a polynomial at point x
+// audit: x is int64 but really should be uint64
 func EvaluatePolynomial(poly polynomial.Polynomial, x int64) *fr.Element {
 	xFr := new(fr.Element).SetInt64(x)
 	result := poly.Eval(xFr)
@@ -15,6 +19,8 @@ func EvaluatePolynomial(poly polynomial.Polynomial, x int64) *fr.Element {
 }
 
 // ComputeLagrangeCoefficient computes the Lagrange coefficient for participant i at x=0
+// audit: should participants register a random element than using their index ?
+// TODO(anup): there is an optimized cached version that can be done here.
 func ComputeLagrangeCoefficient(i int, participants []int) *fr.Element {
 	numerator := new(fr.Element).SetOne()
 	denominator := new(fr.Element).SetOne()
@@ -43,7 +49,7 @@ func ComputeLagrangeCoefficient(i int, participants []int) *fr.Element {
 }
 
 // RecoverSecret recovers the secret from shares using Lagrange interpolation
-func RecoverSecret(shares map[int]*fr.Element) *fr.Element {
+func RecoverSecret(shares map[int]*fr.Element) (*fr.Element, error) {
 	participants := make([]int, 0, len(shares))
 	for id := range shares {
 		participants = append(participants, id)
@@ -57,11 +63,15 @@ func RecoverSecret(shares map[int]*fr.Element) *fr.Element {
 		secret.Add(secret, term)
 	}
 
-	return secret
+	if secret.IsZero() {
+		return nil, errors.New("secret cannot be zero, this should not happen")
+	}
+	return secret, nil
 }
 
 // GeneratePolynomial generates a random polynomial with given secret and degree
-func GeneratePolynomial(secret *fr.Element, degree int) polynomial.Polynomial {
+// audit: should the polynomial be generated with a random secret ?
+func GeneratePolynomial(secret *fr.Element, degree int) (polynomial.Polynomial, error) {
 	poly := make(polynomial.Polynomial, degree+1)
 
 	// Set the constant term to the secret
@@ -69,13 +79,16 @@ func GeneratePolynomial(secret *fr.Element, degree int) polynomial.Polynomial {
 
 	// Generate random coefficients for higher degree terms
 	for i := 1; i <= degree; i++ {
-		_, _ = poly[i].SetRandom()
+		if _, err := poly[i].SetRandom(); err != nil {
+			return nil, fmt.Errorf("failed to generate random coefficient: %w", err)
+		}
 	}
 
-	return poly
+	return poly, nil
 }
 
 // GenerateShares generates shares for participants using polynomial secret sharing
+// audit: should the shares be generated with a random scalar's generated for the participants?
 func GenerateShares(poly polynomial.Polynomial, participantIDs []int) map[int]*fr.Element {
 	shares := make(map[int]*fr.Element)
 
@@ -87,6 +100,7 @@ func GenerateShares(poly polynomial.Polynomial, participantIDs []int) map[int]*f
 }
 
 // CreateCommitments creates polynomial commitments in G2
+// TODO(anupsv): parallelize this, maybe doesn't matter for 20 operators. Look into this further.
 func CreateCommitments(poly polynomial.Polynomial) ([]*G2Point, error) {
 	commitments := make([]*G2Point, len(poly))
 
@@ -101,33 +115,47 @@ func CreateCommitments(poly polynomial.Polynomial) ([]*G2Point, error) {
 	return commitments, nil
 }
 
-// VerifyShare verifies a share against polynomial commitments
+// VerifyShare verifies a share against polynomial commitments using MultiExp optimization
+// audit: nodeId should be uint64
 func VerifyShare(nodeID int, share *fr.Element, commitments []*G2Point) (bool, error) {
+	if len(commitments) == 0 {
+		return false, errors.New("no commitments provided")
+	}
+
+	if share == nil {
+		return false, errors.New("share is nil")
+	}
+
 	// Compute share * G2
 	shareCommitment, err := ScalarMulG2(G2Generator, share)
 	if err != nil {
 		return false, fmt.Errorf("failed to compute share commitment: %w", err)
 	}
 
-	// Compute expected commitment from polynomial commitments
-	// C_expected = Σ commitments[k] * nodeID^k
-	expectedCommitment := commitments[0] // Start with constant term
-
+	// Compute powers of nodeID: [1, nodeID, nodeID^2, ..., nodeID^(n-1)]
+	powers := make([]fr.Element, len(commitments))
 	nodeFr := new(fr.Element).SetInt64(int64(nodeID))
-	nodePower := new(fr.Element).SetOne()
+	powers[0].SetOne() // nodeID^0 = 1
 
-	for k := 1; k < len(commitments); k++ {
-		nodePower.Mul(nodePower, nodeFr)
-		term, err := ScalarMulG2(commitments[k], nodePower)
-		if err != nil {
-			return false, fmt.Errorf("failed to compute term: %w", err)
+	for i := 1; i < len(commitments); i++ {
+		powers[i].Mul(&powers[i-1], nodeFr) // nodeID^i = nodeID^(i-1) * nodeID
+	}
+
+	// Extract G2 affine points from commitments
+	commitmentPoints := make([]bls12381.G2Affine, len(commitments))
+	for i, c := range commitments {
+		if c == nil || c.point == nil {
+			return false, fmt.Errorf("nil commitment at index %d", i)
 		}
-		expectedCommitment, err = AddG2(expectedCommitment, term)
-		if err != nil {
-			return false, fmt.Errorf("failed to compute expected commitment: %w", err)
-		}
+		commitmentPoints[i] = *c.point
+	}
+
+	// Use MultiExp to compute Σ commitments[k] * nodeID^k efficiently
+	var expectedCommitment bls12381.G2Affine
+	if _, err := expectedCommitment.MultiExp(commitmentPoints, powers, ecc.MultiExpConfig{}); err != nil {
+		return false, fmt.Errorf("failed to compute expected commitment: %w", err)
 	}
 
 	// Check if share * G2 == expected commitment
-	return shareCommitment.Equal(expectedCommitment), nil
+	return shareCommitment.point.Equal(&expectedCommitment), nil
 }

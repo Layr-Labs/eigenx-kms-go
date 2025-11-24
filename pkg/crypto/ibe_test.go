@@ -37,7 +37,10 @@ func testGetAppPublicKey(t *testing.T) {
 	appID := "test-application"
 
 	// Get the application's "public key" (Q_ID = H_1(app_id))
-	appPubKey := GetAppPublicKey(appID)
+	appPubKey, err := GetAppPublicKey(appID)
+	if err != nil {
+		t.Fatalf("Failed to get app public key: %v", err)
+	}
 
 	// Verify it's not zero
 	if appPubKey.X.Sign() == 0 {
@@ -45,14 +48,20 @@ func testGetAppPublicKey(t *testing.T) {
 	}
 
 	// Verify it's deterministic
-	appPubKey2 := GetAppPublicKey(appID)
-	if !PointsEqualG1(appPubKey, appPubKey2) {
+	appPubKey2, err := GetAppPublicKey(appID)
+	if err != nil {
+		t.Fatalf("Failed to get app public key: %v", err)
+	}
+	if !PointsEqualG1(*appPubKey, *appPubKey2) {
 		t.Error("App public key should be deterministic")
 	}
 
 	// Verify different apps have different keys
-	differentApp := GetAppPublicKey("different-app")
-	if PointsEqualG1(appPubKey, differentApp) {
+	differentApp, err := GetAppPublicKey("different-app")
+	if err != nil {
+		t.Fatalf("Failed to get app public key: %v", err)
+	}
+	if PointsEqualG1(*appPubKey, *differentApp) {
 		t.Error("Different apps should have different public keys")
 	}
 }
@@ -75,7 +84,11 @@ func testMasterPublicKeyDerivation(t *testing.T) {
 		// Create commitments
 		commitments := make([]types.G2Point, threshold)
 		for k := 0; k < threshold; k++ {
-			commitments[k] = ScalarMulG2(G2Generator, &poly[k])
+			commitment, err := ScalarMulG2(G2Generator, &poly[k])
+			if err != nil {
+				t.Fatalf("Failed to scalar multiply G2: %v", err)
+			}
+			commitments[k] = *commitment
 		}
 		allCommitments[i] = commitments
 	}
@@ -91,10 +104,18 @@ func testMasterPublicKeyDerivation(t *testing.T) {
 	// Verify it's the sum of constant term commitments
 	expected := allCommitments[0][0] // First commitment from first node
 	for i := 1; i < numNodes; i++ {
-		expected = AddG2(expected, allCommitments[i][0])
+		tmpExpected, err := AddG2(expected, allCommitments[i][0])
+		if err != nil {
+			t.Fatalf("Failed to add G2: %v", err)
+		}
+		expected = *tmpExpected
 	}
 
-	if !PointsEqualG2(masterPubKey, expected) {
+	equal, err := PointsEqualG2(*masterPubKey, expected)
+	if err != nil {
+		t.Fatalf("Failed to compare G2 points: %v", err)
+	}
+	if !equal {
 		t.Error("Master public key should be sum of constant term commitments")
 	}
 }
@@ -106,19 +127,29 @@ func testIBEEncryptionDecryption(t *testing.T) {
 
 	// Create a mock master public key
 	masterSecret := new(fr.Element).SetInt64(98765)
-	masterPubKey := ScalarMulG2(G2Generator, masterSecret)
+	masterPubKey, err := ScalarMulG2(G2Generator, masterSecret)
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G2: %v", err)
+	}
 
 	// Encrypt data for the application
-	ciphertext, err := EncryptForApp(appID, masterPubKey, plaintext)
+	ciphertext, err := EncryptForApp(appID, *masterPubKey, plaintext)
 	if err != nil {
 		t.Fatalf("Encryption failed: %v", err)
 	}
 
 	// Generate application private key (what threshold signature recovery would produce)
-	appPrivateKey := ScalarMulG1(HashToG1(appID), masterSecret)
+	appHash, err := HashToG1(appID)
+	if err != nil {
+		t.Fatalf("Failed to hash to G1: %v", err)
+	}
+	appPrivateKey, err := ScalarMulG1(*appHash, masterSecret)
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G1: %v", err)
+	}
 
 	// Decrypt the data
-	decrypted, err := DecryptForApp(appID, appPrivateKey, ciphertext)
+	decrypted, err := DecryptForApp(appID, *appPrivateKey, ciphertext)
 	if err != nil {
 		t.Fatalf("Decryption failed: %v", err)
 	}
@@ -129,8 +160,15 @@ func testIBEEncryptionDecryption(t *testing.T) {
 	}
 
 	// Test with wrong app ID (should fail to decrypt correctly)
-	wrongAppKey := ScalarMulG1(HashToG1("wrong-app"), masterSecret)
-	wrongDecrypted, err := DecryptForApp("wrong-app", wrongAppKey, ciphertext)
+	wrongAppHash, err := HashToG1("wrong-app")
+	if err != nil {
+		t.Fatalf("Failed to hash to G1: %v", err)
+	}
+	wrongAppKey, err := ScalarMulG1(*wrongAppHash, masterSecret)
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G1: %v", err)
+	}
+	wrongDecrypted, err := DecryptForApp("wrong-app", *wrongAppKey, ciphertext)
 	if err != nil {
 		t.Fatalf("Wrong app decryption failed: %v", err)
 	}
@@ -166,20 +204,42 @@ func testEncryptionPersistenceAcrossReshare(t *testing.T) {
 	}
 
 	// Create master public key and encrypt data
-	masterPubKey := ScalarMulG2(G2Generator, masterSecret)
-	ciphertext, err := EncryptForApp(appID, masterPubKey, plaintext)
+	masterPubKey, err := ScalarMulG2(G2Generator, masterSecret)
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G2: %v", err)
+	}
+	ciphertext, err := EncryptForApp(appID, *masterPubKey, plaintext)
 	if err != nil {
 		t.Fatalf("Initial encryption failed: %v", err)
 	}
 
 	// Verify initial decryption works
-	initialAppPrivateKey := RecoverAppPrivateKey(appID, map[int]types.G1Point{
-		1: ScalarMulG1(HashToG1(appID), initialShares[0]),
-		2: ScalarMulG1(HashToG1(appID), initialShares[1]),
-		3: ScalarMulG1(HashToG1(appID), initialShares[2]),
-	}, initialThreshold)
+	appHash, err := HashToG1(appID)
+	if err != nil {
+		t.Fatalf("Failed to hash to G1: %v", err)
+	}
 
-	decrypted1, err := DecryptForApp(appID, initialAppPrivateKey, ciphertext)
+	firstShare, err := ScalarMulG1(*appHash, initialShares[0])
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G1: %v", err)
+	}
+	secondShare, err := ScalarMulG1(*appHash, initialShares[1])
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G1: %v", err)
+	}
+	thirdShare, err := ScalarMulG1(*appHash, initialShares[2])
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G1: %v", err)
+	}
+	initialAppPrivateKey, err := RecoverAppPrivateKey(appID, map[int]types.G1Point{
+		1: *firstShare,
+		2: *secondShare,
+		3: *thirdShare,
+	}, initialThreshold)
+	if err != nil {
+		t.Fatalf("Failed to recover app private key: %v", err)
+	}
+	decrypted1, err := DecryptForApp(appID, *initialAppPrivateKey, ciphertext)
 	if err != nil {
 		t.Fatalf("Initial decryption failed: %v", err)
 	}
@@ -221,15 +281,33 @@ func testEncryptionPersistenceAcrossReshare(t *testing.T) {
 
 	// === Phase 4: Verify encryption still works after reshare ===
 
+	newAppHash, err := HashToG1(appID)
+	if err != nil {
+		t.Fatalf("Failed to hash to G1: %v", err)
+	}
+	newFirstShare, err := ScalarMulG1(*newAppHash, newShares[1])
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G1: %v", err)
+	}
+	newSecondShare, err := ScalarMulG1(*newAppHash, newShares[2])
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G1: %v", err)
+	}
+	newThirdShare, err := ScalarMulG1(*newAppHash, newShares[3])
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G1: %v", err)
+	}
 	// Recover app private key using new shares
-	newAppPrivateKey := RecoverAppPrivateKey(appID, map[int]types.G1Point{
-		1: ScalarMulG1(HashToG1(appID), newShares[1]),
-		2: ScalarMulG1(HashToG1(appID), newShares[2]),
-		3: ScalarMulG1(HashToG1(appID), newShares[3]),
+	newAppPrivateKey, err := RecoverAppPrivateKey(appID, map[int]types.G1Point{
+		1: *newFirstShare,
+		2: *newSecondShare,
+		3: *newThirdShare,
 	}, newThreshold)
-
+	if err != nil {
+		t.Fatalf("Failed to recover app private key: %v", err)
+	}
 	// Decrypt with new key - should still work!
-	decrypted2, err := DecryptForApp(appID, newAppPrivateKey, ciphertext)
+	decrypted2, err := DecryptForApp(appID, *newAppPrivateKey, ciphertext)
 	if err != nil {
 		t.Fatalf("Post-reshare decryption failed: %v", err)
 	}
@@ -269,7 +347,15 @@ func testThresholdSignatureRecovery(t *testing.T) {
 	// Generate partial signatures (what each KMS node would compute)
 	partialSigs := make(map[int]types.G1Point)
 	for nodeID, share := range keyShares {
-		partialSigs[nodeID] = ScalarMulG1(HashToG1(appID), share)
+		appHash, err := HashToG1(appID)
+		if err != nil {
+			t.Fatalf("Failed to hash to G1: %v", err)
+		}
+		partialSig, err := ScalarMulG1(*appHash, share)
+		if err != nil {
+			t.Fatalf("Failed to scalar multiply G1: %v", err)
+		}
+		partialSigs[nodeID] = *partialSig
 	}
 
 	// Test recovery with exactly threshold signatures
@@ -279,7 +365,10 @@ func testThresholdSignatureRecovery(t *testing.T) {
 		thresholdSigs[id] = partialSigs[id]
 	}
 
-	recoveredKey := RecoverAppPrivateKey(appID, thresholdSigs, threshold)
+	recoveredKey, err := RecoverAppPrivateKey(appID, thresholdSigs, threshold)
+	if err != nil {
+		t.Fatalf("Failed to recover app private key: %v", err)
+	}
 
 	// Verify the key is not zero
 	if recoveredKey.X.Sign() == 0 {
@@ -293,7 +382,10 @@ func testThresholdSignatureRecovery(t *testing.T) {
 		thresholdSigs2[id] = partialSigs[id]
 	}
 
-	recoveredKey2 := RecoverAppPrivateKey(appID, thresholdSigs2, threshold)
+	recoveredKey2, err := RecoverAppPrivateKey(appID, thresholdSigs2, threshold)
+	if err != nil {
+		t.Fatalf("Failed to recover app private key: %v", err)
+	}
 
 	// Should recover equivalent keys (both should be non-zero)
 	if recoveredKey2.X.Sign() == 0 {
