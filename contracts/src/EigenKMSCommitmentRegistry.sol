@@ -7,6 +7,7 @@ import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProo
 
 import {EigenKMSCommitmentRegistryStorage} from "./EigenKMSCommitmentRegistryStorage.sol";
 import {ICertificateVerifier} from "./interfaces/ICertificateVerifier.sol";
+import {IEigenKMSCommitmentRegistryErrors} from "./interfaces/IEigenKMSCommitmentRegistryErrors.sol";
 
 /**
  * @title EigenKMSCommitmentRegistry
@@ -15,7 +16,12 @@ import {ICertificateVerifier} from "./interfaces/ICertificateVerifier.sol";
  *      This enables fraud detection while minimizing on-chain storage costs
  *      Upgradeable using UUPS pattern with storage separation
  */
-contract EigenKMSCommitmentRegistry is Initializable, OwnableUpgradeable, EigenKMSCommitmentRegistryStorage {
+contract EigenKMSCommitmentRegistry is
+    Initializable,
+    OwnableUpgradeable,
+    EigenKMSCommitmentRegistryStorage,
+    IEigenKMSCommitmentRegistryErrors
+{
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
         _disableInitializers();
@@ -38,7 +44,7 @@ contract EigenKMSCommitmentRegistry is Initializable, OwnableUpgradeable, EigenK
         address _bn254CertificateVerifier,
         uint8 _curveType
     ) external initializer {
-        require(_curveType == 1 || _curveType == 2, "Invalid curve type");
+        if (_curveType != 1 && _curveType != 2) revert InvalidCurveType();
         __Ownable_init();
         _transferOwnership(_owner);
 
@@ -57,7 +63,7 @@ contract EigenKMSCommitmentRegistry is Initializable, OwnableUpgradeable, EigenK
     function setCurveType(
         uint8 _curveType
     ) external override onlyOwner {
-        require(_curveType == 1 || _curveType == 2, "Invalid curve type");
+        if (_curveType != 1 && _curveType != 2) revert InvalidCurveType();
         uint8 oldCurveType = curveType;
         curveType = _curveType;
         emit CurveTypeUpdated(oldCurveType, _curveType);
@@ -72,19 +78,19 @@ contract EigenKMSCommitmentRegistry is Initializable, OwnableUpgradeable, EigenK
      * @param _ackMerkleRoot Root of the acknowledgement merkle tree
      */
     function submitCommitment(uint64 epoch, bytes32 _commitmentHash, bytes32 _ackMerkleRoot) external override {
-        require(_commitmentHash != bytes32(0), "Invalid commitment hash");
-        require(_ackMerkleRoot != bytes32(0), "Invalid merkle root");
-        require(commitments[epoch][msg.sender].commitmentHash == bytes32(0), "Commitment already submitted");
+        if (_commitmentHash == bytes32(0)) revert InvalidCommitmentHash();
+        if (_ackMerkleRoot == bytes32(0)) revert InvalidMerkleRoot();
+        if (commitments[epoch][msg.sender].commitmentHash != bytes32(0)) revert CommitmentAlreadySubmitted();
 
         // Validate operator is registered using the configured curve type
         if (curveType == 1) {
             // ECDSA validation
-            require(ecdsaCertificateVerifier != address(0), "ECDSA verifier not configured");
-            require(_isValidOperator(msg.sender, ecdsaCertificateVerifier), "Operator not registered (ECDSA)");
+            if (ecdsaCertificateVerifier == address(0)) revert ECDSAVerifierNotConfigured();
+            if (!_isValidOperator(msg.sender, ecdsaCertificateVerifier)) revert OperatorNotRegisteredECDSA();
         } else if (curveType == 2) {
             // BN254 validation
-            require(bn254CertificateVerifier != address(0), "BN254 verifier not configured");
-            require(_isValidOperator(msg.sender, bn254CertificateVerifier), "Operator not registered (BN254)");
+            if (bn254CertificateVerifier == address(0)) revert BN254VerifierNotConfigured();
+            if (!_isValidOperator(msg.sender, bn254CertificateVerifier)) revert OperatorNotRegisteredBN254();
         }
         // curveType == 0 (Unknown) allows any operator (for testing/development)
 
@@ -128,16 +134,16 @@ contract EigenKMSCommitmentRegistry is Initializable, OwnableUpgradeable, EigenK
         AckData calldata ack2
     ) external override {
         bytes32 root = commitments[epoch][dealer].ackMerkleRoot;
-        require(root != bytes32(0), "No commitment");
-        require(ack1.shareHash != ack2.shareHash, "ShareHashes must differ");
+        if (root == bytes32(0)) revert NoCommitment();
+        if (ack1.shareHash == ack2.shareHash) revert ShareHashesMustDiffer();
 
         bytes32 hash1 =
             keccak256(abi.encodePacked(ack1.player, ack1.dealerID, epoch, ack1.shareHash, ack1.commitmentHash));
         bytes32 hash2 =
             keccak256(abi.encodePacked(ack2.player, ack2.dealerID, epoch, ack2.shareHash, ack2.commitmentHash));
 
-        require(MerkleProof.verify(ack1.proof, root, hash1), "Ack1 invalid");
-        require(MerkleProof.verify(ack2.proof, root, hash2), "Ack2 invalid");
+        if (!MerkleProof.verify(ack1.proof, root, hash1)) revert Ack1Invalid();
+        if (!MerkleProof.verify(ack2.proof, root, hash2)) revert Ack2Invalid();
 
         emit EquivocationProven(epoch, dealer, ack1.player, ack2.player);
 

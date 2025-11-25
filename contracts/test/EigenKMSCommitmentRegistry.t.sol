@@ -5,6 +5,7 @@ import "forge-std/Test.sol";
 import {ERC1967Proxy} from "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
 import "../src/EigenKMSCommitmentRegistry.sol";
 import "../src/interfaces/IEigenKMSCommitmentRegistry.sol";
+import {IEigenKMSCommitmentRegistryErrors} from "../src/interfaces/IEigenKMSCommitmentRegistryErrors.sol";
 
 // Mock certificate verifier for testing
 contract MockCertificateVerifier {
@@ -22,7 +23,7 @@ contract MockCertificateVerifier {
     }
 }
 
-contract EigenKMSCommitmentRegistryTest is Test {
+contract EigenKMSCommitmentRegistryTest is Test, IEigenKMSCommitmentRegistryErrors {
     EigenKMSCommitmentRegistry public registry;
     MockCertificateVerifier public mockECDSAVerifier;
     MockCertificateVerifier public mockBN254Verifier;
@@ -94,7 +95,7 @@ contract EigenKMSCommitmentRegistryTest is Test {
 
         // Second submission should revert
         vm.prank(operator1);
-        vm.expectRevert("Commitment already submitted");
+        vm.expectRevert(CommitmentAlreadySubmitted.selector);
         registry.submitCommitment(epoch, commitmentHash, ackMerkleRoot);
     }
 
@@ -105,7 +106,7 @@ contract EigenKMSCommitmentRegistryTest is Test {
         bytes32 ackMerkleRoot = keccak256("test root");
 
         vm.prank(operator1);
-        vm.expectRevert("Invalid commitment hash");
+        vm.expectRevert(InvalidCommitmentHash.selector);
         registry.submitCommitment(epoch, invalidHash, ackMerkleRoot);
     }
 
@@ -116,7 +117,7 @@ contract EigenKMSCommitmentRegistryTest is Test {
         bytes32 invalidRoot = bytes32(0);
 
         vm.prank(operator1);
-        vm.expectRevert("Invalid merkle root");
+        vm.expectRevert(InvalidMerkleRoot.selector);
         registry.submitCommitment(epoch, commitmentHash, invalidRoot);
     }
 
@@ -261,7 +262,7 @@ contract EigenKMSCommitmentRegistryTest is Test {
             proof: emptyProof
         });
 
-        vm.expectRevert("Ack1 invalid");
+        vm.expectRevert(Ack1Invalid.selector);
         registry.proveEquivocation(epoch, operator1, ack1, ack2);
     }
 
@@ -291,7 +292,7 @@ contract EigenKMSCommitmentRegistryTest is Test {
             proof: emptyProof
         });
 
-        vm.expectRevert("ShareHashes must differ");
+        vm.expectRevert(ShareHashesMustDiffer.selector);
         registry.proveEquivocation(epoch, operator1, ack1, ack2);
     }
 
@@ -316,7 +317,7 @@ contract EigenKMSCommitmentRegistryTest is Test {
             proof: emptyProof
         });
 
-        vm.expectRevert("No commitment");
+        vm.expectRevert(NoCommitment.selector);
         registry.proveEquivocation(epoch, operator1, ack1, ack2);
     }
 
@@ -421,13 +422,13 @@ contract EigenKMSCommitmentRegistryTest is Test {
 
     /// @notice Test setCurveType rejects invalid curve types
     function test_SetCurveType_RevertInvalid() public {
-        vm.expectRevert("Invalid curve type");
+        vm.expectRevert(InvalidCurveType.selector);
         registry.setCurveType(0); // Unknown
 
-        vm.expectRevert("Invalid curve type");
+        vm.expectRevert(InvalidCurveType.selector);
         registry.setCurveType(3); // Invalid
 
-        vm.expectRevert("Invalid curve type");
+        vm.expectRevert(InvalidCurveType.selector);
         registry.setCurveType(255); // Invalid
     }
 
