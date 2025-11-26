@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -111,7 +112,7 @@ func ExampleAppClient() {
 	}
 
 	fmt.Printf("Successfully recovered application private key!\n")
-	fmt.Printf("Private key X coordinate: %x\n", appPrivateKey.X.Bytes()[:8])
+	fmt.Printf("Private key: %s\n", hex.EncodeToString(appPrivateKey.CompressedBytes[:8]))
 
 	// Step 8: Use the private key to decrypt environment variables
 	// In a real application, you would:

@@ -43,7 +43,7 @@ func testGetAppPublicKey(t *testing.T) {
 	}
 
 	// Verify it's not zero
-	if appPubKey.X.Sign() == 0 {
+	if appPubKey.IsZero() {
 		t.Error("App public key should not be zero")
 	}
 
@@ -52,7 +52,7 @@ func testGetAppPublicKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get app public key: %v", err)
 	}
-	if !appPubKey.Equal(appPubKey2) {
+	if !appPubKey.IsEqual(appPubKey2) {
 		t.Error("App public key should be deterministic")
 	}
 
@@ -61,7 +61,7 @@ func testGetAppPublicKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to get app public key: %v", err)
 	}
-	if appPubKey.Equal(differentApp) {
+	if appPubKey.IsEqual(differentApp) {
 		t.Error("Different apps should have different public keys")
 	}
 }
@@ -97,7 +97,7 @@ func testMasterPublicKeyDerivation(t *testing.T) {
 	masterPubKey := ComputeMasterPublicKey(allCommitments)
 
 	// Verify it's not zero/identity
-	if masterPubKey.X.Sign() == 0 {
+	if masterPubKey.IsZero() {
 		t.Error("Master public key should not be zero")
 	}
 
@@ -111,11 +111,7 @@ func testMasterPublicKeyDerivation(t *testing.T) {
 		expected = *tmpExpected
 	}
 
-	equal, err := PointsEqualG2(*masterPubKey, expected)
-	if err != nil {
-		t.Fatalf("Failed to compare G2 points: %v", err)
-	}
-	if !equal {
+	if !masterPubKey.IsEqual(&expected) {
 		t.Error("Master public key should be sum of constant term commitments")
 	}
 }
@@ -371,7 +367,7 @@ func testThresholdSignatureRecovery(t *testing.T) {
 	}
 
 	// Verify the key is not zero
-	if recoveredKey.X.Sign() == 0 {
+	if recoveredKey.IsZero() {
 		t.Error("Recovered key should not be zero")
 	}
 
@@ -388,16 +384,11 @@ func testThresholdSignatureRecovery(t *testing.T) {
 	}
 
 	// Should recover equivalent keys (both should be non-zero)
-	if recoveredKey2.X.Sign() == 0 {
+	if recoveredKey2.IsZero() {
 		t.Error("Second recovered key should not be zero")
 	}
 
 	fmt.Printf("✓ Threshold signature recovery test passed!\n")
 	fmt.Printf("  - Recovered keys from different threshold subsets\n")
 	fmt.Printf("  - Both keys are valid and non-zero\n")
-}
-
-// PointsEqualG1 checks if two G1 points are equal (helper function)
-func PointsEqualG1(a, b types.G1Point) bool {
-	return a.X.Cmp(b.X) == 0 && a.Y.Cmp(b.Y) == 0
 }

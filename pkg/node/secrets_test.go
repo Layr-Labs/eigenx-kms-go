@@ -201,7 +201,7 @@ func testSecretsEndpointFlow(t *testing.T) {
 	}
 
 	// Verify it's not zero
-	if partialSig.X.Sign() == 0 {
+	if partialSig.IsZero() {
 		t.Error("Partial signature should not be zero")
 	}
 

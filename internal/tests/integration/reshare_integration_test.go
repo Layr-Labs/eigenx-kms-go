@@ -43,7 +43,7 @@ func testFullReshareProtocol(t *testing.T) {
 
 	// Verify initial DKG setup
 	initialMasterPubKey := cluster.GetMasterPublicKey()
-	if initialMasterPubKey.X.Sign() == 0 {
+	if initialMasterPubKey.IsZero() {
 		t.Fatal("Initial master public key should not be zero")
 	}
 
@@ -61,7 +61,7 @@ func testFullReshareProtocol(t *testing.T) {
 	// Verify all nodes can generate partial signatures before reshare
 	for i, node := range cluster.Nodes {
 		partialSig := node.SignAppID(appID, time.Now().Unix())
-		if partialSig.X.Sign() == 0 {
+		if partialSig.IsZero() {
 			t.Errorf("Node %d should generate valid partial signature", i+1)
 		}
 	}
