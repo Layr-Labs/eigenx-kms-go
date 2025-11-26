@@ -30,9 +30,27 @@ func (p *G2Point) Equal(result *G2Point) bool {
 	return reflect.DeepEqual(p.CompressedBytes, result.CompressedBytes)
 }
 
+// IsZero checks if the G1Point is the identity/zero point
+func (p *G1Point) IsZero() (bool, error) {
+	affinePoint, err := bls.G1PointFromCompressedBytes(p.CompressedBytes)
+	if err != nil {
+		return false, err
+	}
+	return affinePoint.IsZero(), nil
+}
+
 // G2Point represents a point on BLS12-381 G2 (used for public keys)
 type G2Point struct {
 	CompressedBytes []byte
+}
+
+// IsInfinity checks if the G2Point is the identity/zero point
+func (p *G2Point) IsZero() (bool, error) {
+	affinePoint, err := bls.G2PointFromCompressedBytes(p.CompressedBytes)
+	if err != nil {
+		return false, err
+	}
+	return affinePoint.IsZero(), nil
 }
 
 // Acknowledgement is signed by players to prevent dealer equivocation
@@ -100,28 +118,8 @@ func G1PointZero() *G1Point {
 	return &G1Point{CompressedBytes: point.Marshal()}
 }
 
-// IsZero checks if the G1Point is the identity/zero point
-func (p *G1Point) IsZero() (bool, error) {
-	// new bls G1 point
-	point, err := bls.NewG1PointFromCompressedBytes(p.CompressedBytes)
-	if err != nil {
-		return false, err
-	}
-	return point.IsZero(), nil
-}
-
 // G2Point which is zero
 func G2PointZero() *G2Point {
 	point := new(bls12381.G2Affine).SetInfinity()
 	return &G2Point{CompressedBytes: point.Marshal()}
-}
-
-// IsZero checks if the G2Point is the identity/zero point
-func (p *G2Point) IsZero() (bool, error) {
-	// new bls G2 point
-	point, err := bls.NewG2PointFromCompressedBytes(p.CompressedBytes)
-	if err != nil {
-		return false, err
-	}
-	return point.IsZero(), nil
 }

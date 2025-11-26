@@ -213,6 +213,27 @@ func G1PointFromBigInt(x, y *big.Int) (*G1Point, error) {
 	return NewG1Point(point), nil
 }
 
+// G1PointFromCompressedBytes creates a G1Point from compressed bytes
+func G1PointFromCompressedBytes(bytes []byte) (*G1Point, error) {
+	point := new(bls12381.G1Affine)
+	_, err := point.SetBytes(bytes)
+	if err != nil {
+		return nil, err
+	}
+	return NewG1Point(point), nil
+}
+
+// G2PointFromCompressedBytes creates a G2Point from compressed bytes
+func G2PointFromCompressedBytes(bytes []byte) (*G2Point, error) {
+	point := new(bls12381.G2Affine)
+	_, err := point.SetBytes(bytes)
+	if err != nil {
+		return nil, err
+	}
+
+	return NewG2Point(point), nil
+}
+
 // G2PointFromBigInt creates a G2Point from big integers (for legacy compatibility)
 // audit: this function is weird, we should probably split it to requiring only x and both x and y.
 func G2PointFromBigInt(x, y *big.Int) (*G2Point, error) {

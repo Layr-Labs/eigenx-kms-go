@@ -182,11 +182,7 @@ func testMasterPublicKeyDerivation(t *testing.T) {
 		expected = *tmpExpected
 	}
 
-	equal, err := PointsEqualG2(*masterPubKey, expected)
-	if err != nil {
-		t.Fatalf("Failed to compare G2 points: %v", err)
-	}
-	if !equal {
+	if !masterPubKey.Equal(&expected) {
 		t.Error("Master public key should be sum of constant term commitments")
 	}
 }

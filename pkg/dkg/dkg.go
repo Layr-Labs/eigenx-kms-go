@@ -97,12 +97,7 @@ func (d *DKG) VerifyShare(fromID int, share *fr.Element, commitments []types.G2P
 		}
 		rightSide = *tmpRightSide
 	}
-
-	equal, err := crypto.PointsEqualG2(*leftSide, rightSide)
-	if err != nil {
-		return false
-	}
-	return equal
+	return leftSide.Equal(&rightSide)
 }
 
 // FinalizeKeyShare computes the final key share from all received shares

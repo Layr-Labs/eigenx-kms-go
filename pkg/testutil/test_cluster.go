@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"encoding/hex"
 	"fmt"
 	"net/http/httptest"
 	"strconv"
@@ -10,7 +11,6 @@ import (
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
@@ -159,15 +159,11 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 
 	// Compute master public key from commitments
 	cluster.MasterPubKey = ComputeMasterPublicKey(cluster)
-	masterPubKeyG2, err := bls.NewG2PointFromCompressedBytes(cluster.MasterPubKey.CompressedBytes)
-	if err != nil {
-		t.Fatalf("Failed to convert master public key to G2 point: %v", err)
-	}
 	t.Logf("✓ Test cluster ready with DKG complete")
 	t.Logf("  - Nodes: %d", numNodes)
 	t.Logf("  - Block interval: 10 blocks")
 	t.Logf("  - Current block: %d", cluster.MockPoller.GetCurrentBlock())
-	t.Logf("  - Master Public Key: X=%s", masterPubKeyG2.ToAffine().X.String()[:20]+"...")
+	t.Logf("  - Master Public Key: %s", hex.EncodeToString(cluster.MasterPubKey.CompressedBytes[:20])+"...")
 
 	return cluster
 }

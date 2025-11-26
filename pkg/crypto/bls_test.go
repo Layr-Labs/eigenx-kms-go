@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
 )
@@ -96,11 +97,7 @@ func testScalarMulG2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to scalar multiply G2: %v", err)
 	}
-	equal, err := PointsEqualG2(*result, *result2)
-	if err != nil {
-		t.Fatalf("Failed to compare G2 points: %v", err)
-	}
-	if !equal {
+	if !result.Equal(result2) {
 		t.Error("Scalar multiplication should be deterministic")
 	}
 }
@@ -170,12 +167,8 @@ func testAddG2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to add G2: %v", err)
 	}
-	equal, err := PointsEqualG2(*result, *result2)
-	if err != nil {
+	if !result.Equal(result2) {
 		t.Fatalf("Failed to compare G2 points: %v", err)
-	}
-	if !equal {
-		t.Error("Addition should be commutative")
 	}
 }
 
@@ -314,9 +307,14 @@ func testRecoverSecret(t *testing.T) {
 // testHashCommitment tests commitment hashing
 func testHashCommitment(t *testing.T) {
 	// Create some test commitments
+	var point1, point2 bls12381.G2Affine
+	point1.X.SetRandom()
+	point1.Y.SetRandom()
+	point2.X.SetRandom()
+	point2.Y.SetRandom()
 	commitments := []types.G2Point{
-		{CompressedBytes: []byte{1, 2}},
-		{CompressedBytes: []byte{3, 4}},
+		{CompressedBytes: point1.Marshal()},
+		{CompressedBytes: point2.Marshal()},
 	}
 
 	hash1 := HashCommitment(commitments)
@@ -328,8 +326,14 @@ func testHashCommitment(t *testing.T) {
 	}
 
 	// Verify different inputs give different outputs
+	var point3, point4 bls12381.G2Affine
+	point3.X.SetRandom()
+	point3.Y.SetRandom()
+	point4.X.SetRandom()
+	point4.Y.SetRandom()
 	commitments2 := []types.G2Point{
-		{CompressedBytes: []byte{5, 6}},
+		{CompressedBytes: point3.Marshal()},
+		{CompressedBytes: point4.Marshal()},
 	}
 	hash3 := HashCommitment(commitments2)
 
@@ -441,11 +445,7 @@ func testComputeMasterPublicKey(t *testing.T) {
 		expected = *tmpExpected
 	}
 
-	equal, err := PointsEqualG2(*masterPK, expected)
-	if err != nil {
-		t.Fatalf("Failed to compare G2 points: %v", err)
-	}
-	if !equal {
+	if !masterPK.Equal(&expected) {
 		t.Error("Master public key should be sum of first commitments")
 	}
 }
