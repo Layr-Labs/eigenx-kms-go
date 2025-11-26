@@ -216,10 +216,10 @@ func testCreateAcknowledgement(t *testing.T) {
 
 	// Create test commitments with random g2 points
 	var point1, point2 bls12381.G2Affine
-	point1.X.SetRandom()
-	point1.Y.SetRandom()
-	point2.X.SetRandom()
-	point2.Y.SetRandom()
+	_, _ = point1.X.SetRandom()
+	_, _ = point1.Y.SetRandom()
+	_, _ = point2.X.SetRandom()
+	_, _ = point2.Y.SetRandom()
 	commitments := []types.G2Point{
 		{CompressedBytes: point1.Marshal()},
 		{CompressedBytes: point2.Marshal()},

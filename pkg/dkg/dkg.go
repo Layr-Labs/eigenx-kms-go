@@ -97,10 +97,8 @@ func (d *DKG) VerifyShare(fromID int, share *fr.Element, commitments []types.G2P
 		}
 		rightSide = *tmpRightSide
 	}
-	if !leftSide.IsEqual(&rightSide) {
-		return false
-	}
-	return true
+
+	return leftSide.IsEqual(&rightSide)
 }
 
 // FinalizeKeyShare computes the final key share from all received shares
