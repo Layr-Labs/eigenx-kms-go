@@ -308,10 +308,10 @@ func testRecoverSecret(t *testing.T) {
 func testHashCommitment(t *testing.T) {
 	// Create some test commitments
 	var point1, point2 bls12381.G2Affine
-	point1.X.SetRandom()
-	point1.Y.SetRandom()
-	point2.X.SetRandom()
-	point2.Y.SetRandom()
+	_, _ = point1.X.SetRandom()
+	_, _ = point1.Y.SetRandom()
+	_, _ = point2.X.SetRandom()
+	_, _ = point2.Y.SetRandom()
 	commitments := []types.G2Point{
 		{CompressedBytes: point1.Marshal()},
 		{CompressedBytes: point2.Marshal()},
@@ -327,10 +327,10 @@ func testHashCommitment(t *testing.T) {
 
 	// Verify different inputs give different outputs
 	var point3, point4 bls12381.G2Affine
-	point3.X.SetRandom()
-	point3.Y.SetRandom()
-	point4.X.SetRandom()
-	point4.Y.SetRandom()
+	_, _ = point3.X.SetRandom()
+	_, _ = point3.Y.SetRandom()
+	_, _ = point4.X.SetRandom()
+	_, _ = point4.Y.SetRandom()
 	commitments2 := []types.G2Point{
 		{CompressedBytes: point3.Marshal()},
 		{CompressedBytes: point4.Marshal()},

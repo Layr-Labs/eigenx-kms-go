@@ -180,8 +180,8 @@ func testComputeNewKeyShare(t *testing.T) {
 
 	// Create test commitments with random g2 point
 	var point1 bls12381.G2Affine
-	point1.X.SetRandom()
-	point1.Y.SetRandom()
+	_, _ = point1.X.SetRandom()
+	_, _ = point1.Y.SetRandom()
 	allCommitments := [][]types.G2Point{
 		{{CompressedBytes: point1.Marshal()}},
 	}
