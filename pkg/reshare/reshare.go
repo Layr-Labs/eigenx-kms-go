@@ -104,11 +104,7 @@ func (r *Reshare) VerifyNewShare(fromID int, share *fr.Element, commitments []ty
 		rightSide = *tmpRightSide
 	}
 
-	equal, err := crypto.PointsEqualG2(*leftSide, rightSide)
-	if err != nil {
-		return false
-	}
-	return equal
+	return leftSide.IsEqual(&rightSide)
 }
 
 // ComputeNewKeyShare computes the new key share using Lagrange interpolation

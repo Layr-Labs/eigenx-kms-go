@@ -33,7 +33,7 @@ func testFullDKGProtocol(t *testing.T) {
 
 	// Verify master public key was computed
 	masterPubKey := cluster.GetMasterPublicKey()
-	if masterPubKey.X.Sign() == 0 {
+	if masterPubKey.IsZero() {
 		t.Fatal("Master public key should not be zero after DKG")
 	}
 

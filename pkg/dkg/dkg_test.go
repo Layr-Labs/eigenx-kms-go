@@ -2,7 +2,6 @@ package dkg
 
 import (
 	"fmt"
-	"math/big"
 	"testing"
 
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
@@ -11,6 +10,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 )
@@ -214,10 +214,15 @@ func testCreateAcknowledgement(t *testing.T) {
 	nodeID := addressToNodeID(operators[0].OperatorAddress)
 	dealerID := addressToNodeID(operators[1].OperatorAddress)
 
-	// Create test commitments
+	// Create test commitments with random g2 points
+	var point1, point2 bls12381.G2Affine
+	_, _ = point1.X.SetRandom()
+	_, _ = point1.Y.SetRandom()
+	_, _ = point2.X.SetRandom()
+	_, _ = point2.Y.SetRandom()
 	commitments := []types.G2Point{
-		{X: big.NewInt(1), Y: big.NewInt(2)},
-		{X: big.NewInt(3), Y: big.NewInt(4)},
+		{CompressedBytes: point1.Marshal()},
+		{CompressedBytes: point2.Marshal()},
 	}
 
 	// Mock signer function

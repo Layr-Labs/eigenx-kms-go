@@ -2,7 +2,6 @@ package reshare
 
 import (
 	"fmt"
-	"math/big"
 	"testing"
 
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
@@ -10,6 +9,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 )
@@ -178,9 +178,12 @@ func testComputeNewKeyShare(t *testing.T) {
 		_, _ = shares[id].SetRandom()
 	}
 
-	// Create test commitments
+	// Create test commitments with random g2 point
+	var point1 bls12381.G2Affine
+	_, _ = point1.X.SetRandom()
+	_, _ = point1.Y.SetRandom()
 	allCommitments := [][]types.G2Point{
-		{{X: big.NewInt(1), Y: big.NewInt(2)}},
+		{{CompressedBytes: point1.Marshal()}},
 	}
 
 	keyVersion := r.ComputeNewKeyShare(dealerIDs, shares, allCommitments)

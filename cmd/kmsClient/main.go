@@ -187,7 +187,7 @@ func encryptCommand(c *cli.Context) error {
 	}
 
 	// Step 2: Get master public key from operators
-	masterPubKey, err := getMasterPublicKey(appID, operators)
+	masterPubKey, err := getMasterPublicKey(operators)
 	if err != nil {
 		return fmt.Errorf("failed to get master public key: %w", err)
 	}
@@ -302,20 +302,19 @@ func getPubkeyCommand(c *cli.Context) error {
 		return fmt.Errorf("failed to get operators: %w", err)
 	}
 
-	masterPubKey, err := getMasterPublicKey(appID, operators)
+	masterPubKey, err := getMasterPublicKey(operators)
 	if err != nil {
 		return fmt.Errorf("failed to get master public key: %w", err)
 	}
 
 	fmt.Printf("✅ Master Public Key:\n")
-	fmt.Printf("  X: %s\n", masterPubKey.X.String())
-	fmt.Printf("  Y: %s\n", masterPubKey.Y.String())
+	fmt.Printf("  %s\n", hex.EncodeToString(masterPubKey.CompressedBytes))
 
 	return nil
 }
 
 // getMasterPublicKey fetches the master public key from operators
-func getMasterPublicKey(appID string, operators *peering.OperatorSetPeers) (types.G2Point, error) {
+func getMasterPublicKey(operators *peering.OperatorSetPeers) (types.G2Point, error) {
 	if len(operators.Peers) == 0 {
 		return types.G2Point{}, fmt.Errorf("no operators provided")
 	}

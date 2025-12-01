@@ -1,8 +1,10 @@
 package types
 
 import (
-	"math/big"
+	"bytes"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
+	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
 
@@ -17,12 +19,54 @@ type KeyShareVersion struct {
 
 // G1Point represents a point on BLS12-381 G1 (used for signatures)
 type G1Point struct {
-	X, Y *big.Int
+	CompressedBytes []byte
+}
+
+// ZeroG1Point is the zero point on the G1 curve
+func ZeroG1Point() *G1Point {
+	point := new(bls12381.G1Affine)
+	point.SetInfinity()
+	return &G1Point{CompressedBytes: point.Marshal()}
+}
+
+// ZeroG2Point is the zero point on the G1 curve
+func ZeroG2Point() *G2Point {
+	point := new(bls12381.G2Affine)
+	point.SetInfinity()
+	return &G2Point{CompressedBytes: point.Marshal()}
+}
+
+// IsZero checks if the G1Point is the identity/zero point
+func (p *G1Point) IsZero() bool {
+	affinePoint, err := bls.G1PointFromCompressedBytes(p.CompressedBytes)
+	if err != nil {
+		return false
+	}
+	return affinePoint.IsZero()
+}
+
+// IsEqual checks if two G1Points are equal
+func (p *G1Point) IsEqual(other *G1Point) bool {
+	return bytes.Equal(p.CompressedBytes, other.CompressedBytes)
 }
 
 // G2Point represents a point on BLS12-381 G2 (used for public keys)
 type G2Point struct {
-	X, Y *big.Int
+	CompressedBytes []byte
+}
+
+// IsEqual checks if two G2Points are equal
+func (p *G2Point) IsEqual(other *G2Point) bool {
+	return bytes.Equal(p.CompressedBytes, other.CompressedBytes)
+}
+
+// IsInfinity checks if the G2Point is the identity/zero point
+func (p *G2Point) IsZero() bool {
+	affinePoint, err := bls.G2PointFromCompressedBytes(p.CompressedBytes)
+	if err != nil {
+		return false
+	}
+	return affinePoint.IsZero()
 }
 
 // Acknowledgement is signed by players to prevent dealer equivocation

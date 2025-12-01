@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"encoding/hex"
 	"fmt"
 	"net/http/httptest"
 	"strconv"
@@ -163,7 +164,7 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 	t.Logf("  - Nodes: %d", numNodes)
 	t.Logf("  - Block interval: 10 blocks")
 	t.Logf("  - Current block: %d", cluster.MockPoller.GetCurrentBlock())
-	t.Logf("  - Master Public Key: X=%s", cluster.MasterPubKey.X.String()[:20]+"...")
+	t.Logf("  - Master Public Key: %s", hex.EncodeToString(cluster.MasterPubKey.CompressedBytes[:20])+"...")
 
 	return cluster
 }
