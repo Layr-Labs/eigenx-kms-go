@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+
 	"github.com/Layr-Labs/chain-indexer/pkg/clients/ethereum"
 	"github.com/Layr-Labs/crypto-libs/pkg/ecdsa"
 	"github.com/Layr-Labs/eigenx-kms-go/internal/aws"
