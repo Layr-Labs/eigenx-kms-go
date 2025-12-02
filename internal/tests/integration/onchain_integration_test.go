@@ -18,8 +18,11 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/node"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering/peeringDataFetcher"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner/inMemoryTransportSigner"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	ethTypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"go.uber.org/zap"
 )
 
@@ -29,6 +32,7 @@ const (
 
 //nolint:unused // Used in skipped test, will be needed when test is re-enabled
 func createNode(
+	t *testing.T,
 	operatorAddress string,
 	privateKeyHexString string,
 	avsAddress string,
@@ -42,27 +46,33 @@ func createNode(
 	pdf := peeringDataFetcher.NewPeeringDataFetcher(cc, l)
 	pkBytes, err := hexutil.Decode(privateKeyHexString)
 	if err != nil {
-		l.Sugar().Fatalf("failed to decode private key: %v", err)
+		t.Fatalf("failed to decode private key: %v", err)
 	}
-	imts, err := inMemoryTransportSigner.NewBn254InMemoryTransportSigner(pkBytes, l)
+	imts, err := inMemoryTransportSigner.NewECDSAInMemoryTransportSigner(pkBytes, l)
 	if err != nil {
-		l.Sugar().Fatalf("failed to create in-memory transport signer: %v", err)
+		t.Fatalf("failed to create in-memory transport signer: %v", err)
 	}
 
 	// Use mock attestation verifier for tests
 	mockVerifier := attestation.NewStubVerifier()
 
+	// Create mock base contract caller
+	mockBaseContractCaller := contractCaller.NewMockIContractCaller(t)
+	mockBaseContractCaller.On("SubmitCommitment", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(&ethTypes.Receipt{Status: 1}, nil).Maybe()
+	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
+
 	n, err := node.NewNode(node.Config{
 		OperatorAddress: operatorAddress,
 		Port:            port,
-		BN254PrivateKey: privateKeyHexString,
 		ChainID:         chainID,
 		AVSAddress:      avsAddress,
 		OperatorSetId:   0,
-	}, pdf, bh, cp, imts, mockVerifier, l)
+	}, pdf, bh, cp, imts, mockVerifier, mockBaseContractCaller, mockRegistryAddress, l)
 	if err != nil {
-		l.Sugar().Fatalf("failed to create node: %v", err)
+		t.Fatalf("Failed to create node: %v", err)
 	}
+
 	return n
 }
 

@@ -13,6 +13,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/node"
@@ -22,6 +23,8 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	ethTypes "github.com/ethereum/go-ethereum/core/types"
+	"github.com/stretchr/testify/mock"
 )
 
 // TestCluster represents a cluster of KMS nodes for testing
@@ -102,7 +105,6 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 		cfg := node.Config{
 			OperatorAddress: addresses[i],
 			Port:            portNumber,
-			BN254PrivateKey: privateKeys[i],
 			ChainID:         config.ChainId_EthereumAnvil, // Use anvil for tests (10 block interval)
 			AVSAddress:      "0x1234567890123456789012345678901234567890",
 			OperatorSetId:   1,
@@ -120,7 +122,16 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 		// Use mock attestation verifier for tests
 		mockVerifier := attestation.NewStubVerifier()
 
-		n, err := node.NewNode(cfg, peeringDataFetcher, nodeBlockHandlers[i], cluster.MockPoller, imts, mockVerifier, testLogger)
+		// Create mock base contract caller for commitment registry
+		mockBaseContractCaller := contractCaller.NewMockIContractCaller(t)
+		// Configure mock to return success for SubmitCommitment calls
+		mockBaseContractCaller.On("SubmitCommitment",
+			mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+			Return(&ethTypes.Receipt{Status: 1}, nil).Maybe()
+
+		mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
+
+		n, err := node.NewNode(cfg, peeringDataFetcher, nodeBlockHandlers[i], cluster.MockPoller, imts, mockVerifier, mockBaseContractCaller, mockRegistryAddress, testLogger)
 		if err != nil {
 			t.Fatalf("Failed to create node %d: %v", i+1, err)
 		}
