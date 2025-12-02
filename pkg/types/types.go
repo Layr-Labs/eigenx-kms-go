@@ -37,12 +37,12 @@ func ZeroG2Point() *G2Point {
 }
 
 // IsZero checks if the G1Point is the identity/zero point
-func (p *G1Point) IsZero() bool {
+func (p *G1Point) IsZero() (bool, error) {
 	affinePoint, err := bls.G1PointFromCompressedBytes(p.CompressedBytes)
 	if err != nil {
-		return false
+		return false, err
 	}
-	return affinePoint.IsZero()
+	return affinePoint.IsZero(), nil
 }
 
 // IsEqual checks if two G1Points are equal
@@ -61,12 +61,12 @@ func (p *G2Point) IsEqual(other *G2Point) bool {
 }
 
 // IsInfinity checks if the G2Point is the identity/zero point
-func (p *G2Point) IsZero() bool {
+func (p *G2Point) IsZero() (bool, error) {
 	affinePoint, err := bls.G2PointFromCompressedBytes(p.CompressedBytes)
 	if err != nil {
-		return false
+		return false, err
 	}
-	return affinePoint.IsZero()
+	return affinePoint.IsZero(), nil
 }
 
 // Acknowledgement is signed by players to prevent dealer equivocation

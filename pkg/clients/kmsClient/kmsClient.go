@@ -216,7 +216,10 @@ func (c *KMSClient) GetMasterPublicKey() (types.G2Point, error) {
 		return types.G2Point{}, fmt.Errorf("failed to collect commitments from any operator")
 	}
 
-	masterPubKey := crypto.ComputeMasterPublicKey(allCommitments)
+	masterPubKey, err := crypto.ComputeMasterPublicKey(allCommitments)
+	if err != nil {
+		return types.G2Point{}, fmt.Errorf("failed to compute master public key: %w", err)
+	}
 	c.logger.Sugar().Infow("Computed master public key", "commitment_count", len(allCommitments))
 
 	return *masterPubKey, nil

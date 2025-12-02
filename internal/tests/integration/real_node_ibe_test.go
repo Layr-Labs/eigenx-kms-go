@@ -31,7 +31,11 @@ func Test_IBEIntegration(t *testing.T) {
 		t.Fatalf("Failed to get master public key: %v", err)
 	}
 
-	if masterPubKey.IsZero() {
+	isZero, err := masterPubKey.IsZero()
+	if err != nil {
+		t.Fatalf("Failed to check if master public key is zero: %v", err)
+	}
+	if isZero {
 		t.Fatal("Master public key should not be zero")
 	}
 

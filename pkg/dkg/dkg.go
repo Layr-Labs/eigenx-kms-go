@@ -97,7 +97,6 @@ func (d *DKG) VerifyShare(fromID int, share *fr.Element, commitments []types.G2P
 		}
 		rightSide = *tmpRightSide
 	}
-
 	return leftSide.IsEqual(&rightSide)
 }
 

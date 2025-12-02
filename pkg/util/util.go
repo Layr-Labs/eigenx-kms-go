@@ -144,3 +144,14 @@ func DeriveAddressFromECDSAPrivateKey(pk *ecdsa.PrivateKey) (common.Address, err
 	}
 	return DeriveAddress(pk.PublicKey), nil
 }
+
+// ValidateAppID validates that an application ID meets minimum requirements
+func ValidateAppID(appID string) error {
+	if appID == "" {
+		return fmt.Errorf("appID is empty")
+	}
+	if len(appID) < 5 {
+		return fmt.Errorf("appID is too short (minimum 5 characters)")
+	}
+	return nil
+}
