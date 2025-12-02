@@ -4,6 +4,7 @@ pragma solidity ^0.8.27;
 import {IAllocationManager} from "@eigenlayer-contracts/src/contracts/interfaces/IAllocationManager.sol";
 import {IKeyRegistrar} from "@eigenlayer-contracts/src/contracts/interfaces/IKeyRegistrar.sol";
 import {IPermissionController} from "@eigenlayer-contracts/src/contracts/interfaces/IPermissionController.sol";
+import {OperatorSet, OperatorSetLib} from "@eigenlayer-contracts/src/contracts/libraries/OperatorSetLib.sol";
 import {AVSRegistrar} from "@eigenlayer-middleware/src/middlewareV2/registrar/AVSRegistrar.sol";
 import {SocketRegistry} from "@eigenlayer-middleware/src/middlewareV2/registrar/modules/SocketRegistry.sol";
 import {Allowlist} from "@eigenlayer-middleware/src/middlewareV2/registrar/modules/Allowlist.sol";
@@ -11,6 +12,11 @@ import {IEigenKMSRegistrarTypes} from "./interfaces/IEigenKMSRegistrar.sol";
 import {EigenKMSRegistrarStorage} from "./EigenKMSRegistrarStorage.sol";
 
 contract EigenKMSRegistrar is AVSRegistrar, SocketRegistry, Allowlist, EigenKMSRegistrarStorage {
+    using OperatorSetLib for OperatorSet;
+
+    /// @notice Thrown when operator is not in the allowlist for an operator set
+    error OperatorNotAllowed(address operator, uint32 operatorSetId);
+
     /**
      * @dev Constructor that passes parameters to parent
      * @param _allocationManager The AllocationManager contract address
@@ -71,8 +77,8 @@ contract EigenKMSRegistrar is AVSRegistrar, SocketRegistry, Allowlist, EigenKMSR
     }
 
     /**
-     * @notice Before registering operator, check if the operator is in the allowlist for the aggregator operator set
-     * @dev Only the aggregator operator set requires allowlist validation. Executor operator sets do not require allowlist checks.
+     * @notice Before registering operator, check if the operator is in the allowlist
+     * @dev Validates operator is allowed for each operator set they're registering to
      * @param operator The address of the operator
      * @param operatorSetIds The IDs of the operator sets
      * @param data The data passed to the operator
@@ -83,7 +89,16 @@ contract EigenKMSRegistrar is AVSRegistrar, SocketRegistry, Allowlist, EigenKMSR
         bytes calldata data
     ) internal override {
         super._beforeRegisterOperator(operator, operatorSetIds, data);
-        // TODO(seanmcgary) probably need some additional logic
+
+        // Check allowlist for each operator set
+        for (uint256 i = 0; i < operatorSetIds.length; i++) {
+            OperatorSet memory operatorSet = OperatorSet({avs: avs, id: operatorSetIds[i]});
+
+            // Check if operator is allowed in this operator set
+            if (!isOperatorAllowed(operatorSet, operator)) {
+                revert OperatorNotAllowed(operator, operatorSetIds[i]);
+            }
+        }
     }
 
     /**
