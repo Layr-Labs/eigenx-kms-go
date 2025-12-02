@@ -22,6 +22,11 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/node"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering/peeringDataFetcher"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/persistence"
+	persistenceBadger "github.com/Layr-Labs/eigenx-kms-go/pkg/persistence/badger"
+	persistenceMemory "github.com/Layr-Labs/eigenx-kms-go/pkg/persistence/memory"
+	persistenceRedis "github.com/Layr-Labs/eigenx-kms-go/pkg/persistence/redis"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/transactionSigner"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner/inMemoryTransportSigner"
 	web3TransportSigner "github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner/web3TransportSigner"
@@ -145,6 +150,40 @@ This server implements:
 				EnvVars:  []string{config.EnvKMSCommitmentRegistryAddr},
 				Required: true,
 			},
+			&cli.StringFlag{
+				Name:    "persistence-type",
+				Usage:   "Persistence backend: 'memory' (testing only), 'badger' (local disk), or 'redis' (distributed)",
+				Value:   "badger",
+				EnvVars: []string{config.EnvKMSPersistenceType},
+			},
+			&cli.StringFlag{
+				Name:    "persistence-data-path",
+				Usage:   "Data directory for Badger persistence",
+				Value:   "./kms-data",
+				EnvVars: []string{config.EnvKMSPersistenceDataPath},
+			},
+			&cli.StringFlag{
+				Name:    "redis-address",
+				Usage:   "Redis server address (host:port) for Redis persistence",
+				Value:   "localhost:6379",
+				EnvVars: []string{config.EnvKMSRedisAddress},
+			},
+			&cli.StringFlag{
+				Name:    "redis-password",
+				Usage:   "Redis password (optional)",
+				EnvVars: []string{config.EnvKMSRedisPassword},
+			},
+			&cli.IntFlag{
+				Name:    "redis-db",
+				Usage:   "Redis database number (0-15)",
+				Value:   0,
+				EnvVars: []string{config.EnvKMSRedisDB},
+			},
+			&cli.StringFlag{
+				Name:    "redis-key-prefix",
+				Usage:   "Custom prefix for Redis keys (for multi-tenant setups)",
+				EnvVars: []string{config.EnvKMSRedisKeyPrefix},
+			},
 		},
 		Action: runKMSServer,
 	}
@@ -199,10 +238,15 @@ func runKMSServer(c *cli.Context) error {
 		l.Sugar().Fatalw("Failed to get Ethereum contract caller", "error", err)
 	}
 
-	// Create contract caller (no signer needed for read operations)
-	contractCaller, err := caller.NewContractCaller(l1Client, nil, l)
+	// Create Base Ethereum client for commitment registry
+	baseClient := ethereum.NewEthereumClient(&ethereum.EthereumClientConfig{
+		BaseUrl:   kmsConfig.BaseRpcUrl,
+		BlockType: ethereum.BlockType_Latest,
+	}, l)
+
+	l2Client, err := baseClient.GetEthereumContractCaller()
 	if err != nil {
-		l.Sugar().Fatalw("Failed to create contract caller", "error", err)
+		l.Sugar().Fatalw("Failed to get Base contract caller", "error", err)
 	}
 
 	bh := blockHandler.NewBlockHandler(l)
@@ -218,17 +262,17 @@ func runKMSServer(c *cli.Context) error {
 		ethClient,
 		logParser,
 		&EVMChainPoller.EVMChainPollerConfig{
-			ChainId: chainIndexerConfig.ChainId(kmsConfig.ChainID),
+			ChainId:         chainIndexerConfig.ChainId(kmsConfig.ChainID),
+			PollingInterval: config.GetDefaultPollerIntervalForChainId(kmsConfig.ChainID),
 		},
 		pollerStore, bh, l)
 	if err != nil {
 		l.Sugar().Fatalw("Failed to create EVM chain poller", "error", err)
 	}
 
-	pdf := peeringDataFetcher.NewPeeringDataFetcher(contractCaller, l)
-
 	// Create transport signer based on OperatorConfig
 	var transportSignerInstance transportSigner.ITransportSigner
+	var transactionSignerInstance transactionSigner.ITransactionSigner
 	if kmsConfig.OperatorConfig.SigningConfig.UseRemoteSigner {
 		// Create Web3Signer client
 		web3SignerClient, err := web3signer.NewWeb3SignerClientFromRemoteSignerConfig(
@@ -241,7 +285,7 @@ func runKMSServer(c *cli.Context) error {
 
 		// Create Web3Signer transport signer
 		fromAddr := common.HexToAddress(kmsConfig.OperatorConfig.SigningConfig.RemoteSignerConfig.FromAddress)
-		transportSignerInstance, err = web3TransportSigner.NewWeb3Signer(
+		transportSignerInstance, err = web3TransportSigner.NewWeb3TransportSigner(
 			web3SignerClient,
 			fromAddr,
 			kmsConfig.OperatorConfig.SigningConfig.RemoteSignerConfig.PublicKey,
@@ -252,8 +296,14 @@ func runKMSServer(c *cli.Context) error {
 			l.Sugar().Fatalw("Failed to create Web3Signer transport signer", "error", err)
 		}
 
+		transactionSignerInstance, err = transactionSigner.NewWeb3TransactionSigner(web3SignerClient, fromAddr, l2Client, l)
+		if err != nil {
+			l.Sugar().Fatalw("Failed to create Web3Signer transaction signer", "error", err)
+		}
+
 		l.Sugar().Infow("Using Web3Signer for P2P authentication",
 			"from_address", fromAddr.Hex(),
+			"public_key", kmsConfig.OperatorConfig.SigningConfig.RemoteSignerConfig.PublicKey,
 			"url", kmsConfig.OperatorConfig.SigningConfig.RemoteSignerConfig.Url)
 	} else {
 		// Use local ECDSA private key
@@ -265,6 +315,11 @@ func runKMSServer(c *cli.Context) error {
 		transportSignerInstance, err = inMemoryTransportSigner.NewECDSAInMemoryTransportSigner(pkBytes, l)
 		if err != nil {
 			l.Sugar().Fatalw("Failed to create ECDSA in-memory transport signer", "error", err)
+		}
+
+		transactionSignerInstance, err = transactionSigner.NewPrivateKeySigner(kmsConfig.OperatorConfig.SigningConfig.PrivateKey, l2Client, l)
+		if err != nil {
+			l.Sugar().Fatalw("Failed to create private key transaction signer", "error", err)
 		}
 
 		l.Sugar().Infow("Using local ECDSA private key for P2P authentication",
@@ -318,21 +373,18 @@ func runKMSServer(c *cli.Context) error {
 		"provider", providerStr,
 		"debug_mode", debugMode)
 
-	// Create Base Ethereum client for commitment registry
-	baseEthClient := ethereum.NewEthereumClient(&ethereum.EthereumClientConfig{
-		BaseUrl:   kmsConfig.BaseRpcUrl,
-		BlockType: ethereum.BlockType_Latest,
-	}, l)
-
-	baseL1Client, err := baseEthClient.GetEthereumContractCaller()
-	if err != nil {
-		l.Sugar().Fatalw("Failed to get Base contract caller", "error", err)
-	}
-
-	baseContractCaller, err := caller.NewContractCaller(baseL1Client, nil, l)
+	baseContractCaller, err := caller.NewContractCaller(l2Client, transactionSignerInstance, l)
 	if err != nil {
 		l.Sugar().Fatalw("Failed to create Base contract caller", "error", err)
 	}
+
+	// Create contract caller (no signer needed for read operations)
+	l1ContractCaller, err := caller.NewContractCaller(l1Client, nil, l)
+	if err != nil {
+		l.Sugar().Fatalw("Failed to create contract caller", "error", err)
+	}
+
+	pdf := peeringDataFetcher.NewPeeringDataFetcher(l1ContractCaller, l)
 
 	// Parse commitment registry address
 	commitmentRegistryAddr := common.HexToAddress(kmsConfig.CommitmentRegistryAddress)
@@ -341,10 +393,69 @@ func runKMSServer(c *cli.Context) error {
 		"base_rpc_url", kmsConfig.BaseRpcUrl,
 		"commitment_registry_address", commitmentRegistryAddr.Hex())
 
+	// Create node persistence layer based on configuration
+	var nodePersistence persistence.INodePersistence
+	switch kmsConfig.PersistenceConfig.Type {
+	case "badger":
+		var err error
+		nodePersistence, err = persistenceBadger.NewBadgerPersistence(
+			kmsConfig.PersistenceConfig.DataPath,
+			l,
+		)
+		if err != nil {
+			l.Sugar().Fatalw("Failed to create Badger persistence", "error", err)
+		}
+		l.Sugar().Infow("Using Badger persistence",
+			"path", kmsConfig.PersistenceConfig.DataPath)
+	case "redis":
+		var err error
+		nodePersistence, err = persistenceRedis.NewRedisPersistence(
+			&persistenceRedis.RedisConfig{
+				Address:   kmsConfig.PersistenceConfig.RedisConfig.Address,
+				Password:  kmsConfig.PersistenceConfig.RedisConfig.Password,
+				DB:        kmsConfig.PersistenceConfig.RedisConfig.DB,
+				KeyPrefix: kmsConfig.PersistenceConfig.RedisConfig.KeyPrefix,
+			},
+			l,
+		)
+		if err != nil {
+			l.Sugar().Fatalw("Failed to create Redis persistence", "error", err)
+		}
+		logFields := []interface{}{
+			"address", kmsConfig.PersistenceConfig.RedisConfig.Address,
+			"db", kmsConfig.PersistenceConfig.RedisConfig.DB,
+		}
+		if kmsConfig.PersistenceConfig.RedisConfig.KeyPrefix != "" {
+			logFields = append(logFields, "key_prefix", kmsConfig.PersistenceConfig.RedisConfig.KeyPrefix)
+		}
+		l.Sugar().Infow("Using Redis persistence", logFields...)
+	default:
+		nodePersistence = persistenceMemory.NewMemoryPersistence()
+		l.Sugar().Warn("⚠️  Using in-memory persistence - data will be lost on restart")
+	}
+
+	defer func() { _ = nodePersistence.Close() }()
+
+	// Health check persistence
+	if err := nodePersistence.HealthCheck(); err != nil {
+		l.Sugar().Fatalw("Persistence health check failed", "error", err)
+	}
+
 	// Create and configure the node
-	n, err := node.NewNode(nodeConfig, pdf, bh, poller, transportSignerInstance, attestationVerifierInstance, baseContractCaller, commitmentRegistryAddr, l)
+	n, err := node.NewNode(
+		nodeConfig,
+		pdf,
+		bh,
+		poller,
+		transportSignerInstance,
+		attestationVerifierInstance,
+		baseContractCaller,
+		commitmentRegistryAddr,
+		nodePersistence,
+		l,
+	)
 	if err != nil {
-		return fmt.Errorf("failed to create node: %w", err)
+		l.Sugar().Fatalw("Failed to create node", "error", err)
 	}
 
 	if c.Bool("verbose") {
@@ -408,6 +519,22 @@ func parseKMSConfig(c *cli.Context) (*config.KMSServerConfig, error) {
 		}
 	}
 
+	// Build persistence config
+	persistenceConfig := config.PersistenceConfig{
+		Type:     c.String("persistence-type"),
+		DataPath: c.String("persistence-data-path"),
+	}
+
+	// Add Redis config if using Redis persistence
+	if persistenceConfig.Type == "redis" {
+		persistenceConfig.RedisConfig = &config.RedisConfig{
+			Address:   c.String("redis-address"),
+			Password:  c.String("redis-password"),
+			DB:        c.Int("redis-db"),
+			KeyPrefix: c.String("redis-key-prefix"),
+		}
+	}
+
 	return &config.KMSServerConfig{
 		OperatorAddress:           c.String("operator-address"),
 		Port:                      c.Int("port"),
@@ -420,5 +547,6 @@ func parseKMSConfig(c *cli.Context) (*config.KMSServerConfig, error) {
 		BaseRpcUrl:                c.String("base-rpc-url"),
 		CommitmentRegistryAddress: c.String("commitment-registry-address"),
 		OperatorConfig:            operatorConfig,
+		PersistenceConfig:         persistenceConfig,
 	}, nil
 }

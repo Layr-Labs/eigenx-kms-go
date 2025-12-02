@@ -19,6 +19,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/node"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering/localPeeringDataFetcher"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/persistence/memory"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner/inMemoryTransportSigner"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/ethereum/go-ethereum/common"
@@ -131,7 +132,10 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 
 		mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
 
-		n, err := node.NewNode(cfg, peeringDataFetcher, nodeBlockHandlers[i], cluster.MockPoller, imts, mockVerifier, mockBaseContractCaller, mockRegistryAddress, testLogger)
+		// Create in-memory persistence for each test node
+		persistence := memory.NewMemoryPersistence()
+
+		n, err := node.NewNode(cfg, peeringDataFetcher, nodeBlockHandlers[i], cluster.MockPoller, imts, mockVerifier, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
 		if err != nil {
 			t.Fatalf("Failed to create node %d: %v", i+1, err)
 		}

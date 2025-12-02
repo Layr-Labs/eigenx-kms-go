@@ -35,7 +35,7 @@ func TestNewWeb3Signer(t *testing.T) {
 
 	t.Run("successful creation with ECDSA", func(t *testing.T) {
 		publicKey := "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12"
-		web3Signer, err := NewWeb3Signer(client, fromAddress, publicKey, config.CurveTypeECDSA, l)
+		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, publicKey, config.CurveTypeECDSA, l)
 		require.NoError(t, err)
 		assert.NotNil(t, web3Signer)
 
@@ -48,7 +48,7 @@ func TestNewWeb3Signer(t *testing.T) {
 
 	t.Run("fails with BN254 curve type", func(t *testing.T) {
 		publicKey := "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12"
-		web3Signer, err := NewWeb3Signer(client, fromAddress, publicKey, config.CurveTypeBN254, l)
+		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, publicKey, config.CurveTypeBN254, l)
 		assert.Error(t, err)
 		assert.Nil(t, web3Signer)
 		assert.Contains(t, err.Error(), "web3signer only supports ECDSA curve type")
@@ -56,7 +56,7 @@ func TestNewWeb3Signer(t *testing.T) {
 
 	t.Run("fails with nil client", func(t *testing.T) {
 		publicKey := "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12"
-		web3Signer, err := NewWeb3Signer(nil, fromAddress, publicKey, config.CurveTypeECDSA, l)
+		web3Signer, err := NewWeb3TransportSigner(nil, fromAddress, publicKey, config.CurveTypeECDSA, l)
 		assert.Error(t, err)
 		assert.Nil(t, web3Signer)
 		assert.Contains(t, err.Error(), "web3signer client cannot be nil")
@@ -64,14 +64,14 @@ func TestNewWeb3Signer(t *testing.T) {
 
 	t.Run("fails with nil logger", func(t *testing.T) {
 		publicKey := "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12"
-		web3Signer, err := NewWeb3Signer(client, fromAddress, publicKey, config.CurveTypeECDSA, nil)
+		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, publicKey, config.CurveTypeECDSA, nil)
 		assert.Error(t, err)
 		assert.Nil(t, web3Signer)
 		assert.Contains(t, err.Error(), "logger cannot be nil")
 	})
 
 	t.Run("fails with empty public key", func(t *testing.T) {
-		web3Signer, err := NewWeb3Signer(client, fromAddress, "", config.CurveTypeECDSA, l)
+		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, "", config.CurveTypeECDSA, l)
 		assert.Error(t, err)
 		assert.Nil(t, web3Signer)
 		assert.Contains(t, err.Error(), "publicKey cannot be empty")
@@ -110,7 +110,7 @@ func TestWeb3Signer_SignMessage(t *testing.T) {
 		client, err := web3signer.NewClient(cfg, l)
 		require.NoError(t, err)
 
-		web3Signer, err := NewWeb3Signer(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
+		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
 		require.NoError(t, err)
 
 		signature, err := web3Signer.SignMessage(testData)
@@ -153,7 +153,7 @@ func TestWeb3Signer_SignMessage(t *testing.T) {
 		client, err := web3signer.NewClient(cfg, l)
 		require.NoError(t, err)
 
-		web3Signer, err := NewWeb3Signer(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
+		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
 		require.NoError(t, err)
 
 		signature, err := web3Signer.SignMessage(testData)
@@ -179,7 +179,7 @@ func TestWeb3Signer_SignMessage(t *testing.T) {
 		client, err := web3signer.NewClient(cfg, l)
 		require.NoError(t, err)
 
-		web3Signer, err := NewWeb3Signer(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
+		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
 		require.NoError(t, err)
 
 		signature, err := web3Signer.SignMessage(testData)
@@ -221,7 +221,7 @@ func TestWeb3Signer_SignMessageForSolidity(t *testing.T) {
 		client, err := web3signer.NewClient(cfg, l)
 		require.NoError(t, err)
 
-		web3Signer, err := NewWeb3Signer(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
+		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
 		require.NoError(t, err)
 
 		signature, err := web3Signer.SignMessageForSolidity(testData)
@@ -263,7 +263,7 @@ func TestWeb3Signer_GetFromAddress(t *testing.T) {
 
 	fromAddress := common.HexToAddress("0x1234567890abcdef1234567890abcdef12345678")
 
-	web3Signer, err := NewWeb3Signer(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
+	web3Signer, err := NewWeb3TransportSigner(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
 	require.NoError(t, err)
 
 	assert.Equal(t, fromAddress, web3Signer.GetFromAddress())
@@ -279,7 +279,7 @@ func TestWeb3Signer_GetCurveType(t *testing.T) {
 
 	fromAddress := common.HexToAddress("0x1234567890abcdef1234567890abcdef12345678")
 
-	web3Signer, err := NewWeb3Signer(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
+	web3Signer, err := NewWeb3TransportSigner(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
 	require.NoError(t, err)
 
 	assert.Equal(t, config.CurveTypeECDSA, web3Signer.GetCurveType())
@@ -295,7 +295,7 @@ func TestWeb3Signer_SupportsRemoteSigning(t *testing.T) {
 
 	fromAddress := common.HexToAddress("0x1234567890abcdef1234567890abcdef12345678")
 
-	web3Signer, err := NewWeb3Signer(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
+	web3Signer, err := NewWeb3TransportSigner(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
 	require.NoError(t, err)
 
 	assert.True(t, web3Signer.SupportsRemoteSigning())
@@ -337,7 +337,7 @@ func TestWeb3Signer_Validate(t *testing.T) {
 		client, err := web3signer.NewClient(cfg, l)
 		require.NoError(t, err)
 
-		web3Signer, err := NewWeb3Signer(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
+		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
 		require.NoError(t, err)
 
 		err = web3Signer.Validate()
@@ -373,7 +373,7 @@ func TestWeb3Signer_Validate(t *testing.T) {
 		client, err := web3signer.NewClient(cfg, l)
 		require.NoError(t, err)
 
-		web3Signer, err := NewWeb3Signer(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
+		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
 		require.NoError(t, err)
 
 		err = web3Signer.Validate()
@@ -407,7 +407,7 @@ func TestWeb3Signer_Validate(t *testing.T) {
 		client, err := web3signer.NewClient(cfg, l)
 		require.NoError(t, err)
 
-		web3Signer, err := NewWeb3Signer(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
+		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
 		require.NoError(t, err)
 
 		err = web3Signer.Validate()
@@ -445,7 +445,7 @@ func TestWeb3Signer_Validate(t *testing.T) {
 		client, err := web3signer.NewClient(cfg, l)
 		require.NoError(t, err)
 
-		web3Signer, err := NewWeb3Signer(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
+		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
 		require.NoError(t, err)
 
 		err = web3Signer.Validate()
@@ -463,7 +463,7 @@ func TestWeb3Signer_InterfaceCompliance(t *testing.T) {
 
 	fromAddress := common.HexToAddress("0x1234567890abcdef1234567890abcdef12345678")
 
-	signerImpl, err := NewWeb3Signer(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
+	signerImpl, err := NewWeb3TransportSigner(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
 	require.NoError(t, err)
 
 	// Verify that Web3Signer implements the ISigner interface
@@ -498,7 +498,7 @@ func TestWeb3Signer_Integration(t *testing.T) {
 
 	t.Run("test actual web3signer REST API signing", func(t *testing.T) {
 		// Create Web3Signer instance
-		web3Signer, err := NewWeb3Signer(client, fromAddress, publicKey, config.CurveTypeECDSA, l)
+		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, publicKey, config.CurveTypeECDSA, l)
 		require.NoError(t, err)
 
 		// Test data to sign
@@ -527,7 +527,7 @@ func TestWeb3Signer_Integration(t *testing.T) {
 
 	t.Run("test SignMessageForSolidity", func(t *testing.T) {
 		// Create Web3Signer instance
-		web3Signer, err := NewWeb3Signer(client, fromAddress, publicKey, config.CurveTypeECDSA, l)
+		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, publicKey, config.CurveTypeECDSA, l)
 		require.NoError(t, err)
 
 		// Perform signing for Solidity
@@ -549,7 +549,7 @@ func TestWeb3Signer_Integration(t *testing.T) {
 
 	t.Run("test account validation", func(t *testing.T) {
 		// Create Web3Signer instance
-		web3Signer, err := NewWeb3Signer(client, fromAddress, publicKey, config.CurveTypeECDSA, l)
+		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, publicKey, config.CurveTypeECDSA, l)
 		require.NoError(t, err)
 
 		// Test account validation (this uses JSON-RPC eth_accounts)
@@ -586,7 +586,7 @@ func Test_CompareWeb3SignerToInMemorySigner(t *testing.T) {
 	client, err := web3signer.NewClient(cfg, l)
 	require.NoError(t, err)
 
-	web3Signer, err := NewWeb3Signer(client, common.HexToAddress(chainConfig.OperatorAccountAddress1), chainConfig.OperatorAccountPublicKey1, config.CurveTypeECDSA, l)
+	web3Signer, err := NewWeb3TransportSigner(client, common.HexToAddress(chainConfig.OperatorAccountAddress1), chainConfig.OperatorAccountPublicKey1, config.CurveTypeECDSA, l)
 	require.NoError(t, err)
 
 	payload := []byte("Hello from Web3Signer REST API test!")

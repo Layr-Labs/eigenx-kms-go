@@ -28,6 +28,14 @@ const (
 	EnvKMSWeb3SignerKey         = "KMS_WEB3SIGNER_KEY"
 	EnvKMSWeb3SignerFromAddress = "KMS_WEB3SIGNER_FROM_ADDRESS"
 	EnvKMSWeb3SignerPublicKey   = "KMS_WEB3SIGNER_PUBLIC_KEY"
+	// Persistence configuration
+	EnvKMSPersistenceType     = "KMS_PERSISTENCE_TYPE"
+	EnvKMSPersistenceDataPath = "KMS_PERSISTENCE_DATA_PATH"
+	// Redis persistence configuration
+	EnvKMSRedisAddress   = "KMS_REDIS_ADDRESS"
+	EnvKMSRedisPassword  = "KMS_REDIS_PASSWORD"
+	EnvKMSRedisDB        = "KMS_REDIS_DB"
+	EnvKMSRedisKeyPrefix = "KMS_REDIS_KEY_PREFIX"
 )
 
 type CurveType string
@@ -107,6 +115,27 @@ var ChainNameToId = map[ChainName]ChainId{
 	ChainName_BaseSepolia:     ChainId_BaseSepolia,
 }
 
+func IsEthereum(chainId ChainId) bool {
+	return chainId == ChainId_EthereumMainnet || chainId == ChainId_EthereumSepolia || chainId == ChainId_EthereumAnvil
+}
+
+func GetDefaultPollerIntervalForChainId(chainId ChainId) time.Duration {
+	switch chainId {
+	case ChainId_EthereumMainnet:
+		return 6 * time.Second
+	case ChainId_EthereumSepolia:
+		return 6 * time.Second
+	case ChainId_BaseAnvil:
+		return 1 * time.Second
+	case ChainId_BaseSepolia:
+		return 1 * time.Second
+	case ChainId_EthereumAnvil:
+		return 2 * time.Second
+	default:
+		return 6 * time.Second // Default to mainnet interval
+	}
+}
+
 // Block interval constants by chain (block-based scheduling)
 const (
 	ReshareBlockInterval_Mainnet = 50 // 50 blocks ~10 minutes (12s per block)
@@ -183,6 +212,7 @@ var (
 		ChainId_EthereumSepolia: ethereumSepoliaCoreContracts,
 		ChainId_EthereumAnvil:   ethereumSepoliaCoreContracts, // fork of ethereum sepolia
 		ChainId_BaseAnvil:       ethereumSepoliaCoreContracts, // fork of ethereum sepolia (for L2 testing)
+		ChainId_BaseSepolia:     &CoreContractAddresses{},     // No core contracts on Base for now
 	}
 )
 
@@ -234,6 +264,66 @@ func (oc *OperatorConfig) Validate() error {
 	return nil
 }
 
+// PersistenceConfig represents the persistence layer configuration
+type PersistenceConfig struct {
+	// Type specifies the persistence backend: "memory", "badger", or "redis"
+	Type string `json:"type"`
+
+	// DataPath is the directory path for file-based persistence (used by badger)
+	// Not used for memory or redis persistence
+	DataPath string `json:"data_path"`
+
+	// Redis configuration (only used when Type is "redis")
+	RedisConfig *RedisConfig `json:"redis_config,omitempty"`
+}
+
+// RedisConfig holds configuration for Redis persistence
+type RedisConfig struct {
+	// Address is the Redis server address (host:port)
+	Address string `json:"address"`
+	// Password is the optional Redis password
+	Password string `json:"password,omitempty"`
+	// DB is the Redis database number (0-15)
+	DB int `json:"db"`
+	// KeyPrefix is an optional custom prefix for all keys (for multi-tenant setups).
+	// If set, this prefix is prepended to all keys, e.g., "myapp:" would result in
+	// keys like "myapp:kms:keyshare:123". If empty, keys use the default "kms:" prefix.
+	KeyPrefix string `json:"key_prefix,omitempty"`
+}
+
+// Validate validates the persistence configuration
+func (pc *PersistenceConfig) Validate() error {
+	// Default to badger if not specified
+	if pc.Type == "" {
+		pc.Type = "badger"
+	}
+
+	// Validate type
+	if pc.Type != "memory" && pc.Type != "badger" && pc.Type != "redis" {
+		return fmt.Errorf("persistence type must be 'memory', 'badger', or 'redis', got '%s'", pc.Type)
+	}
+
+	// Validate data path for badger
+	if pc.Type == "badger" && pc.DataPath == "" {
+		pc.DataPath = "./kms-data" // Default path
+	}
+
+	// Validate redis config
+	if pc.Type == "redis" {
+		if pc.RedisConfig == nil {
+			return fmt.Errorf("redis_config is required when persistence type is 'redis'")
+		}
+		if pc.RedisConfig.Address == "" {
+			return fmt.Errorf("redis address cannot be empty")
+		}
+		if pc.RedisConfig.DB < 0 || pc.RedisConfig.DB > 15 {
+			return fmt.Errorf("redis DB must be between 0 and 15, got %d", pc.RedisConfig.DB)
+		}
+	}
+
+	return nil
+}
+
 // KMSServerConfig represents the complete configuration for a KMS server
 type KMSServerConfig struct {
 	// Node identity
@@ -256,6 +346,9 @@ type KMSServerConfig struct {
 	// Operational settings
 	Debug   bool `json:"debug"`
 	Verbose bool `json:"verbose"`
+
+	// Persistence configuration
+	PersistenceConfig PersistenceConfig `json:"persistence_config"`
 
 	// Contract addresses (populated from chain)
 	CoreContracts *CoreContractAddresses `json:"core_contracts,omitempty"`
@@ -301,6 +394,11 @@ func (c *KMSServerConfig) Validate() error {
 		return fmt.Errorf("failed to get core contracts: %w", err)
 	}
 	c.CoreContracts = coreContracts
+
+	// Validate persistence configuration
+	if err := c.PersistenceConfig.Validate(); err != nil {
+		return fmt.Errorf("invalid persistence config: %w", err)
+	}
 
 	return nil
 }

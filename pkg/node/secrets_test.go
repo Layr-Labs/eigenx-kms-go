@@ -20,6 +20,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering/localPeeringDataFetcher"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/persistence/memory"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/registry"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner/inMemoryTransportSigner"
 	kmsTypes "github.com/Layr-Labs/eigenx-kms-go/pkg/types"
@@ -114,7 +115,10 @@ func testSecretsEndpointFlow(t *testing.T) {
 		Return(&ethTypes.Receipt{Status: 1}, nil).Maybe()
 	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
 
-	node, err := NewNode(cfg, peeringDataFetcher, bh, nil, imts, mockVerifier, mockBaseContractCaller, mockRegistryAddress, testLogger)
+	persistence := memory.NewMemoryPersistence()
+	defer func() { _ = persistence.Close() }()
+
+	node, err := NewNode(cfg, peeringDataFetcher, bh, nil, imts, mockVerifier, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
 	if err != nil {
 		t.Fatalf("Failed to create node: %v", err)
 	}
@@ -266,7 +270,10 @@ func testSecretsEndpointValidation(t *testing.T) {
 		Return(&ethTypes.Receipt{Status: 1}, nil).Maybe()
 	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
 
-	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockVerifier, mockBaseContractCaller, mockRegistryAddress, testLogger)
+	persistence := memory.NewMemoryPersistence()
+	defer func() { _ = persistence.Close() }()
+
+	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockVerifier, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
 	if err != nil {
 		t.Fatalf("Failed to create node: %v", err)
 	}
@@ -328,7 +335,10 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 		Return(&ethTypes.Receipt{Status: 1}, nil).Maybe()
 	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
 
-	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockVerifier, mockBaseContractCaller, mockRegistryAddress, testLogger)
+	persistence := memory.NewMemoryPersistence()
+	defer func() { _ = persistence.Close() }()
+
+	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockVerifier, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
 	if err != nil {
 		t.Fatalf("Failed to create node: %v", err)
 	}
