@@ -9,6 +9,18 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
+// Environment variable names for KMS Server configuration
+const (
+	EnvKMSOperatorAddress = "KMS_OPERATOR_ADDRESS"
+	EnvKMSPort            = "KMS_PORT"
+	EnvKMSChainID         = "KMS_CHAIN_ID"
+	EnvKMSBN254PrivateKey = "KMS_BN254_PRIVATE_KEY"
+	EnvKMSRPCURL          = "KMS_RPC_URL"
+	EnvKMSAVSAddress      = "KMS_AVS_ADDRESS"
+	EnvKMSOperatorSetID   = "KMS_OPERATOR_SET_ID"
+	EnvKMSVerbose         = "KMS_VERBOSE"
+)
+
 type CurveType string
 
 func (c CurveType) String() string {
@@ -63,6 +75,7 @@ type ChainName string
 const (
 	ChainName_EthereumMainnet ChainName = "mainnet"
 	ChainName_EthereumSepolia ChainName = "sepolia"
+	ChainName_PreProdSepolia  ChainName = "dev"
 	ChainName_EthereumAnvil   ChainName = "devnet"
 )
 
@@ -83,6 +96,20 @@ const (
 	ReshareBlockInterval_Sepolia = 10 // 10 blocks ~2 minutes (12s per block)
 	ReshareBlockInterval_Anvil   = 10 // 10 blocks for testing (20 seconds with 2s blocks)
 )
+
+func GetEnvironmentNameForChainName(chainName ChainName) (string, error) {
+	switch chainName {
+	case ChainName_EthereumMainnet:
+		return "mainnet-ethereum", nil
+	case ChainName_EthereumSepolia:
+		return "testnet-sepolia", nil
+	case ChainName_EthereumAnvil:
+		return "devnet-sepolia", nil
+	case ChainName_PreProdSepolia:
+		return "preprod-sepolia", nil
+	}
+	return "", fmt.Errorf("unsupported chain name: %s", chainName)
+}
 
 // GetReshareBlockIntervalForChain returns the block interval for reshares on a given chain
 func GetReshareBlockIntervalForChain(chainId ChainId) int64 {

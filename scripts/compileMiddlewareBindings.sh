@@ -48,6 +48,7 @@ cd ./contracts
 forge build
 
 create_binding "IEigenKMSRegistrar"
+create_binding "EigenKMSCommitmentRegistry"
 
 # echo "Generating bindings for contracts..."
 # for contract_name in $contracts; do

@@ -458,3 +458,47 @@ func (s *Server) handleGetCommitments(w http.ResponseWriter, r *http.Request) {
 
 	s.node.logger.Sugar().Debugw("Served public key commitments", "operator_address", s.node.OperatorAddress.Hex())
 }
+
+// handleCommitmentBroadcast handles commitment broadcasts with merkle proofs (Phase 5)
+func (s *Server) handleCommitmentBroadcast(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var msg types.CommitmentBroadcastMessage
+	if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+		http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Get session (should already exist from DKG/Reshare flow)
+	session := s.node.getSession(msg.SessionID)
+	if session == nil {
+		http.Error(w, "Session not found", http.StatusNotFound)
+		return
+	}
+
+	s.node.logger.Sugar().Debugw("Received commitment broadcast",
+		"from", msg.FromOperatorID,
+		"epoch", msg.Broadcast.Epoch,
+		"num_acks", len(msg.Broadcast.Acknowledgements),
+		"num_commitments", len(msg.Broadcast.Commitments),
+		"proof_length", len(msg.Broadcast.MerkleProof),
+	)
+
+	// Phase 6: Verify the broadcast
+	// Note: Contract registry address should come from node config in production
+	// For now, using zero address as placeholder
+	contractRegistryAddr := common.Address{}
+	if err := s.node.VerifyOperatorBroadcast(msg.SessionID, msg.Broadcast, contractRegistryAddr); err != nil {
+		s.node.logger.Sugar().Warnw("Failed to verify operator broadcast",
+			"from", msg.FromOperatorID,
+			"error", err,
+		)
+		http.Error(w, fmt.Sprintf("Verification failed: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
