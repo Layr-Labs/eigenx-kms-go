@@ -46,8 +46,8 @@ func testDKGWithMerkleAcknowledgements(t *testing.T) {
 
 	// Verify all nodes have same master public key
 	masterPubKey := cluster.GetMasterPublicKey()
-	require.NotNil(t, masterPubKey)
-	require.NotEqual(t, int64(0), masterPubKey.X.Sign(), "Master public key should not be zero")
+	require.NotNil(t, masterPubKey.CompressedBytes)
+	require.False(t, masterPubKey.IsZero(), "Master public key should not be zero")
 
 	// Verify threshold calculation
 	expectedThreshold := dkg.CalculateThreshold(4)
