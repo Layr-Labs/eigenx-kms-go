@@ -1,7 +1,6 @@
 package testutil
 
 import (
-	"math/big"
 	"testing"
 
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
@@ -74,11 +73,16 @@ func CreateTestShare(value uint64) *fr.Element {
 func CreateTestCommitments(t *testing.T, n int) []types.G2Point {
 	commitments := make([]types.G2Point, n)
 	for i := 0; i < n; i++ {
-		// Create simple test commitments
-		commitments[i] = types.G2Point{
-			X: big.NewInt(int64(i + 1)),
-			Y: big.NewInt(int64(i + 2)),
+		// random g2 point
+		randomElement, err := new(fr.Element).SetRandom()
+		if err != nil {
+			t.Fatalf("Failed to create random element: %v", err)
 		}
+		commitment, err := crypto.ScalarMulG2(crypto.G2Generator, randomElement)
+		if err != nil {
+			t.Fatalf("Failed to create commitment: %v", err)
+		}
+		commitments[i] = *commitment
 	}
 	return commitments
 }

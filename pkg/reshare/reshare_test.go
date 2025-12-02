@@ -13,6 +13,7 @@ import (
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/stretchr/testify/require"
 )
 
 func Test_ReshareProtocol(t *testing.T) {
@@ -235,11 +236,16 @@ func Test_CreateAcknowledgement(t *testing.T) {
 	// Create test share
 	share := fr.NewElement(789)
 
-	// Create test commitments
-	commitments := []types.G2Point{
-		{X: big.NewInt(1), Y: big.NewInt(2)},
-		{X: big.NewInt(3), Y: big.NewInt(4)},
-	}
+	// Create test random commitments
+	randomElement1, err := new(fr.Element).SetRandom()
+	require.NoError(t, err)
+	commitment1, err := crypto.ScalarMulG2(crypto.G2Generator, randomElement1)
+	require.NoError(t, err)
+	randomElement2, err := new(fr.Element).SetRandom()
+	require.NoError(t, err)
+	commitment2, err := crypto.ScalarMulG2(crypto.G2Generator, randomElement2)
+	require.NoError(t, err)
+	commitments := []types.G2Point{*commitment1, *commitment2}
 
 	// Mock signer function
 	signer := func(dealer int, hash [32]byte) []byte {
