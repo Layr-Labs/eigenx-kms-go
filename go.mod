@@ -6,8 +6,14 @@ require (
 	github.com/Layr-Labs/chain-indexer v0.1.1-0.20251030152338-0e3be49f2ac8
 	github.com/Layr-Labs/crypto-libs v0.0.5-0.20250813195719-721609a5aa3d
 	github.com/Layr-Labs/eigenlayer-contracts v1.8.1
+	github.com/aws/aws-sdk-go-v2 v1.40.0
+	github.com/aws/aws-sdk-go-v2/config v1.18.45
+	github.com/aws/aws-sdk-go-v2/service/kms v1.49.1
+	github.com/aws/aws-sdk-go-v2/service/sts v1.23.2
 	github.com/consensys/gnark-crypto v0.19.1
 	github.com/ethereum/go-ethereum v1.16.5
+	github.com/google/uuid v1.6.0
+	github.com/pkg/errors v0.9.1
 	github.com/stretchr/testify v1.11.1
 	github.com/urfave/cli/v2 v2.27.7
 	github.com/wealdtech/go-merkletree/v2 v2.6.1
@@ -18,6 +24,15 @@ require (
 require (
 	github.com/Microsoft/go-winio v0.6.2 // indirect
 	github.com/StackExchange/wmi v1.2.1 // indirect
+	github.com/aws/aws-sdk-go-v2/credentials v1.13.43 // indirect
+	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.13.13 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.14 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.14 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/ini v1.3.45 // indirect
+	github.com/aws/aws-sdk-go-v2/service/internal/presigned-url v1.9.37 // indirect
+	github.com/aws/aws-sdk-go-v2/service/sso v1.15.2 // indirect
+	github.com/aws/aws-sdk-go-v2/service/ssooidc v1.17.3 // indirect
+	github.com/aws/smithy-go v1.23.2 // indirect
 	github.com/bits-and-blooms/bitset v1.20.0 // indirect
 	github.com/cpuguy83/go-md2man/v2 v2.0.7 // indirect
 	github.com/crate-crypto/go-eth-kzg v1.4.0 // indirect
@@ -29,11 +44,9 @@ require (
 	github.com/ethereum/go-verkle v0.2.2 // indirect
 	github.com/fsnotify/fsnotify v1.8.0 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
-	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.0 // indirect
 	github.com/holiman/uint256 v1.3.2 // indirect
 	github.com/iden3/go-iden3-crypto v0.0.16 // indirect
-	github.com/pkg/errors v0.9.1 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
 	github.com/rs/cors v1.11.1 // indirect
 	github.com/russross/blackfriday/v2 v2.1.0 // indirect

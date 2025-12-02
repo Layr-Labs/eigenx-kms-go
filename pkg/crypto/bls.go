@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"math/big"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"

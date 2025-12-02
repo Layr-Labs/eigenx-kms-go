@@ -10,6 +10,7 @@ import (
 	"github.com/Layr-Labs/eigenlayer-contracts/pkg/bindings/IAllocationManager"
 	"github.com/Layr-Labs/eigenlayer-contracts/pkg/bindings/IDelegationManager"
 	"github.com/Layr-Labs/eigenlayer-contracts/pkg/bindings/IKeyRegistrar"
+	"github.com/Layr-Labs/eigenlayer-contracts/pkg/bindings/IPermissionController"
 	"github.com/Layr-Labs/eigenlayer-contracts/pkg/bindings/IReleaseManager"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/middleware-bindings/IEigenKMSRegistrar"
@@ -29,10 +30,11 @@ type ContractCaller struct {
 	logger        *zap.Logger
 	coreContracts *config.CoreContractAddresses
 
-	allocationManager *IAllocationManager.IAllocationManager
-	delegationManager *IDelegationManager.IDelegationManager
-	keyRegistrar      *IKeyRegistrar.IKeyRegistrar
-	releaseManager    *IReleaseManager.IReleaseManager
+	allocationManager    *IAllocationManager.IAllocationManager
+	delegationManager    *IDelegationManager.IDelegationManager
+	keyRegistrar         *IKeyRegistrar.IKeyRegistrar
+	releaseManager       *IReleaseManager.IReleaseManager
+	permissionController *IPermissionController.IPermissionController
 
 	signer transactionSigner.ITransactionSigner
 }

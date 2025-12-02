@@ -2,6 +2,7 @@ package reshare
 
 import (
 	"fmt"
+	"math/big"
 	"testing"
 
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"

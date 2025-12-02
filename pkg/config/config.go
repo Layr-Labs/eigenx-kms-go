@@ -9,6 +9,18 @@ import (
 	"k8s.io/apimachinery/pkg/util/validation/field"
 )
 
+// Environment variable names for KMS Server configuration
+const (
+	EnvKMSOperatorAddress  = "KMS_OPERATOR_ADDRESS"
+	EnvKMSPort             = "KMS_PORT"
+	EnvKMSChainID          = "KMS_CHAIN_ID"
+	EnvKMSBN254PrivateKey  = "KMS_BN254_PRIVATE_KEY"
+	EnvKMSRPCURL           = "KMS_RPC_URL"
+	EnvKMSAVSAddress       = "KMS_AVS_ADDRESS"
+	EnvKMSOperatorSetID    = "KMS_OPERATOR_SET_ID"
+	EnvKMSVerbose          = "KMS_VERBOSE"
+)
+
 type CurveType string
 
 func (c CurveType) String() string {
