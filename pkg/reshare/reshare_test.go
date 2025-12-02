@@ -2,6 +2,7 @@ package reshare
 
 import (
 	"fmt"
+	"math/big"
 	"testing"
 
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
@@ -13,7 +14,6 @@ import (
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/stretchr/testify/require"
 )
 
 func Test_ReshareProtocol(t *testing.T) {
@@ -236,16 +236,22 @@ func Test_CreateAcknowledgement(t *testing.T) {
 	// Create test share
 	share := fr.NewElement(789)
 
-	// Create test random commitments
-	randomElement1, err := new(fr.Element).SetRandom()
-	require.NoError(t, err)
-	commitment1, err := crypto.ScalarMulG2(crypto.G2Generator, randomElement1)
-	require.NoError(t, err)
-	randomElement2, err := new(fr.Element).SetRandom()
-	require.NoError(t, err)
-	commitment2, err := crypto.ScalarMulG2(crypto.G2Generator, randomElement2)
-	require.NoError(t, err)
-	commitments := []types.G2Point{*commitment1, *commitment2}
+	// Create test commitments using proper G2 points
+	g2Gen := new(bls12381.G2Affine)
+	_, _, _, *g2Gen = bls12381.Generators()
+
+	// Create two test commitments by scalar multiplying the generator
+	scalar1 := fr.NewElement(1)
+	scalar2 := fr.NewElement(2)
+
+	var commitment1, commitment2 bls12381.G2Affine
+	commitment1.ScalarMultiplication(g2Gen, scalar1.BigInt(new(big.Int)))
+	commitment2.ScalarMultiplication(g2Gen, scalar2.BigInt(new(big.Int)))
+
+	commitments := []types.G2Point{
+		{CompressedBytes: commitment1.Marshal()},
+		{CompressedBytes: commitment2.Marshal()},
+	}
 
 	// Mock signer function
 	signer := func(dealer int, hash [32]byte) []byte {

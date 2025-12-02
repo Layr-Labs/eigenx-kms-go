@@ -7,6 +7,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 	ethcrypto "github.com/ethereum/go-ethereum/crypto"
@@ -71,6 +72,10 @@ func CreateTestShare(value uint64) *fr.Element {
 
 // CreateTestCommitments creates n test commitments (G2 points)
 func CreateTestCommitments(t *testing.T, n int) []types.G2Point {
+	// Get G2 generator
+	g2Gen := new(bls12381.G2Affine)
+	_, _, _, *g2Gen = bls12381.Generators()
+
 	commitments := make([]types.G2Point, n)
 	for i := 0; i < n; i++ {
 		// random g2 point
