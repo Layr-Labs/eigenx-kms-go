@@ -10,6 +10,9 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/ethereum/go-ethereum/common"
+	ethcrypto "github.com/ethereum/go-ethereum/crypto"
+
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
@@ -225,6 +228,13 @@ func (c *KMSClient) GetMasterPublicKey() (types.G2Point, error) {
 	return *masterPubKey, nil
 }
 
+// addressToNodeID converts an Ethereum address to a node ID using keccak256 hash
+func addressToNodeID(address common.Address) int {
+	hash := ethcrypto.Keccak256(address.Bytes())
+	nodeID := int(common.BytesToHash(hash).Big().Uint64())
+	return nodeID
+}
+
 // CollectPartialSignatures collects partial signatures from threshold operators for an app
 func (c *KMSClient) CollectPartialSignatures(appID string, attestationTime int64) (map[int]types.G1Point, error) {
 	c.logger.Sugar().Infow("Collecting partial signatures",
@@ -270,9 +280,13 @@ func (c *KMSClient) CollectPartialSignatures(appID string, attestationTime int64
 			continue
 		}
 
-		partialSigs[i] = response.PartialSignature
+		// Convert operator address to node ID (must match the IDs used during DKG)
+		operatorAddress := common.HexToAddress(response.OperatorAddress)
+		nodeID := addressToNodeID(operatorAddress)
+
+		partialSigs[nodeID] = response.PartialSignature
 		collected++
-		c.logger.Sugar().Debugw("Collected partial signature", "operator_index", i, "total", collected)
+		c.logger.Sugar().Debugw("Collected partial signature", "operator_index", i, "node_id", nodeID, "operator_address", response.OperatorAddress, "total", collected)
 	}
 
 	if collected < c.threshold {

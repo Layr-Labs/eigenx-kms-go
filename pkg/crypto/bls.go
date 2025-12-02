@@ -517,13 +517,6 @@ func DecryptForApp(appID string, appPrivateKey types.G1Point, ciphertext []byte)
 		return nil, errors.New("invalid pairing result: identity element")
 	}
 
-	// Validate pairing result is not identity (should be prevented by C1 infinity check above)
-	var identity bls12381.GT
-	identity.SetOne()
-	if g_ID.Equal(&identity) {
-		return nil, errors.New("invalid pairing result: identity element")
-	}
-
 	// Derive symmetric key from g_ID using HKDF (must match encryption exactly)
 	// Uses same salt and info structure to ensure decryption works
 	// The version from the ciphertext is used to ensure proper version-aware decryption
