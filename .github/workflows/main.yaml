@@ -73,3 +73,11 @@ jobs:
       - name: Build binary
         run: |
           make all
+  build-container:
+    uses: ./.github/workflows/build-container.yaml
+    with:
+      registry: "public.ecr.aws/j0c8z4y5/eigenx-kms"
+    secrets:
+      AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+      AWS_REGION: ${{ secrets.AWS_REGION }}
