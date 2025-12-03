@@ -164,6 +164,7 @@ func runKMSServer(c *cli.Context) error {
 	l1Client, err := ethClient.GetEthereumContractCaller()
 	if err != nil {
 		l.Sugar().Fatalw("Failed to get Ethereum contract caller", "error", err)
+		return fmt.Errorf("failed to get Ethereum contract caller: %w", err)
 	}
 
 	// Create contract caller (no signer needed for read operations)
