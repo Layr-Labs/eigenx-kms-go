@@ -132,21 +132,28 @@ type Config struct {
 }
 
 // NewNode creates a new node instance with dependency injection
+// attestationVerifier is required and must not be nil
 func NewNode(
 	cfg Config,
 	pdf peering.IPeeringDataFetcher,
 	bh blockHandler.IBlockHandler,
 	cp chainPoller.IChainPoller,
 	tps transportSigner.ITransportSigner,
+	attestationVerifier attestation.Verifier,
 	l *zap.Logger,
-) *Node {
+) (*Node, error) {
+	// Validate required dependencies
+	if attestationVerifier == nil {
+		return nil, fmt.Errorf("attestationVerifier is required and cannot be nil")
+	}
+
 	// Parse operator address
 	operatorAddress := common.HexToAddress(cfg.OperatorAddress)
 
 	// Parse BN254 private key
 	bn254PrivKey, err := bn254.NewPrivateKeyFromHexString(cfg.BN254PrivateKey)
 	if err != nil {
-		l.Sugar().Fatalw("Invalid BN254 private key", "error", err)
+		return nil, fmt.Errorf("invalid BN254 private key: %w", err)
 	}
 
 	// Use operator address hash as transport client ID (for consistency)
@@ -161,7 +168,7 @@ func NewNode(
 		OperatorSetId:         cfg.OperatorSetId,
 		keyStore:              keystore.NewKeyStore(),
 		server:                NewServer(nil, cfg.Port), // Will set node reference later
-		attestationVerifier:   attestation.NewStubVerifier(),
+		attestationVerifier:   attestationVerifier,
 		releaseRegistry:       registry.NewStubClient(),
 		rsaEncryption:         encryption.NewRSAEncryption(),
 		peeringDataFetcher:    pdf,
@@ -186,7 +193,7 @@ func NewNode(
 	// TODO(seanmcgary): this should be injected, not created here
 	n.transport = transport.NewClient(transportClientID, operatorAddress, tps)
 
-	return n
+	return n, nil
 }
 
 // startScheduler starts the automatic protocol scheduler with context

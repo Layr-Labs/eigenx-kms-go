@@ -1,9 +1,12 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"os"
+	"time"
 
 	EVMChainPoller "github.com/Layr-Labs/chain-indexer/pkg/chainPollers/evm"
 	"github.com/Layr-Labs/chain-indexer/pkg/chainPollers/persistence/memory"
@@ -11,6 +14,7 @@ import (
 	chainIndexerConfig "github.com/Layr-Labs/chain-indexer/pkg/config"
 	"github.com/Layr-Labs/chain-indexer/pkg/contractStore/inMemoryContractStore"
 	"github.com/Layr-Labs/chain-indexer/pkg/transactionLogParser"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
@@ -83,6 +87,24 @@ This server implements:
 				Usage:   "Operator set ID",
 				Value:   0,
 				EnvVars: []string{config.EnvKMSOperatorSetID},
+			},
+			&cli.StringFlag{
+				Name:     "gcp-project-id",
+				Usage:    "GCP project ID for TEE attestation verification",
+				EnvVars:  []string{"KMS_GCP_PROJECT_ID"},
+				Required: true,
+			},
+			&cli.StringFlag{
+				Name:    "attestation-provider",
+				Usage:   "Attestation provider: 'google' or 'intel'",
+				Value:   "google",
+				EnvVars: []string{"KMS_ATTESTATION_PROVIDER"},
+			},
+			&cli.BoolFlag{
+				Name:    "attestation-debug-mode",
+				Usage:   "Enable debug mode for attestation (allows debug TEEs)",
+				EnvVars: []string{"KMS_ATTESTATION_DEBUG_MODE"},
+				Value:   false,
 			},
 			&cli.BoolFlag{
 				Name:    "verbose",
@@ -181,8 +203,58 @@ func runKMSServer(c *cli.Context) error {
 		l.Sugar().Fatalw("Failed to create in-memory transport signer", "error", err)
 	}
 
+	// Create attestation verifier
+	gcpProjectID := c.String("gcp-project-id")
+	providerStr := c.String("attestation-provider")
+	debugMode := c.Bool("attestation-debug-mode")
+
+	// Parse attestation provider
+	var provider attestation.AttestationProvider
+	switch providerStr {
+	case "google":
+		provider = attestation.GoogleConfidentialSpace
+	case "intel":
+		provider = attestation.IntelTrustAuthority
+	default:
+		return fmt.Errorf("invalid attestation provider: %s (must be 'google' or 'intel')", providerStr)
+	}
+
+	// Create slog logger for attestation verifier
+	slogger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	if c.Bool("verbose") {
+		slogger = slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
+			Level: slog.LevelDebug,
+		}))
+	}
+
+	// Initialize production attestation verifier
+	ctx := context.Background()
+	attestationVerifierCore, err := attestation.NewAttestationVerifier(
+		ctx,
+		slogger,
+		gcpProjectID,
+		time.Hour, // JWK cache refresh interval
+		debugMode,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to create attestation verifier: %w", err)
+	}
+
+	// Wrap with production verifier adapter
+	attestationVerifier := attestation.NewProductionVerifier(attestationVerifierCore, provider)
+
+	l.Sugar().Infow("Production attestation verification enabled",
+		"gcp_project_id", gcpProjectID,
+		"provider", providerStr,
+		"debug_mode", debugMode)
+
 	// Create and configure the node
-	n := node.NewNode(nodeConfig, pdf, bh, poller, imts, l)
+	n, err := node.NewNode(nodeConfig, pdf, bh, poller, imts, attestationVerifier, l)
+	if err != nil {
+		return fmt.Errorf("failed to create node: %w", err)
+	}
 
 	if c.Bool("verbose") {
 		l.Sugar().Infow("KMS Server Configuration",

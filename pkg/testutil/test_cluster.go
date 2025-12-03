@@ -10,6 +10,7 @@ import (
 
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
@@ -116,7 +117,14 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 			t.Fatalf("Failed to create in-memory transport signer: %v", err)
 		}
 
-		cluster.Nodes[i] = node.NewNode(cfg, peeringDataFetcher, nodeBlockHandlers[i], cluster.MockPoller, imts, testLogger)
+		// Use mock attestation verifier for tests
+		mockVerifier := attestation.NewStubVerifier()
+
+		n, err := node.NewNode(cfg, peeringDataFetcher, nodeBlockHandlers[i], cluster.MockPoller, imts, mockVerifier, testLogger)
+		if err != nil {
+			t.Fatalf("Failed to create node %d: %v", i+1, err)
+		}
+		cluster.Nodes[i] = n
 
 		// Replace placeholder server with actual server
 		server := node.NewServer(cluster.Nodes[i], 0)
