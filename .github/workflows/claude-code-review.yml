@@ -61,7 +61,7 @@ jobs:
                - Check API documentation accuracy
 
             Provide detailed feedback using inline comments for specific issues.
-            Use top-level comments for general observations or praise.
+            Use top-level comments for general observations.
 
           # Tools for comprehensive PR review
           claude_args: |
