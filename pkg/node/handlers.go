@@ -212,15 +212,14 @@ func (s *Server) handleDKGCommitment(w http.ResponseWriter, r *http.Request) {
 	// Convert sender address to node ID and store commitments
 	senderNodeID := addressToNodeID(senderPeer.OperatorAddress)
 
-	// Store in session
-	session.mu.Lock()
-	session.commitments[senderNodeID] = commitMsg.Commitments
-	session.mu.Unlock()
-
-	// Also store in global state for backward compatibility
-	s.node.mu.Lock()
-	s.node.receivedCommitments[senderNodeID] = commitMsg.Commitments
-	s.node.mu.Unlock()
+	// Store commitment in session (handles duplicate detection and completion signaling)
+	if err := session.HandleReceivedCommitment(senderNodeID, commitMsg.Commitments); err != nil {
+		s.node.logger.Sugar().Warnw("Failed to store commitment",
+			"from", senderPeer.OperatorAddress.Hex(),
+			"error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	s.node.logger.Sugar().Debugw("Received authenticated DKG commitments",
 		"node_id", s.node.OperatorAddress.Hex(),
@@ -268,15 +267,14 @@ func (s *Server) handleDKGShare(w http.ResponseWriter, r *http.Request) {
 	senderNodeID := addressToNodeID(senderPeer.OperatorAddress)
 	share := types.DeserializeFr(shareMsg.Share)
 
-	// Store received share in session
-	session.mu.Lock()
-	session.shares[senderNodeID] = share
-	session.mu.Unlock()
-
-	// Also store in global state for backward compatibility
-	s.node.mu.Lock()
-	s.node.receivedShares[senderNodeID] = share
-	s.node.mu.Unlock()
+	// Store share in session (handles duplicate detection and completion signaling)
+	if err := session.HandleReceivedShare(senderNodeID, share); err != nil {
+		s.node.logger.Sugar().Warnw("Failed to store share",
+			"from", senderPeer.OperatorAddress.Hex(),
+			"error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	s.node.logger.Sugar().Debugw("Received authenticated DKG share",
 		"node_id", s.node.OperatorAddress.Hex(),
@@ -323,21 +321,14 @@ func (s *Server) handleDKGAck(w http.ResponseWriter, r *http.Request) {
 	senderNodeID := addressToNodeID(senderPeer.OperatorAddress)
 	thisNodeID := addressToNodeID(s.node.OperatorAddress)
 
-	// Store in session
-	session.mu.Lock()
-	if session.acks[thisNodeID] == nil {
-		session.acks[thisNodeID] = make(map[int]*types.Acknowledgement)
+	// Store ack in session (handles duplicate detection and completion signaling)
+	if err := session.HandleReceivedAck(thisNodeID, senderNodeID, ackMsg.Ack); err != nil {
+		s.node.logger.Sugar().Warnw("Failed to store ack",
+			"from", senderPeer.OperatorAddress.Hex(),
+			"error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
 	}
-	session.acks[thisNodeID][senderNodeID] = ackMsg.Ack
-	session.mu.Unlock()
-
-	// Also store in global state for backward compatibility
-	s.node.mu.Lock()
-	if s.node.receivedAcks[thisNodeID] == nil {
-		s.node.receivedAcks[thisNodeID] = make(map[int]*types.Acknowledgement)
-	}
-	s.node.receivedAcks[thisNodeID][senderNodeID] = ackMsg.Ack
-	s.node.mu.Unlock()
 
 	s.node.logger.Sugar().Debugw("Received authenticated acknowledgement",
 		"node_id", s.node.OperatorAddress.Hex(),
@@ -356,15 +347,47 @@ func (s *Server) handleReshareCommitment(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Parse commitment message
-	var commitments []types.G2Point
-	if err := json.NewDecoder(r.Body).Decode(&commitments); err != nil {
-		http.Error(w, "Failed to parse commitments", http.StatusBadRequest)
+	// Validate authenticated message
+	authMsg, senderPeer, _, err := s.validateAuthenticatedMessage(r, s.node.OperatorAddress)
+	if err != nil {
+		s.node.logger.Sugar().Warnw("Reshare commitment authentication failed", "error", err)
+		http.Error(w, "Authentication failed", http.StatusUnauthorized)
 		return
 	}
 
-	// TODO: Store received commitments
-	s.node.logger.Sugar().Debugw("Received reshare commitments", "node_id", s.node.OperatorAddress.Hex(), "count", len(commitments))
+	// Decode commitment message
+	var commitMsg types.CommitmentMessage
+	if err := json.Unmarshal(authMsg.Payload, &commitMsg); err != nil {
+		http.Error(w, "Failed to parse commitment message", http.StatusBadRequest)
+		return
+	}
+
+	// Get session for this message, wait if not ready yet
+	session := s.node.waitForSession(commitMsg.SessionTimestamp, 5*time.Second)
+	if session == nil {
+		s.node.logger.Sugar().Warnw("Session not created within timeout",
+			"session_timestamp", commitMsg.SessionTimestamp,
+			"from", senderPeer.OperatorAddress.Hex())
+		http.Error(w, "Session timeout", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Convert sender address to node ID
+	senderNodeID := addressToNodeID(senderPeer.OperatorAddress)
+
+	// Store commitment in session
+	if err := session.HandleReceivedCommitment(senderNodeID, commitMsg.Commitments); err != nil {
+		s.node.logger.Sugar().Warnw("Failed to store reshare commitment",
+			"from", senderPeer.OperatorAddress.Hex(),
+			"error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	s.node.logger.Sugar().Debugw("Received reshare commitments",
+		"node_id", s.node.OperatorAddress.Hex(),
+		"from", senderPeer.OperatorAddress.Hex(),
+		"count", len(commitMsg.Commitments))
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -376,27 +399,100 @@ func (s *Server) handleReshareShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// TODO: Parse and store received share
-	s.node.logger.Sugar().Debugw("Received reshare share", "node_id", s.node.OperatorAddress.Hex())
+	// Validate authenticated message
+	authMsg, senderPeer, _, err := s.validateAuthenticatedMessage(r, s.node.OperatorAddress)
+	if err != nil {
+		s.node.logger.Sugar().Warnw("Reshare share authentication failed", "error", err)
+		http.Error(w, "Authentication failed", http.StatusUnauthorized)
+		return
+	}
+
+	// Decode share message
+	var shareMsg types.ShareMessage
+	if err := json.Unmarshal(authMsg.Payload, &shareMsg); err != nil {
+		http.Error(w, "Failed to parse share message", http.StatusBadRequest)
+		return
+	}
+
+	// Get session for this message
+	session := s.node.waitForSession(shareMsg.SessionTimestamp, 5*time.Second)
+	if session == nil {
+		s.node.logger.Sugar().Warnw("Session not created within timeout",
+			"session_timestamp", shareMsg.SessionTimestamp,
+			"from", senderPeer.OperatorAddress.Hex())
+		http.Error(w, "Session timeout", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Convert addresses to node IDs
+	senderNodeID := addressToNodeID(senderPeer.OperatorAddress)
+	share := types.DeserializeFr(shareMsg.Share)
+
+	// Store share in session
+	if err := session.HandleReceivedShare(senderNodeID, share); err != nil {
+		s.node.logger.Sugar().Warnw("Failed to store reshare share",
+			"from", senderPeer.OperatorAddress.Hex(),
+			"error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	s.node.logger.Sugar().Debugw("Received reshare share",
+		"node_id", s.node.OperatorAddress.Hex(),
+		"from", senderPeer.OperatorAddress.Hex())
 
 	w.WriteHeader(http.StatusOK)
 }
 
 func (s *Server) handleReshareAck(w http.ResponseWriter, r *http.Request) {
-	var msg types.AcknowledgementMessage
-	if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	// Validate authenticated message
+	authMsg, senderPeer, _, err := s.validateAuthenticatedMessage(r, s.node.OperatorAddress)
+	if err != nil {
+		s.node.logger.Sugar().Warnw("Reshare ack authentication failed", "error", err)
+		http.Error(w, "Authentication failed", http.StatusUnauthorized)
+		return
+	}
+
+	// Decode acknowledgement message
+	var ackMsg types.AcknowledgementMessage
+	if err := json.Unmarshal(authMsg.Payload, &ackMsg); err != nil {
+		http.Error(w, "Failed to parse ack message", http.StatusBadRequest)
+		return
+	}
+
+	// Get session for this message
+	session := s.node.waitForSession(ackMsg.SessionTimestamp, 5*time.Second)
+	if session == nil {
+		s.node.logger.Sugar().Warnw("Session not created within timeout",
+			"session_timestamp", ackMsg.SessionTimestamp,
+			"from", senderPeer.OperatorAddress.Hex())
+		http.Error(w, "Unknown session", http.StatusBadRequest)
+		return
+	}
+
+	// Convert sender address to node ID
+	senderNodeID := addressToNodeID(senderPeer.OperatorAddress)
+	thisNodeID := addressToNodeID(s.node.OperatorAddress)
+
+	// Store ack in session
+	if err := session.HandleReceivedAck(thisNodeID, senderNodeID, ackMsg.Ack); err != nil {
+		s.node.logger.Sugar().Warnw("Failed to store reshare ack",
+			"from", senderPeer.OperatorAddress.Hex(),
+			"error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	s.node.mu.Lock()
-	if s.node.receivedAcks[msg.Ack.DealerID] == nil {
-		s.node.receivedAcks[msg.Ack.DealerID] = make(map[int]*types.Acknowledgement)
-	}
-	s.node.receivedAcks[msg.Ack.DealerID][msg.Ack.PlayerID] = msg.Ack
-	s.node.mu.Unlock()
+	s.node.logger.Sugar().Debugw("Received reshare ack",
+		"node_id", s.node.OperatorAddress.Hex(),
+		"from_player", senderNodeID,
+		"for_dealer", thisNodeID)
 
-	s.node.logger.Sugar().Debugw("Received reshare ack", "node_id", s.node.OperatorAddress.Hex(), "from_player", msg.Ack.PlayerID)
 	w.WriteHeader(http.StatusOK)
 }
 
