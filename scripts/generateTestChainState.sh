@@ -176,7 +176,16 @@ registerOperator $operatorAccountPk_5 $operatorAccountAddress_5
 # Deploy L1 avs contract
 # -----------------------------------------------------------------------------
 echo "Deploying L1 AVS contract..."
-forge script script/local/DeployEigenKMSRegistrar.s.sol --slow --rpc-url $L1_RPC_URL --broadcast --sig "run(address)" "${avsAccountAddress}"
+operatorSetId="0"
+forge script script/local/DeployEigenKMSRegistrar.s.sol --slow --rpc-url $L1_RPC_URL --broadcast \
+    --sig "run(address,uint32,address,address,address,address,address)" \
+    "${avsAccountAddress}" \
+    "${operatorSetId}" \
+    "${operatorAccountAddress_1}" \
+    "${operatorAccountAddress_2}" \
+    "${operatorAccountAddress_3}" \
+    "${operatorAccountAddress_4}" \
+    "${operatorAccountAddress_5}"
 
 # we need to get index 2 since thats where the actual proxy lives
 eigenKMSRegistrarAddress=$(cat ./broadcast/DeployEigenKMSRegistrar.s.sol/$anvilL1ChainId/run-latest.json | jq -r '.transactions[2].contractAddress')

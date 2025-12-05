@@ -12,6 +12,7 @@ import {IPermissionController} from "@eigenlayer-contracts/src/contracts/interfa
 
 import {EigenKMSRegistrar} from "../../src/EigenKMSRegistrar.sol";
 import {IEigenKMSRegistrarTypes} from "../../src/interfaces/IEigenKMSRegistrar.sol";
+import {OperatorSet} from "@eigenlayer-contracts/src/contracts/libraries/OperatorSetLib.sol";
 
 contract DeployEigenKMSRegistrar is Script {
     // Eigenlayer Core Contracts
@@ -22,19 +23,24 @@ contract DeployEigenKMSRegistrar is Script {
     function setUp() public {}
 
     function run(
-        address avs
+        address avs,
+        uint32 operatorSetId,
+        address operator1,
+        address operator2,
+        address operator3,
+        address operator4,
+        address operator5
     ) public {
-        // Load the private key from the environment variable
         uint256 deployerPrivateKey = vm.envUint("PRIVATE_KEY_DEPLOYER");
-        address deployer = vm.addr(deployerPrivateKey);
 
-        // 1. Deploy the EigenKMSRegistrar middleware contract
         vm.startBroadcast(deployerPrivateKey);
-        console.log("Deployer address:", deployer);
+        console.log("Deployer address:", vm.addr(deployerPrivateKey));
+        console.log("AVS address:", avs);
+        console.log("Operator Set ID:", operatorSetId);
 
         // Create initial config
         IEigenKMSRegistrarTypes.AvsConfig memory initialConfig = IEigenKMSRegistrarTypes.AvsConfig({
-            operatorSetId: 1
+            operatorSetId: operatorSetId
         });
 
         // Deploy ProxyAdmin
@@ -53,9 +59,71 @@ contract DeployEigenKMSRegistrar is Script {
         );
         console.log("EigenKMSRegistrar proxy deployed to:", address(proxy));
 
-        // Transfer ProxyAdmin ownership to avs (or a multisig in production)
+        // Transfer ProxyAdmin ownership to avs
         proxyAdmin.transferOwnership(avs);
+        vm.stopBroadcast();
 
+        // Add operators to allowlist
+        _addOperatorsToAllowlist(address(proxy), avs, operatorSetId, operator1, operator2, operator3, operator4, operator5);
+
+        // Log final deployment summary
+        console.log("\n=== Deployment Summary ===");
+        console.log("ProxyAdmin:", address(proxyAdmin));
+        console.log("Implementation:", address(eigenKMSRegistrarImpl));
+        console.log("Proxy (use this address):", address(proxy));
+        console.log("Owner:", avs);
+        console.log("========================\n");
+    }
+
+    function _addOperatorsToAllowlist(
+        address registrarProxy,
+        address avs,
+        uint32 operatorSetId,
+        address operator1,
+        address operator2,
+        address operator3,
+        address operator4,
+        address operator5
+    ) internal {
+        uint256 avsPrivateKey = vm.envUint("PRIVATE_KEY_AVS");
+        EigenKMSRegistrar registrar = EigenKMSRegistrar(registrarProxy);
+
+        OperatorSet memory operatorSet = OperatorSet({
+            avs: avs,
+            id: operatorSetId
+        });
+
+        console.log("\nAdding operators to allowlist...");
+        uint256 count = 0;
+
+        vm.startBroadcast(avsPrivateKey);
+        if (operator1 != address(0)) {
+            registrar.addOperatorToAllowlist(operatorSet, operator1);
+            console.log("Added operator 1:", operator1);
+            count++;
+        }
+        if (operator2 != address(0)) {
+            registrar.addOperatorToAllowlist(operatorSet, operator2);
+            console.log("Added operator 2:", operator2);
+            count++;
+        }
+        if (operator3 != address(0)) {
+            registrar.addOperatorToAllowlist(operatorSet, operator3);
+            console.log("Added operator 3:", operator3);
+            count++;
+        }
+        if (operator4 != address(0)) {
+            registrar.addOperatorToAllowlist(operatorSet, operator4);
+            console.log("Added operator 4:", operator4);
+            count++;
+        }
+        if (operator5 != address(0)) {
+            registrar.addOperatorToAllowlist(operatorSet, operator5);
+            console.log("Added operator 5:", operator5);
+            count++;
+        }
+
+        console.log("Total operators allowlisted:", count);
         vm.stopBroadcast();
     }
 }
