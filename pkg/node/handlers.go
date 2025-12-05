@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
@@ -19,7 +20,7 @@ func (s *Server) validateAuthenticatedMessage(r *http.Request, expectedRecipient
 	if err := json.NewDecoder(r.Body).Decode(&authMsg); err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to parse authenticated message: %w", err)
 	}
-
+	s.node.logger.Sugar().Infow("Received authenticated message wrapper", "msg", string(authMsg.Payload))
 	// First decode payload to get sender address and session timestamp
 	var baseMsg struct {
 		FromOperatorAddress common.Address `json:"fromOperatorAddress"`
@@ -29,10 +30,11 @@ func (s *Server) validateAuthenticatedMessage(r *http.Request, expectedRecipient
 	if err := json.Unmarshal(authMsg.Payload, &baseMsg); err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to parse message addresses: %w", err)
 	}
+	// s.node.logger.Sugar().Infow("received authenticated message", "msg", baseMsg)
 
 	// Verify message is intended for this node (unless broadcast)
-	if baseMsg.ToOperatorAddress != (common.Address{}) && baseMsg.ToOperatorAddress != expectedRecipient {
-		return nil, nil, nil, fmt.Errorf("message not intended for this operator")
+	if baseMsg.ToOperatorAddress != (common.Address{}) && strings.Compare(baseMsg.ToOperatorAddress.String(), expectedRecipient.String()) != 0 {
+		return nil, nil, nil, fmt.Errorf("message not intended for this operator - to: '%s' expected: '%s'", baseMsg.ToOperatorAddress, expectedRecipient)
 	}
 
 	// Get session - it contains the operators for this protocol run

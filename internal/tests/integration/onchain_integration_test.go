@@ -21,6 +21,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/node"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering/peeringDataFetcher"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/transactionSigner"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner/inMemoryTransportSigner"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -151,9 +152,6 @@ func Test_OnChainIntegration(t *testing.T) {
 	l2EthClient, err := l2Client.GetEthereumContractCaller()
 	require.NoError(t, err)
 
-	l2ContractCaller, err := caller.NewContractCaller(l2EthClient, nil, l)
-	require.NoError(t, err)
-
 	commitmentRegistryAddress := common.HexToAddress(chainConfig.EigenCommitmentRegistryAddress)
 
 	t.Logf("Using Commitment Registry at: %s", commitmentRegistryAddress.Hex())
@@ -197,11 +195,17 @@ func Test_OnChainIntegration(t *testing.T) {
 		// Create peering data fetcher
 		pdf := peeringDataFetcher.NewPeeringDataFetcher(l1ContractCaller, l)
 
-		// Create ECDSA transport signer (production-like, using local keys for testing)
+		// Create ECDSA transport signer (production direction)
 		pkBytes, err := hexutil.Decode(operatorConfigs[i].privateKey)
 		require.NoError(t, err)
 
 		transportSigner, err := inMemoryTransportSigner.NewECDSAInMemoryTransportSigner(pkBytes, l)
+		require.NoError(t, err)
+
+		txSigner, err := transactionSigner.NewPrivateKeySigner(operatorConfigs[i].privateKey, l2EthClient, l)
+		require.NoError(t, err)
+
+		nodeCc, err := caller.NewContractCaller(l2EthClient, txSigner, l)
 		require.NoError(t, err)
 
 		// Use stub attestation verifier for testing
@@ -211,7 +215,7 @@ func Test_OnChainIntegration(t *testing.T) {
 		// Create node
 		nodeConfig := node.Config{
 			OperatorAddress: operatorConfigs[i].address,
-			Port:            7500 + i,
+			Port:            7501 + i,
 			ChainID:         config.ChainId_EthereumAnvil,
 			AVSAddress:      chainConfig.AVSAccountAddress,
 			OperatorSetId:   0,
@@ -224,7 +228,7 @@ func Test_OnChainIntegration(t *testing.T) {
 			poller,
 			transportSigner,
 			attestationVerifier,
-			l2ContractCaller,
+			nodeCc,
 			commitmentRegistryAddress,
 			l,
 		)

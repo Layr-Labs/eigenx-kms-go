@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/Layr-Labs/crypto-libs/pkg/ecdsa"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"go.uber.org/zap"
@@ -351,7 +353,13 @@ func (n *Node) fetchCurrentOperators(ctx context.Context, avsAddress string, ope
 		return sortedPeers[i].OperatorAddress.Hex() < sortedPeers[j].OperatorAddress.Hex()
 	})
 
-	n.logger.Sugar().Infow("Fetched operators from chain", "operator_address", n.OperatorAddress.Hex(), "count", len(sortedPeers))
+	n.logger.Sugar().Infow("Fetched operators from chain",
+		"operator_address", n.OperatorAddress.Hex(),
+		"count", len(sortedPeers),
+		"operators", strings.Join(util.Map(sortedPeers, func(op *peering.OperatorSetPeer, i uint64) string {
+			return fmt.Sprintf("%s:%s", op.OperatorAddress.String(), op.SocketAddress)
+		}), ", "),
+	)
 	return sortedPeers, nil
 }
 
@@ -545,6 +553,9 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 
 	// Send shares to each participant
 	for _, op := range operators {
+		n.logger.Sugar().Debugw("Sending share to operator",
+			"operator_address", n.OperatorAddress.Hex(),
+			"target", op.OperatorAddress.Hex())
 		opNodeID := addressToNodeID(op.OperatorAddress)
 		if opNodeID == thisNodeID {
 			n.mu.Lock()

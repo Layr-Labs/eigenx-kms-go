@@ -140,6 +140,7 @@ echo "EC Operator account 5 private key: $operatorAccountPk_5"
 cd contracts
 
 export L1_RPC_URL="http://localhost:${anvilL1RpcPort}"
+export L2_RPC_URL="http://localhost:${anvilL2RpcPort}"
 
 # -----------------------------------------------------------------------------
 # Create operators
@@ -207,11 +208,11 @@ ecdsaCertificateVerifier="0xb3Cd1A457dEa9A9A6F6406c6419B1c326670A96F" # base sep
 bn254CertificateVerifier="0xff58A373c18268F483C1F5cA03Cf885c0C43373a" # base sepolia
 curveType="1"
 
-forge script script/local/DeployEigenKMSCommitmentRegistry.s.sol --slow --rpc-url $L1_RPC_URL --broadcast \
+forge script script/local/DeployEigenKMSCommitmentRegistry.s.sol --slow --rpc-url $L2_RPC_URL --broadcast \
     --sig "run(address,uint32,address,address,uint8)" \
     "${avsAccountAddress}" "${operatorSetId}" "${ecdsaCertificateVerifier}" "${bn254CertificateVerifier}" "${curveType}"
 
-eigenKMSCommitmentRegistryAddress=$(cat ./broadcast/DeployEigenKMSCommitmentRegistry.s.sol/$anvilL1ChainId/run-latest.json | jq -r '.transactions[2].contractAddress')
+eigenKMSCommitmentRegistryAddress=$(cat ./broadcast/DeployEigenKMSCommitmentRegistry.s.sol/$anvilL2ChainId/run-latest.json | jq -r '.transactions[2].contractAddress')
 
 echo "Commitment registry contract address: $eigenKMSCommitmentRegistryAddress"
 
@@ -246,7 +247,7 @@ function registerOperatorToAvs() {
         --operator-address $operatorAddress \
         --operator-private-key $operatorPk \
         --avs-private-key $avsAccountPk \
-        --bn254-private-key $operatorPk \
+        --ecdsa-private-key $operatorPk \
         --socket $socket \
         --operator-set-id 0 \
         --rpc-url $L1_RPC_URL \

@@ -172,35 +172,35 @@ func (c *Client) SendReshareShare(toOperator *peering.OperatorSetPeer, share *fr
 
 // BroadcastDKGCommitments broadcasts authenticated DKG commitments to all operators
 func (c *Client) BroadcastDKGCommitments(operators []*peering.OperatorSetPeer, commitments []types.G2Point, sessionTimestamp int64) error {
-	// Create broadcast message (ToOperatorAddress is zero for broadcast)
-	msg := types.CommitmentMessage{
-		FromOperatorAddress: c.operatorAddr,
-		ToOperatorAddress:   common.Address{}, // Zero address for broadcast
-		SessionTimestamp:    sessionTimestamp,
-		Commitments:         commitments,
-	}
-
-	msgBytes, err := json.Marshal(msg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal payload: %w", err)
-	}
-
-	// Create authenticated message
-	authMsg, err := c.signer.CreateAuthenticatedMessage(msgBytes)
-	if err != nil {
-		return fmt.Errorf("failed to create authenticated message: %w", err)
-	}
-
-	data, err := json.Marshal(authMsg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal authenticated message: %w", err)
-	}
 
 	// Send to all other operators
 	for _, op := range operators {
 		if op.OperatorAddress == c.operatorAddr {
 			continue // Skip self
 		}
+		msg := types.CommitmentMessage{
+			FromOperatorAddress: c.operatorAddr,
+			ToOperatorAddress:   op.OperatorAddress, // Zero address for broadcast
+			SessionTimestamp:    sessionTimestamp,
+			Commitments:         commitments,
+		}
+
+		msgBytes, err := json.Marshal(msg)
+		if err != nil {
+			return fmt.Errorf("failed to marshal payload: %w", err)
+		}
+
+		// Create authenticated message
+		authMsg, err := c.signer.CreateAuthenticatedMessage(msgBytes)
+		if err != nil {
+			return fmt.Errorf("failed to create authenticated message: %w", err)
+		}
+
+		data, err := json.Marshal(authMsg)
+		if err != nil {
+			return fmt.Errorf("failed to marshal authenticated message: %w", err)
+		}
+
 		url := buildRequestURL(op.SocketAddress, "/dkg/commitment")
 		_, _ = http.Post(url, "application/json", bytes.NewReader(data))
 	}
@@ -209,34 +209,33 @@ func (c *Client) BroadcastDKGCommitments(operators []*peering.OperatorSetPeer, c
 
 // BroadcastReshareCommitments broadcasts authenticated reshare commitments to all operators
 func (c *Client) BroadcastReshareCommitments(operators []*peering.OperatorSetPeer, commitments []types.G2Point, sessionTimestamp int64) error {
-	// Create broadcast message (ToOperatorAddress is zero for broadcast)
-	msg := types.CommitmentMessage{
-		FromOperatorAddress: c.operatorAddr,
-		ToOperatorAddress:   common.Address{}, // Zero address for broadcast
-		SessionTimestamp:    sessionTimestamp,
-		Commitments:         commitments,
-	}
-
-	msgBytes, err := json.Marshal(msg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal payload: %w", err)
-	}
-
-	// Create authenticated message
-	authMsg, err := c.signer.CreateAuthenticatedMessage(msgBytes)
-	if err != nil {
-		return fmt.Errorf("failed to create authenticated message: %w", err)
-	}
-
-	data, err := json.Marshal(authMsg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal authenticated message: %w", err)
-	}
 
 	// Send to all other operators
 	for _, op := range operators {
 		if op.OperatorAddress == c.operatorAddr {
 			continue // Skip self
+		}
+		msg := types.CommitmentMessage{
+			FromOperatorAddress: c.operatorAddr,
+			ToOperatorAddress:   op.OperatorAddress, // Zero address for broadcast
+			SessionTimestamp:    sessionTimestamp,
+			Commitments:         commitments,
+		}
+
+		msgBytes, err := json.Marshal(msg)
+		if err != nil {
+			return fmt.Errorf("failed to marshal payload: %w", err)
+		}
+
+		// Create authenticated message
+		authMsg, err := c.signer.CreateAuthenticatedMessage(msgBytes)
+		if err != nil {
+			return fmt.Errorf("failed to create authenticated message: %w", err)
+		}
+
+		data, err := json.Marshal(authMsg)
+		if err != nil {
+			return fmt.Errorf("failed to marshal authenticated message: %w", err)
 		}
 		url := buildRequestURL(op.SocketAddress, "/reshare/commitment")
 		_, _ = http.Post(url, "application/json", bytes.NewReader(data))
@@ -314,32 +313,32 @@ func (c *Client) SendReshareAcknowledgement(ack *types.Acknowledgement, toOperat
 
 // BroadcastCompletionSignature broadcasts an authenticated completion signature
 func (c *Client) BroadcastCompletionSignature(operators []*peering.OperatorSetPeer, completion *types.CompletionSignature, sessionTimestamp int64) error {
-	msg := types.CompletionMessage{
-		FromOperatorAddress: c.operatorAddr,
-		ToOperatorAddress:   common.Address{}, // Zero address for broadcast
-		SessionTimestamp:    sessionTimestamp,
-		Completion:          completion,
-	}
-
-	msgBytes, err := json.Marshal(msg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal payload: %w", err)
-	}
-
-	// Create authenticated message
-	authMsg, err := c.signer.CreateAuthenticatedMessage(msgBytes)
-	if err != nil {
-		return fmt.Errorf("failed to create authenticated message: %w", err)
-	}
-
-	data, err := json.Marshal(authMsg)
-	if err != nil {
-		return fmt.Errorf("failed to marshal authenticated message: %w", err)
-	}
 
 	for _, op := range operators {
 		if op.OperatorAddress == c.operatorAddr {
 			continue // Skip self
+		}
+		msg := types.CompletionMessage{
+			FromOperatorAddress: c.operatorAddr,
+			ToOperatorAddress:   op.OperatorAddress, // Zero address for broadcast
+			SessionTimestamp:    sessionTimestamp,
+			Completion:          completion,
+		}
+
+		msgBytes, err := json.Marshal(msg)
+		if err != nil {
+			return fmt.Errorf("failed to marshal payload: %w", err)
+		}
+
+		// Create authenticated message
+		authMsg, err := c.signer.CreateAuthenticatedMessage(msgBytes)
+		if err != nil {
+			return fmt.Errorf("failed to create authenticated message: %w", err)
+		}
+
+		data, err := json.Marshal(authMsg)
+		if err != nil {
+			return fmt.Errorf("failed to marshal authenticated message: %w", err)
 		}
 		url := buildRequestURL(op.SocketAddress, "/reshare/complete")
 		_, _ = http.Post(url, "application/json", bytes.NewReader(data))

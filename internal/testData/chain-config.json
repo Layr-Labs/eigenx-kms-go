@@ -24,7 +24,7 @@
       "operatorSocket_5": "http://localhost:7505",
       "forkL1Block": "9775400",
       "forkL2Block": "34590518",
-      "eigenCommitmentRegistryAddress": "0x123352c45ef5735f8ec4fc552c14a448be300ea7",
+      "eigenCommitmentRegistryAddress": "0x06329b1e7a2eaf761b8d2dbd67726e5dad73f5a2",
       "eigenRegistrarAddress": "0x06329b1e7a2eaf761b8d2dbd67726e5dad73f5a2"
 
 }
