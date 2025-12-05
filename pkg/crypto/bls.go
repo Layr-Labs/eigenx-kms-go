@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"sort"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
@@ -185,12 +186,21 @@ func RecoverSecret(shares map[int]*fr.Element) (*fr.Element, error) {
 
 // RecoverAppPrivateKey recovers app private key from partial signatures
 func RecoverAppPrivateKey(appID string, partialSigs map[int]types.G1Point, threshold int) (*types.G1Point, error) {
+	if len(partialSigs) < threshold {
+		return nil, fmt.Errorf("insufficient partial signatures: got %d, need %d", len(partialSigs), threshold)
+	}
+
+	// Collect all participant IDs and sort for deterministic selection
 	participants := make([]int, 0, len(partialSigs))
 	for id := range partialSigs {
 		participants = append(participants, id)
-		if len(participants) >= threshold {
-			break
-		}
+	}
+
+	// Sort participants for deterministic selection (any threshold subset should work)
+	sort.Ints(participants)
+	// We'll use the first threshold participants after sorting
+	if len(participants) > threshold {
+		participants = participants[:threshold]
 	}
 
 	// start off with zero point as an accumulator
@@ -306,26 +316,26 @@ func EncryptForApp(appID string, masterPublicKey types.G2Point, plaintext []byte
 		return nil, err
 	}
 
-	// Step 1: Compute Q_ID = H_1(app_id) ∈ G1
-	Q_ID, err := HashToG1(appID)
+	// Step 1: Compute QiD = H_1(app_id) ∈ G1
+	QiD, err := HashToG1(appID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to hash app ID: %w", err)
 	}
 
 	// Convert Q_ID to G1Affine for pairing
-	Q_ID_affine, err := bls.G1PointFromCompressedBytes(Q_ID.CompressedBytes)
+	QiDAffine, err := bls.G1PointFromCompressedBytes(QiD.CompressedBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert Q_ID to G1Affine: %w", err)
 	}
 
 	// Convert masterPublicKey to G2Affine for pairing
-	masterPK_affine, err := bls.G2PointFromCompressedBytes(masterPublicKey.CompressedBytes)
+	masterPKAffine, err := bls.G2PointFromCompressedBytes(masterPublicKey.CompressedBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert master public key to G2Affine: %w", err)
 	}
 
 	// Validate master public key is not zero/infinity point
-	if masterPK_affine.IsZero() {
+	if masterPKAffine.IsZero() {
 		return nil, errors.New("invalid master public key: zero/infinity point")
 	}
 
@@ -342,19 +352,19 @@ func EncryptForApp(appID string, masterPublicKey types.G2Point, plaintext []byte
 	}
 
 	// Safety check: Ensure C1 is not infinity (should never happen with valid r)
-	C1_check, err := bls.G2PointFromCompressedBytes(C1.CompressedBytes)
+	c1Check, err := bls.G2PointFromCompressedBytes(C1.CompressedBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate C1: %w", err)
 	}
-	if C1_check.IsZero() {
+	if c1Check.IsZero() {
 		return nil, errors.New("internal error: C1 is infinity point")
 	}
 
 	// Step 4: Compute g_ID = e(Q_ID, masterPublicKey)^r
 	// First compute the pairing e(Q_ID, masterPublicKey)
 	pairingResult, err := bls12381.Pair(
-		[]bls12381.G1Affine{*Q_ID_affine.ToAffine()},
-		[]bls12381.G2Affine{*masterPK_affine.ToAffine()},
+		[]bls12381.G1Affine{*QiDAffine.ToAffine()},
+		[]bls12381.G2Affine{*masterPKAffine.ToAffine()},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute pairing: %w", err)
@@ -368,15 +378,15 @@ func EncryptForApp(appID string, masterPublicKey types.G2Point, plaintext []byte
 	}
 
 	// Then raise to the power r: g_ID = pairing^r
-	var g_ID bls12381.GT
+	var gID bls12381.GT
 	rBigInt := new(big.Int)
 	r.BigInt(rBigInt)
-	g_ID.Exp(pairingResult, rBigInt)
+	gID.Exp(pairingResult, rBigInt)
 
 	// Validate g_ID is not identity element
 	// This is a defensive programming check - the probability is astronomically low (~1/2^255)
 	// since it requires r = 0 mod order(GT).
-	if g_ID.IsOne() {
+	if gID.IsOne() {
 		return nil, errors.New("invalid g_ID: identity element")
 	}
 
@@ -384,8 +394,8 @@ func EncryptForApp(appID string, masterPublicKey types.G2Point, plaintext []byte
 	// HKDF provides better security properties than raw hashing:
 	// - Salt ensures different keys even if g_ID repeats across systems
 	// - Info binds the key to its specific purpose, version, and application
-	g_ID_bytes := g_ID.Bytes()
-	keyMaterial, err := deriveKeyMaterial(g_ID_bytes[:], ibeVersion, appID)
+	gIDBytes := gID.Bytes()
+	keyMaterial, err := deriveKeyMaterial(gIDBytes[:], ibeVersion, appID)
 	if err != nil {
 		return nil, err
 	}
@@ -477,18 +487,18 @@ func DecryptForApp(appID string, appPrivateKey types.G1Point, ciphertext []byte)
 	C1 := &types.G2Point{CompressedBytes: C1Bytes}
 
 	// Convert appPrivateKey to G1Affine for pairing
-	appPrivKey_affine, err := bls.G1PointFromCompressedBytes(appPrivateKey.CompressedBytes)
+	appPrivKeyAffine, err := bls.G1PointFromCompressedBytes(appPrivateKey.CompressedBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert app private key to G1Affine: %w", err)
 	}
 
 	// Validate appPrivateKey is not zero/infinity point
-	if appPrivKey_affine.IsZero() {
+	if appPrivKeyAffine.IsZero() {
 		return nil, errors.New("invalid app private key: zero/infinity point")
 	}
 
 	// Convert C1 to G2Affine for pairing
-	C1_affine, err := bls.G2PointFromCompressedBytes(C1.CompressedBytes)
+	c1Affine, err := bls.G2PointFromCompressedBytes(C1.CompressedBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert C1 to G2Affine: %w", err)
 	}
@@ -496,16 +506,16 @@ func DecryptForApp(appID string, appPrivateKey types.G1Point, ciphertext []byte)
 	// CRITICAL: Reject infinity/zero point to prevent forgery attacks
 	// With C1 = O (infinity), the pairing e(appPrivateKey, O) = 1_GT (identity)
 	// This gives attacker a known decryption key, allowing ciphertext forgery
-	if C1_affine.IsZero() {
+	if c1Affine.IsZero() {
 		return nil, errors.New("invalid ciphertext: C1 is infinity point")
 	}
 
 	// Compute g_ID = e(appPrivateKey, C1)
 	// This gives us the same value as e(Q_ID, masterPublicKey)^r from encryption
 	// because: e([s]Q_ID, [r]P) = e(Q_ID, [s]P)^r = e(Q_ID, masterPublicKey)^r
-	g_ID, err := bls12381.Pair(
-		[]bls12381.G1Affine{*appPrivKey_affine.ToAffine()},
-		[]bls12381.G2Affine{*C1_affine.ToAffine()},
+	gID, err := bls12381.Pair(
+		[]bls12381.G1Affine{*appPrivKeyAffine.ToAffine()},
+		[]bls12381.G2Affine{*c1Affine.ToAffine()},
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute pairing: %w", err)
@@ -513,15 +523,15 @@ func DecryptForApp(appID string, appPrivateKey types.G1Point, ciphertext []byte)
 
 	// Additional security check: Ensure pairing result is not identity
 	// This should never happen with valid C1 and appPrivateKey, but check anyway
-	if g_ID.IsOne() {
+	if gID.IsOne() {
 		return nil, errors.New("invalid pairing result: identity element")
 	}
 
 	// Derive symmetric key from g_ID using HKDF (must match encryption exactly)
 	// Uses same salt and info structure to ensure decryption works
 	// The version from the ciphertext is used to ensure proper version-aware decryption
-	g_ID_bytes := g_ID.Bytes()
-	keyMaterial, err := deriveKeyMaterial(g_ID_bytes[:], version, appID)
+	gIDBytes := gID.Bytes()
+	keyMaterial, err := deriveKeyMaterial(gIDBytes[:], version, appID)
 	if err != nil {
 		return nil, err
 	}

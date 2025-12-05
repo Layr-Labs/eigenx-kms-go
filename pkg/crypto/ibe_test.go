@@ -30,6 +30,10 @@ func Test_IBEOperations(t *testing.T) {
 		testMasterPublicKeyDerivation(t)
 	})
 
+	t.Run("MasterPublicKeyConsistency", func(t *testing.T) {
+		testMasterPublicKeyConsistency(t)
+	})
+
 	t.Run("IBEEncryptionDecryption", func(t *testing.T) {
 		testIBEEncryptionDecryption(t)
 	})
@@ -187,13 +191,90 @@ func testMasterPublicKeyDerivation(t *testing.T) {
 	}
 }
 
+// testMasterPublicKeyConsistency ensures the computed master public key matches
+// the sum of all dealer commitments. If operators only expose a single dealer's
+// commitments (the previous bug), encryption and decryption will no longer agree.
+func testMasterPublicKeyConsistency(t *testing.T) {
+	numDealers := 3
+	threshold := 3
+	appID := "master-pk-consistency-app"
+	plaintext := []byte("consistency check payload")
+
+	// Prepare storage for each dealer's commitments and the aggregated version.
+	dealerCommitments := make([][]types.G2Point, numDealers)
+	aggregatedCommitments := make([]types.G2Point, threshold)
+	for i := range aggregatedCommitments {
+		aggregatedCommitments[i] = *types.ZeroG2Point()
+	}
+
+	masterSecret := new(fr.Element).SetZero()
+
+	for dealer := 0; dealer < numDealers; dealer++ {
+		poly := make([]fr.Element, threshold)
+		for j := 0; j < threshold; j++ {
+			// Deterministic coefficients so the test is reproducible.
+			poly[j].SetUint64(uint64(100*(dealer+1) + (j + 1)))
+		}
+
+		// Keep track of the aggregate master secret (sum of constant terms).
+		masterSecret.Add(masterSecret, &poly[0])
+
+		commitments := make([]types.G2Point, threshold)
+		for j := 0; j < threshold; j++ {
+			commitment, err := ScalarMulG2(G2Generator, &poly[j])
+			require.NoError(t, err)
+			commitments[j] = *commitment
+
+			sum, err := AddG2(aggregatedCommitments[j], commitments[j])
+			require.NoError(t, err)
+			aggregatedCommitments[j] = *sum
+		}
+
+		dealerCommitments[dealer] = commitments
+	}
+
+	// Simulate the deduplicated aggregated commitments that clients expect.
+	correctMasterPK, err := ComputeMasterPublicKey([][]types.G2Point{aggregatedCommitments})
+	require.NoError(t, err)
+
+	// Simulate the buggy case where every operator exposes only a single dealer's commitments.
+	buggyMasterPK, err := ComputeMasterPublicKey([][]types.G2Point{dealerCommitments[0]})
+	require.NoError(t, err)
+	require.False(t, correctMasterPK.IsEqual(buggyMasterPK), "aggregated commitments should differ from single-dealer commitments")
+
+	appHash, err := HashToG1(appID)
+	require.NoError(t, err)
+	appPrivKey, err := ScalarMulG1(*appHash, masterSecret)
+	require.NoError(t, err)
+
+	// Encryption with the correct master public key should decrypt successfully.
+	correctCiphertext, err := EncryptForApp(appID, *correctMasterPK, plaintext)
+	require.NoError(t, err)
+
+	decrypted, err := DecryptForApp(appID, *appPrivKey, correctCiphertext)
+	require.NoError(t, err)
+	require.Equal(t, plaintext, decrypted)
+
+	// Encryption performed with the buggy master public key should fail to decrypt
+	// with the true application private key recovered from the combined secret.
+	buggyCiphertext, err := EncryptForApp(appID, *buggyMasterPK, plaintext)
+	require.NoError(t, err)
+
+	_, err = DecryptForApp(appID, *appPrivKey, buggyCiphertext)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "failed to decrypt")
+}
+
 // testIBEEncryptionDecryption tests basic IBE encryption/decryption
 func testIBEEncryptionDecryption(t *testing.T) {
 	appID := "secure-app"
 	plaintext := []byte("sensitive application secret data")
 
 	// Create a mock master public key
-	masterSecret := new(fr.Element).SetInt64(98765)
+	masterSecret, err := new(fr.Element).SetRandom()
+	if err != nil {
+		t.Fatalf("Failed to set random master secret: %v", err)
+	}
 	masterPubKey, err := ScalarMulG2(G2Generator, masterSecret)
 	if err != nil {
 		t.Fatalf("Failed to scalar multiply G2: %v", err)
@@ -404,7 +485,10 @@ func testThresholdSignatureRecovery(t *testing.T) {
 	threshold := (2*numNodes + 2) / 3
 
 	// Create master secret and polynomial
-	masterSecret := new(fr.Element).SetInt64(24680)
+	masterSecret, err := new(fr.Element).SetRandom()
+	if err != nil {
+		t.Fatalf("Failed to set random master secret: %v", err)
+	}
 	poly := make(polynomial.Polynomial, threshold)
 	poly[0].Set(masterSecret)
 	for i := 1; i < threshold; i++ {
@@ -433,7 +517,7 @@ func testThresholdSignatureRecovery(t *testing.T) {
 
 	// Test recovery with exactly threshold signatures
 	thresholdSigs := make(map[int]types.G1Point)
-	nodeIDs := []int{1, 2, 3} // Use first `threshold` nodes
+	nodeIDs := []int{1, 2, 3, 4} // Use first `threshold` nodes
 	for _, id := range nodeIDs {
 		thresholdSigs[id] = partialSigs[id]
 	}
@@ -454,7 +538,7 @@ func testThresholdSignatureRecovery(t *testing.T) {
 
 	// Test recovery with different threshold subset
 	thresholdSigs2 := make(map[int]types.G1Point)
-	nodeIDs2 := []int{2, 4, 5} // Use different `threshold` nodes
+	nodeIDs2 := []int{2, 3, 4, 5} // Use different `threshold` nodes
 	for _, id := range nodeIDs2 {
 		thresholdSigs2[id] = partialSigs[id]
 	}

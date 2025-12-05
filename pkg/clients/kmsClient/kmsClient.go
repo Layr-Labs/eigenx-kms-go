@@ -181,6 +181,7 @@ func (c *KMSClient) GetMasterPublicKey() (types.G2Point, error) {
 	c.logger.Sugar().Infow("Fetching master public key from operators", "operator_count", len(c.operatorURLs))
 
 	var allCommitments [][]types.G2Point
+	seenCommitments := make(map[string]struct{})
 
 	for i, operatorURL := range c.operatorURLs {
 		resp, err := http.Get(operatorURL + "/pubkey")
@@ -210,7 +211,15 @@ func (c *KMSClient) GetMasterPublicKey() (types.G2Point, error) {
 			c.logger.Sugar().Debugw("Operator has no active commitments", "operator_index", i)
 			continue
 		}
-
+		var commitmentKey []byte
+		for _, commitment := range response.Commitments {
+			commitmentKey = append(commitmentKey, commitment.CompressedBytes...)
+		}
+		key := fmt.Sprintf("%x", commitmentKey)
+		if _, exists := seenCommitments[key]; exists {
+			continue
+		}
+		seenCommitments[key] = struct{}{}
 		allCommitments = append(allCommitments, response.Commitments)
 		c.logger.Sugar().Debugw("Collected commitments from operator", "operator_index", i)
 	}
@@ -277,6 +286,16 @@ func (c *KMSClient) CollectPartialSignatures(appID string, attestationTime int64
 		var response types.AppSignResponse
 		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
 			c.logger.Sugar().Warnw("Failed to decode response", "operator_index", i, "error", err)
+			continue
+		}
+
+		isZero, err := response.PartialSignature.IsZero()
+		if err != nil {
+			c.logger.Sugar().Warnw("Failed to validate partial signature", "operator_index", i, "error", err)
+			continue
+		}
+		if isZero {
+			c.logger.Sugar().Warnw("Received zero partial signature", "operator_index", i, "operator_address", response.OperatorAddress)
 			continue
 		}
 

@@ -3,6 +3,8 @@ package integration
 import (
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/kmsClient"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/testutil"
@@ -27,14 +29,10 @@ func Test_IBEIntegration(t *testing.T) {
 
 	// Step 1: Get master public key from operators (via /pubkey endpoint)
 	masterPubKey, err := kmsClient.GetMasterPublicKey()
-	if err != nil {
-		t.Fatalf("Failed to get master public key: %v", err)
-	}
+	require.NoError(t, err, "Failed to get master public key")
 
 	isZero, err := masterPubKey.IsZero()
-	if err != nil {
-		t.Fatalf("Failed to check if master public key is zero: %v", err)
-	}
+	require.NoError(t, err, "Failed to check if master public key is zero")
 	if isZero {
 		t.Fatal("Master public key should not be zero")
 	}
@@ -43,9 +41,7 @@ func Test_IBEIntegration(t *testing.T) {
 
 	// Step 2: Encrypt data using IBE
 	ciphertext, err := kmsClient.EncryptForApp(appID, masterPubKey, plaintext)
-	if err != nil {
-		t.Fatalf("Failed to encrypt data: %v", err)
-	}
+	require.NoError(t, err, "Failed to encrypt data")
 
 	if len(ciphertext) == 0 {
 		t.Fatal("Ciphertext should not be empty")
@@ -55,9 +51,7 @@ func Test_IBEIntegration(t *testing.T) {
 
 	// Step 3: Decrypt data (client collects partial signatures via /app/sign)
 	decrypted, err := kmsClient.DecryptForApp(appID, ciphertext, 0)
-	if err != nil {
-		t.Fatalf("Failed to decrypt data: %v", err)
-	}
+	require.NoError(t, err, "Failed to decrypt data")
 
 	// Step 4: Verify decrypted data matches original
 	if string(decrypted) != string(plaintext) {
