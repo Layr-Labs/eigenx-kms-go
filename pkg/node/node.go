@@ -76,12 +76,6 @@ type Node struct {
 	dkg      *dkg.DKG
 	resharer *reshare.Reshare
 
-	// State management
-	receivedShares      map[int]*fr.Element
-	receivedCommitments map[int][]types.G2Point
-	receivedAcks        map[int]map[int]*types.Acknowledgement
-	reshareComplete     map[int]*types.CompletionSignature
-
 	// Session management
 	activeSessions    map[int64]*ProtocolSession
 	sessionMutex      sync.RWMutex
@@ -111,18 +105,23 @@ type ProtocolSession struct {
 	StartTime        time.Time
 	Operators        []*peering.OperatorSetPeer
 
-	// Session-specific state
+	// Session-specific state (moved from global Node state)
 	shares      map[int]*fr.Element
 	commitments map[int][]types.G2Point
 	acks        map[int]map[int]*types.Acknowledgement
 
-	// Phase 4: Merkle tree state (will be used in Phase 5-6)
-	myAckMerkleTree   *merkle.MerkleTree //nolint:unused // Tree built from acks I collected as dealer
-	myCommitmentHash  [32]byte           //nolint:unused // Hash of my commitments
-	contractSubmitted bool               //nolint:unused // Whether I submitted to contract
+	// Completion channels (buffered, size 1) - signaled when all expected messages received
+	sharesCompleteChan      chan bool
+	commitmentsCompleteChan chan bool
+	acksCompleteChan        chan bool
 
-	// Phase 4: Verification state (will be used in Phase 6)
-	verifiedOperators map[int]bool //nolint:unused // Operators whose broadcasts I verified
+	// Phase 4: Merkle tree state
+	myAckMerkleTree   *merkle.MerkleTree
+	myCommitmentHash  [32]byte
+	contractSubmitted bool
+
+	// Phase 4: Verification state
+	verifiedOperators map[int]bool
 
 	mu sync.RWMutex
 }
@@ -179,10 +178,6 @@ func NewNode(
 		rsaEncryption:             encryption.NewRSAEncryption(),
 		peeringDataFetcher:        pdf,
 		logger:                    l,
-		receivedShares:            make(map[int]*fr.Element),
-		receivedCommitments:       make(map[int][]types.G2Point),
-		receivedAcks:              make(map[int]map[int]*types.Acknowledgement),
-		reshareComplete:           make(map[int]*types.CompletionSignature),
 		activeSessions:            make(map[int64]*ProtocolSession),
 		sessionNotify:             make(map[int64]chan struct{}),
 		enableAutoReshare:         true, // Always enabled
@@ -398,15 +393,24 @@ func (n *Node) detectClusterState(operators []*peering.OperatorSetPeer) string {
 // createSession creates a new protocol session with the provided timestamp
 func (n *Node) createSession(sessionType string, operators []*peering.OperatorSetPeer, sessionTimestamp int64) *ProtocolSession {
 	session := &ProtocolSession{
-		SessionTimestamp:  sessionTimestamp, // Use provided timestamp for coordination
-		Type:              sessionType,
-		Phase:             1,
-		StartTime:         time.Now(),
-		Operators:         operators,
-		shares:            make(map[int]*fr.Element),
-		commitments:       make(map[int][]types.G2Point),
-		acks:              make(map[int]map[int]*types.Acknowledgement),
-		verifiedOperators: make(map[int]bool), // Phase 4
+		SessionTimestamp:        sessionTimestamp,
+		Type:                    sessionType,
+		Phase:                   1,
+		StartTime:               time.Now(),
+		Operators:               operators,
+		shares:                  make(map[int]*fr.Element),
+		commitments:             make(map[int][]types.G2Point),
+		acks:                    make(map[int]map[int]*types.Acknowledgement),
+		sharesCompleteChan:      make(chan bool, 1),
+		commitmentsCompleteChan: make(chan bool, 1),
+		acksCompleteChan:        make(chan bool, 1),
+		verifiedOperators:       make(map[int]bool),
+	}
+
+	// Initialize acks map for each operator (as dealer)
+	for _, op := range operators {
+		nodeID := addressToNodeID(op.OperatorAddress)
+		session.acks[nodeID] = make(map[int]*types.Acknowledgement)
 	}
 
 	n.sessionMutex.Lock()
