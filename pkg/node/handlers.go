@@ -487,16 +487,15 @@ func (s *Server) handleCommitmentBroadcast(w http.ResponseWriter, r *http.Reques
 		"proof_length", len(msg.Broadcast.MerkleProof),
 	)
 
-	// Phase 6: Verify the broadcast
-	// Note: Contract registry address should come from node config in production
-	// For now, using zero address as placeholder
-	contractRegistryAddr := common.Address{}
+	// Phase 6: Verify the broadcast against on-chain commitment
+	contractRegistryAddr := s.node.commitmentRegistryAddress
 	if err := s.node.VerifyOperatorBroadcast(msg.SessionID, msg.Broadcast, contractRegistryAddr); err != nil {
-		s.node.logger.Sugar().Warnw("Failed to verify operator broadcast",
-			"from", msg.FromOperatorID,
+		s.node.logger.Sugar().Errorw("Failed to verify operator broadcast",
+			"from_operator", msg.FromOperatorID,
+			"session", msg.SessionID,
 			"error", err,
 		)
-		http.Error(w, fmt.Sprintf("Verification failed: %v", err), http.StatusBadRequest)
+		http.Error(w, fmt.Sprintf("verification failed: %v", err), http.StatusBadRequest)
 		return
 	}
 
