@@ -33,12 +33,13 @@ const (
 )
 
 // Test_OnChainIntegration is a full end-to-end test with L1 (Ethereum) and L2 (Base) anvil instances
+// This test uses real anvil instances and waits for actual block boundaries to trigger DKG
 func Test_OnChainIntegration(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Skipping end-to-end integration test in short mode")
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
 
 	// Create logger
@@ -241,8 +242,35 @@ func Test_OnChainIntegration(t *testing.T) {
 	// ------------------------------------------------------------------------
 	// Wait for DKG to complete
 	// ------------------------------------------------------------------------
-	t.Log("Waiting for DKG to complete...")
-	time.Sleep(15 * time.Second)
+	t.Log("Waiting for nodes to sync and DKG to complete...")
+	t.Log("  (Nodes need to reach a block boundary that's a multiple of 10)")
+	t.Log("  (With 2-second block time, may take 30-60 seconds)")
+
+	// Poll for up to 90 seconds waiting for DKG to complete
+	dkgComplete := false
+	for attempt := 0; attempt < 45; attempt++ {
+		time.Sleep(2 * time.Second)
+
+		allNodesReady := true
+		for _, n := range nodes {
+			if n.GetKeyStore().GetActiveVersion() == nil {
+				allNodesReady = false
+				break
+			}
+		}
+
+		if allNodesReady {
+			dkgComplete = true
+			t.Logf("✓ DKG completed after ~%d seconds", (attempt+1)*2)
+			break
+		}
+
+		if attempt%5 == 0 {
+			t.Logf("Waiting for DKG... (%d seconds elapsed)", (attempt+1)*2)
+		}
+	}
+
+	require.True(t, dkgComplete, "DKG should complete within 90 seconds")
 
 	// Verify all nodes have active key shares
 	for i, n := range nodes {
@@ -295,12 +323,15 @@ func Test_OnChainIntegration(t *testing.T) {
 	t.Logf("✓ Successfully encrypted and decrypted data using KMSClient")
 
 	// ------------------------------------------------------------------------
-	// Trigger reshare and verify
+	// Wait for reshare to trigger
 	// ------------------------------------------------------------------------
-	t.Log("Waiting for reshare to trigger...")
+	t.Log("Waiting for next reshare boundary block...")
+	t.Log("  (Need to wait for next block that's a multiple of 10)")
+	t.Log("  (Could take 30-60 seconds depending on current block)")
 
-	// Wait for reshare interval (block 20 with 10-block interval)
-	time.Sleep(20 * time.Second)
+	// Wait long enough to ensure we hit the next boundary block
+	// With 2s block time and 10-block interval, worst case is 20 seconds + processing time
+	time.Sleep(40 * time.Second)
 
 	// Verify all nodes still have active versions
 	for i, n := range nodes {
