@@ -211,6 +211,10 @@ forge script script/local/DeployEigenKMSCommitmentRegistry.s.sol --slow --rpc-ur
     --sig "run(address,uint32,address,address,uint8)" \
     "${avsAccountAddress}" "${operatorSetId}" "${ecdsaCertificateVerifier}" "${bn254CertificateVerifier}" "${curveType}"
 
+eigenKMSCommitmentRegistryAddress=$(cat ./broadcast/DeployEigenKMSCommitmentRegistry.s.sol/$anvilL1ChainId/run-latest.json | jq -r '.transactions[2].contractAddress')
+
+echo "Commitment registry contract address: $eigenKMSCommitmentRegistryAddress"
+
 
 # -----------------------------------------------------------------------------
 # Setup L1 multichain
@@ -263,6 +267,7 @@ echo "Ended at block number: "
 cast block-number
 
 kill $anvilL1Pid || true
+kill $anvilL2Pid || true
 sleep 3
 
 rm -rf ./internal/testData/anvil*.json
@@ -270,11 +275,16 @@ rm -rf ./internal/testData/anvil*.json
 cp -R $anvilL1DumpStatePath internal/testData/anvil-l1-state.json
 cp -R $anvilL1ConfigPath internal/testData/anvil-l1-config.json
 
+cp -R $anvilL2DumpStatePath internal/testData/anvil-l2-state.json
+cp -R $anvilL2ConfigPath internal/testData/anvil-l2-config.json
+
 # make the files read-only since anvil likes to overwrite things
 chmod 444 internal/testData/anvil*
 
 rm $anvilL1DumpStatePath
 rm $anvilL1ConfigPath
+rm $anvilL2DumpStatePath
+rm $anvilL2ConfigPath
 
 function lowercaseAddress() {
     echo "$1" | tr '[:upper:]' '[:lower:]'
@@ -309,7 +319,11 @@ cat <<EOF > internal/testData/chain-config.json
       "operatorAccountAddress_5": "$operatorAccountAddress_5",
       "operatorAccountPk_5": "$operatorAccountPk_5",
       "operatorAccountPublicKey_5": "$operatorAccountPublicKey_5",
-      "forkL1Block": "$anvilL1StartBlock"
+      "forkL1Block": "$anvilL1StartBlock",
+      "forkL2Block": "$anvilL2StartBlock",
+      "eigenCommitmentRegistryAddress": "$eigenKMSCommitmentRegistryAddress",
+      "eigenRegistrarAddress": "$eigenKMSRegistrarAddress"
+
 }
 EOF
 

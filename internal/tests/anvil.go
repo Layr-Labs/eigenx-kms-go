@@ -76,8 +76,8 @@ func WaitForAnvil(
 	for {
 		select {
 		case <-ctx.Done():
-			t.Logf("Failed to start l1Anvil: %v", ctx.Err())
-			errorsChan <- fmt.Errorf("failed to start l1Anvil: %w", ctx.Err())
+			t.Logf("Failed to start anvil: %v", ctx.Err())
+			errorsChan <- fmt.Errorf("failed to start anvil: %w", ctx.Err())
 			return
 		case <-time.After(2 * time.Second):
 			t.Logf("Checking if anvil is up and running...")
@@ -86,7 +86,7 @@ func WaitForAnvil(
 				t.Logf("Failed to get latest block, will retry: %v", err)
 				continue
 			}
-			t.Logf("L1 Anvil is up and running, latest block: %v", block)
+			t.Logf("Anvil is up and running, latest block: %v", block)
 			return
 		}
 	}
@@ -128,6 +128,40 @@ func StartL1Anvil(projectRoot string, ctx context.Context) (*exec.Cmd, error) {
 	chainId := "31337"
 
 	fullPath, err := filepath.Abs(fmt.Sprintf("%s/internal/testData/anvil-l1-state.json", projectRoot))
+	if err != nil {
+		return nil, fmt.Errorf("failed to get absolute path: %w", err)
+	}
+
+	stat, err := os.Stat(fullPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat file: %w", err)
+	}
+	if stat.IsDir() {
+		return nil, fmt.Errorf("path is a directory: %s", fullPath)
+	}
+
+	return StartAnvil(projectRoot, ctx, &AnvilConfig{
+		ForkUrl:         forkUrl,
+		ForkBlockNumber: forkBlockNumber,
+		BlockTime:       blockTime,
+		PortNumber:      portNumber,
+		StateFilePath:   fullPath,
+		ChainId:         chainId,
+	})
+}
+
+func StartL2Anvil(projectRoot string, ctx context.Context) (*exec.Cmd, error) {
+	chainConfig, err := ReadChainConfig(projectRoot)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read chain config: %w", err)
+	}
+	forkUrl := "https://soft-alpha-grass.base-sepolia.quiknode.pro/fd5e4bf346247d9b6e586008a9f13df72ce6f5b2/"
+	portNumber := "9545"
+	blockTime := "2"
+	forkBlockNumber := chainConfig.ForkL2Block
+	chainId := "31338"
+
+	fullPath, err := filepath.Abs(fmt.Sprintf("%s/internal/testData/anvil-l2-state.json", projectRoot))
 	if err != nil {
 		return nil, fmt.Errorf("failed to get absolute path: %w", err)
 	}
