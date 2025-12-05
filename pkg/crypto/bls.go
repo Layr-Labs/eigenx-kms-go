@@ -346,13 +346,13 @@ func EncryptForApp(appID string, masterPublicKey types.G2Point, plaintext []byte
 	}
 
 	// Step 3: Compute C1 = r*P where P is G2 generator
-	C1, err := ScalarMulG2(G2Generator, r)
+	c1, err := ScalarMulG2(G2Generator, r)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute C1: %w", err)
 	}
 
 	// Safety check: Ensure C1 is not infinity (should never happen with valid r)
-	c1Check, err := bls.G2PointFromCompressedBytes(C1.CompressedBytes)
+	c1Check, err := bls.G2PointFromCompressedBytes(c1.CompressedBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to validate C1: %w", err)
 	}
@@ -420,7 +420,7 @@ func EncryptForApp(appID string, masterPublicKey types.G2Point, plaintext []byte
 
 	// Prepare additional authenticated data (AAD)
 	// This cryptographically binds the appID, version, and C1 to the ciphertext
-	aad := buildAAD(appID, ibeVersion, C1.CompressedBytes)
+	aad := buildAAD(appID, ibeVersion, c1.CompressedBytes)
 
 	// Encrypt plaintext with AAD
 	encryptedData := gcm.Seal(nil, nonce, plaintext, aad)
@@ -428,7 +428,7 @@ func EncryptForApp(appID string, masterPublicKey types.G2Point, plaintext []byte
 	// Build final ciphertext with version header
 	// Format: magic(3) || version(1) || C1(96) || nonce(12) || encrypted_data
 	// This allows format detection and future upgrades
-	totalLen := headerSize + len(C1.CompressedBytes) + len(nonce) + len(encryptedData)
+	totalLen := headerSize + len(c1.CompressedBytes) + len(nonce) + len(encryptedData)
 	finalCiphertext := make([]byte, 0, totalLen)
 
 	// Append header
@@ -436,7 +436,7 @@ func EncryptForApp(appID string, masterPublicKey types.G2Point, plaintext []byte
 	finalCiphertext = append(finalCiphertext, ibeVersion)
 
 	// Append ciphertext components
-	finalCiphertext = append(finalCiphertext, C1.CompressedBytes...)
+	finalCiphertext = append(finalCiphertext, c1.CompressedBytes...)
 	finalCiphertext = append(finalCiphertext, nonce...)
 	finalCiphertext = append(finalCiphertext, encryptedData...)
 
@@ -483,8 +483,8 @@ func DecryptForApp(appID string, appPrivateKey types.G1Point, ciphertext []byte)
 	// Extract C1 from ciphertext (after header)
 	c1Start := headerSize
 	c1End := c1Start + g2Size
-	C1Bytes := ciphertext[c1Start:c1End]
-	C1 := &types.G2Point{CompressedBytes: C1Bytes}
+	c1Bytes := ciphertext[c1Start:c1End]
+	c1 := &types.G2Point{CompressedBytes: c1Bytes}
 
 	// Convert appPrivateKey to G1Affine for pairing
 	appPrivKeyAffine, err := bls.G1PointFromCompressedBytes(appPrivateKey.CompressedBytes)
@@ -498,7 +498,7 @@ func DecryptForApp(appID string, appPrivateKey types.G1Point, ciphertext []byte)
 	}
 
 	// Convert C1 to G2Affine for pairing
-	c1Affine, err := bls.G2PointFromCompressedBytes(C1.CompressedBytes)
+	c1Affine, err := bls.G2PointFromCompressedBytes(c1.CompressedBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to convert C1 to G2Affine: %w", err)
 	}
@@ -556,7 +556,7 @@ func DecryptForApp(appID string, appPrivateKey types.G1Point, ciphertext []byte)
 
 	// Reconstruct additional authenticated data (AAD)
 	// Must match exactly what was used during encryption
-	aad := buildAAD(appID, version, C1Bytes)
+	aad := buildAAD(appID, version, c1Bytes)
 
 	// Decrypt with AES-GCM using AAD
 	plaintext, err := gcm.Open(nil, nonce, encryptedData, aad)
