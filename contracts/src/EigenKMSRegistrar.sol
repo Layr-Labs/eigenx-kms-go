@@ -15,6 +15,7 @@ contract EigenKMSRegistrar is AVSRegistrar, SocketRegistry, Allowlist, EigenKMSR
     using OperatorSetLib for OperatorSet;
 
     /// @notice Thrown when operator is not in the allowlist for an operator set
+    /// @dev Selector: 0x15cfe7d7
     error OperatorNotAllowed(address operator, uint32 operatorSetId);
 
     /**

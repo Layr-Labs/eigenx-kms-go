@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 
 anvilL1Pid=""
+anvilL2Pid=""
 
 function cleanup() {
     kill $anvilL1Pid || true
+    kill $anvilL2Pid || true
 
     exit $?
 }
@@ -15,11 +17,21 @@ set -euo pipefail
 L1_FORK_RPC_URL=https://practical-serene-mound.ethereum-sepolia.quiknode.pro/3aaa48bd95f3d6aed60e89a1a466ed1e2a440b61/
 
 anvilL1ChainId=31337
-anvilL1StartBlock=9469897
+anvilL1StartBlock=9775400
 anvilL1DumpStatePath=./anvil-l1.json
 anvilL1ConfigPath=./anvil-l1-config.json
 anvilL1RpcPort=8545
 anvilL1RpcUrl="http://localhost:${anvilL1RpcPort}"
+
+# base mainnet
+L2_FORK_RPC_URL=https://soft-alpha-grass.base-sepolia.quiknode.pro/fd5e4bf346247d9b6e586008a9f13df72ce6f5b2/
+
+anvilL2ChainId=8453
+anvilL2StartBlock=34590518
+anvilL2DumpStatePath=./anvil-l2.json
+anvilL2ConfigPath=./anvil-l2-config.json
+anvilL2RpcPort=9545
+anvilL2RpcUrl="http://localhost:${anvilL2RpcPort}"
 
 
 seedAccounts=$(cat ./anvilConfig/accounts.json)
@@ -39,10 +51,26 @@ anvil \
 anvilL1Pid=$!
 sleep 3
 
+# -----------------------------------------------------------------------------
+# Start Base L2
+# -----------------------------------------------------------------------------
+anvil \
+    --fork-url $L2_FORK_RPC_URL \
+    --dump-state $anvilL2DumpStatePath \
+    --config-out $anvilL2ConfigPath \
+    --chain-id $anvilL2ChainId \
+    --port $anvilL2RpcPort \
+    --fork-block-number $anvilL2StartBlock &
+anvilL2Pid=$!
+sleep 3
+
 function fundAccount() {
     address=$1
     echo "Funding address $address on L1"
     cast rpc --rpc-url $anvilL1RpcUrl anvil_setBalance $address '0x21E19E0C9BAB2400000' # 10,000 ETH
+
+    echo "Funding address $address on L2"
+    cast rpc --rpc-url $anvilL2RpcUrl anvil_setBalance $address '0x21E19E0C9BAB2400000' # 10,000 ETH
 }
 
 # loop over the seed accounts (json array) and fund the accounts
@@ -161,6 +189,21 @@ echo "Setting up EigenKMS Registrar..."
 forge script script/local/SetupEigenKMSRegistrar.s.sol --slow --rpc-url $L1_RPC_URL --broadcast --sig "run(address)" $eigenKMSRegistrarAddress
 
 # -----------------------------------------------------------------------------
+# Deploy L2 avs contract
+# -----------------------------------------------------------------------------
+echo "Deploying L1 AVS contract..."
+avsAddress=$()
+operatorSetId="0"
+ecdsaCertificateVerifier="0xb3Cd1A457dEa9A9A6F6406c6419B1c326670A96F" # base sepolia
+bn254CertificateVerifier="0xff58A373c18268F483C1F5cA03Cf885c0C43373a" # base sepolia
+curveType="1"
+
+forge script script/local/DeployEigenKMSCommitmentRegistry.s.sol --slow --rpc-url $L1_RPC_URL --broadcast \
+    --sig "run(address,uint32,address,address,uint8)" \
+    "${avsAccountAddress}" "${operatorSetId}" "${ecdsaCertificateVerifier}" "${bn254CertificateVerifier}" "${curveType}"
+
+
+# -----------------------------------------------------------------------------
 # Setup L1 multichain
 # -----------------------------------------------------------------------------
 # echo "Setting up L1 AVS..."
@@ -169,6 +212,8 @@ forge script script/local/SetupEigenKMSRegistrar.s.sol --slow --rpc-url $L1_RPC_
 # cast rpc anvil_impersonateAccount $CROSS_CHAIN_REGISTRY_OWNER_ACCOUNT --rpc-url $L1_RPC_URL
 # forge script script/local/WhitelistDevnet.s.sol --slow --rpc-url $L1_RPC_URL --sender $CROSS_CHAIN_REGISTRY_OWNER_ACCOUNT --unlocked --broadcast --sig "run()"
 # forge script script/local/SetupAVSMultichain.s.sol --slow --rpc-url $L1_RPC_URL --broadcast --sig "run()"
+
+
 
 # Move back up into the project root
 cd ../
