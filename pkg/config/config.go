@@ -77,6 +77,7 @@ const (
 	ChainId_EthereumMainnet ChainId = 1
 	ChainId_EthereumSepolia ChainId = 11155111
 	ChainId_EthereumAnvil   ChainId = 31337
+	ChainId_BaseAnvil       ChainId = 31338
 	ChainId_BaseSepolia     ChainId = 84532
 )
 
@@ -87,6 +88,7 @@ const (
 	ChainName_EthereumSepolia ChainName = "sepolia"
 	ChainName_PreProdSepolia  ChainName = "dev"
 	ChainName_EthereumAnvil   ChainName = "devnet"
+	ChainName_BaseAnvil       ChainName = "base-devnet"
 	ChainName_BaseSepolia     ChainName = "base-sepolia"
 )
 
@@ -94,12 +96,14 @@ var ChainIdToName = map[ChainId]ChainName{
 	ChainId_EthereumMainnet: ChainName_EthereumMainnet,
 	ChainId_EthereumSepolia: ChainName_EthereumSepolia,
 	ChainId_EthereumAnvil:   ChainName_EthereumAnvil,
+	ChainId_BaseAnvil:       ChainName_BaseAnvil,
 	ChainId_BaseSepolia:     ChainName_BaseSepolia,
 }
 var ChainNameToId = map[ChainName]ChainId{
 	ChainName_EthereumMainnet: ChainId_EthereumMainnet,
 	ChainName_EthereumSepolia: ChainId_EthereumSepolia,
 	ChainName_EthereumAnvil:   ChainId_EthereumAnvil,
+	ChainName_BaseAnvil:       ChainId_BaseAnvil,
 	ChainName_BaseSepolia:     ChainId_BaseSepolia,
 }
 
@@ -178,6 +182,7 @@ var (
 		},
 		ChainId_EthereumSepolia: ethereumSepoliaCoreContracts,
 		ChainId_EthereumAnvil:   ethereumSepoliaCoreContracts, // fork of ethereum sepolia
+		ChainId_BaseAnvil:       ethereumSepoliaCoreContracts, // fork of ethereum sepolia (for L2 testing)
 	}
 )
 

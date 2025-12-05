@@ -45,18 +45,23 @@ type ChainConfig struct {
 	OperatorAccountAddress1        string `json:"operatorAccountAddress_1"`
 	OperatorAccountPrivateKey1     string `json:"operatorAccountPk_1"`
 	OperatorAccountPublicKey1      string `json:"operatorAccountPublicKey_1"`
+	OperatorSocket1                string `json:"operatorSocket_1"`
 	OperatorAccountAddress2        string `json:"operatorAccountAddress_2"`
 	OperatorAccountPrivateKey2     string `json:"operatorAccountPk_2"`
 	OperatorAccountPublicKey2      string `json:"operatorAccountPublicKey_2"`
+	OperatorSocket2                string `json:"operatorSocket_2"`
 	OperatorAccountAddress3        string `json:"operatorAccountAddress_3"`
 	OperatorAccountPrivateKey3     string `json:"operatorAccountPk_3"`
 	OperatorAccountPublicKey3      string `json:"operatorAccountPublicKey_3"`
+	OperatorSocket3                string `json:"operatorSocket_3"`
 	OperatorAccountAddress4        string `json:"operatorAccountAddress_4"`
 	OperatorAccountPrivateKey4     string `json:"operatorAccountPk_4"`
 	OperatorAccountPublicKey4      string `json:"operatorAccountPublicKey_4"`
+	OperatorSocket4                string `json:"operatorSocket_4"`
 	OperatorAccountAddress5        string `json:"operatorAccountAddress_5"`
 	OperatorAccountPrivateKey5     string `json:"operatorAccountPk_5"`
 	OperatorAccountPublicKey5      string `json:"operatorAccountPublicKey_5"`
+	OperatorSocket5                string `json:"operatorSocket_5"`
 	ForkL1Block                    string `json:"forkL1Block"`
 	ForkL2Block                    string `json:"forkL2Block"`
 	EigenCommitmentRegistryAddress string `json:"eigenCommitmentRegistryAddress"`
