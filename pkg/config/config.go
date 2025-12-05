@@ -20,14 +20,14 @@ const (
 	EnvKMSBaseRPCURL             = "KMS_BASE_RPC_URL"
 	EnvKMSCommitmentRegistryAddr = "KMS_COMMITMENT_REGISTRY_ADDRESS"
 	// ECDSA operator signing configuration
-	EnvKMSECDSAPrivateKey        = "KMS_ECDSA_PRIVATE_KEY"
-	EnvKMSUseRemoteSigner        = "KMS_USE_REMOTE_SIGNER"
-	EnvKMSWeb3SignerURL          = "KMS_WEB3SIGNER_URL"
-	EnvKMSWeb3SignerCACert       = "KMS_WEB3SIGNER_CA_CERT"
-	EnvKMSWeb3SignerCert         = "KMS_WEB3SIGNER_CERT"
-	EnvKMSWeb3SignerKey          = "KMS_WEB3SIGNER_KEY"
-	EnvKMSWeb3SignerFromAddress  = "KMS_WEB3SIGNER_FROM_ADDRESS"
-	EnvKMSWeb3SignerPublicKey    = "KMS_WEB3SIGNER_PUBLIC_KEY"
+	EnvKMSECDSAPrivateKey       = "KMS_ECDSA_PRIVATE_KEY"
+	EnvKMSUseRemoteSigner       = "KMS_USE_REMOTE_SIGNER"
+	EnvKMSWeb3SignerURL         = "KMS_WEB3SIGNER_URL"
+	EnvKMSWeb3SignerCACert      = "KMS_WEB3SIGNER_CA_CERT"
+	EnvKMSWeb3SignerCert        = "KMS_WEB3SIGNER_CERT"
+	EnvKMSWeb3SignerKey         = "KMS_WEB3SIGNER_KEY"
+	EnvKMSWeb3SignerFromAddress = "KMS_WEB3SIGNER_FROM_ADDRESS"
+	EnvKMSWeb3SignerPublicKey   = "KMS_WEB3SIGNER_PUBLIC_KEY"
 )
 
 type CurveType string
