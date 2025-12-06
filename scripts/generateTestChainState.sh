@@ -14,10 +14,10 @@ set -euo pipefail
 
 
 # ethereum holesky
-L1_FORK_RPC_URL=https://practical-serene-mound.ethereum-sepolia.quiknode.pro/3aaa48bd95f3d6aed60e89a1a466ed1e2a440b61/
+L1_FORK_RPC_URL=https://rough-chaotic-meme.ethereum-sepolia.quiknode.pro/dcdf2b0e1ce08e4fe7515933897f89104fb1273a/
 
 anvilL1ChainId=31337
-anvilL1StartBlock=9775400
+anvilL1StartBlock=9778678
 anvilL1DumpStatePath=./anvil-l1.json
 anvilL1ConfigPath=./anvil-l1-config.json
 anvilL1RpcPort=8545
@@ -27,7 +27,7 @@ anvilL1RpcUrl="http://localhost:${anvilL1RpcPort}"
 L2_FORK_RPC_URL=https://soft-alpha-grass.base-sepolia.quiknode.pro/fd5e4bf346247d9b6e586008a9f13df72ce6f5b2/
 
 anvilL2ChainId=8453
-anvilL2StartBlock=34590518
+anvilL2StartBlock=34610863
 anvilL2DumpStatePath=./anvil-l2.json
 anvilL2ConfigPath=./anvil-l2-config.json
 anvilL2RpcPort=9545

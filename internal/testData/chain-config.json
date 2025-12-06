@@ -22,8 +22,8 @@
       "operatorAccountPk_5": "0x59b74c409b9c59507ddab13ee3347b9b9f89914f381fe3b2ce2b34a6034aa1c0",
       "operatorAccountPublicKey_5": "0xb4c11ad8bf212f62f790013accf1c3683b13f90d4149821590845c17cee34e367dce3b5ff07c191f4e20fb1324221d0307cc71bb9aed64d363048bd3476bf57c",
       "operatorSocket_5": "http://localhost:7505",
-      "forkL1Block": "9775400",
-      "forkL2Block": "34590518",
+      "forkL1Block": "9778678",
+      "forkL2Block": "34610863",
       "eigenCommitmentRegistryAddress": "0x06329b1e7a2eaf761b8d2dbd67726e5dad73f5a2",
       "eigenRegistrarAddress": "0x06329b1e7a2eaf761b8d2dbd67726e5dad73f5a2"
 
