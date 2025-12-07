@@ -10,6 +10,9 @@ import (
 
 	"go.uber.org/zap"
 
+	"github.com/ethereum/go-ethereum/common"
+	ethcrypto "github.com/ethereum/go-ethereum/crypto"
+
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
@@ -178,6 +181,7 @@ func (c *KMSClient) GetMasterPublicKey() (types.G2Point, error) {
 	c.logger.Sugar().Infow("Fetching master public key from operators", "operator_count", len(c.operatorURLs))
 
 	var allCommitments [][]types.G2Point
+	seenCommitments := make(map[string]struct{})
 
 	for i, operatorURL := range c.operatorURLs {
 		resp, err := http.Get(operatorURL + "/pubkey")
@@ -207,7 +211,15 @@ func (c *KMSClient) GetMasterPublicKey() (types.G2Point, error) {
 			c.logger.Sugar().Debugw("Operator has no active commitments", "operator_index", i)
 			continue
 		}
-
+		var commitmentKey []byte
+		for _, commitment := range response.Commitments {
+			commitmentKey = append(commitmentKey, commitment.CompressedBytes...)
+		}
+		key := fmt.Sprintf("%x", commitmentKey)
+		if _, exists := seenCommitments[key]; exists {
+			continue
+		}
+		seenCommitments[key] = struct{}{}
 		allCommitments = append(allCommitments, response.Commitments)
 		c.logger.Sugar().Debugw("Collected commitments from operator", "operator_index", i)
 	}
@@ -216,10 +228,20 @@ func (c *KMSClient) GetMasterPublicKey() (types.G2Point, error) {
 		return types.G2Point{}, fmt.Errorf("failed to collect commitments from any operator")
 	}
 
-	masterPubKey := crypto.ComputeMasterPublicKey(allCommitments)
+	masterPubKey, err := crypto.ComputeMasterPublicKey(allCommitments)
+	if err != nil {
+		return types.G2Point{}, fmt.Errorf("failed to compute master public key: %w", err)
+	}
 	c.logger.Sugar().Infow("Computed master public key", "commitment_count", len(allCommitments))
 
 	return *masterPubKey, nil
+}
+
+// addressToNodeID converts an Ethereum address to a node ID using keccak256 hash
+func addressToNodeID(address common.Address) int {
+	hash := ethcrypto.Keccak256(address.Bytes())
+	nodeID := int(common.BytesToHash(hash).Big().Uint64())
+	return nodeID
 }
 
 // CollectPartialSignatures collects partial signatures from threshold operators for an app
@@ -267,9 +289,23 @@ func (c *KMSClient) CollectPartialSignatures(appID string, attestationTime int64
 			continue
 		}
 
-		partialSigs[i] = response.PartialSignature
+		isZero, err := response.PartialSignature.IsZero()
+		if err != nil {
+			c.logger.Sugar().Warnw("Failed to validate partial signature", "operator_index", i, "error", err)
+			continue
+		}
+		if isZero {
+			c.logger.Sugar().Warnw("Received zero partial signature", "operator_index", i, "operator_address", response.OperatorAddress)
+			continue
+		}
+
+		// Convert operator address to node ID (must match the IDs used during DKG)
+		operatorAddress := common.HexToAddress(response.OperatorAddress)
+		nodeID := addressToNodeID(operatorAddress)
+
+		partialSigs[nodeID] = response.PartialSignature
 		collected++
-		c.logger.Sugar().Debugw("Collected partial signature", "operator_index", i, "total", collected)
+		c.logger.Sugar().Debugw("Collected partial signature", "operator_index", i, "node_id", nodeID, "operator_address", response.OperatorAddress, "total", collected)
 	}
 
 	if collected < c.threshold {

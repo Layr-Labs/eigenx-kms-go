@@ -193,6 +193,16 @@ func G1PointFromCompressedBytes(bytes []byte) (*G1Point, error) {
 	return NewG1Point(point), nil
 }
 
+// ToAffine converts G1Point to a G1Affine point
+func (p *G1Point) ToAffine() *bls12381.G1Affine {
+	return p.point
+}
+
+// ToAffine converts G2Point to a G2Affine point
+func (p *G2Point) ToAffine() *bls12381.G2Affine {
+	return p.point
+}
+
 // G2PointFromCompressedBytes creates a G2Point from compressed bytes
 func G2PointFromCompressedBytes(bytes []byte) (*G2Point, error) {
 	point := new(bls12381.G2Affine)

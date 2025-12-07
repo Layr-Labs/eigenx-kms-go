@@ -53,7 +53,11 @@ func testScalarMulG1(t *testing.T) {
 
 			// Verify result is not zero (unless scalar is zero)
 			// Note: Y is always 0 in our encoding, X contains the marshaled point
-			if !tt.scalar.IsZero() && result.IsZero() {
+			resultIsZero, err := result.IsZero()
+			if err != nil {
+				t.Fatalf("Failed to check if G1 point is zero: %v", err)
+			}
+			if !tt.scalar.IsZero() && resultIsZero {
 				t.Error("Expected non-zero result for non-zero scalar")
 			}
 
@@ -62,7 +66,7 @@ func testScalarMulG1(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Failed to scalar multiply G1: %v", err)
 			}
-			if !result.IsEqual(result2) {
+			if !result2.IsEqual(result) {
 				t.Error("Scalar multiplication should be deterministic")
 			}
 		})
@@ -80,7 +84,11 @@ func testScalarMulG2(t *testing.T) {
 
 	// Verify result is not zero
 	// Note: Y is always 0 in our encoding, X contains the marshaled point
-	if result.IsZero() {
+	resultIsZero, err := result.IsZero()
+	if err != nil {
+		t.Fatalf("Failed to check if G2 point is zero: %v", err)
+	}
+	if resultIsZero {
 		t.Error("Expected non-zero result")
 	}
 
@@ -422,7 +430,10 @@ func testComputeMasterPublicKey(t *testing.T) {
 		{*commitment3},
 	}
 
-	masterPK := ComputeMasterPublicKey(allCommitments)
+	masterPK, err := ComputeMasterPublicKey(allCommitments)
+	if err != nil {
+		t.Fatalf("Failed to compute master public key: %v", err)
+	}
 
 	// Verify it's the sum of first commitments
 	expected := allCommitments[0][0]

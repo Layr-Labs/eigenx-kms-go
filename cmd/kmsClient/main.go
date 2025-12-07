@@ -372,7 +372,10 @@ func getMasterPublicKey(operators *peering.OperatorSetPeers) (types.G2Point, err
 
 	// Step 2: Compute master public key from commitments
 	fmt.Printf("🔑 Computing master public key from %d operator commitments...\n", successful)
-	masterPubKey := crypto.ComputeMasterPublicKey(allCommitments)
+	masterPubKey, err := crypto.ComputeMasterPublicKey(allCommitments)
+	if err != nil {
+		return types.G2Point{}, fmt.Errorf("failed to compute master public key: %w", err)
+	}
 
 	return *masterPubKey, nil
 }
