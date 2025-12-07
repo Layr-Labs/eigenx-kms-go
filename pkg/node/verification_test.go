@@ -338,3 +338,81 @@ func TestMerkleProofVerification_Integration(t *testing.T) {
 	invalid := merkle.VerifyProof(invalidProof, tree.Root)
 	require.False(t, invalid, "Invalid proof should fail")
 }
+
+func TestWaitForAcknowledgementsValidation(t *testing.T) {
+	logger := zap.NewNop()
+	operatorAddr := common.HexToAddress("0x00000000000000000000000000000000000000AA")
+	dealerID := addressToNodeID(operatorAddr)
+	sessionTimestamp := int64(42)
+	threshold := 2
+	expectedCommitmentHash := [32]byte{1, 2, 3}
+	expectedShareHashes := map[int][32]byte{
+		101: {4},
+		202: {5},
+	}
+
+	buildNode := func(acks map[int]*types.Acknowledgement) *Node {
+		return &Node{
+			OperatorAddress: operatorAddr,
+			logger:          logger,
+			receivedAcks: map[int]map[int]*types.Acknowledgement{
+				dealerID: acks,
+			},
+		}
+	}
+
+	buildAcks := func(modify func(map[int]*types.Acknowledgement)) map[int]*types.Acknowledgement {
+		ackMap := make(map[int]*types.Acknowledgement, len(expectedShareHashes))
+		for playerID, shareHash := range expectedShareHashes {
+			ackMap[playerID] = &types.Acknowledgement{
+				DealerID:       dealerID,
+				PlayerID:       playerID,
+				Epoch:          sessionTimestamp,
+				ShareHash:      shareHash,
+				CommitmentHash: expectedCommitmentHash,
+			}
+		}
+		if modify != nil {
+			modify(ackMap)
+		}
+		return ackMap
+	}
+
+	t.Run("accepts consistent acknowledgements", func(t *testing.T) {
+		node := buildNode(buildAcks(nil))
+		err := node.waitForAcknowledgements(sessionTimestamp, threshold, 50*time.Millisecond, expectedCommitmentHash, expectedShareHashes)
+		require.NoError(t, err)
+	})
+
+	t.Run("rejects mismatched commitment hash", func(t *testing.T) {
+		acks := buildAcks(func(m map[int]*types.Acknowledgement) {
+			ack := m[101]
+			ack.CommitmentHash[0] ^= 0xFF
+		})
+		node := buildNode(acks)
+		err := node.waitForAcknowledgements(sessionTimestamp, threshold, 50*time.Millisecond, expectedCommitmentHash, expectedShareHashes)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "commitment hash mismatch")
+	})
+
+	t.Run("rejects mismatched share hash", func(t *testing.T) {
+		acks := buildAcks(func(m map[int]*types.Acknowledgement) {
+			ack := m[202]
+			ack.ShareHash[0] ^= 0xFF
+		})
+		node := buildNode(acks)
+		err := node.waitForAcknowledgements(sessionTimestamp, threshold, 50*time.Millisecond, expectedCommitmentHash, expectedShareHashes)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "share hash mismatch")
+	})
+
+	t.Run("rejects epoch mismatch", func(t *testing.T) {
+		acks := buildAcks(func(m map[int]*types.Acknowledgement) {
+			m[101].Epoch = sessionTimestamp + 1
+		})
+		node := buildNode(acks)
+		err := node.waitForAcknowledgements(sessionTimestamp, threshold, 50*time.Millisecond, expectedCommitmentHash, expectedShareHashes)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "epoch mismatch")
+	})
+}

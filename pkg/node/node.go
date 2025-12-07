@@ -531,6 +531,15 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 		return err
 	}
 
+	commitmentHash := eigenxcrypto.HashCommitment(commitments)
+	sentShareHashes := make(map[int][32]byte, len(shares))
+	for participantID, share := range shares {
+		if share == nil {
+			return fmt.Errorf("nil share for participant %d", participantID)
+		}
+		sentShareHashes[participantID] = eigenxcrypto.HashShareForAck(share)
+	}
+
 	// Broadcast commitments
 	if err := n.transport.BroadcastDKGCommitments(operators, commitments, session.SessionTimestamp); err != nil {
 		n.logger.Sugar().Errorw("Failed to broadcast commitments", "operator_address", n.OperatorAddress.Hex(), "error", err)
@@ -624,7 +633,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	n.mu.Unlock()
 
 	// Wait for acknowledgements (as a dealer) - need ALL operators for DKG
-	if err := n.waitForAcknowledgements(len(operators), protocolTimeout); err != nil {
+	if err := n.waitForAcknowledgements(session.SessionTimestamp, len(operators), protocolTimeout, commitmentHash, sentShareHashes); err != nil {
 		return fmt.Errorf("insufficient acknowledgements: %v", err)
 	}
 
@@ -915,26 +924,36 @@ func (n *Node) waitForCommitmentsWithRetry(expectedCount int, timeout time.Durat
 	return fmt.Errorf("timeout: got %d commitments, expected %d", received, expectedCount)
 }
 
-func (n *Node) waitForAcknowledgements(threshold int, timeout time.Duration) error {
+func (n *Node) waitForAcknowledgements(sessionTimestamp int64, threshold int, timeout time.Duration, expectedCommitmentHash [32]byte, expectedShareHashes map[int][32]byte) error {
 	deadline := time.Now().Add(timeout)
 	checkInterval := 200 * time.Millisecond
 	thisNodeID := addressToNodeID(n.OperatorAddress)
 
 	for time.Now().Before(deadline) {
+		var ackList []*types.Acknowledgement
+
 		n.mu.RLock()
-		// receivedAcks is keyed by dealer ID, we are the dealer waiting for acks
-		acks := n.receivedAcks[thisNodeID]
-		count := 0
-		if acks != nil {
-			count = len(acks)
+		dealerAcks := n.receivedAcks[thisNodeID]
+		if len(dealerAcks) >= threshold {
+			ackList = make([]*types.Acknowledgement, 0, len(dealerAcks))
+			for _, ack := range dealerAcks {
+				ackList = append(ackList, ack)
+			}
 		}
 		n.mu.RUnlock()
 
-		if count >= threshold {
-			n.logger.Sugar().Infow("Received sufficient acknowledgements",
-				"operator_address", n.OperatorAddress.Hex(),
-				"received", count,
-				"threshold", threshold)
+		if len(ackList) >= threshold {
+			if err := n.validateAcknowledgements(ackList, sessionTimestamp, expectedCommitmentHash, expectedShareHashes); err != nil {
+				return err
+			}
+
+			if n.logger != nil {
+				n.logger.Sugar().Infow("Received consistent acknowledgements",
+					"operator_address", n.OperatorAddress.Hex(),
+					"received", len(ackList),
+					"threshold", threshold,
+					"session_timestamp", sessionTimestamp)
+			}
 			return nil
 		}
 
@@ -950,6 +969,38 @@ func (n *Node) waitForAcknowledgements(threshold int, timeout time.Duration) err
 	n.mu.RUnlock()
 
 	return fmt.Errorf("timeout waiting for acknowledgements: got %d acks, expected %d", count, threshold)
+}
+
+func (n *Node) validateAcknowledgements(acks []*types.Acknowledgement, sessionTimestamp int64, expectedCommitmentHash [32]byte, expectedShareHashes map[int][32]byte) error {
+	if len(acks) == 0 {
+		return fmt.Errorf("no acknowledgements to validate")
+	}
+
+	for _, ack := range acks {
+		if ack == nil {
+			return fmt.Errorf("received nil acknowledgement")
+		}
+
+		if ack.Epoch != sessionTimestamp {
+			return fmt.Errorf("acknowledgement epoch mismatch for player %d: expected %d, got %d",
+				ack.PlayerID, sessionTimestamp, ack.Epoch)
+		}
+
+		if ack.CommitmentHash != expectedCommitmentHash {
+			return fmt.Errorf("acknowledgement commitment hash mismatch for player %d", ack.PlayerID)
+		}
+
+		expectedShareHash, ok := expectedShareHashes[ack.PlayerID]
+		if !ok {
+			return fmt.Errorf("no recorded share hash for player %d", ack.PlayerID)
+		}
+
+		if ack.ShareHash != expectedShareHash {
+			return fmt.Errorf("acknowledgement share hash mismatch for player %d", ack.PlayerID)
+		}
+	}
+
+	return nil
 }
 
 // Helper methods for testing
