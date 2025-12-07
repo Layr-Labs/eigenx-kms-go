@@ -9,6 +9,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/merkle"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/reshare"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/testutil"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -149,8 +150,8 @@ func testAcknowledgementWithNewFields(t *testing.T) {
 	require.Len(t, operators, 3)
 
 	// Get node IDs
-	nodeID := testutil.AddressToNodeID(operators[0].OperatorAddress)
-	dealerID := testutil.AddressToNodeID(operators[1].OperatorAddress)
+	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
+	dealerID := util.AddressToNodeID(operators[1].OperatorAddress)
 	epoch := int64(12345)
 
 	// Create a test share

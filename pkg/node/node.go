@@ -34,16 +34,9 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/reshare"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transport"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
-
-// addressToNodeID converts an Ethereum address to a node ID using keccak256 hash
-// Equivalent to: uint64(uint256(keccak256(abi.encodePacked(address))))
-func addressToNodeID(address common.Address) int {
-	hash := crypto.Keccak256(address.Bytes())
-	// Take first 8 bytes of hash as uint64, then convert to int
-	return int(common.BytesToHash(hash).Big().Uint64())
-}
 
 const (
 	// ReshareFrequency is the frequency of resharing in seconds (deprecated)
@@ -238,7 +231,7 @@ func NewNode(
 	operatorAddress := common.HexToAddress(cfg.OperatorAddress)
 
 	// Use operator address hash as transport client ID (for consistency)
-	transportClientID := addressToNodeID(operatorAddress)
+	transportClientID := util.AddressToNodeID(operatorAddress)
 
 	n := &Node{
 		OperatorAddress:           operatorAddress,
@@ -598,7 +591,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	defer n.cleanupSession(session.SessionTimestamp)
 
 	// Use keccak256 hash of operator address as node ID
-	thisNodeID := addressToNodeID(n.OperatorAddress)
+	thisNodeID := util.AddressToNodeID(n.OperatorAddress)
 
 	// Verify this operator is in the fetched operator set
 	operatorFound := false
@@ -632,10 +625,10 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 
 	// Send shares to each participant
 	for _, op := range operators {
+		opNodeID := util.AddressToNodeID(op.OperatorAddress)
 		n.logger.Sugar().Debugw("Sending share to operator",
 			"operator_address", n.OperatorAddress.Hex(),
 			"target", op.OperatorAddress.Hex())
-		opNodeID := addressToNodeID(op.OperatorAddress)
 		if opNodeID == thisNodeID {
 			// Store own share and commitment in session
 			_ = session.HandleReceivedShare(thisNodeID, shares[thisNodeID])
@@ -681,7 +674,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 			// Find dealer's peer info for transport
 			var dealerPeer *peering.OperatorSetPeer
 			for _, op := range operators {
-				if addressToNodeID(op.OperatorAddress) == dealerID {
+				if util.AddressToNodeID(op.OperatorAddress) == dealerID {
 					dealerPeer = op
 					break
 				}
@@ -808,7 +801,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	participantIDs := make([]int, 0, len(receivedCommitments))
 
 	for _, op := range operators {
-		opNodeID := addressToNodeID(op.OperatorAddress)
+		opNodeID := util.AddressToNodeID(op.OperatorAddress)
 		if comm, ok := receivedCommitments[opNodeID]; ok {
 			allCommitments = append(allCommitments, comm)
 			participantIDs = append(participantIDs, opNodeID)
@@ -844,7 +837,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	}
 
 	// Use keccak256 hash of operator address as node ID (same as DKG)
-	thisNodeID := addressToNodeID(n.OperatorAddress)
+	thisNodeID := util.AddressToNodeID(n.OperatorAddress)
 
 	// Verify this operator is in the fetched operator set
 	operatorFound := false
@@ -889,7 +882,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 
 	// Send shares to all operators
 	for _, op := range operators {
-		opNodeID := addressToNodeID(op.OperatorAddress)
+		opNodeID := util.AddressToNodeID(op.OperatorAddress)
 		if opNodeID == thisNodeID {
 			// Store own share and commitment in session
 			_ = session.HandleReceivedShare(thisNodeID, shares[opNodeID])
@@ -937,7 +930,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 			// Find dealer's peer info for transport
 			var dealerPeer *peering.OperatorSetPeer
 			for _, op := range operators {
-				if addressToNodeID(op.OperatorAddress) == dealerID {
+				if util.AddressToNodeID(op.OperatorAddress) == dealerID {
 					dealerPeer = op
 					break
 				}
@@ -972,7 +965,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	}
 
 	// Wait for acknowledgements (as a dealer)
-	myNodeID := addressToNodeID(n.OperatorAddress)
+	myNodeID := util.AddressToNodeID(n.OperatorAddress)
 	if err := waitForAcks(session, myNodeID, protocolTimeout); err != nil {
 		return fmt.Errorf("insufficient reshare acknowledgements: %v", err)
 	}
@@ -1132,7 +1125,7 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		return fmt.Errorf("failed to fetch operators: %w", err)
 	}
 
-	thisNodeID := addressToNodeID(n.OperatorAddress)
+	thisNodeID := util.AddressToNodeID(n.OperatorAddress)
 
 	// Create reshare instance
 	n.resharer = reshare.NewReshare(thisNodeID, operators)
@@ -1161,7 +1154,7 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	participantIDs := make([]int, 0, len(session.commitments))
 
 	for _, op := range operators {
-		opNodeID := addressToNodeID(op.OperatorAddress)
+		opNodeID := util.AddressToNodeID(op.OperatorAddress)
 		if comm, ok := session.commitments[opNodeID]; ok {
 			allCommitments = append(allCommitments, comm)
 			participantIDs = append(participantIDs, opNodeID)
@@ -1473,7 +1466,7 @@ func (n *Node) VerifyOperatorBroadcast(
 		return fmt.Errorf("session not found")
 	}
 
-	myNodeID := addressToNodeID(n.OperatorAddress)
+	myNodeID := util.AddressToNodeID(n.OperatorAddress)
 
 	var myAck *types.Acknowledgement
 	for _, ack := range broadcast.Acknowledgements {

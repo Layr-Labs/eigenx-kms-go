@@ -11,6 +11,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
@@ -72,7 +73,7 @@ func createTestOperators(t *testing.T, numOperators int) []*peering.OperatorSetP
 // testNewReshare tests reshare instance creation
 func testNewReshare(t *testing.T) {
 	operators := createTestOperators(t, 5)
-	nodeID := addressToNodeID(operators[0].OperatorAddress)
+	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
 
 	r := NewReshare(nodeID, operators)
 
@@ -90,7 +91,7 @@ func testNewReshare(t *testing.T) {
 // testGenerateNewShares tests new share generation
 func testGenerateNewShares(t *testing.T) {
 	operators := createTestOperators(t, 3)
-	nodeID := addressToNodeID(operators[0].OperatorAddress)
+	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
 	threshold := 2 // (2*3+2)/3 = 2.67 -> 2
 
 	r := NewReshare(nodeID, operators)
@@ -113,7 +114,7 @@ func testGenerateNewShares(t *testing.T) {
 
 	// Verify all operators have shares
 	for _, op := range operators {
-		opNodeID := addressToNodeID(op.OperatorAddress)
+		opNodeID := util.AddressToNodeID(op.OperatorAddress)
 		if shares[opNodeID] == nil {
 			t.Errorf("Missing share for operator %s (ID: %d)", op.OperatorAddress.Hex(), opNodeID)
 		}
@@ -123,7 +124,7 @@ func testGenerateNewShares(t *testing.T) {
 // testGenerateNewSharesNilCurrentShare tests error handling for nil current share
 func testGenerateNewSharesNilCurrentShare(t *testing.T) {
 	operators := createTestOperators(t, 3)
-	nodeID := addressToNodeID(operators[0].OperatorAddress)
+	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
 	r := NewReshare(nodeID, operators)
 
 	_, _, err := r.GenerateNewShares(nil, 2)
@@ -135,7 +136,7 @@ func testGenerateNewSharesNilCurrentShare(t *testing.T) {
 // testVerifyNewShare tests new share verification
 func testVerifyNewShare(t *testing.T) {
 	operators := createTestOperators(t, 3)
-	nodeID := addressToNodeID(operators[0].OperatorAddress)
+	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
 	threshold := 2
 
 	r := NewReshare(nodeID, operators)
@@ -149,7 +150,7 @@ func testVerifyNewShare(t *testing.T) {
 	}
 
 	// Test valid share verification
-	targetNodeID := addressToNodeID(operators[1].OperatorAddress)
+	targetNodeID := util.AddressToNodeID(operators[1].OperatorAddress)
 	verifierReshare := NewReshare(targetNodeID, operators)
 	valid := verifierReshare.VerifyNewShare(nodeID, shares[targetNodeID], commitments)
 	if !valid {
@@ -168,7 +169,7 @@ func testVerifyNewShare(t *testing.T) {
 // testComputeNewKeyShare tests new key share computation
 func testComputeNewKeyShare(t *testing.T) {
 	operators := createTestOperators(t, 3)
-	nodeID := addressToNodeID(operators[0].OperatorAddress)
+	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
 
 	r := NewReshare(nodeID, operators)
 

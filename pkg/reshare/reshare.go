@@ -7,10 +7,9 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/merkle"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
-	"github.com/ethereum/go-ethereum/common"
-	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 )
 
 // Protocol represents the reshare protocol interface
@@ -18,13 +17,6 @@ type Protocol interface {
 	GenerateNewShares(currentShare *fr.Element, newThreshold int) (map[int]*fr.Element, []types.G2Point, error)
 	VerifyNewShare(fromID int, share *fr.Element, commitments []types.G2Point) bool
 	ComputeNewKeyShare(dealerIDs []int, shares map[int]*fr.Element, allCommitments [][]types.G2Point) *types.KeyShareVersion
-}
-
-// addressToNodeID converts an Ethereum address to a node ID using keccak256 hash
-func addressToNodeID(address common.Address) int {
-	hash := ethcrypto.Keccak256(address.Bytes())
-	nodeID := int(common.BytesToHash(hash).Big().Uint64())
-	return nodeID
 }
 
 // Reshare implements the reshare protocol
@@ -62,7 +54,7 @@ func (r *Reshare) GenerateNewShares(currentShare *fr.Element, newThreshold int) 
 	// Compute shares for all operators
 	newShares := make(map[int]*fr.Element)
 	for _, op := range r.operators {
-		opNodeID := addressToNodeID(op.OperatorAddress)
+		opNodeID := util.AddressToNodeID(op.OperatorAddress)
 		share := crypto.EvaluatePolynomial(r.poly, int64(opNodeID))
 		newShares[opNodeID] = share
 	}

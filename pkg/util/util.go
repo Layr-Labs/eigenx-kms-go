@@ -146,6 +146,7 @@ func DeriveAddressFromECDSAPrivateKey(pk *ecdsa.PrivateKey) (common.Address, err
 }
 
 // ValidateAppID validates that an application ID meets minimum requirements
+// AppID must be at least 5 characters long
 func ValidateAppID(appID string) error {
 	if appID == "" {
 		return fmt.Errorf("appID is empty")
@@ -154,4 +155,11 @@ func ValidateAppID(appID string) error {
 		return fmt.Errorf("appID is too short (minimum 5 characters)")
 	}
 	return nil
+}
+
+// AddressToNodeID converts an Ethereum address into a deterministic node ID.
+// The node ID is derived from the keccak256 hash of the address, matching the on-chain encoding.
+func AddressToNodeID(address common.Address) int {
+	hash := crypto.Keccak256(address.Bytes())
+	return int(common.BytesToHash(hash).Big().Uint64())
 }

@@ -10,10 +10,10 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/reshare"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/testutil"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
 	"github.com/ethereum/go-ethereum/common"
-	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 )
 
 // Test_ReshareIntegration tests the complete reshare protocol using real Node instances
@@ -156,7 +156,7 @@ func testReshareWithThresholdChange(t *testing.T) {
 
 	// Test that reshare module can generate new shares with new threshold
 	firstNodeAddr := cluster.Nodes[0].GetOperatorAddress()
-	firstNodeID := int(ethcrypto.Keccak256(firstNodeAddr.Bytes())[0])
+	firstNodeID := util.AddressToNodeID(firstNodeAddr)
 	resharer := reshare.NewReshare(firstNodeID, newOperators)
 	newShares, commitments, err := resharer.GenerateNewShares(activeVersion.PrivateShare, newThreshold)
 	if err != nil {
@@ -191,7 +191,7 @@ func testReshareSecretConsistency(t *testing.T) {
 	testOperators := createTestOperatorsForReshare(t, 5)
 	nodeIDs := make([]int, 5)
 	for i := 0; i < 5; i++ {
-		nodeIDs[i] = addressToNodeID(testOperators[i].OperatorAddress)
+		nodeIDs[i] = util.AddressToNodeID(testOperators[i].OperatorAddress)
 	}
 
 	// Create a known secret and proper polynomial shares using actual node IDs
@@ -261,13 +261,6 @@ func testReshareSecretConsistency(t *testing.T) {
 	t.Logf("  - Original secret preserved through reshare")
 	t.Logf("  - Lagrange interpolation working correctly")
 	t.Logf("  - Reshare module functions operating properly")
-}
-
-// addressToNodeID converts an Ethereum address to a node ID using keccak256 hash
-func addressToNodeID(address common.Address) int {
-	hash := ethcrypto.Keccak256(address.Bytes())
-	nodeID := int(common.BytesToHash(hash).Big().Uint64())
-	return nodeID
 }
 
 // createTestOperatorsForReshare creates test operators using the same pattern as other tests

@@ -6,6 +6,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/merkle"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
@@ -76,14 +77,14 @@ func TestAddressToNodeID(t *testing.T) {
 	addr1 := common.HexToAddress("0x1234567890123456789012345678901234567890")
 	addr2 := common.HexToAddress("0xABCDEF1234567890ABCDEF1234567890ABCDEF12")
 
-	id1 := addressToNodeID(addr1)
-	id2 := addressToNodeID(addr2)
+	id1 := util.AddressToNodeID(addr1)
+	id2 := util.AddressToNodeID(addr2)
 
 	// Different addresses should produce different IDs
 	require.NotEqual(t, id1, id2)
 
 	// Same address should produce same ID (deterministic)
-	id1_again := addressToNodeID(addr1)
+	id1_again := util.AddressToNodeID(addr1)
 	require.Equal(t, id1, id1_again)
 }
 

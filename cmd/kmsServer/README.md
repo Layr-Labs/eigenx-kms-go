@@ -46,7 +46,7 @@ Optional flags:
 
 ### Address-Based Identity
 - Operators identified by Ethereum addresses (not sequential node IDs)
-- Node IDs derived from addresses using `addressToNodeID(keccak256(address))`
+- Node IDs derived from addresses using `util.AddressToNodeID(address)`
 - Consistent identity across DKG, reshare, and client operations
 
 ### Authenticated Messaging

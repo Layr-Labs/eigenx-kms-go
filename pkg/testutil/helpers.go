@@ -10,7 +10,6 @@ import (
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
-	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 )
 
 // CreateTestOperators creates test operators from ChainConfig data
@@ -90,11 +89,4 @@ func CreateTestCommitments(t *testing.T, n int) []types.G2Point {
 		commitments[i] = *commitment
 	}
 	return commitments
-}
-
-// AddressToNodeID converts an Ethereum address to a node ID using keccak256 hash
-func AddressToNodeID(address common.Address) int {
-	hash := ethcrypto.Keccak256(address.Bytes())
-	nodeID := int(common.BytesToHash(hash).Big().Uint64())
-	return nodeID
 }

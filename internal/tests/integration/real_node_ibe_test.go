@@ -33,9 +33,7 @@ func Test_IBEIntegration(t *testing.T) {
 
 	isZero, err := masterPubKey.IsZero()
 	require.NoError(t, err, "Failed to check if master public key is zero")
-	if isZero {
-		t.Fatal("Master public key should not be zero")
-	}
+	require.False(t, isZero, "Master public key should not be zero")
 
 	t.Logf("  ✓ Retrieved master public key from operators via HTTP")
 
@@ -43,9 +41,7 @@ func Test_IBEIntegration(t *testing.T) {
 	ciphertext, err := kmsClient.EncryptForApp(appID, masterPubKey, plaintext)
 	require.NoError(t, err, "Failed to encrypt data")
 
-	if len(ciphertext) == 0 {
-		t.Fatal("Ciphertext should not be empty")
-	}
+	require.NotEmpty(t, ciphertext, "Ciphertext should not be empty")
 
 	t.Logf("  ✓ Encrypted %d bytes → %d bytes ciphertext", len(plaintext), len(ciphertext))
 
@@ -54,9 +50,7 @@ func Test_IBEIntegration(t *testing.T) {
 	require.NoError(t, err, "Failed to decrypt data")
 
 	// Step 4: Verify decrypted data matches original
-	if string(decrypted) != string(plaintext) {
-		t.Fatalf("Decryption mismatch: expected %q, got %q", string(plaintext), string(decrypted))
-	}
+	require.Equal(t, string(plaintext), string(decrypted), "Decryption mismatch")
 
 	t.Logf("✓ IBE integration test passed")
 	t.Logf("  - Client queried /pubkey endpoints for master public key")

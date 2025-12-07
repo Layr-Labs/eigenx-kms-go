@@ -10,6 +10,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
@@ -101,7 +102,7 @@ func testCalculateThreshold(t *testing.T) {
 // testNewDKG tests DKG instance creation
 func testNewDKG(t *testing.T) {
 	operators := createTestOperators(t, 3)
-	nodeID := addressToNodeID(operators[0].OperatorAddress)
+	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
 	threshold := CalculateThreshold(len(operators))
 
 	dkg := NewDKG(nodeID, threshold, operators)
@@ -123,7 +124,7 @@ func testNewDKG(t *testing.T) {
 // testGenerateShares tests share generation
 func testGenerateShares(t *testing.T) {
 	operators := createTestOperators(t, 5)
-	nodeID := addressToNodeID(operators[0].OperatorAddress)
+	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
 	threshold := CalculateThreshold(len(operators))
 	dkg := NewDKG(nodeID, threshold, operators)
 
@@ -141,7 +142,7 @@ func testGenerateShares(t *testing.T) {
 
 	// Verify all operators have shares
 	for _, op := range operators {
-		opNodeID := addressToNodeID(op.OperatorAddress)
+		opNodeID := util.AddressToNodeID(op.OperatorAddress)
 		if shares[opNodeID] == nil {
 			t.Errorf("Missing share for operator %s (ID: %d)", op.OperatorAddress.Hex(), opNodeID)
 		}
@@ -151,7 +152,7 @@ func testGenerateShares(t *testing.T) {
 // testVerifyShare tests share verification
 func testVerifyShare(t *testing.T) {
 	operators := createTestOperators(t, 3)
-	nodeID := addressToNodeID(operators[0].OperatorAddress)
+	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
 	threshold := CalculateThreshold(len(operators))
 	dealerDKG := NewDKG(nodeID, threshold, operators)
 
@@ -161,7 +162,7 @@ func testVerifyShare(t *testing.T) {
 	}
 
 	// Test verification with valid share - create verifier DKG instance
-	targetNodeID := addressToNodeID(operators[1].OperatorAddress)
+	targetNodeID := util.AddressToNodeID(operators[1].OperatorAddress)
 	verifierDKG := NewDKG(targetNodeID, threshold, operators)
 	valid := verifierDKG.VerifyShare(nodeID, shares[targetNodeID], commitments)
 	if !valid {
@@ -180,7 +181,7 @@ func testVerifyShare(t *testing.T) {
 // testFinalizeKeyShare tests key finalization
 func testFinalizeKeyShare(t *testing.T) {
 	operators := createTestOperators(t, 3)
-	nodeID := addressToNodeID(operators[0].OperatorAddress)
+	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
 	threshold := CalculateThreshold(len(operators))
 	dkg := NewDKG(nodeID, threshold, operators)
 
@@ -193,7 +194,7 @@ func testFinalizeKeyShare(t *testing.T) {
 	participantIDs := make([]int, len(operators))
 	allCommitments := [][]types.G2Point{commitments}
 	for i, op := range operators {
-		participantIDs[i] = addressToNodeID(op.OperatorAddress)
+		participantIDs[i] = util.AddressToNodeID(op.OperatorAddress)
 	}
 
 	keyVersion := dkg.FinalizeKeyShare(shares, allCommitments, participantIDs)
@@ -211,8 +212,8 @@ func testFinalizeKeyShare(t *testing.T) {
 // testCreateAcknowledgement tests acknowledgement creation
 func testCreateAcknowledgement(t *testing.T) {
 	operators := createTestOperators(t, 3)
-	nodeID := addressToNodeID(operators[0].OperatorAddress)
-	dealerID := addressToNodeID(operators[1].OperatorAddress)
+	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
+	dealerID := util.AddressToNodeID(operators[1].OperatorAddress)
 	epoch := int64(12345)
 
 	// Create test commitments with random g2 points
