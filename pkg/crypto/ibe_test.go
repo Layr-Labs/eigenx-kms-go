@@ -102,33 +102,25 @@ func testGetAppPublicKey(t *testing.T) {
 
 	// Get the application's "public key" (Q_ID = H_1(app_id))
 	appPubKey, err := GetAppPublicKey(appID)
-	if err != nil {
-		t.Fatalf("Failed to get app public key: %v", err)
-	}
+	require.NoError(t, err, "Failed to get app public key")
 
 	// Verify it's not zero
 	isZero, err := appPubKey.IsZero()
-	if err != nil {
-		t.Fatalf("Failed to check if G1 point is zero: %v", err)
-	}
+	require.NoError(t, err, "Failed to check if G1 point is zero")
 	if isZero {
 		t.Error("App public key should not be zero")
 	}
 
 	// Verify it's deterministic
 	appPubKey2, err := GetAppPublicKey(appID)
-	if err != nil {
-		t.Fatalf("Failed to get app public key: %v", err)
-	}
+	require.NoError(t, err, "Failed to get app public key")
 	if !appPubKey.IsEqual(appPubKey2) {
 		t.Error("App public key should be deterministic")
 	}
 
 	// Verify different apps have different keys
 	differentApp, err := GetAppPublicKey("different-app")
-	if err != nil {
-		t.Fatalf("Failed to get app public key: %v", err)
-	}
+	require.NoError(t, err, "Failed to get app public key")
 	if appPubKey.IsEqual(differentApp) {
 		t.Error("Different apps should have different public keys")
 	}
@@ -153,9 +145,7 @@ func testMasterPublicKeyDerivation(t *testing.T) {
 		commitments := make([]types.G2Point, threshold)
 		for k := 0; k < threshold; k++ {
 			commitment, err := ScalarMulG2(G2Generator, &poly[k])
-			if err != nil {
-				t.Fatalf("Failed to scalar multiply G2: %v", err)
-			}
+			require.NoError(t, err, "Failed to scalar multiply G2")
 			commitments[k] = *commitment
 		}
 		allCommitments[i] = commitments
@@ -163,15 +153,11 @@ func testMasterPublicKeyDerivation(t *testing.T) {
 
 	// Compute master public key
 	masterPubKey, err := ComputeMasterPublicKey(allCommitments)
-	if err != nil {
-		t.Fatalf("Failed to compute master public key: %v", err)
-	}
+	require.NoError(t, err, "Failed to compute master public key")
 
 	// Verify it's not zero/identity
 	isZero, err := masterPubKey.IsZero()
-	if err != nil {
-		t.Fatalf("Failed to check if G2 point is zero: %v", err)
-	}
+	require.NoError(t, err, "Failed to check if G2 point is zero")
 	if isZero {
 		t.Error("Master public key should not be zero")
 	}
@@ -180,9 +166,7 @@ func testMasterPublicKeyDerivation(t *testing.T) {
 	expected := allCommitments[0][0] // First commitment from first node
 	for i := 1; i < numNodes; i++ {
 		tmpExpected, err := AddG2(expected, allCommitments[i][0])
-		if err != nil {
-			t.Fatalf("Failed to add G2: %v", err)
-		}
+		require.NoError(t, err, "Failed to add G2")
 		expected = *tmpExpected
 	}
 
@@ -272,35 +256,23 @@ func testIBEEncryptionDecryption(t *testing.T) {
 
 	// Create a mock master public key
 	masterSecret, err := new(fr.Element).SetRandom()
-	if err != nil {
-		t.Fatalf("Failed to set random master secret: %v", err)
-	}
+	require.NoError(t, err, "Failed to set random master secret")
 	masterPubKey, err := ScalarMulG2(G2Generator, masterSecret)
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G2: %v", err)
-	}
+	require.NoError(t, err, "Failed to scalar multiply G2")
 
 	// Encrypt data for the application
 	ciphertext, err := EncryptForApp(appID, *masterPubKey, plaintext)
-	if err != nil {
-		t.Fatalf("Encryption failed: %v", err)
-	}
+	require.NoError(t, err, "Encryption failed")
 
 	// Generate application private key (what threshold signature recovery would produce)
 	appHash, err := HashToG1(appID)
-	if err != nil {
-		t.Fatalf("Failed to hash to G1: %v", err)
-	}
+	require.NoError(t, err, "Failed to hash to G1")
 	appPrivateKey, err := ScalarMulG1(*appHash, masterSecret)
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G1: %v", err)
-	}
+	require.NoError(t, err, "Failed to scalar multiply G1")
 
 	// Decrypt the data
 	decrypted, err := DecryptForApp(appID, *appPrivateKey, ciphertext)
-	if err != nil {
-		t.Fatalf("Decryption failed: %v", err)
-	}
+	require.NoError(t, err, "Decryption failed")
 
 	// Verify decryption worked
 	if string(decrypted) != string(plaintext) {
@@ -309,13 +281,9 @@ func testIBEEncryptionDecryption(t *testing.T) {
 
 	// Test with wrong app ID (should fail authentication)
 	wrongAppHash, err := HashToG1("wrong-app")
-	if err != nil {
-		t.Fatalf("Failed to hash to G1: %v", err)
-	}
+	require.NoError(t, err, "Failed to hash to G1")
 	wrongAppKey, err := ScalarMulG1(*wrongAppHash, masterSecret)
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G1: %v", err)
-	}
+	require.NoError(t, err, "Failed to scalar multiply G1")
 
 	// Decryption with wrong app key should fail authentication
 	_, err = DecryptForApp("wrong-app", *wrongAppKey, ciphertext)
@@ -359,49 +327,30 @@ func testEncryptionPersistenceAcrossReshare(t *testing.T) {
 
 	// Create master public key and encrypt data
 	masterPubKey, err := ScalarMulG2(G2Generator, masterSecret)
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G2: %v", err)
-	}
+	require.NoError(t, err, "Failed to scalar multiply G2")
 	ciphertext, err := EncryptForApp(appID, *masterPubKey, plaintext)
-	if err != nil {
-		t.Fatalf("Initial encryption failed: %v", err)
-	}
+	require.NoError(t, err, "Initial encryption failed")
 
 	// Verify initial decryption works
 	appHash, err := HashToG1(appID)
-	if err != nil {
-		t.Fatalf("Failed to hash to G1: %v", err)
-	}
+	require.NoError(t, err, "Failed to hash to G1")
 
 	firstShare, err := ScalarMulG1(*appHash, initialShares[0])
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G1: %v", err)
-	}
+	require.NoError(t, err, "Failed to scalar multiply G1")
 	secondShare, err := ScalarMulG1(*appHash, initialShares[1])
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G1: %v", err)
-	}
+	require.NoError(t, err, "Failed to scalar multiply G1")
 	thirdShare, err := ScalarMulG1(*appHash, initialShares[2])
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G1: %v", err)
-	}
+	require.NoError(t, err, "Failed to scalar multiply G1")
 	initialAppPrivateKey, err := RecoverAppPrivateKey(appID, map[int]types.G1Point{
 		1: *firstShare,
 		2: *secondShare,
 		3: *thirdShare,
 	}, initialThreshold)
-	if err != nil {
-		t.Fatalf("Failed to recover app private key: %v", err)
-	}
+	require.NoError(t, err, "Failed to recover app private key")
 	decrypted1, err := DecryptForApp(appID, *initialAppPrivateKey, ciphertext)
-	if err != nil {
-		t.Fatalf("Initial decryption failed: %v", err)
-	}
+	require.NoError(t, err, "Initial decryption failed")
 
-	if string(decrypted1) != string(plaintext) {
-		t.Fatalf("Initial decryption incorrect. Expected: %s, Got: %s",
-			string(plaintext), string(decrypted1))
-	}
+	require.Equal(t, string(plaintext), string(decrypted1), "Initial decryption incorrect")
 
 	// === Phase 3: Reshare - operator set changes (nodes 1-4 remain, 5 leaves, 6 joins) ===
 
@@ -436,35 +385,23 @@ func testEncryptionPersistenceAcrossReshare(t *testing.T) {
 	// === Phase 4: Verify encryption still works after reshare ===
 
 	newAppHash, err := HashToG1(appID)
-	if err != nil {
-		t.Fatalf("Failed to hash to G1: %v", err)
-	}
+	require.NoError(t, err, "Failed to hash to G1")
 	newFirstShare, err := ScalarMulG1(*newAppHash, newShares[1])
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G1: %v", err)
-	}
+	require.NoError(t, err, "Failed to scalar multiply G1")
 	newSecondShare, err := ScalarMulG1(*newAppHash, newShares[2])
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G1: %v", err)
-	}
+	require.NoError(t, err, "Failed to scalar multiply G1")
 	newThirdShare, err := ScalarMulG1(*newAppHash, newShares[3])
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G1: %v", err)
-	}
+	require.NoError(t, err, "Failed to scalar multiply G1")
 	// Recover app private key using new shares
 	newAppPrivateKey, err := RecoverAppPrivateKey(appID, map[int]types.G1Point{
 		1: *newFirstShare,
 		2: *newSecondShare,
 		3: *newThirdShare,
 	}, newThreshold)
-	if err != nil {
-		t.Fatalf("Failed to recover app private key: %v", err)
-	}
+	require.NoError(t, err, "Failed to recover app private key")
 	// Decrypt with new key - should still work!
 	decrypted2, err := DecryptForApp(appID, *newAppPrivateKey, ciphertext)
-	if err != nil {
-		t.Fatalf("Post-reshare decryption failed: %v", err)
-	}
+	require.NoError(t, err, "Post-reshare decryption failed")
 
 	if string(decrypted2) != string(plaintext) {
 		t.Errorf("Post-reshare decryption incorrect. Expected: %s, Got: %s",
@@ -486,9 +423,7 @@ func testThresholdSignatureRecovery(t *testing.T) {
 
 	// Create master secret and polynomial
 	masterSecret, err := new(fr.Element).SetRandom()
-	if err != nil {
-		t.Fatalf("Failed to set random master secret: %v", err)
-	}
+	require.NoError(t, err, "Failed to set random master secret")
 	poly := make(polynomial.Polynomial, threshold)
 	poly[0].Set(masterSecret)
 	for i := 1; i < threshold; i++ {
@@ -505,13 +440,9 @@ func testThresholdSignatureRecovery(t *testing.T) {
 	partialSigs := make(map[int]types.G1Point)
 	for nodeID, share := range keyShares {
 		appHash, err := HashToG1(appID)
-		if err != nil {
-			t.Fatalf("Failed to hash to G1: %v", err)
-		}
+		require.NoError(t, err, "Failed to hash to G1")
 		partialSig, err := ScalarMulG1(*appHash, share)
-		if err != nil {
-			t.Fatalf("Failed to scalar multiply G1: %v", err)
-		}
+		require.NoError(t, err, "Failed to scalar multiply G1")
 		partialSigs[nodeID] = *partialSig
 	}
 
@@ -523,15 +454,11 @@ func testThresholdSignatureRecovery(t *testing.T) {
 	}
 
 	recoveredKey, err := RecoverAppPrivateKey(appID, thresholdSigs, threshold)
-	if err != nil {
-		t.Fatalf("Failed to recover app private key: %v", err)
-	}
+	require.NoError(t, err, "Failed to recover app private key")
 
 	// Verify the key is not zero
 	isZero, err := recoveredKey.IsZero()
-	if err != nil {
-		t.Fatalf("Failed to check if G1 point is zero: %v", err)
-	}
+	require.NoError(t, err, "Failed to check if G1 point is zero")
 	if isZero {
 		t.Error("Recovered key should not be zero")
 	}
@@ -544,15 +471,11 @@ func testThresholdSignatureRecovery(t *testing.T) {
 	}
 
 	recoveredKey2, err := RecoverAppPrivateKey(appID, thresholdSigs2, threshold)
-	if err != nil {
-		t.Fatalf("Failed to recover app private key: %v", err)
-	}
+	require.NoError(t, err, "Failed to recover app private key")
 
 	// Should recover equivalent keys (both should be non-zero)
 	isZero, err = recoveredKey2.IsZero()
-	if err != nil {
-		t.Fatalf("Failed to check if G1 point is zero: %v", err)
-	}
+	require.NoError(t, err, "Failed to check if G1 point is zero")
 	if isZero {
 		t.Error("Second recovered key should not be zero")
 	}

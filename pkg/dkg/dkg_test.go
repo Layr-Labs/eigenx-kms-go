@@ -14,6 +14,7 @@ import (
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/stretchr/testify/require"
 )
 
 // Test_DKGProtocol runs all DKG protocol unit tests
@@ -30,9 +31,7 @@ func Test_DKGProtocol(t *testing.T) {
 func createTestOperators(t *testing.T, numOperators int) []*peering.OperatorSetPeer {
 	projectRoot := tests.GetProjectRootPath()
 	chainConfig, err := tests.ReadChainConfig(projectRoot)
-	if err != nil {
-		t.Fatalf("Failed to read chain config: %v", err)
-	}
+	require.NoError(t, err, "Failed to read chain config")
 
 	operators := make([]*peering.OperatorSetPeer, numOperators)
 	addresses := []string{
@@ -53,9 +52,7 @@ func createTestOperators(t *testing.T, numOperators int) []*peering.OperatorSetP
 	for i := 0; i < numOperators && i < len(addresses); i++ {
 		// Create BN254 public key from private key
 		privKey, err := bn254.NewPrivateKeyFromHexString(privateKeys[i])
-		if err != nil {
-			t.Fatalf("Failed to create BN254 private key: %v", err)
-		}
+		require.NoError(t, err, "Failed to create BN254 private key")
 
 		operators[i] = &peering.OperatorSetPeer{
 			OperatorAddress: common.HexToAddress(addresses[i]),
@@ -107,9 +104,7 @@ func testNewDKG(t *testing.T) {
 
 	dkg := NewDKG(nodeID, threshold, operators)
 
-	if dkg == nil {
-		t.Fatal("Expected non-nil DKG instance")
-	}
+	require.NotNil(t, dkg, "Expected non-nil DKG instance")
 	if dkg.nodeID != nodeID {
 		t.Errorf("Expected nodeID %d, got %d", nodeID, dkg.nodeID)
 	}
@@ -129,9 +124,7 @@ func testGenerateShares(t *testing.T) {
 	dkg := NewDKG(nodeID, threshold, operators)
 
 	shares, commitments, err := dkg.GenerateShares()
-	if err != nil {
-		t.Fatalf("GenerateShares failed: %v", err)
-	}
+	require.NoError(t, err, "GenerateShares failed")
 
 	if len(shares) != len(operators) {
 		t.Errorf("Expected %d shares, got %d", len(operators), len(shares))
@@ -157,9 +150,7 @@ func testVerifyShare(t *testing.T) {
 	dealerDKG := NewDKG(nodeID, threshold, operators)
 
 	shares, commitments, err := dealerDKG.GenerateShares()
-	if err != nil {
-		t.Fatalf("GenerateShares failed: %v", err)
-	}
+	require.NoError(t, err, "GenerateShares failed")
 
 	// Test verification with valid share - create verifier DKG instance
 	targetNodeID := util.AddressToNodeID(operators[1].OperatorAddress)
@@ -186,9 +177,7 @@ func testFinalizeKeyShare(t *testing.T) {
 	dkg := NewDKG(nodeID, threshold, operators)
 
 	shares, commitments, err := dkg.GenerateShares()
-	if err != nil {
-		t.Fatalf("GenerateShares failed: %v", err)
-	}
+	require.NoError(t, err, "GenerateShares failed")
 
 	// Create participant IDs from addresses
 	participantIDs := make([]int, len(operators))
@@ -198,9 +187,7 @@ func testFinalizeKeyShare(t *testing.T) {
 	}
 
 	keyVersion := dkg.FinalizeKeyShare(shares, allCommitments, participantIDs)
-	if keyVersion == nil {
-		t.Fatal("Expected non-nil key version")
-	}
+	require.NotNil(t, keyVersion, "Expected non-nil key version")
 	if keyVersion.PrivateShare == nil {
 		t.Error("Expected non-nil private share")
 	}
@@ -237,9 +224,7 @@ func testCreateAcknowledgement(t *testing.T) {
 
 	ack := CreateAcknowledgement(nodeID, dealerID, epoch, &share, commitments, signer)
 
-	if ack == nil {
-		t.Fatal("Expected non-nil acknowledgement")
-	}
+	require.NotNil(t, ack, "Expected non-nil acknowledgement")
 	if ack.PlayerID != nodeID {
 		t.Errorf("Expected PlayerID %d, got %d", nodeID, ack.PlayerID)
 	}
@@ -288,14 +273,10 @@ func Test_BuildAcknowledgementMerkleTree(t *testing.T) {
 
 	// Build merkle tree
 	tree, err := BuildAcknowledgementMerkleTree(acks)
-	if err != nil {
-		t.Fatalf("Failed to build merkle tree: %v", err)
-	}
+	require.NoError(t, err, "Failed to build merkle tree")
 
 	// Verify tree was created
-	if tree == nil {
-		t.Fatal("Expected non-nil merkle tree")
-	}
+	require.NotNil(t, tree, "Expected non-nil merkle tree")
 
 	// Verify root is not zero
 	if tree.Root == [32]byte{} {
@@ -311,9 +292,7 @@ func Test_BuildAcknowledgementMerkleTree(t *testing.T) {
 // Test_BuildAcknowledgementMerkleTree_Empty tests empty acks (Phase 4)
 func Test_BuildAcknowledgementMerkleTree_Empty(t *testing.T) {
 	tree, err := BuildAcknowledgementMerkleTree([]*types.Acknowledgement{})
-	if err != nil {
-		t.Fatalf("Should handle empty acks: %v", err)
-	}
+	require.NoError(t, err, "Should handle empty acks")
 	if tree != nil {
 		t.Error("Expected nil tree for empty acks")
 	}

@@ -7,6 +7,7 @@ import (
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
+	"github.com/stretchr/testify/require"
 )
 
 // Test_CryptoOperations is the top-level test function that runs all crypto operation tests
@@ -47,25 +48,19 @@ func testScalarMulG1(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			result, err := ScalarMulG1(G1Generator, tt.scalar)
-			if err != nil {
-				t.Fatalf("Failed to scalar multiply G1: %v", err)
-			}
+			require.NoError(t, err, "Failed to scalar multiply G1")
 
 			// Verify result is not zero (unless scalar is zero)
 			// Note: Y is always 0 in our encoding, X contains the marshaled point
 			resultIsZero, err := result.IsZero()
-			if err != nil {
-				t.Fatalf("Failed to check if G1 point is zero: %v", err)
-			}
+			require.NoError(t, err, "Failed to check if G1 point is zero")
 			if !tt.scalar.IsZero() && resultIsZero {
 				t.Error("Expected non-zero result for non-zero scalar")
 			}
 
 			// Verify deterministic results
 			result2, err := ScalarMulG1(G1Generator, tt.scalar)
-			if err != nil {
-				t.Fatalf("Failed to scalar multiply G1: %v", err)
-			}
+			require.NoError(t, err, "Failed to scalar multiply G1")
 			if !result2.IsEqual(result) {
 				t.Error("Scalar multiplication should be deterministic")
 			}
@@ -78,25 +73,19 @@ func testScalarMulG2(t *testing.T) {
 	scalar := new(fr.Element).SetInt64(42)
 
 	result, err := ScalarMulG2(G2Generator, scalar)
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G2: %v", err)
-	}
+	require.NoError(t, err, "Failed to scalar multiply G2")
 
 	// Verify result is not zero
 	// Note: Y is always 0 in our encoding, X contains the marshaled point
 	resultIsZero, err := result.IsZero()
-	if err != nil {
-		t.Fatalf("Failed to check if G2 point is zero: %v", err)
-	}
+	require.NoError(t, err, "Failed to check if G2 point is zero")
 	if resultIsZero {
 		t.Error("Expected non-zero result")
 	}
 
 	// Verify deterministic
 	result2, err := ScalarMulG2(G2Generator, scalar)
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G2: %v", err)
-	}
+	require.NoError(t, err, "Failed to scalar multiply G2")
 	if !result.IsEqual(result2) {
 		t.Error("Scalar multiplication should be deterministic")
 	}
@@ -109,25 +98,17 @@ func testAddG1(t *testing.T) {
 	scalar2 := new(fr.Element).SetInt64(2)
 
 	point1, err := ScalarMulG1(G1Generator, scalar1)
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G1: %v", err)
-	}
+	require.NoError(t, err, "Failed to scalar multiply G1")
 	point2, err := ScalarMulG1(G1Generator, scalar2)
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G1: %v", err)
-	}
+	require.NoError(t, err, "Failed to scalar multiply G1")
 
 	// Add them
 	result, err := AddG1(*point1, *point2)
-	if err != nil {
-		t.Fatalf("Failed to add G1: %v", err)
-	}
+	require.NoError(t, err, "Failed to add G1")
 
 	// Verify commutativity: a + b = b + a
 	result2, err := AddG1(*point2, *point1)
-	if err != nil {
-		t.Fatalf("Failed to add G1: %v", err)
-	}
+	require.NoError(t, err, "Failed to add G1")
 	if !result.IsEqual(result2) {
 		t.Error("Addition should be commutative")
 	}
@@ -135,9 +116,7 @@ func testAddG1(t *testing.T) {
 	// Verify adding identity
 	identity := types.ZeroG1Point()
 	result3, err := AddG1(*point1, *identity)
-	if err != nil {
-		t.Fatalf("Failed to add G1: %v", err)
-	}
+	require.NoError(t, err, "Failed to add G1")
 	if !result3.IsEqual(point1) {
 		t.Error("Adding identity should return original point")
 	}
@@ -149,27 +128,17 @@ func testAddG2(t *testing.T) {
 	scalar2 := new(fr.Element).SetInt64(5)
 
 	point1, err := ScalarMulG2(G2Generator, scalar1)
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G2: %v", err)
-	}
+	require.NoError(t, err, "Failed to scalar multiply G2")
 	point2, err := ScalarMulG2(G2Generator, scalar2)
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G2: %v", err)
-	}
+	require.NoError(t, err, "Failed to scalar multiply G2")
 
 	result, err := AddG2(*point1, *point2)
-	if err != nil {
-		t.Fatalf("Failed to add G2: %v", err)
-	}
+	require.NoError(t, err, "Failed to add G2")
 
 	// Verify commutativity
 	result2, err := AddG2(*point2, *point1)
-	if err != nil {
-		t.Fatalf("Failed to add G2: %v", err)
-	}
-	if !result.IsEqual(result2) {
-		t.Fatalf("Failed to compare G2 points: %v", err)
-	}
+	require.NoError(t, err, "Failed to add G2")
+	require.True(t, result.IsEqual(result2), "Addition should be commutative")
 }
 
 // testHashToG1 tests hashing to G1
@@ -186,15 +155,11 @@ func testHashToG1(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.appID, func(t *testing.T) {
 			result, err := HashToG1(tt.appID)
-			if err != nil {
-				t.Fatalf("Failed to hash to G1: %v", err)
-			}
+			require.NoError(t, err, "Failed to hash to G1")
 
 			// Verify deterministic
 			result2, err := HashToG1(tt.appID)
-			if err != nil {
-				t.Fatalf("Failed to hash to G1: %v", err)
-			}
+			require.NoError(t, err, "Failed to hash to G1")
 			if !result.IsEqual(result2) {
 				t.Error("Hash should be deterministic")
 			}
@@ -202,9 +167,7 @@ func testHashToG1(t *testing.T) {
 			// Verify different inputs give different outputs
 			if tt.appID != "" {
 				different, err := HashToG1(tt.appID + "-modified")
-				if err != nil {
-					t.Fatalf("Failed to hash to G1: %v", err)
-				}
+				require.NoError(t, err, "Failed to hash to G1")
 				if result.IsEqual(different) {
 					t.Error("Different inputs should give different outputs")
 				}
@@ -281,9 +244,7 @@ func testRecoverSecret(t *testing.T) {
 
 	// Recover secret
 	recovered, err := RecoverSecret(shares)
-	if err != nil {
-		t.Fatalf("Failed to recover secret: %v", err)
-	}
+	require.NoError(t, err, "Failed to recover secret")
 
 	if !recovered.Equal(secret) {
 		t.Errorf("Failed to recover secret: got %v, expected %v", recovered, secret)
@@ -296,9 +257,7 @@ func testRecoverSecret(t *testing.T) {
 	subset[3] = shares[3]
 
 	recoveredSubset, err := RecoverSecret(subset)
-	if err != nil {
-		t.Fatalf("Failed to recover secret: %v", err)
-	}
+	require.NoError(t, err, "Failed to recover secret")
 	if !recoveredSubset.Equal(secret) {
 		t.Error("Failed to recover secret with threshold shares")
 	}
@@ -364,31 +323,23 @@ func testRecoverAppPrivateKey(t *testing.T) {
 
 	// Create partial signatures using the shares
 	msgPoint, err := HashToG1(appID)
-	if err != nil {
-		t.Fatalf("Failed to hash to G1: %v", err)
-	}
+	require.NoError(t, err, "Failed to hash to G1")
 	partialSigs := make(map[int]types.G1Point)
 
 	// Use first `threshold` shares
 	for i := 1; i <= threshold; i++ {
 		partialSig, err := ScalarMulG1(*msgPoint, shares[i])
-		if err != nil {
-			t.Fatalf("Failed to scalar multiply G1: %v", err)
-		}
+		require.NoError(t, err, "Failed to scalar multiply G1")
 		partialSigs[i] = *partialSig
 	}
 
 	// Recover the key
 	recovered, err := RecoverAppPrivateKey(appID, partialSigs, threshold)
-	if err != nil {
-		t.Fatalf("Failed to recover app private key: %v", err)
-	}
+	require.NoError(t, err, "Failed to recover app private key")
 
 	// The recovered key should be secret * H(appID)
 	expected, err := ScalarMulG1(*msgPoint, secret)
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G1: %v", err)
-	}
+	require.NoError(t, err, "Failed to scalar multiply G1")
 
 	if !recovered.IsEqual(expected) {
 		t.Error("Recovered key doesn't match expected")
@@ -396,9 +347,7 @@ func testRecoverAppPrivateKey(t *testing.T) {
 
 	// Verify deterministic recovery
 	recovered2, err := RecoverAppPrivateKey(appID, partialSigs, threshold)
-	if err != nil {
-		t.Fatalf("Failed to recover app private key: %v", err)
-	}
+	require.NoError(t, err, "Failed to recover app private key")
 	if !recovered.IsEqual(recovered2) {
 		t.Error("Recovery should be deterministic")
 	}
@@ -412,17 +361,11 @@ func testComputeMasterPublicKey(t *testing.T) {
 	scalar3 := new(fr.Element).SetInt64(30)
 
 	commitment1, err := ScalarMulG2(G2Generator, scalar1)
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G2: %v", err)
-	}
+	require.NoError(t, err, "Failed to scalar multiply G2")
 	commitment2, err := ScalarMulG2(G2Generator, scalar2)
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G2: %v", err)
-	}
+	require.NoError(t, err, "Failed to scalar multiply G2")
 	commitment3, err := ScalarMulG2(G2Generator, scalar3)
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G2: %v", err)
-	}
+	require.NoError(t, err, "Failed to scalar multiply G2")
 
 	allCommitments := [][]types.G2Point{
 		{*commitment1},
@@ -431,17 +374,13 @@ func testComputeMasterPublicKey(t *testing.T) {
 	}
 
 	masterPK, err := ComputeMasterPublicKey(allCommitments)
-	if err != nil {
-		t.Fatalf("Failed to compute master public key: %v", err)
-	}
+	require.NoError(t, err, "Failed to compute master public key")
 
 	// Verify it's the sum of first commitments
 	expected := allCommitments[0][0]
 	for i := 1; i < len(allCommitments); i++ {
 		tmpExpected, err := AddG2(expected, allCommitments[i][0])
-		if err != nil {
-			t.Fatalf("Failed to add G2: %v", err)
-		}
+		require.NoError(t, err, "Failed to add G2")
 		expected = *tmpExpected
 	}
 

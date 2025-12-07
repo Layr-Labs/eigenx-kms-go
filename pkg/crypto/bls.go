@@ -28,14 +28,16 @@ const (
 	ibeVersion = byte(0x01) // Current version of the ciphertext format
 
 	// Key derivation constants
-	hkdfSalt = "eigenx-kms-go-ibe-encryption" // Salt for HKDF key derivation
+	// hkdfSalt provides domain separation for IBE-derived keys. Keeping it deterministic
+	// and project-specific.
+	hkdfSalt = "eigenx-kms-go-ibe-encryption"
 
 	// Size constants
 	magicSize   = 3 // Size of magic bytes
 	versionSize = 1 // Size of version byte
 	headerSize  = magicSize + versionSize
 	g2Size      = 96 // Compressed G2 point size
-	nonceSize   = 12 // AES-GCM nonce size (fixed at 12 bytes)
+	nonceSize   = 12 // AES-GCM nonce size (96-bit nonce as recommended by NIST SP 800-38D)
 	tagSize     = 16 // AES-GCM tag size
 
 	// Minimum ciphertext size
@@ -237,10 +239,11 @@ func ComputeMasterPublicKey(allCommitments [][]types.G2Point) (*types.G2Point, e
 
 	for _, commitments := range allCommitments {
 		if len(commitments) > 0 {
-			masterPK, err = AddG2(*masterPK, commitments[0])
+			sum, err := AddG2(*masterPK, commitments[0])
 			if err != nil {
 				return nil, err
 			}
+			masterPK = sum
 		}
 	}
 

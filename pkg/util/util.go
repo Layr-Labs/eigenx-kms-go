@@ -159,6 +159,7 @@ func ValidateAppID(appID string) error {
 
 // AddressToNodeID converts an Ethereum address into a deterministic node ID.
 // The node ID is derived from the keccak256 hash of the address, matching the on-chain encoding.
+// audit: Node ID Collision Vulnerability
 func AddressToNodeID(address common.Address) int {
 	hash := crypto.Keccak256(address.Bytes())
 	return int(common.BytesToHash(hash).Big().Uint64())
