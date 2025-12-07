@@ -124,10 +124,28 @@ func (r *Reshare) ComputeNewKeyShare(dealerIDs []int, shares map[int]*fr.Element
 		newShare.Add(newShare, term)
 	}
 
+	// Aggregate commitments from all dealers element-wise (mirrors DKG finalization)
+	var combinedCommitments []types.G2Point
+	if len(allCommitments) > 0 && len(allCommitments[0]) > 0 {
+		combinedCommitments = make([]types.G2Point, len(allCommitments[0]))
+		for i := range combinedCommitments {
+			combinedCommitments[i] = *types.ZeroG2Point()
+		}
+		for _, commitments := range allCommitments {
+			for idx, commitment := range commitments {
+				sum, err := crypto.AddG2(combinedCommitments[idx], commitment)
+				if err != nil {
+					continue
+				}
+				combinedCommitments[idx] = *sum
+			}
+		}
+	}
+
 	return &types.KeyShareVersion{
 		Version:        0, // TODO: Use proper epoch calculation
 		PrivateShare:   newShare,
-		Commitments:    allCommitments[0],
+		Commitments:    combinedCommitments,
 		IsActive:       false,
 		ParticipantIDs: dealerIDs,
 	}
