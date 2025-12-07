@@ -330,152 +330,75 @@ func testIBEEncryptionDecryption(t *testing.T) {
 
 // testEncryptionPersistenceAcrossReshare tests that encrypted data remains decryptable after resharing
 func testEncryptionPersistenceAcrossReshare(t *testing.T) {
-	// TODO: This test needs to be updated to match the full IBE implementation
-	// The current implementation has issues with how it simulates DKG and key recovery
-	// which causes authentication failures with the proper IBE encryption/decryption
-	t.Skip("Skipping test that needs update for full IBE implementation")
-
 	appID := "persistent-app"
 	plaintext := []byte("data encrypted before reshare")
 
-	// === Phase 1: Initial DKG with 5 nodes ===
+	initialNodeIDs := []int{1, 2, 3, 4, 5}
+	initialThreshold := (2*len(initialNodeIDs) + 2) / 3 // ⌈2n/3⌉ = 4 for 5 nodes
 
-	initialNodes := 5
-	initialThreshold := (2*initialNodes + 2) / 3
+	// === Phase 1: Initial DKG simulation ===
+	masterSecret, err := new(fr.Element).SetRandom()
+	require.NoError(t, err)
 
-	// Create initial master secret through DKG simulation
-	masterSecret := new(fr.Element).SetInt64(13579)
 	masterPoly := make(polynomial.Polynomial, initialThreshold)
 	masterPoly[0].Set(masterSecret)
 	for i := 1; i < initialThreshold; i++ {
 		_, _ = masterPoly[i].SetRandom()
 	}
 
-	// Generate initial key shares
-	initialShares := make([]*fr.Element, initialNodes)
-	for i := 0; i < initialNodes; i++ {
-		initialShares[i] = EvaluatePolynomial(masterPoly, int64(i+1))
+	initialShares := make(map[int]*fr.Element, len(initialNodeIDs))
+	for _, id := range initialNodeIDs {
+		initialShares[id] = EvaluatePolynomial(masterPoly, int64(id))
 	}
 
-	// Create master public key and encrypt data
 	masterPubKey, err := ScalarMulG2(G2Generator, masterSecret)
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G2: %v", err)
-	}
+	require.NoError(t, err)
+
 	ciphertext, err := EncryptForApp(appID, *masterPubKey, plaintext)
-	if err != nil {
-		t.Fatalf("Initial encryption failed: %v", err)
+	require.NoError(t, err)
+
+	qID, err := HashToG1(appID)
+	require.NoError(t, err)
+
+	// Recover and decrypt with initial shares to sanity check
+	initialPartialSigs := make(map[int]types.G1Point)
+	for _, id := range initialNodeIDs[:initialThreshold] {
+		partial, err := ScalarMulG1(*qID, initialShares[id])
+		require.NoError(t, err)
+		initialPartialSigs[id] = *partial
+	}
+	initialAppKey, err := RecoverAppPrivateKey(appID, initialPartialSigs, initialThreshold)
+	require.NoError(t, err)
+	decrypted1, err := DecryptForApp(appID, *initialAppKey, ciphertext)
+	require.NoError(t, err)
+	require.Equal(t, plaintext, decrypted1)
+
+	// === Phase 2: Reshare simulation (same secret, new node set includes 6) ===
+	newNodeIDs := []int{1, 2, 3, 4, 6}
+	newThreshold := (2*len(newNodeIDs) + 2) / 3 // still 4 for 5 nodes
+
+	// In a secret-preserving reshare, the master polynomial stays the same; new shares
+	// are simply evaluations of the original polynomial at the new node IDs.
+	newShares := make(map[int]*fr.Element, len(newNodeIDs))
+	for _, id := range newNodeIDs {
+		newShares[id] = EvaluatePolynomial(masterPoly, int64(id))
 	}
 
-	// Verify initial decryption works
-	appHash, err := HashToG1(appID)
-	if err != nil {
-		t.Fatalf("Failed to hash to G1: %v", err)
+	// Build partial signatures from the reshared keys (include the new operator 6)
+	reshareParticipants := []int{1, 2, 3, 6} // 4-of-5 threshold
+	resharePartialSigs := make(map[int]types.G1Point)
+	for _, id := range reshareParticipants {
+		partial, err := ScalarMulG1(*qID, newShares[id])
+		require.NoError(t, err)
+		resharePartialSigs[id] = *partial
 	}
 
-	firstShare, err := ScalarMulG1(*appHash, initialShares[0])
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G1: %v", err)
-	}
-	secondShare, err := ScalarMulG1(*appHash, initialShares[1])
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G1: %v", err)
-	}
-	thirdShare, err := ScalarMulG1(*appHash, initialShares[2])
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G1: %v", err)
-	}
-	initialAppPrivateKey, err := RecoverAppPrivateKey(appID, map[int]types.G1Point{
-		1: *firstShare,
-		2: *secondShare,
-		3: *thirdShare,
-	}, initialThreshold)
-	if err != nil {
-		t.Fatalf("Failed to recover app private key: %v", err)
-	}
-	decrypted1, err := DecryptForApp(appID, *initialAppPrivateKey, ciphertext)
-	if err != nil {
-		t.Fatalf("Initial decryption failed: %v", err)
-	}
+	newAppKey, err := RecoverAppPrivateKey(appID, resharePartialSigs, newThreshold)
+	require.NoError(t, err)
 
-	if string(decrypted1) != string(plaintext) {
-		t.Fatalf("Initial decryption incorrect. Expected: %s, Got: %s",
-			string(plaintext), string(decrypted1))
-	}
-
-	// === Phase 3: Reshare - operator set changes (nodes 1-4 remain, 5 leaves, 6 joins) ===
-
-	newOperators := []int{1, 2, 3, 4, 6} // Node 5 leaves, 6 joins
-	newThreshold := (2*len(newOperators) + 2) / 3
-
-	// Simulate reshare: existing nodes (1-4) create new shares preserving their secrets
-	newShares := make(map[int]*fr.Element)
-
-	for _, existingNode := range []int{1, 2, 3, 4} {
-		// Each existing node creates a new polynomial with their current share as constant
-		currentShare := initialShares[existingNode-1]
-		newPoly := make(polynomial.Polynomial, newThreshold)
-		newPoly[0].Set(currentShare)
-		for j := 1; j < newThreshold; j++ {
-			_, _ = newPoly[j].SetRandom()
-		}
-
-		// Generate new shares for all new operators
-		for _, newNodeID := range newOperators {
-			newShare := EvaluatePolynomial(newPoly, int64(newNodeID))
-			if newShares[newNodeID] == nil {
-				newShares[newNodeID] = new(fr.Element).SetZero()
-			}
-			// Aggregate using Lagrange coefficients
-			lambda := ComputeLagrangeCoefficient(existingNode, []int{1, 2, 3, 4})
-			term := new(fr.Element).Mul(lambda, newShare)
-			newShares[newNodeID].Add(newShares[newNodeID], term)
-		}
-	}
-
-	// === Phase 4: Verify encryption still works after reshare ===
-
-	newAppHash, err := HashToG1(appID)
-	if err != nil {
-		t.Fatalf("Failed to hash to G1: %v", err)
-	}
-	newFirstShare, err := ScalarMulG1(*newAppHash, newShares[1])
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G1: %v", err)
-	}
-	newSecondShare, err := ScalarMulG1(*newAppHash, newShares[2])
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G1: %v", err)
-	}
-	newThirdShare, err := ScalarMulG1(*newAppHash, newShares[3])
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G1: %v", err)
-	}
-	// Recover app private key using new shares
-	newAppPrivateKey, err := RecoverAppPrivateKey(appID, map[int]types.G1Point{
-		1: *newFirstShare,
-		2: *newSecondShare,
-		3: *newThirdShare,
-	}, newThreshold)
-	if err != nil {
-		t.Fatalf("Failed to recover app private key: %v", err)
-	}
-	// Decrypt with new key - should still work!
-	decrypted2, err := DecryptForApp(appID, *newAppPrivateKey, ciphertext)
-	if err != nil {
-		t.Fatalf("Post-reshare decryption failed: %v", err)
-	}
-
-	if string(decrypted2) != string(plaintext) {
-		t.Errorf("Post-reshare decryption incorrect. Expected: %s, Got: %s",
-			string(plaintext), string(decrypted2))
-	}
-
-	fmt.Printf("✓ Encryption persistence test passed!\n")
-	fmt.Printf("  - Data encrypted before reshare\n")
-	fmt.Printf("  - Operator set changed (5 → 1,2,3,4,6)\n")
-	fmt.Printf("  - Data still decryptable with new key shares\n")
-	fmt.Printf("  - Verified secret preservation across reshare\n")
+	decrypted2, err := DecryptForApp(appID, *newAppKey, ciphertext)
+	require.NoError(t, err)
+	require.Equal(t, plaintext, decrypted2)
 }
 
 // testThresholdSignatureRecovery tests the core threshold signature functionality

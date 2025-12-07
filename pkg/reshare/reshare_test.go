@@ -14,6 +14,7 @@ import (
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/stretchr/testify/require"
 )
 
 func Test_ReshareProtocol(t *testing.T) {
@@ -23,6 +24,7 @@ func Test_ReshareProtocol(t *testing.T) {
 	t.Run("VerifyNewShare", func(t *testing.T) { testVerifyNewShare(t) })
 	t.Run("ComputeNewKeyShare", func(t *testing.T) { testComputeNewKeyShare(t) })
 	t.Run("CreateCompletionSignature", func(t *testing.T) { testCreateCompletionSignature(t) })
+	t.Run("ComputeNewKeyShareAggregatesCommitments", func(t *testing.T) { testComputeNewKeyShareAggregatesCommitments(t) })
 }
 
 // createTestOperators creates test operators using ChainConfig data
@@ -163,6 +165,41 @@ func testVerifyNewShare(t *testing.T) {
 	if valid {
 		t.Error("Invalid share should fail verification")
 	}
+}
+
+// testComputeNewKeyShareAggregatesCommitments ensures commitments are aggregated element-wise across dealers
+func testComputeNewKeyShareAggregatesCommitments(t *testing.T) {
+	dealerIDs := []int{1, 2}
+
+	// Shares for dealers (any non-nil values)
+	shares := map[int]*fr.Element{
+		1: new(fr.Element).SetInt64(3),
+		2: new(fr.Element).SetInt64(5),
+	}
+
+	// Commitments: two coefficients per dealer
+	commit1a, _ := crypto.ScalarMulG2(crypto.G2Generator, new(fr.Element).SetInt64(10))
+	commit1b, _ := crypto.ScalarMulG2(crypto.G2Generator, new(fr.Element).SetInt64(11))
+	commit2a, _ := crypto.ScalarMulG2(crypto.G2Generator, new(fr.Element).SetInt64(20))
+	commit2b, _ := crypto.ScalarMulG2(crypto.G2Generator, new(fr.Element).SetInt64(21))
+
+	allCommitments := [][]types.G2Point{
+		{*commit1a, *commit1b},
+		{*commit2a, *commit2b},
+	}
+
+	r := NewReshare(1, nil)
+	keyVersion := r.ComputeNewKeyShare(dealerIDs, shares, allCommitments)
+
+	require.NotNil(t, keyVersion)
+	require.Len(t, keyVersion.Commitments, 2)
+
+	// Expected aggregated commitments
+	sum0, _ := crypto.AddG2(*commit1a, *commit2a)
+	sum1, _ := crypto.AddG2(*commit1b, *commit2b)
+
+	require.True(t, keyVersion.Commitments[0].IsEqual(sum0), "commitment[0] should aggregate dealers")
+	require.True(t, keyVersion.Commitments[1].IsEqual(sum1), "commitment[1] should aggregate dealers")
 }
 
 // testComputeNewKeyShare tests new key share computation

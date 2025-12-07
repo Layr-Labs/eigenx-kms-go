@@ -48,7 +48,9 @@ func (r *Reshare) GenerateNewShares(currentShare *fr.Element, newThreshold int) 
 		return nil, nil, fmt.Errorf("no current share to reshare")
 	}
 
-	// Generate new polynomial where f'_i(0) = s_i (current share)
+	// Generate new polynomial where f'_i(0) = s_i (current share).
+	// fr.Element.SetRandom() uses crypto/rand under the hood; we surface any RNG errors
+	// so callers can fail fast if entropy is unavailable.
 	coeffs := make([]fr.Element, newThreshold)
 	coeffs[0].Set(currentShare) // CRITICAL: constant term is current share
 

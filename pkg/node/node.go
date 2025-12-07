@@ -740,10 +740,10 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 
 	// Wait for shares and commitments (timeout must be less than block interval)
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
-	if err := n.waitForSharesWithRetry(len(operators), protocolTimeout); err != nil {
+	if err := n.waitForSharesWithRetry(newThreshold, protocolTimeout); err != nil {
 		return err
 	}
-	if err := n.waitForCommitmentsWithRetry(len(operators), protocolTimeout); err != nil {
+	if err := n.waitForCommitmentsWithRetry(newThreshold, protocolTimeout); err != nil {
 		return err
 	}
 
@@ -811,34 +811,68 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 
 	// Wait for shares and commitments from existing operators
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
-	if err := n.waitForSharesWithRetry(len(operators), protocolTimeout); err != nil {
+	expectedExisting := len(operators) - 1
+	if expectedExisting <= 0 {
+		return fmt.Errorf("not enough existing operators to reshare")
+	}
+	reshareThreshold := dkg.CalculateThreshold(len(operators))
+	if err := n.waitForSharesWithRetry(reshareThreshold, protocolTimeout); err != nil {
 		return fmt.Errorf("failed to receive shares: %w", err)
 	}
-	if err := n.waitForCommitmentsWithRetry(len(operators), protocolTimeout); err != nil {
+	if err := n.waitForCommitmentsWithRetry(reshareThreshold, protocolTimeout); err != nil {
 		return fmt.Errorf("failed to receive commitments: %w", err)
 	}
 
 	// Collect all commitments and participant IDs
 	n.mu.RLock()
-	allCommitments := make([][]types.G2Point, 0, len(n.receivedCommitments))
-	participantIDs := make([]int, 0, len(n.receivedCommitments))
-
-	for _, op := range operators {
-		opNodeID := addressToNodeID(op.OperatorAddress)
-		if comm, ok := n.receivedCommitments[opNodeID]; ok {
-			allCommitments = append(allCommitments, comm)
-			participantIDs = append(participantIDs, opNodeID)
-		}
-	}
-
-	receivedShares := make(map[int]*fr.Element)
+	receivedShares := make(map[int]*fr.Element, len(n.receivedShares))
 	for k, v := range n.receivedShares {
 		receivedShares[k] = v
 	}
+	receivedCommitments := make(map[int][]types.G2Point, len(n.receivedCommitments))
+	for k, v := range n.receivedCommitments {
+		receivedCommitments[k] = v
+	}
 	n.mu.RUnlock()
 
+	// Validate shares/commitments from existing operators only
+	allCommitments := make([][]types.G2Point, 0, expectedExisting)
+	participantIDs := make([]int, 0, expectedExisting)
+	validShares := make(map[int]*fr.Element, expectedExisting)
+
+	for _, op := range operators {
+		opNodeID := addressToNodeID(op.OperatorAddress)
+		if opNodeID == thisNodeID {
+			continue
+		}
+
+		share, okShare := receivedShares[opNodeID]
+		commitments, okCommit := receivedCommitments[opNodeID]
+		if !okShare || !okCommit {
+			n.logger.Sugar().Warnw("Missing reshare data from operator",
+				"operator_address", n.OperatorAddress.Hex(),
+				"dealer_id", opNodeID)
+			continue
+		}
+
+		if !n.resharer.VerifyNewShare(opNodeID, share, commitments) {
+			n.logger.Sugar().Warnw("Invalid reshare share received",
+				"operator_address", n.OperatorAddress.Hex(),
+				"dealer_id", opNodeID)
+			continue
+		}
+
+		validShares[opNodeID] = share
+		allCommitments = append(allCommitments, commitments)
+		participantIDs = append(participantIDs, opNodeID)
+	}
+
+	if len(validShares) < reshareThreshold {
+		return fmt.Errorf("insufficient valid reshare data: got %d, need %d", len(validShares), reshareThreshold)
+	}
+
 	// Compute new key share using Lagrange interpolation
-	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDs, receivedShares, allCommitments)
+	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDs, validShares, allCommitments)
 	newKeyVersion.Version = sessionTimestamp // Use session timestamp as version
 	newKeyVersion.IsActive = true            // First key version becomes active immediately
 

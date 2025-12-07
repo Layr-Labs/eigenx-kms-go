@@ -44,7 +44,9 @@ func NewDKG(nodeID int, threshold int, operators []*peering.OperatorSetPeer) *DK
 
 // GenerateShares generates polynomial coefficients, shares, and commitments
 func (d *DKG) GenerateShares() (map[int]*fr.Element, []types.G2Point, error) {
-	// Generate random polynomial of degree t-1
+	// Generate random polynomial of degree t-1.
+	// fr.Element.SetRandom() pulls entropy from crypto/rand via gnark-crypto; the call may
+	// fail if the system RNG is unavailable, in which case we bubble the error up.
 	coeffs := make([]fr.Element, d.threshold)
 	for i := 0; i < d.threshold; i++ {
 		if _, err := coeffs[i].SetRandom(); err != nil {
