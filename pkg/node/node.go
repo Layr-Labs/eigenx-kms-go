@@ -42,8 +42,7 @@ import (
 func addressToNodeID(address common.Address) int {
 	hash := crypto.Keccak256(address.Bytes())
 	// Take first 8 bytes of hash as uint64, then convert to int
-	nodeID := int(common.BytesToHash(hash).Big().Uint64())
-	return nodeID
+	return int(common.BytesToHash(hash).Big().Uint64())
 }
 
 const (
