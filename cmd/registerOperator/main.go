@@ -9,6 +9,7 @@ import (
 
 	"github.com/Layr-Labs/chain-indexer/pkg/clients/ethereum"
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
+	"github.com/Layr-Labs/crypto-libs/pkg/ecdsa"
 	"github.com/Layr-Labs/eigenx-kms-go/internal/operator"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transactionSigner"
@@ -66,7 +67,14 @@ This command handles:
 				Aliases:  []string{"bn254"},
 				Usage:    "BN254 private key (hex string) for threshold cryptography",
 				EnvVars:  []string{"EIGENKMS_BN254_PRIVATE_KEY"},
-				Required: true,
+				Required: false,
+			},
+			&cli.StringFlag{
+				Name:     "ecdsa-private-key",
+				Aliases:  []string{"ecdsa"},
+				Usage:    "ECDSA private key (hex string) for threshold cryptography (alternative to BN254 key)",
+				EnvVars:  []string{"EIGENKMS_ECDSA_PRIVATE_KEY"},
+				Required: false,
 			},
 			&cli.StringFlag{
 				Name:     "socket",
@@ -166,6 +174,7 @@ type OperatorConfig struct {
 	OperatorPrivateKey string
 	AVSPrivateKey      string
 	BN254PrivateKey    string
+	ECDSAPrivateKey    string
 	Socket             string
 	OperatorSetID      uint32
 	RPCUrl             string
@@ -200,11 +209,22 @@ func (c *OperatorConfig) Validate() error {
 		return fmt.Errorf("AVS ECDSA private key must be 32 bytes (64 hex chars), got %d chars", len(c.AVSPrivateKey)-2)
 	}
 
-	if !strings.HasPrefix(c.BN254PrivateKey, "0x") {
-		c.BN254PrivateKey = "0x" + c.BN254PrivateKey
+	if c.BN254PrivateKey == "" && c.ECDSAPrivateKey == "" {
+		return fmt.Errorf("either BN254 private key or ECDSA private key must be provided")
 	}
-	if len(c.BN254PrivateKey) != 66 { // 0x + 64 hex chars
-		return fmt.Errorf("BN254 private key must be 32 bytes (64 hex chars), got %d chars", len(c.BN254PrivateKey)-2)
+
+	if c.BN254PrivateKey != "" {
+		if !strings.HasPrefix(c.BN254PrivateKey, "0x") {
+			c.BN254PrivateKey = "0x" + c.BN254PrivateKey
+		}
+		if len(c.BN254PrivateKey) != 66 { // 0x + 64 hex chars
+			return fmt.Errorf("BN254 private key must be 32 bytes (64 hex chars), got %d chars", len(c.BN254PrivateKey)-2)
+		}
+	}
+	if c.ECDSAPrivateKey != "" {
+		if !strings.HasPrefix(c.ECDSAPrivateKey, "0x") {
+			c.ECDSAPrivateKey = "0x" + c.ECDSAPrivateKey
+		}
 	}
 
 	// Validate socket address format
@@ -250,6 +270,7 @@ func parseOperatorConfig(c *cli.Context) (*OperatorConfig, error) {
 		OperatorPrivateKey: c.String("operator-private-key"),
 		AVSPrivateKey:      c.String("avs-private-key"),
 		BN254PrivateKey:    c.String("bn254-private-key"),
+		ECDSAPrivateKey:    c.String("ecdsa-private-key"),
 		Socket:             c.String("socket"),
 		OperatorSetID:      uint32(c.Uint64("operator-set-id")),
 		RPCUrl:             c.String("rpc-url"),
@@ -297,9 +318,20 @@ func executeRegistration(cfg *OperatorConfig, l *zap.Logger) error {
 		return fmt.Errorf("failed to create operator contract caller: %v", err)
 	}
 
-	operatorPrivateKey, err := bn254.NewPrivateKeyFromHexString(cfg.BN254PrivateKey)
-	if err != nil {
-		return fmt.Errorf("failed to parse BN254 private key: %v", err)
+	var operatorPrivateKey any
+	var curveType config.CurveType
+	if cfg.ECDSAPrivateKey != "" {
+		curveType = config.CurveTypeECDSA
+		operatorPrivateKey, err = ecdsa.NewPrivateKeyFromHexString(cfg.ECDSAPrivateKey)
+		if err != nil {
+			return fmt.Errorf("failed to parse ECDSA private key: %v", err)
+		}
+	} else {
+		curveType = config.CurveTypeBN254
+		operatorPrivateKey, err = bn254.NewPrivateKeyFromHexString(cfg.BN254PrivateKey)
+		if err != nil {
+			return fmt.Errorf("failed to parse BN254 private key: %v", err)
+		}
 	}
 
 	receipt, err := operator.RegisterOperatorToOperatorSets(
@@ -311,7 +343,7 @@ func executeRegistration(cfg *OperatorConfig, l *zap.Logger) error {
 		&operator.Operator{
 			TransactionPrivateKey: cfg.OperatorPrivateKey,
 			SigningPrivateKey:     operatorPrivateKey,
-			Curve:                 config.CurveTypeBN254,
+			Curve:                 curveType,
 			OperatorSetIds:        []uint32{cfg.OperatorSetID},
 		},
 		&operator.RegistrationConfig{

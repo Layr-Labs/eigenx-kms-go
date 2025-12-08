@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 
 anvilL1Pid=""
+anvilL2Pid=""
 
 function cleanup() {
     kill $anvilL1Pid || true
+    kill $anvilL2Pid || true
 
     exit $?
 }
@@ -12,14 +14,24 @@ set -euo pipefail
 
 
 # ethereum holesky
-L1_FORK_RPC_URL=https://practical-serene-mound.ethereum-sepolia.quiknode.pro/3aaa48bd95f3d6aed60e89a1a466ed1e2a440b61/
+L1_FORK_RPC_URL=https://rough-chaotic-meme.ethereum-sepolia.quiknode.pro/dcdf2b0e1ce08e4fe7515933897f89104fb1273a/
 
 anvilL1ChainId=31337
-anvilL1StartBlock=9469897
+anvilL1StartBlock=9778678
 anvilL1DumpStatePath=./anvil-l1.json
 anvilL1ConfigPath=./anvil-l1-config.json
 anvilL1RpcPort=8545
 anvilL1RpcUrl="http://localhost:${anvilL1RpcPort}"
+
+# base mainnet
+L2_FORK_RPC_URL=https://soft-alpha-grass.base-sepolia.quiknode.pro/fd5e4bf346247d9b6e586008a9f13df72ce6f5b2/
+
+anvilL2ChainId=8453
+anvilL2StartBlock=34610863
+anvilL2DumpStatePath=./anvil-l2.json
+anvilL2ConfigPath=./anvil-l2-config.json
+anvilL2RpcPort=9545
+anvilL2RpcUrl="http://localhost:${anvilL2RpcPort}"
 
 
 seedAccounts=$(cat ./anvilConfig/accounts.json)
@@ -39,10 +51,26 @@ anvil \
 anvilL1Pid=$!
 sleep 3
 
+# -----------------------------------------------------------------------------
+# Start Base L2
+# -----------------------------------------------------------------------------
+anvil \
+    --fork-url $L2_FORK_RPC_URL \
+    --dump-state $anvilL2DumpStatePath \
+    --config-out $anvilL2ConfigPath \
+    --chain-id $anvilL2ChainId \
+    --port $anvilL2RpcPort \
+    --fork-block-number $anvilL2StartBlock &
+anvilL2Pid=$!
+sleep 3
+
 function fundAccount() {
     address=$1
     echo "Funding address $address on L1"
     cast rpc --rpc-url $anvilL1RpcUrl anvil_setBalance $address '0x21E19E0C9BAB2400000' # 10,000 ETH
+
+    echo "Funding address $address on L2"
+    cast rpc --rpc-url $anvilL2RpcUrl anvil_setBalance $address '0x21E19E0C9BAB2400000' # 10,000 ETH
 }
 
 # loop over the seed accounts (json array) and fund the accounts
@@ -112,6 +140,7 @@ echo "EC Operator account 5 private key: $operatorAccountPk_5"
 cd contracts
 
 export L1_RPC_URL="http://localhost:${anvilL1RpcPort}"
+export L2_RPC_URL="http://localhost:${anvilL2RpcPort}"
 
 # -----------------------------------------------------------------------------
 # Create operators
@@ -148,7 +177,16 @@ registerOperator $operatorAccountPk_5 $operatorAccountAddress_5
 # Deploy L1 avs contract
 # -----------------------------------------------------------------------------
 echo "Deploying L1 AVS contract..."
-forge script script/local/DeployEigenKMSRegistrar.s.sol --slow --rpc-url $L1_RPC_URL --broadcast --sig "run(address)" "${avsAccountAddress}"
+operatorSetId="0"
+forge script script/local/DeployEigenKMSRegistrar.s.sol --slow --rpc-url $L1_RPC_URL --broadcast \
+    --sig "run(address,uint32,address,address,address,address,address)" \
+    "${avsAccountAddress}" \
+    "${operatorSetId}" \
+    "${operatorAccountAddress_1}" \
+    "${operatorAccountAddress_2}" \
+    "${operatorAccountAddress_3}" \
+    "${operatorAccountAddress_4}" \
+    "${operatorAccountAddress_5}"
 
 # we need to get index 2 since thats where the actual proxy lives
 eigenKMSRegistrarAddress=$(cat ./broadcast/DeployEigenKMSRegistrar.s.sol/$anvilL1ChainId/run-latest.json | jq -r '.transactions[2].contractAddress')
@@ -161,6 +199,25 @@ echo "Setting up EigenKMS Registrar..."
 forge script script/local/SetupEigenKMSRegistrar.s.sol --slow --rpc-url $L1_RPC_URL --broadcast --sig "run(address)" $eigenKMSRegistrarAddress
 
 # -----------------------------------------------------------------------------
+# Deploy L2 avs contract
+# -----------------------------------------------------------------------------
+echo "Deploying L1 AVS contract..."
+avsAddress=$()
+operatorSetId="0"
+ecdsaCertificateVerifier="0xb3Cd1A457dEa9A9A6F6406c6419B1c326670A96F" # base sepolia
+bn254CertificateVerifier="0xff58A373c18268F483C1F5cA03Cf885c0C43373a" # base sepolia
+curveType="1"
+
+forge script script/local/DeployEigenKMSCommitmentRegistry.s.sol --slow --rpc-url $L2_RPC_URL --broadcast \
+    --sig "run(address,uint32,address,address,uint8)" \
+    "${avsAccountAddress}" "${operatorSetId}" "${ecdsaCertificateVerifier}" "${bn254CertificateVerifier}" "${curveType}"
+
+eigenKMSCommitmentRegistryAddress=$(cat ./broadcast/DeployEigenKMSCommitmentRegistry.s.sol/$anvilL2ChainId/run-latest.json | jq -r '.transactions[2].contractAddress')
+
+echo "Commitment registry contract address: $eigenKMSCommitmentRegistryAddress"
+
+
+# -----------------------------------------------------------------------------
 # Setup L1 multichain
 # -----------------------------------------------------------------------------
 # echo "Setting up L1 AVS..."
@@ -169,6 +226,8 @@ forge script script/local/SetupEigenKMSRegistrar.s.sol --slow --rpc-url $L1_RPC_
 # cast rpc anvil_impersonateAccount $CROSS_CHAIN_REGISTRY_OWNER_ACCOUNT --rpc-url $L1_RPC_URL
 # forge script script/local/WhitelistDevnet.s.sol --slow --rpc-url $L1_RPC_URL --sender $CROSS_CHAIN_REGISTRY_OWNER_ACCOUNT --unlocked --broadcast --sig "run()"
 # forge script script/local/SetupAVSMultichain.s.sol --slow --rpc-url $L1_RPC_URL --broadcast --sig "run()"
+
+
 
 # Move back up into the project root
 cd ../
@@ -188,7 +247,7 @@ function registerOperatorToAvs() {
         --operator-address $operatorAddress \
         --operator-private-key $operatorPk \
         --avs-private-key $avsAccountPk \
-        --bn254-private-key $operatorPk \
+        --ecdsa-private-key $operatorPk \
         --socket $socket \
         --operator-set-id 0 \
         --rpc-url $L1_RPC_URL \
@@ -209,6 +268,7 @@ echo "Ended at block number: "
 cast block-number
 
 kill $anvilL1Pid || true
+kill $anvilL2Pid || true
 sleep 3
 
 rm -rf ./internal/testData/anvil*.json
@@ -216,11 +276,16 @@ rm -rf ./internal/testData/anvil*.json
 cp -R $anvilL1DumpStatePath internal/testData/anvil-l1-state.json
 cp -R $anvilL1ConfigPath internal/testData/anvil-l1-config.json
 
+cp -R $anvilL2DumpStatePath internal/testData/anvil-l2-state.json
+cp -R $anvilL2ConfigPath internal/testData/anvil-l2-config.json
+
 # make the files read-only since anvil likes to overwrite things
 chmod 444 internal/testData/anvil*
 
 rm $anvilL1DumpStatePath
 rm $anvilL1ConfigPath
+rm $anvilL2DumpStatePath
+rm $anvilL2ConfigPath
 
 function lowercaseAddress() {
     echo "$1" | tr '[:upper:]' '[:lower:]'
@@ -243,19 +308,28 @@ cat <<EOF > internal/testData/chain-config.json
       "operatorAccountAddress_1": "$operatorAccountAddress_1",
       "operatorAccountPk_1": "$operatorAccountPk_1",
       "operatorAccountPublicKey_1": "$operatorAccountPublicKey_1",
+      "operatorSocket_1": "http://localhost:7501",
       "operatorAccountAddress_2": "$operatorAccountAddress_2",
       "operatorAccountPk_2": "$operatorAccountPk_2",
       "operatorAccountPublicKey_2": "$operatorAccountPublicKey_2",
+      "operatorSocket_2": "http://localhost:7502",
       "operatorAccountAddress_3": "$operatorAccountAddress_3",
       "operatorAccountPk_3": "$operatorAccountPk_3",
       "operatorAccountPublicKey_3": "$operatorAccountPublicKey_3",
+      "operatorSocket_3": "http://localhost:7503",
       "operatorAccountAddress_4": "$operatorAccountAddress_4",
       "operatorAccountPk_4": "$operatorAccountPk_4",
       "operatorAccountPublicKey_4": "$operatorAccountPublicKey_4",
+      "operatorSocket_4": "http://localhost:7504",
       "operatorAccountAddress_5": "$operatorAccountAddress_5",
       "operatorAccountPk_5": "$operatorAccountPk_5",
       "operatorAccountPublicKey_5": "$operatorAccountPublicKey_5",
-      "forkL1Block": "$anvilL1StartBlock"
+      "operatorSocket_5": "http://localhost:7505",
+      "forkL1Block": "$anvilL1StartBlock",
+      "forkL2Block": "$anvilL2StartBlock",
+      "eigenCommitmentRegistryAddress": "$eigenKMSCommitmentRegistryAddress",
+      "eigenRegistrarAddress": "$eigenKMSRegistrarAddress"
+
 }
 EOF
 

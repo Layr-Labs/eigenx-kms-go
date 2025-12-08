@@ -46,7 +46,7 @@ func (h *BlockHandler) HandleBlock(ctx context.Context, block *ethereum.Ethereum
 	// Process block
 	select {
 	case h.BlockChannel <- block:
-		h.logger.Sugar().Infof("Block %d sent to channel", block.Number)
+		h.logger.Sugar().Debugf("Block %d sent to channel", block.Number)
 	case <-ctx.Done():
 		h.logger.Sugar().Warnf("Context done before sending block %d to channel", block.Number)
 	default:

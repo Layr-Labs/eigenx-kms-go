@@ -202,6 +202,14 @@ Phase 4: Finalize (sum shares)
 - [x] **Phase 7**: End-to-End Integration Testing ✅
 - [x] **Phase 8**: Fraud Detection ✅
 
+### **Next Steps: On-Chain Integration**
+
+For on-chain integration of the merkle-based acknowledgement system, see:
+
+📄 **[On-Chain Acknowledgement Integration Plan](./005_onChainAckIntegration.md)**
+
+This follow-up document details 7 additional phases for fully integrating contract submission, Base chain support, and end-to-end verification into the DKG/Reshare flows.
+
 ---
 
 ### Phase 1: Core Merkle Tree Infrastructure (2-3 days) ✅ COMPLETE

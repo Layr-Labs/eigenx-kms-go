@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/Layr-Labs/crypto-libs/pkg/ecdsa"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"go.uber.org/zap"
@@ -21,6 +23,7 @@ import (
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller"
 	eigenxcrypto "github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
@@ -54,10 +57,9 @@ type Node struct {
 	// Identity
 	OperatorAddress common.Address // Ethereum address of this operator
 	Port            int
-	BN254PrivateKey *bn254.PrivateKey // BN254 private key for threshold crypto and P2P
-	ChainID         config.ChainId    // Ethereum chain ID
-	AVSAddress      string            // AVS contract address
-	OperatorSetId   uint32            // Operator set ID
+	ChainID         config.ChainId // Ethereum chain ID
+	AVSAddress      string         // AVS contract address
+	OperatorSetId   uint32         // Operator set ID
 
 	// Dependencies
 	keyStore            *keystore.KeyStore
@@ -74,12 +76,6 @@ type Node struct {
 	dkg      *dkg.DKG
 	resharer *reshare.Reshare
 
-	// State management
-	receivedShares      map[int]*fr.Element
-	receivedCommitments map[int][]types.G2Point
-	receivedAcks        map[int]map[int]*types.Acknowledgement
-	reshareComplete     map[int]*types.CompletionSignature
-
 	// Session management
 	activeSessions    map[int64]*ProtocolSession
 	sessionMutex      sync.RWMutex
@@ -94,7 +90,9 @@ type Node struct {
 	blockHandler blockHandler.IBlockHandler
 	poller       chainPoller.IChainPoller
 
-	mu sync.RWMutex
+	// Base chain integration (for commitment registry)
+	baseContractCaller        contractCaller.IContractCaller
+	commitmentRegistryAddress common.Address
 }
 
 // ProtocolSession tracks state for a DKG or reshare session
@@ -105,27 +103,109 @@ type ProtocolSession struct {
 	StartTime        time.Time
 	Operators        []*peering.OperatorSetPeer
 
-	// Session-specific state
+	// Session-specific state (moved from global Node state)
 	shares      map[int]*fr.Element
 	commitments map[int][]types.G2Point
 	acks        map[int]map[int]*types.Acknowledgement
 
-	// Phase 4: Merkle tree state (will be used in Phase 5-6)
-	myAckMerkleTree   *merkle.MerkleTree //nolint:unused // Tree built from acks I collected as dealer
-	myCommitmentHash  [32]byte           //nolint:unused // Hash of my commitments
-	contractSubmitted bool               //nolint:unused // Whether I submitted to contract
+	// Completion channels (buffered, size 1) - signaled when all expected messages received
+	sharesCompleteChan      chan bool
+	commitmentsCompleteChan chan bool
+	acksCompleteChan        chan bool
 
-	// Phase 4: Verification state (will be used in Phase 6)
-	verifiedOperators map[int]bool //nolint:unused // Operators whose broadcasts I verified
+	// Phase 4: Merkle tree state
+	myAckMerkleTree   *merkle.MerkleTree
+	myCommitmentHash  [32]byte
+	contractSubmitted bool
+
+	// Phase 4: Verification state
+	verifiedOperators map[int]bool
 
 	mu sync.RWMutex
 }
 
+// HandleReceivedShare stores a share and signals completion if all shares received
+// Returns error if duplicate share detected
+func (s *ProtocolSession) HandleReceivedShare(senderNodeID int, share *fr.Element) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Reject duplicates
+	if _, exists := s.shares[senderNodeID]; exists {
+		return fmt.Errorf("duplicate share from node %d", senderNodeID)
+	}
+
+	s.shares[senderNodeID] = share
+
+	// Signal completion when EXACTLY all shares received
+	if len(s.shares) == len(s.Operators) {
+		select {
+		case s.sharesCompleteChan <- true:
+		default: // Already signaled
+		}
+	}
+
+	return nil
+}
+
+// HandleReceivedCommitment stores commitments and signals completion if all received
+// Returns error if duplicate commitment detected
+func (s *ProtocolSession) HandleReceivedCommitment(senderNodeID int, commitments []types.G2Point) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Reject duplicates
+	if _, exists := s.commitments[senderNodeID]; exists {
+		return fmt.Errorf("duplicate commitment from node %d", senderNodeID)
+	}
+
+	s.commitments[senderNodeID] = commitments
+
+	// Signal completion when EXACTLY all commitments received
+	if len(s.commitments) == len(s.Operators) {
+		select {
+		case s.commitmentsCompleteChan <- true:
+		default: // Already signaled
+		}
+	}
+
+	return nil
+}
+
+// HandleReceivedAck stores an acknowledgement and signals completion if all acks received for this dealer
+// Returns error if duplicate ack detected
+func (s *ProtocolSession) HandleReceivedAck(dealerNodeID, playerNodeID int, ack *types.Acknowledgement) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	// Reject duplicates
+	if s.acks[dealerNodeID] != nil {
+		if _, exists := s.acks[dealerNodeID][playerNodeID]; exists {
+			return fmt.Errorf("duplicate ack from player %d for dealer %d", playerNodeID, dealerNodeID)
+		}
+	}
+
+	if s.acks[dealerNodeID] == nil {
+		s.acks[dealerNodeID] = make(map[int]*types.Acknowledgement)
+	}
+	s.acks[dealerNodeID][playerNodeID] = ack
+
+	// Signal completion when EXACTLY all expected acks received (for this dealer)
+	expectedAcks := len(s.Operators) - 1 // All except self
+	if len(s.acks[dealerNodeID]) == expectedAcks {
+		select {
+		case s.acksCompleteChan <- true:
+		default: // Already signaled
+		}
+	}
+
+	return nil
+}
+
 // Config holds node configuration
 type Config struct {
-	OperatorAddress string // Ethereum address of the operator (hex string)
-	Port            int
-	BN254PrivateKey string         // BN254 private key (hex string)
+	OperatorAddress string         // Ethereum address of the operator (hex string)
+	Port            int            //HTTP server port
 	ChainID         config.ChainId // Ethereum chain ID
 	AVSAddress      string         // AVS contract address (hex string)
 	OperatorSetId   uint32         // Operator set ID
@@ -140,50 +220,49 @@ func NewNode(
 	cp chainPoller.IChainPoller,
 	tps transportSigner.ITransportSigner,
 	attestationVerifier attestation.Verifier,
+	baseContractCaller contractCaller.IContractCaller,
+	commitmentRegistryAddress common.Address,
 	l *zap.Logger,
 ) (*Node, error) {
 	// Validate required dependencies
 	if attestationVerifier == nil {
 		return nil, fmt.Errorf("attestationVerifier is required and cannot be nil")
 	}
+	if baseContractCaller == nil {
+		return nil, fmt.Errorf("baseContractCaller is required")
+	}
+	if commitmentRegistryAddress == (common.Address{}) {
+		return nil, fmt.Errorf("commitmentRegistryAddress is required")
+	}
 
 	// Parse operator address
 	operatorAddress := common.HexToAddress(cfg.OperatorAddress)
-
-	// Parse BN254 private key
-	bn254PrivKey, err := bn254.NewPrivateKeyFromHexString(cfg.BN254PrivateKey)
-	if err != nil {
-		return nil, fmt.Errorf("invalid BN254 private key: %w", err)
-	}
 
 	// Use operator address hash as transport client ID (for consistency)
 	transportClientID := addressToNodeID(operatorAddress)
 
 	n := &Node{
-		OperatorAddress:       operatorAddress,
-		Port:                  cfg.Port,
-		BN254PrivateKey:       bn254PrivKey,
-		ChainID:               cfg.ChainID,
-		AVSAddress:            cfg.AVSAddress,
-		OperatorSetId:         cfg.OperatorSetId,
-		keyStore:              keystore.NewKeyStore(),
-		server:                NewServer(nil, cfg.Port), // Will set node reference later
-		attestationVerifier:   attestationVerifier,
-		releaseRegistry:       registry.NewStubClient(),
-		rsaEncryption:         encryption.NewRSAEncryption(),
-		peeringDataFetcher:    pdf,
-		logger:                l,
-		receivedShares:        make(map[int]*fr.Element),
-		receivedCommitments:   make(map[int][]types.G2Point),
-		receivedAcks:          make(map[int]map[int]*types.Acknowledgement),
-		reshareComplete:       make(map[int]*types.CompletionSignature),
-		activeSessions:        make(map[int64]*ProtocolSession),
-		sessionNotify:         make(map[int64]chan struct{}),
-		enableAutoReshare:     true, // Always enabled
-		blockHandler:          bh,
-		poller:                cp,
-		lastProcessedBoundary: 0,
-		transportSigner:       tps,
+		OperatorAddress:           operatorAddress,
+		Port:                      cfg.Port,
+		ChainID:                   cfg.ChainID,
+		AVSAddress:                cfg.AVSAddress,
+		OperatorSetId:             cfg.OperatorSetId,
+		keyStore:                  keystore.NewKeyStore(),
+		server:                    NewServer(nil, cfg.Port), // Will set node reference later
+		attestationVerifier:       attestationVerifier,
+		releaseRegistry:           registry.NewStubClient(),
+		rsaEncryption:             encryption.NewRSAEncryption(),
+		peeringDataFetcher:        pdf,
+		logger:                    l,
+		activeSessions:            make(map[int64]*ProtocolSession),
+		sessionNotify:             make(map[int64]chan struct{}),
+		enableAutoReshare:         true, // Always enabled
+		blockHandler:              bh,
+		poller:                    cp,
+		lastProcessedBoundary:     0,
+		transportSigner:           tps,
+		baseContractCaller:        baseContractCaller,
+		commitmentRegistryAddress: commitmentRegistryAddress,
 	}
 
 	// Set node reference in server
@@ -345,7 +424,13 @@ func (n *Node) fetchCurrentOperators(ctx context.Context, avsAddress string, ope
 		return sortedPeers[i].OperatorAddress.Hex() < sortedPeers[j].OperatorAddress.Hex()
 	})
 
-	n.logger.Sugar().Infow("Fetched operators from chain", "operator_address", n.OperatorAddress.Hex(), "count", len(sortedPeers))
+	n.logger.Sugar().Infow("Fetched operators from chain",
+		"operator_address", n.OperatorAddress.Hex(),
+		"count", len(sortedPeers),
+		"operators", strings.Join(util.Map(sortedPeers, func(op *peering.OperatorSetPeer, i uint64) string {
+			return fmt.Sprintf("%s:%s", op.OperatorAddress.String(), op.SocketAddress)
+		}), ", "),
+	)
 	return sortedPeers, nil
 }
 
@@ -384,15 +469,24 @@ func (n *Node) detectClusterState(operators []*peering.OperatorSetPeer) string {
 // createSession creates a new protocol session with the provided timestamp
 func (n *Node) createSession(sessionType string, operators []*peering.OperatorSetPeer, sessionTimestamp int64) *ProtocolSession {
 	session := &ProtocolSession{
-		SessionTimestamp:  sessionTimestamp, // Use provided timestamp for coordination
-		Type:              sessionType,
-		Phase:             1,
-		StartTime:         time.Now(),
-		Operators:         operators,
-		shares:            make(map[int]*fr.Element),
-		commitments:       make(map[int][]types.G2Point),
-		acks:              make(map[int]map[int]*types.Acknowledgement),
-		verifiedOperators: make(map[int]bool), // Phase 4
+		SessionTimestamp:        sessionTimestamp,
+		Type:                    sessionType,
+		Phase:                   1,
+		StartTime:               time.Now(),
+		Operators:               operators,
+		shares:                  make(map[int]*fr.Element),
+		commitments:             make(map[int][]types.G2Point),
+		acks:                    make(map[int]map[int]*types.Acknowledgement),
+		sharesCompleteChan:      make(chan bool, 1),
+		commitmentsCompleteChan: make(chan bool, 1),
+		acksCompleteChan:        make(chan bool, 1),
+		verifiedOperators:       make(map[int]bool),
+	}
+
+	// Initialize acks map for each operator (as dealer)
+	for _, op := range operators {
+		nodeID := addressToNodeID(op.OperatorAddress)
+		session.acks[nodeID] = make(map[int]*types.Acknowledgement)
 	}
 
 	n.sessionMutex.Lock()
@@ -539,12 +633,14 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 
 	// Send shares to each participant
 	for _, op := range operators {
+		n.logger.Sugar().Debugw("Sending share to operator",
+			"operator_address", n.OperatorAddress.Hex(),
+			"target", op.OperatorAddress.Hex())
 		opNodeID := addressToNodeID(op.OperatorAddress)
 		if opNodeID == thisNodeID {
-			n.mu.Lock()
-			n.receivedShares[thisNodeID] = shares[thisNodeID]
-			n.receivedCommitments[thisNodeID] = commitments
-			n.mu.Unlock()
+			// Store own share and commitment in session
+			_ = session.HandleReceivedShare(thisNodeID, shares[thisNodeID])
+			_ = session.HandleReceivedCommitment(thisNodeID, commitments)
 			continue
 		}
 		if err := n.transport.SendDKGShare(op, shares[opNodeID], session.SessionTimestamp); err != nil {
@@ -556,28 +652,23 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 		}
 	}
 
-	// Wait for all shares and commitments (timeout must be less than block interval)
+	// Wait for all shares and commitments using channel-based signaling
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
-	if err := n.waitForSharesWithRetry(len(operators), protocolTimeout); err != nil {
+	if err := waitForShares(session, protocolTimeout); err != nil {
 		return err
 	}
-	if err := n.waitForCommitmentsWithRetry(len(operators), protocolTimeout); err != nil {
+	if err := waitForCommitments(session, protocolTimeout); err != nil {
 		return err
 	}
 
 	// Phase 2: Verify and send acknowledgements
 	n.logger.Sugar().Infow("Starting DKG Phase 2", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "phase", "verify_and_ack")
 
-	n.mu.RLock()
-	receivedShares := make(map[int]*fr.Element)
-	for k, v := range n.receivedShares {
-		receivedShares[k] = v
-	}
-	receivedCommitments := make(map[int][]types.G2Point)
-	for k, v := range n.receivedCommitments {
-		receivedCommitments[k] = v
-	}
-	n.mu.RUnlock()
+	// Get shares and commitments from session (we know we have all of them now)
+	session.mu.RLock()
+	receivedShares := session.shares
+	receivedCommitments := session.commitments
+	session.mu.RUnlock()
 
 	validShares := make(map[int]*fr.Element)
 	for dealerID, share := range receivedShares {
@@ -619,17 +710,100 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 		}
 	}
 
-	n.mu.Lock()
-	n.receivedShares = validShares
-	n.mu.Unlock()
+	// No need to store validShares globally - just use them for finalization later
 
 	// Wait for acknowledgements (as a dealer) - need ALL operators for DKG
-	if err := n.waitForAcknowledgements(len(operators), protocolTimeout); err != nil {
+	myNodeID := addressToNodeID(n.OperatorAddress)
+	if err := waitForAcks(session, myNodeID, protocolTimeout); err != nil {
 		return fmt.Errorf("insufficient acknowledgements: %v", err)
 	}
 
-	// Phase 3: Finalize
-	n.logger.Sugar().Infow("Starting DKG Phase 3", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "phase", "finalization")
+	// Phase 3: Build Merkle Tree and Submit to Contract
+	n.logger.Sugar().Infow("DKG Phase 3: Building merkle tree and submitting to contract",
+		"operator_address", n.OperatorAddress.Hex(),
+		"session", session.SessionTimestamp)
+
+	// Collect acknowledgements from session where I am the dealer
+	session.mu.RLock()
+	myAcks := make([]*types.Acknowledgement, 0)
+	if ackMap, ok := session.acks[myNodeID]; ok {
+		for _, ack := range ackMap {
+			myAcks = append(myAcks, ack)
+		}
+	}
+	session.mu.RUnlock()
+
+	if len(myAcks) == 0 {
+		return fmt.Errorf("no acknowledgements collected as dealer")
+	}
+
+	// Build merkle tree from collected acks
+	merkleTree, err := dkg.BuildAcknowledgementMerkleTree(myAcks)
+	if err != nil {
+		return fmt.Errorf("failed to build merkle tree: %w", err)
+	}
+
+	// Compute commitment hash
+	myCommitmentHash := eigenxcrypto.HashCommitment(commitments)
+
+	n.logger.Sugar().Infow("Merkle tree built successfully",
+		"num_acks", len(myAcks),
+		"merkle_root", fmt.Sprintf("0x%x", merkleTree.Root))
+
+	// Submit to contract with retry logic
+	err = n.submitCommitmentWithRetry(
+		ctx,
+		session.SessionTimestamp,
+		myCommitmentHash,
+		merkleTree.Root,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to submit commitment after retries: %w", err)
+	}
+
+	n.logger.Sugar().Infow("Commitment submitted to Base contract successfully",
+		"commitment_hash", fmt.Sprintf("0x%x", myCommitmentHash),
+		"merkle_root", fmt.Sprintf("0x%x", merkleTree.Root))
+
+	// Store in session
+	session.mu.Lock()
+	session.myAckMerkleTree = merkleTree
+	session.myCommitmentHash = myCommitmentHash
+	session.contractSubmitted = true
+	session.mu.Unlock()
+
+	// Phase 4: Broadcast commitments with proofs to all operators
+	n.logger.Sugar().Infow("DKG Phase 4: Broadcasting commitments with proofs",
+		"operator_address", n.OperatorAddress.Hex())
+
+	err = n.transport.BroadcastCommitmentsWithProofs(
+		operators,
+		session.SessionTimestamp,
+		commitments,
+		myAcks,
+		merkleTree,
+	)
+	if err != nil {
+		n.logger.Sugar().Warnw("Failed to broadcast commitments with proofs", "error", err)
+		// Continue - not fatal if some broadcasts fail
+	}
+
+	// Phase 5: Wait for and verify all operator broadcasts
+	n.logger.Sugar().Infow("DKG Phase 5: Waiting for operator verifications",
+		"expected_verifications", len(operators)-1)
+
+	err = n.WaitForVerifications(session.SessionTimestamp, protocolTimeout)
+	if err != nil {
+		n.logger.Sugar().Warnw("Verification phase incomplete", "error", err)
+		// Continue - not fatal, verification is optional
+	} else {
+		n.logger.Sugar().Infow("All operator broadcasts verified successfully")
+	}
+
+	// Phase 6: Finalize
+	n.logger.Sugar().Infow("DKG Phase 6: Finalizing key share",
+		"operator_address", n.OperatorAddress.Hex(),
+		"node_id", thisNodeID)
 
 	allCommitments := make([][]types.G2Point, 0, len(receivedCommitments))
 	participantIDs := make([]int, 0, len(receivedCommitments))
@@ -642,8 +816,12 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 		}
 	}
 
-	keyVersion := n.dkg.FinalizeKeyShare(n.receivedShares, allCommitments, participantIDs)
+	// Use validShares (only verified shares) for finalization
+	keyVersion := n.dkg.FinalizeKeyShare(validShares, allCommitments, participantIDs)
 	keyVersion.Version = session.SessionTimestamp // Use session timestamp as version
+	// Store THIS node's commitments (not allCommitments[0]) so that when the client
+	// queries all operators and sums their commitments[0], it computes the correct master public key
+	keyVersion.Commitments = commitments
 	n.keyStore.AddVersion(keyVersion)
 
 	n.logger.Sugar().Infow("DKG complete",
@@ -714,10 +892,9 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	for _, op := range operators {
 		opNodeID := addressToNodeID(op.OperatorAddress)
 		if opNodeID == thisNodeID {
-			n.mu.Lock()
-			n.receivedShares[thisNodeID] = shares[opNodeID]
-			n.receivedCommitments[thisNodeID] = commitments
-			n.mu.Unlock()
+			// Store own share and commitment in session
+			_ = session.HandleReceivedShare(thisNodeID, shares[opNodeID])
+			_ = session.HandleReceivedCommitment(thisNodeID, commitments)
 			continue
 		}
 		if err := n.transport.SendReshareShare(op, shares[opNodeID], session.SessionTimestamp); err != nil {
@@ -729,41 +906,211 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		}
 	}
 
-	// Wait for shares and commitments (timeout must be less than block interval)
+	// Wait for shares and commitments using channel-based signaling
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
-	if err := n.waitForSharesWithRetry(len(operators), protocolTimeout); err != nil {
+	if err := waitForShares(session, protocolTimeout); err != nil {
 		return err
 	}
-	if err := n.waitForCommitmentsWithRetry(len(operators), protocolTimeout); err != nil {
+	if err := waitForCommitments(session, protocolTimeout); err != nil {
 		return err
 	}
 
-	// Phase 2: Finalize reshare
-	n.logger.Sugar().Infow("Starting Reshare Finalization", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID)
+	// Phase 1b: Verify shares and send acknowledgements
+	n.logger.Sugar().Infow("Reshare Phase 1b: Verifying shares and sending acknowledgements",
+		"operator_address", n.OperatorAddress.Hex(),
+		"node_id", thisNodeID)
 
-	// Collect all commitments and participant IDs
-	n.mu.RLock()
-	allCommitments := make([][]types.G2Point, 0, len(n.receivedCommitments))
-	participantIDs := make([]int, 0, len(n.receivedCommitments))
+	// Get shares and commitments from session
+	session.mu.RLock()
+	receivedShares := session.shares
+	receivedCommitments := session.commitments
+	session.mu.RUnlock()
 
-	for _, op := range operators {
-		opNodeID := addressToNodeID(op.OperatorAddress)
-		if comm, ok := n.receivedCommitments[opNodeID]; ok {
-			allCommitments = append(allCommitments, comm)
-			participantIDs = append(participantIDs, opNodeID)
+	validShares := make(map[int]*fr.Element)
+	for dealerID, share := range receivedShares {
+		commitments := receivedCommitments[dealerID]
+		if n.resharer.VerifyNewShare(dealerID, share, commitments) {
+			validShares[dealerID] = share
+
+			// Create acknowledgement for verified share
+			ack := reshare.CreateAcknowledgement(thisNodeID, dealerID, sessionTimestamp, share, commitments, n.signAcknowledgement)
+
+			// Find dealer's peer info for transport
+			var dealerPeer *peering.OperatorSetPeer
+			for _, op := range operators {
+				if addressToNodeID(op.OperatorAddress) == dealerID {
+					dealerPeer = op
+					break
+				}
+			}
+
+			if dealerPeer != nil {
+				// Send acknowledgement to dealer
+				err := n.transport.SendReshareAcknowledgement(ack, dealerPeer, session.SessionTimestamp)
+				if err != nil {
+					n.logger.Sugar().Warnw("Failed to send reshare acknowledgement",
+						"operator_address", n.OperatorAddress.Hex(),
+						"dealer_address", dealerPeer.OperatorAddress.Hex(),
+						"error", err)
+				} else {
+					n.logger.Sugar().Debugw("Sent reshare acknowledgement",
+						"operator_address", n.OperatorAddress.Hex(),
+						"dealer_address", dealerPeer.OperatorAddress.Hex(),
+						"dealer_id", dealerID)
+				}
+			}
+
+			n.logger.Sugar().Infow("Verified and acked reshare share",
+				"operator_address", n.OperatorAddress.Hex(),
+				"node_id", thisNodeID,
+				"dealer_id", dealerID)
+		} else {
+			n.logger.Sugar().Warnw("Invalid reshare share received",
+				"operator_address", n.OperatorAddress.Hex(),
+				"node_id", thisNodeID,
+				"dealer_id", dealerID)
 		}
 	}
 
-	receivedShares := make(map[int]*fr.Element)
-	for k, v := range n.receivedShares {
-		receivedShares[k] = v
+	// Wait for acknowledgements (as a dealer)
+	myNodeID := addressToNodeID(n.OperatorAddress)
+	if err := waitForAcks(session, myNodeID, protocolTimeout); err != nil {
+		return fmt.Errorf("insufficient reshare acknowledgements: %v", err)
 	}
-	n.mu.RUnlock()
+
+	// Phase 2: Build Merkle Tree and Submit to Contract
+	n.logger.Sugar().Infow("Reshare Phase 2: Building merkle tree and submitting to contract",
+		"operator_address", n.OperatorAddress.Hex(),
+		"session", session.SessionTimestamp)
+
+	// Collect acknowledgements from session where I am the dealer
+	session.mu.RLock()
+	myAcks := make([]*types.Acknowledgement, 0)
+	if ackMap, ok := session.acks[myNodeID]; ok {
+		for _, ack := range ackMap {
+			myAcks = append(myAcks, ack)
+		}
+	}
+	session.mu.RUnlock()
+
+	if len(myAcks) == 0 {
+		return fmt.Errorf("no acknowledgements collected as dealer in reshare")
+	}
+
+	// Build merkle tree from collected acks
+	merkleTree, err := reshare.BuildAcknowledgementMerkleTree(myAcks)
+	if err != nil {
+		return fmt.Errorf("failed to build merkle tree in reshare: %w", err)
+	}
+
+	// Compute commitment hash from my commitments (from session)
+	session.mu.RLock()
+	myCommitments, ok := session.commitments[myNodeID]
+	session.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("my commitments not found in reshare")
+	}
+
+	myCommitmentHash := eigenxcrypto.HashCommitment(myCommitments)
+
+	n.logger.Sugar().Infow("Merkle tree built successfully in reshare",
+		"num_acks", len(myAcks),
+		"merkle_root", fmt.Sprintf("0x%x", merkleTree.Root))
+
+	// Submit to contract with retry logic
+	err = n.submitCommitmentWithRetry(
+		ctx,
+		session.SessionTimestamp,
+		myCommitmentHash,
+		merkleTree.Root,
+	)
+	if err != nil {
+		return fmt.Errorf("failed to submit commitment in reshare after retries: %w", err)
+	}
+
+	n.logger.Sugar().Infow("Commitment submitted to Base contract successfully in reshare",
+		"commitment_hash", fmt.Sprintf("0x%x", myCommitmentHash),
+		"merkle_root", fmt.Sprintf("0x%x", merkleTree.Root))
+
+	// Store in session
+	session.mu.Lock()
+	session.myAckMerkleTree = merkleTree
+	session.myCommitmentHash = myCommitmentHash
+	session.contractSubmitted = true
+	session.mu.Unlock()
+
+	// Phase 3: Broadcast commitments with proofs
+	n.logger.Sugar().Infow("Reshare Phase 3: Broadcasting commitments with proofs",
+		"operator_address", n.OperatorAddress.Hex())
+
+	err = n.transport.BroadcastCommitmentsWithProofs(
+		operators,
+		session.SessionTimestamp,
+		myCommitments,
+		myAcks,
+		merkleTree,
+	)
+	if err != nil {
+		n.logger.Sugar().Warnw("Failed to broadcast commitments with proofs in reshare", "error", err)
+		// Continue - not fatal if some broadcasts fail
+	}
+
+	// Phase 4: Wait for verifications
+	n.logger.Sugar().Infow("Reshare Phase 4: Waiting for operator verifications",
+		"expected_verifications", len(operators)-1)
+
+	err = n.WaitForVerifications(session.SessionTimestamp, protocolTimeout)
+	if err != nil {
+		n.logger.Sugar().Warnw("Verification phase incomplete in reshare", "error", err)
+		// Continue - not fatal, verification is optional
+	} else {
+		n.logger.Sugar().Infow("All operator broadcasts verified successfully in reshare")
+	}
+
+	// Phase 5: Finalize reshare
+	n.logger.Sugar().Infow("Reshare Phase 5: Finalizing key share",
+		"operator_address", n.OperatorAddress.Hex(),
+		"node_id", thisNodeID)
+
+	// Collect all commitments and participant IDs for finalization from session
+	session.mu.RLock()
+	allCommitmentsForFinalize := make([][]types.G2Point, 0, len(session.commitments))
+	participantIDsForFinalize := make([]int, 0, len(session.commitments))
+
+	for _, op := range operators {
+		opNodeID := addressToNodeID(op.OperatorAddress)
+		if comm, ok := session.commitments[opNodeID]; ok {
+			allCommitmentsForFinalize = append(allCommitmentsForFinalize, comm)
+			participantIDsForFinalize = append(participantIDsForFinalize, opNodeID)
+		}
+	}
+
+	receivedSharesForFinalize := session.shares
+	session.mu.RUnlock()
 
 	// Compute new key share using Lagrange interpolation
-	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDs, receivedShares, allCommitments)
+	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDsForFinalize, receivedSharesForFinalize, allCommitmentsForFinalize)
 	newKeyVersion.Version = sessionTimestamp // Use session timestamp as version
 	newKeyVersion.IsActive = true            // Activate immediately (all operators must participate)
+
+	// Scale this node's first commitment by its Lagrange coefficient
+	// This ensures that when the client sums all operators' commitments[0], it gets g^s (master public key)
+	// In reshare: C[0] = g^{x_i} where x_i is old share
+	// Master public key = g^s = g^{Σ λ_i * x_i} = Σ λ_i * C[0]
+	// So we store λ_i * C[0] as our contribution to the master public key sum
+	lambda := eigenxcrypto.ComputeLagrangeCoefficient(thisNodeID, participantIDsForFinalize)
+	scaledFirstCommitment, err := eigenxcrypto.ScalarMulG2(commitments[0], lambda)
+	if err != nil {
+		return fmt.Errorf("failed to scale commitment: %w", err)
+	}
+
+	// Create scaled commitments (only first one is scaled for master public key computation)
+	scaledCommitments := make([]types.G2Point, len(commitments))
+	scaledCommitments[0] = *scaledFirstCommitment
+	for i := 1; i < len(commitments); i++ {
+		scaledCommitments[i] = commitments[i]
+	}
+	newKeyVersion.Commitments = scaledCommitments
 
 	// Add new version to keystore
 	n.keyStore.AddVersion(newKeyVersion)
@@ -800,33 +1147,30 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		"operator_address", n.OperatorAddress.Hex(),
 		"expected_operators", len(operators))
 
-	// Wait for shares and commitments from existing operators
+	// Wait for shares and commitments from existing operators using channel-based signaling
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
-	if err := n.waitForSharesWithRetry(len(operators), protocolTimeout); err != nil {
+	if err := waitForShares(session, protocolTimeout); err != nil {
 		return fmt.Errorf("failed to receive shares: %w", err)
 	}
-	if err := n.waitForCommitmentsWithRetry(len(operators), protocolTimeout); err != nil {
+	if err := waitForCommitments(session, protocolTimeout); err != nil {
 		return fmt.Errorf("failed to receive commitments: %w", err)
 	}
 
-	// Collect all commitments and participant IDs
-	n.mu.RLock()
-	allCommitments := make([][]types.G2Point, 0, len(n.receivedCommitments))
-	participantIDs := make([]int, 0, len(n.receivedCommitments))
+	// Collect all commitments and participant IDs from session
+	session.mu.RLock()
+	allCommitments := make([][]types.G2Point, 0, len(session.commitments))
+	participantIDs := make([]int, 0, len(session.commitments))
 
 	for _, op := range operators {
 		opNodeID := addressToNodeID(op.OperatorAddress)
-		if comm, ok := n.receivedCommitments[opNodeID]; ok {
+		if comm, ok := session.commitments[opNodeID]; ok {
 			allCommitments = append(allCommitments, comm)
 			participantIDs = append(participantIDs, opNodeID)
 		}
 	}
 
-	receivedShares := make(map[int]*fr.Element)
-	for k, v := range n.receivedShares {
-		receivedShares[k] = v
-	}
-	n.mu.RUnlock()
+	receivedShares := session.shares
+	session.mu.RUnlock()
 
 	// Compute new key share using Lagrange interpolation
 	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDs, receivedShares, allCommitments)
@@ -867,89 +1211,82 @@ func (n *Node) SignAppID(appID string, attestationTime int64) types.G1Point {
 	return *partialSig
 }
 
-// Wait functions
+// Wait functions using channel-based completion signaling
 
-func (n *Node) waitForSharesWithRetry(expectedCount int, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	checkInterval := 200 * time.Millisecond
+// waitForShares waits for all shares to be received using channel signaling
+func waitForShares(session *ProtocolSession, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
-	for time.Now().Before(deadline) {
-		n.mu.RLock()
-		received := len(n.receivedShares)
-		n.mu.RUnlock()
+	select {
+	case <-session.sharesCompleteChan:
+		return nil
 
-		if received >= expectedCount {
-			return nil
-		}
-
-		time.Sleep(checkInterval)
+	case <-ctx.Done():
+		session.mu.RLock()
+		received := len(session.shares)
+		expected := len(session.Operators)
+		session.mu.RUnlock()
+		return fmt.Errorf("timeout waiting for shares: got %d/%d", received, expected)
 	}
-
-	n.mu.RLock()
-	received := len(n.receivedShares)
-	n.mu.RUnlock()
-
-	return fmt.Errorf("timeout: got %d shares, expected %d", received, expectedCount)
 }
 
-func (n *Node) waitForCommitmentsWithRetry(expectedCount int, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	checkInterval := 200 * time.Millisecond
+// waitForCommitments waits for all commitments to be received using channel signaling
+func waitForCommitments(session *ProtocolSession, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
-	for time.Now().Before(deadline) {
-		n.mu.RLock()
-		received := len(n.receivedCommitments)
-		n.mu.RUnlock()
+	select {
+	case <-session.commitmentsCompleteChan:
+		return nil
 
-		if received >= expectedCount {
-			return nil
-		}
-
-		time.Sleep(checkInterval)
+	case <-ctx.Done():
+		session.mu.RLock()
+		received := len(session.commitments)
+		expected := len(session.Operators)
+		session.mu.RUnlock()
+		return fmt.Errorf("timeout waiting for commitments: got %d/%d", received, expected)
 	}
-
-	n.mu.RLock()
-	received := len(n.receivedCommitments)
-	n.mu.RUnlock()
-
-	return fmt.Errorf("timeout: got %d commitments, expected %d", received, expectedCount)
 }
 
-func (n *Node) waitForAcknowledgements(threshold int, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	checkInterval := 200 * time.Millisecond
-	thisNodeID := addressToNodeID(n.OperatorAddress)
+// waitForAcks waits for all acknowledgements to be received for a specific dealer using polling
+// Note: We poll instead of using acksCompleteChan because the channel signals when ANY dealer
+// completes, not when THIS specific dealer completes. Each dealer needs to wait for their own acks.
+func waitForAcks(session *ProtocolSession, dealerNodeID int, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
 
-	for time.Now().Before(deadline) {
-		n.mu.RLock()
-		// receivedAcks is keyed by dealer ID, we are the dealer waiting for acks
-		acks := n.receivedAcks[thisNodeID]
-		count := 0
-		if acks != nil {
-			count = len(acks)
+	expected := len(session.Operators) - 1 // All operators except dealer itself
+
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			session.mu.RLock()
+			ackMap := session.acks[dealerNodeID]
+			received := 0
+			if ackMap != nil {
+				received = len(ackMap)
+			}
+			session.mu.RUnlock()
+			return fmt.Errorf("timeout waiting for acks: got %d/%d", received, expected)
+
+		case <-ticker.C:
+			session.mu.RLock()
+			ackMap := session.acks[dealerNodeID]
+			received := 0
+			if ackMap != nil {
+				received = len(ackMap)
+			}
+			session.mu.RUnlock()
+
+			if received >= expected {
+				return nil
+			}
 		}
-		n.mu.RUnlock()
-
-		if count >= threshold {
-			n.logger.Sugar().Infow("Received sufficient acknowledgements",
-				"operator_address", n.OperatorAddress.Hex(),
-				"received", count,
-				"threshold", threshold)
-			return nil
-		}
-
-		time.Sleep(checkInterval)
 	}
-
-	n.mu.RLock()
-	acks := n.receivedAcks[thisNodeID]
-	count := 0
-	if acks != nil {
-		count = len(acks)
-	}
-	n.mu.RUnlock()
-
-	return fmt.Errorf("timeout waiting for acknowledgements: got %d acks, expected %d", count, threshold)
 }
 
 // Helper methods for testing
@@ -974,39 +1311,8 @@ func (n *Node) RunDKGPhase1() (map[int]*fr.Element, []types.G2Point, error) {
 	return n.dkg.GenerateShares()
 }
 
-// ReceiveShare receives a share from another node (for testing)
-func (n *Node) ReceiveShare(fromID int, share *fr.Element, commitments []types.G2Point) error {
-	n.mu.Lock()
-	n.receivedShares[fromID] = share
-	n.receivedCommitments[fromID] = commitments
-	n.mu.Unlock()
-
-	// Verify the share
-	if n.dkg.VerifyShare(fromID, share, commitments) {
-		n.logger.Sugar().Infow("Verified share", "node_id", n.OperatorAddress.Hex(), "from_id", fromID)
-		return nil
-	} else {
-		return fmt.Errorf("node %s: invalid share from node %d", n.OperatorAddress.Hex(), fromID)
-	}
-}
-
-// UpdateOperatorSet is no longer needed - operators are fetched dynamically from peering system
-
-// FinalizeDKG finalizes the DKG process and creates active key version (for testing)
-func (n *Node) FinalizeDKG(allCommitments [][]types.G2Point, participantIDs []int) error {
-	n.mu.RLock()
-	receivedShares := make(map[int]*fr.Element)
-	for k, v := range n.receivedShares {
-		receivedShares[k] = v
-	}
-	n.mu.RUnlock()
-
-	keyVersion := n.dkg.FinalizeKeyShare(receivedShares, allCommitments, participantIDs)
-	n.keyStore.AddVersion(keyVersion)
-
-	n.logger.Sugar().Infow("DKG finalized", "node_id", n.OperatorAddress.Hex(), "version", keyVersion.Version)
-	return nil
-}
+// Deprecated: Old test helper functions - use TestCluster instead
+// These functions used global state which has been moved to sessions
 
 // verifyMessage verifies an authenticated message using the sender's BN254 public key
 func (n *Node) verifyMessage(authMsg *types.AuthenticatedMessage, senderPeer *peering.OperatorSetPeer) error {
@@ -1066,22 +1372,83 @@ func (n *Node) findPeerByAddress(address common.Address, peers []*peering.Operat
 	return nil
 }
 
-// signAcknowledgement signs an acknowledgement using BN254 private key
+// submitCommitmentWithRetry submits a commitment to the Base contract with exponential backoff retry logic
+func (n *Node) submitCommitmentWithRetry(
+	ctx context.Context,
+	epoch int64,
+	commitmentHash [32]byte,
+	merkleRoot [32]byte,
+) error {
+	const maxRetries = 3
+	backoffDurations := []time.Duration{
+		2 * time.Second,
+		4 * time.Second,
+		8 * time.Second,
+	}
+
+	var lastErr error
+
+	for attempt := 0; attempt < maxRetries; attempt++ {
+		n.logger.Sugar().Infow("Submitting commitment to Base contract",
+			"attempt", attempt+1,
+			"max_attempts", maxRetries,
+			"epoch", epoch,
+			"commitment_hash", fmt.Sprintf("0x%x", commitmentHash),
+			"merkle_root", fmt.Sprintf("0x%x", merkleRoot))
+
+		// Call contract submission (synchronous, waits for tx to be mined)
+		_, err := n.baseContractCaller.SubmitCommitment(
+			ctx,
+			n.commitmentRegistryAddress,
+			epoch,
+			commitmentHash,
+			merkleRoot,
+		)
+
+		if err == nil {
+			n.logger.Sugar().Infow("Commitment submitted successfully to Base chain",
+				"attempt", attempt+1,
+				"epoch", epoch)
+			return nil
+		}
+
+		lastErr = err
+		n.logger.Sugar().Warnw("Commitment submission failed",
+			"attempt", attempt+1,
+			"error", err)
+
+		// If this isn't the last attempt, wait before retrying
+		if attempt < maxRetries-1 {
+			backoffDuration := backoffDurations[attempt]
+			n.logger.Sugar().Infow("Retrying after backoff",
+				"backoff_duration", backoffDuration)
+
+			select {
+			case <-ctx.Done():
+				return fmt.Errorf("context cancelled during retry backoff: %w", ctx.Err())
+			case <-time.After(backoffDuration):
+				// Continue to next retry
+			}
+		}
+	}
+
+	return fmt.Errorf("failed to submit commitment after %d attempts: %w", maxRetries, lastErr)
+}
+
+// signAcknowledgement signs an acknowledgement using ECDSA transport signer
 func (n *Node) signAcknowledgement(dealerID int, commitmentHash [32]byte) []byte {
 	// Create message: dealerID || commitmentHash
 	dealerBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(dealerBytes, uint32(dealerID))
 	message := append(dealerBytes, commitmentHash[:]...)
-	messageHash := crypto.Keccak256(message)
 
-	var hash32 [32]byte
-	copy(hash32[:], messageHash)
-	signature, err := n.BN254PrivateKey.SignSolidityCompatible(hash32)
+	// Sign using transport signer (ECDSA)
+	signature, err := n.transportSigner.SignMessage(message)
 	if err != nil {
 		n.logger.Sugar().Errorw("Failed to sign acknowledgement", "error", err)
 		return nil
 	}
-	return signature.Bytes()
+	return signature
 }
 
 // VerifyOperatorBroadcast verifies a commitment broadcast against on-chain data (Phase 6)

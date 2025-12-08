@@ -5,17 +5,26 @@
       "operatorAccountAddress_1": "0x9095535f04796d223A83c0e1346e7C1D9C6EE6f3",
       "operatorAccountPk_1": "0x164c99fbf92b37b1cfa80194c7670b014f02c55eb5c1d99b65459921020ff6df",
       "operatorAccountPublicKey_1": "0x433998e0c19b6c43f90f59d197db09f32a6b2543cd3bc40be96cdec49c6f6cbc7b254c7cb5a1cf6c78137686599dd82779c52470b363e4870c9ad3dffcf343e3",
+      "operatorSocket_1": "http://localhost:7501",
       "operatorAccountAddress_2": "0x753cfB4Da4872c77Bf78fE2031c86c218674B805",
       "operatorAccountPk_2": "0xd93d143e2963cdc9b744edae90396f70f3dd200628686379a96fbd8564e5842b",
       "operatorAccountPublicKey_2": "0x4a1c4e4efef810c1ad8df6634dfe0d03c01dc118c7230ce6446867752ccbd6241d4f043931801566df3086de4d6bd34d5bf2cc81f690de64ef6e49b46d2cdd73",
+      "operatorSocket_2": "http://localhost:7502",
       "operatorAccountAddress_3": "0x5B5B4D4A4B01aA9F76EC6C8562cD7B2F2dC48D9F",
       "operatorAccountPk_3": "0xf977ed3eb4c222aaf3c54a2e912c89b2015015e95e994ad0c2d42f7ac590a775",
       "operatorAccountPublicKey_3": "0x729bbba03d5db21197f4ad279f42ecf4df80bb1683f29b1565002f9a6216c9af14c8d984134a61de7bc0950861a0082bdab3cf26b5755ee2674f3afc48e4a647",
+      "operatorSocket_3": "http://localhost:7503",
       "operatorAccountAddress_4": "0xeF7e91f647888F6737f07720485827802B76eAcF",
       "operatorAccountPk_4": "0xe1a6d3b0ef8ac47db3791fa4127a166c3f1f28fd45e4522e908b52bc82c742b6",
       "operatorAccountPublicKey_4": "0xa3aae4b8195cc26f01c4f7d4f196b69396e345c25ba4212ec6574b5a5d8ee4f37a12da8bda19077dd0b21f059ea39abf0f4af701e2be3f6a2ac1bc5075bf2e1d",
+      "operatorSocket_4": "http://localhost:7504",
       "operatorAccountAddress_5": "0xBd8e9963c1ce68D293C8a3B715Faa97301eB05BE",
       "operatorAccountPk_5": "0x59b74c409b9c59507ddab13ee3347b9b9f89914f381fe3b2ce2b34a6034aa1c0",
       "operatorAccountPublicKey_5": "0xb4c11ad8bf212f62f790013accf1c3683b13f90d4149821590845c17cee34e367dce3b5ff07c191f4e20fb1324221d0307cc71bb9aed64d363048bd3476bf57c",
-      "forkL1Block": "9469897"
+      "operatorSocket_5": "http://localhost:7505",
+      "forkL1Block": "9778678",
+      "forkL2Block": "34610863",
+      "eigenCommitmentRegistryAddress": "0x06329b1e7a2eaf761b8d2dbd67726e5dad73f5a2",
+      "eigenRegistrarAddress": "0x06329b1e7a2eaf761b8d2dbd67726e5dad73f5a2"
+
 }

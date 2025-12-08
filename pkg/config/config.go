@@ -2,7 +2,6 @@ package config
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -11,14 +10,24 @@ import (
 
 // Environment variable names for KMS Server configuration
 const (
-	EnvKMSOperatorAddress = "KMS_OPERATOR_ADDRESS"
-	EnvKMSPort            = "KMS_PORT"
-	EnvKMSChainID         = "KMS_CHAIN_ID"
-	EnvKMSBN254PrivateKey = "KMS_BN254_PRIVATE_KEY"
-	EnvKMSRPCURL          = "KMS_RPC_URL"
-	EnvKMSAVSAddress      = "KMS_AVS_ADDRESS"
-	EnvKMSOperatorSetID   = "KMS_OPERATOR_SET_ID"
-	EnvKMSVerbose         = "KMS_VERBOSE"
+	EnvKMSOperatorAddress        = "KMS_OPERATOR_ADDRESS"
+	EnvKMSPort                   = "KMS_PORT"
+	EnvKMSChainID                = "KMS_CHAIN_ID"
+	EnvKMSRPCURL                 = "KMS_RPC_URL"
+	EnvKMSAVSAddress             = "KMS_AVS_ADDRESS"
+	EnvKMSOperatorSetID          = "KMS_OPERATOR_SET_ID"
+	EnvKMSVerbose                = "KMS_VERBOSE"
+	EnvKMSBaseRPCURL             = "KMS_BASE_RPC_URL"
+	EnvKMSCommitmentRegistryAddr = "KMS_COMMITMENT_REGISTRY_ADDRESS"
+	// ECDSA operator signing configuration
+	EnvKMSECDSAPrivateKey       = "KMS_ECDSA_PRIVATE_KEY"
+	EnvKMSUseRemoteSigner       = "KMS_USE_REMOTE_SIGNER"
+	EnvKMSWeb3SignerURL         = "KMS_WEB3SIGNER_URL"
+	EnvKMSWeb3SignerCACert      = "KMS_WEB3SIGNER_CA_CERT"
+	EnvKMSWeb3SignerCert        = "KMS_WEB3SIGNER_CERT"
+	EnvKMSWeb3SignerKey         = "KMS_WEB3SIGNER_KEY"
+	EnvKMSWeb3SignerFromAddress = "KMS_WEB3SIGNER_FROM_ADDRESS"
+	EnvKMSWeb3SignerPublicKey   = "KMS_WEB3SIGNER_PUBLIC_KEY"
 )
 
 type CurveType string
@@ -68,6 +77,8 @@ const (
 	ChainId_EthereumMainnet ChainId = 1
 	ChainId_EthereumSepolia ChainId = 11155111
 	ChainId_EthereumAnvil   ChainId = 31337
+	ChainId_BaseAnvil       ChainId = 31338
+	ChainId_BaseSepolia     ChainId = 84532
 )
 
 type ChainName string
@@ -77,17 +88,23 @@ const (
 	ChainName_EthereumSepolia ChainName = "sepolia"
 	ChainName_PreProdSepolia  ChainName = "dev"
 	ChainName_EthereumAnvil   ChainName = "devnet"
+	ChainName_BaseAnvil       ChainName = "base-devnet"
+	ChainName_BaseSepolia     ChainName = "base-sepolia"
 )
 
 var ChainIdToName = map[ChainId]ChainName{
 	ChainId_EthereumMainnet: ChainName_EthereumMainnet,
 	ChainId_EthereumSepolia: ChainName_EthereumSepolia,
 	ChainId_EthereumAnvil:   ChainName_EthereumAnvil,
+	ChainId_BaseAnvil:       ChainName_BaseAnvil,
+	ChainId_BaseSepolia:     ChainName_BaseSepolia,
 }
 var ChainNameToId = map[ChainName]ChainId{
 	ChainName_EthereumMainnet: ChainId_EthereumMainnet,
 	ChainName_EthereumSepolia: ChainId_EthereumSepolia,
 	ChainName_EthereumAnvil:   ChainId_EthereumAnvil,
+	ChainName_BaseAnvil:       ChainId_BaseAnvil,
+	ChainName_BaseSepolia:     ChainId_BaseSepolia,
 }
 
 // Block interval constants by chain (block-based scheduling)
@@ -165,6 +182,7 @@ var (
 		},
 		ChainId_EthereumSepolia: ethereumSepoliaCoreContracts,
 		ChainId_EthereumAnvil:   ethereumSepoliaCoreContracts, // fork of ethereum sepolia
+		ChainId_BaseAnvil:       ethereumSepoliaCoreContracts, // fork of ethereum sepolia (for L2 testing)
 	}
 )
 
@@ -174,6 +192,46 @@ func GetCoreContractsForChainId(chainId ChainId) (*CoreContractAddresses, error)
 		return nil, fmt.Errorf("unsupported chain ID: %d", chainId)
 	}
 	return contracts, nil
+}
+
+type ECDSAKeyConfig struct {
+	UseRemoteSigner    bool                `json:"remoteSigner" yaml:"remoteSigner"`
+	RemoteSignerConfig *RemoteSignerConfig `json:"remoteSignerConfig" yaml:"remoteSignerConfig"`
+	PrivateKey         string              `json:"privateKey" yaml:"privateKey"`
+}
+
+func (ekc *ECDSAKeyConfig) Validate() error {
+	var allErrors field.ErrorList
+	if ekc.UseRemoteSigner {
+		if ekc.RemoteSignerConfig == nil {
+			allErrors = append(allErrors, field.Required(field.NewPath("remoteSignerConfig"), "remoteSignerConfig is required when UseRemoteSigner is true"))
+		} else if err := ekc.RemoteSignerConfig.Validate(); err != nil {
+			allErrors = append(allErrors, field.Invalid(field.NewPath("remoteSignerConfig"), ekc.RemoteSignerConfig, err.Error()))
+		}
+	}
+	if len(allErrors) > 0 {
+		return allErrors.ToAggregate()
+	}
+	return nil
+}
+
+type OperatorConfig struct {
+	Address       string          `json:"address"`        // Ethereum address of the operator
+	SigningConfig *ECDSAKeyConfig `json:"signing_config"` // ECDSA key config for signing transactions
+}
+
+func (oc *OperatorConfig) Validate() error {
+	var allErrors field.ErrorList
+	if oc.Address == "" {
+		allErrors = append(allErrors, field.Required(field.NewPath("address"), "address is required"))
+	}
+	if oc.SigningConfig == nil {
+		allErrors = append(allErrors, field.Required(field.NewPath("signingConfig"), "signingConfig is required"))
+	}
+	if len(allErrors) > 0 {
+		return allErrors.ToAggregate()
+	}
+	return nil
 }
 
 // KMSServerConfig represents the complete configuration for a KMS server
@@ -186,13 +244,14 @@ type KMSServerConfig struct {
 	ChainID   ChainId   `json:"chain_id"`
 	ChainName ChainName `json:"chain_name"`
 
-	// Cryptographic keys
-	BN254PrivateKey string `json:"bn254_private_key"` // BN254 private key for threshold crypto and P2P
-
 	// Blockchain configuration
 	RpcUrl        string `json:"rpc_url"`         // Ethereum RPC endpoint
 	AVSAddress    string `json:"avs_address"`     // AVS contract address
 	OperatorSetId uint32 `json:"operator_set_id"` // Operator set ID
+
+	// Base chain configuration (for commitment registry)
+	BaseRpcUrl                string `json:"base_rpc_url"`                // Base chain RPC endpoint
+	CommitmentRegistryAddress string `json:"commitment_registry_address"` // Commitment registry contract address on Base
 
 	// Operational settings
 	Debug   bool `json:"debug"`
@@ -200,6 +259,8 @@ type KMSServerConfig struct {
 
 	// Contract addresses (populated from chain)
 	CoreContracts *CoreContractAddresses `json:"core_contracts,omitempty"`
+
+	OperatorConfig *OperatorConfig `json:"operator_config,omitempty"`
 }
 
 // Validate validates the KMS server configuration
@@ -212,16 +273,13 @@ func (c *KMSServerConfig) Validate() error {
 		return fmt.Errorf("invalid operator address format: %s", c.OperatorAddress)
 	}
 
-	// Validate BN254 private key format
-	if c.BN254PrivateKey == "" {
-		return fmt.Errorf("BN254 private key cannot be empty")
-	}
-	bn254Key := c.BN254PrivateKey
-	if !strings.HasPrefix(bn254Key, "0x") {
-		bn254Key = "0x" + bn254Key
-	}
-	if len(bn254Key) != 66 { // 0x + 64 hex chars
-		return fmt.Errorf("BN254 private key must be 32 bytes (64 hex chars), got %d chars", len(bn254Key)-2)
+	// Validate operator config (ECDSA signing configuration)
+	if c.OperatorConfig == nil {
+		return fmt.Errorf("operator config cannot be nil")
+	} else {
+		if err := c.OperatorConfig.Validate(); err != nil {
+			return fmt.Errorf("invalid operator config: %w", err)
+		}
 	}
 
 	if c.Port < 1 || c.Port > 65535 {

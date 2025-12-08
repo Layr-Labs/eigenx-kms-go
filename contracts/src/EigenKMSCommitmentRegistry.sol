@@ -82,16 +82,17 @@ contract EigenKMSCommitmentRegistry is
         if (_ackMerkleRoot == bytes32(0)) revert InvalidMerkleRoot();
         if (commitments[epoch][msg.sender].commitmentHash != bytes32(0)) revert CommitmentAlreadySubmitted();
 
+        // TODO(seanmcgary): integrate with certificate verifier
         // Validate operator is registered using the configured curve type
-        if (curveType == 1) {
-            // ECDSA validation
-            if (ecdsaCertificateVerifier == address(0)) revert ECDSAVerifierNotConfigured();
-            if (!_isValidOperator(msg.sender, ecdsaCertificateVerifier)) revert OperatorNotRegisteredECDSA();
-        } else if (curveType == 2) {
-            // BN254 validation
-            if (bn254CertificateVerifier == address(0)) revert BN254VerifierNotConfigured();
-            if (!_isValidOperator(msg.sender, bn254CertificateVerifier)) revert OperatorNotRegisteredBN254();
-        }
+        // if (curveType == 1) {
+        //     // ECDSA validation
+        //     if (ecdsaCertificateVerifier == address(0)) revert ECDSAVerifierNotConfigured();
+        //     if (!_isValidOperator(msg.sender, ecdsaCertificateVerifier)) revert OperatorNotRegisteredECDSA();
+        // } else if (curveType == 2) {
+        //     // BN254 validation
+        //     if (bn254CertificateVerifier == address(0)) revert BN254VerifierNotConfigured();
+        //     if (!_isValidOperator(msg.sender, bn254CertificateVerifier)) revert OperatorNotRegisteredBN254();
+        // }
         // curveType == 0 (Unknown) allows any operator (for testing/development)
 
         commitments[epoch][msg.sender] = OperatorCommitment({

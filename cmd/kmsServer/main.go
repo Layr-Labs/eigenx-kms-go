@@ -16,12 +16,16 @@ import (
 	"github.com/Layr-Labs/chain-indexer/pkg/transactionLogParser"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/web3signer"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/node"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering/peeringDataFetcher"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner/inMemoryTransportSigner"
+	web3TransportSigner "github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner/web3TransportSigner"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/urfave/cli/v2"
 )
@@ -60,12 +64,47 @@ This server implements:
 				EnvVars:  []string{config.EnvKMSChainID},
 				Required: true,
 			},
+			// ECDSA Operator Signing Configuration
 			&cli.StringFlag{
-				Name:     "bn254-private-key",
-				Aliases:  []string{"bn254"},
-				Usage:    "BN254 private key (hex string) for threshold cryptography and P2P authentication",
-				EnvVars:  []string{config.EnvKMSBN254PrivateKey},
-				Required: true,
+				Name:    "ecdsa-private-key",
+				Aliases: []string{"ecdsa"},
+				Usage:   "ECDSA private key (hex string) for P2P authentication and transaction signing",
+				EnvVars: []string{config.EnvKMSECDSAPrivateKey},
+			},
+			&cli.BoolFlag{
+				Name:    "use-remote-signer",
+				Usage:   "Use Web3Signer for remote signing instead of local private key",
+				EnvVars: []string{config.EnvKMSUseRemoteSigner},
+			},
+			&cli.StringFlag{
+				Name:    "web3signer-url",
+				Usage:   "Web3Signer URL (required if --use-remote-signer is true)",
+				EnvVars: []string{config.EnvKMSWeb3SignerURL},
+			},
+			&cli.StringFlag{
+				Name:    "web3signer-ca-cert",
+				Usage:   "Web3Signer CA certificate path (for TLS)",
+				EnvVars: []string{config.EnvKMSWeb3SignerCACert},
+			},
+			&cli.StringFlag{
+				Name:    "web3signer-cert",
+				Usage:   "Web3Signer client certificate path (for mTLS)",
+				EnvVars: []string{config.EnvKMSWeb3SignerCert},
+			},
+			&cli.StringFlag{
+				Name:    "web3signer-key",
+				Usage:   "Web3Signer client key path (for mTLS)",
+				EnvVars: []string{config.EnvKMSWeb3SignerKey},
+			},
+			&cli.StringFlag{
+				Name:    "web3signer-from-address",
+				Usage:   "Ethereum address to use for Web3Signer signing (required if --use-remote-signer is true)",
+				EnvVars: []string{config.EnvKMSWeb3SignerFromAddress},
+			},
+			&cli.StringFlag{
+				Name:    "web3signer-public-key",
+				Usage:   "ECDSA public key for Web3Signer (required if --use-remote-signer is true)",
+				EnvVars: []string{config.EnvKMSWeb3SignerPublicKey},
 			},
 			&cli.StringFlag{
 				Name:    "rpc-url",
@@ -111,6 +150,19 @@ This server implements:
 				Usage:   "Enable verbose logging",
 				EnvVars: []string{config.EnvKMSVerbose},
 			},
+			&cli.StringFlag{
+				Name:     "base-rpc-url",
+				Usage:    "Base chain RPC endpoint URL for commitment registry",
+				EnvVars:  []string{config.EnvKMSBaseRPCURL},
+				Required: true,
+			},
+			&cli.StringFlag{
+				Name:     "commitment-registry-address",
+				Aliases:  []string{"registry"},
+				Usage:    "EigenKMS Commitment Registry contract address (on Base)",
+				EnvVars:  []string{config.EnvKMSCommitmentRegistryAddr},
+				Required: true,
+			},
 		},
 		Action: runKMSServer,
 	}
@@ -148,7 +200,6 @@ func runKMSServer(c *cli.Context) error {
 	nodeConfig := node.Config{
 		OperatorAddress: kmsConfig.OperatorAddress,
 		Port:            kmsConfig.Port,
-		BN254PrivateKey: kmsConfig.BN254PrivateKey,
 		ChainID:         kmsConfig.ChainID,
 		AVSAddress:      kmsConfig.AVSAddress,
 		OperatorSetId:   kmsConfig.OperatorSetId,
@@ -194,13 +245,48 @@ func runKMSServer(c *cli.Context) error {
 
 	pdf := peeringDataFetcher.NewPeeringDataFetcher(contractCaller, l)
 
-	pkBytes, err := hexutil.Decode(kmsConfig.BN254PrivateKey)
-	if err != nil {
-		l.Sugar().Fatalw("Failed to decode private key", "error", err)
-	}
-	imts, err := inMemoryTransportSigner.NewBn254InMemoryTransportSigner(pkBytes, l)
-	if err != nil {
-		l.Sugar().Fatalw("Failed to create in-memory transport signer", "error", err)
+	// Create transport signer based on OperatorConfig
+	var transportSignerInstance transportSigner.ITransportSigner
+	if kmsConfig.OperatorConfig.SigningConfig.UseRemoteSigner {
+		// Create Web3Signer client
+		web3SignerClient, err := web3signer.NewWeb3SignerClientFromRemoteSignerConfig(
+			kmsConfig.OperatorConfig.SigningConfig.RemoteSignerConfig,
+			l,
+		)
+		if err != nil {
+			l.Sugar().Fatalw("Failed to create Web3Signer client", "error", err)
+		}
+
+		// Create Web3Signer transport signer
+		fromAddr := common.HexToAddress(kmsConfig.OperatorConfig.SigningConfig.RemoteSignerConfig.FromAddress)
+		transportSignerInstance, err = web3TransportSigner.NewWeb3Signer(
+			web3SignerClient,
+			fromAddr,
+			kmsConfig.OperatorConfig.SigningConfig.RemoteSignerConfig.PublicKey,
+			config.CurveTypeECDSA,
+			l,
+		)
+		if err != nil {
+			l.Sugar().Fatalw("Failed to create Web3Signer transport signer", "error", err)
+		}
+
+		l.Sugar().Infow("Using Web3Signer for P2P authentication",
+			"from_address", fromAddr.Hex(),
+			"url", kmsConfig.OperatorConfig.SigningConfig.RemoteSignerConfig.Url)
+	} else {
+		// Use local ECDSA private key
+		pkBytes, err := hexutil.Decode(kmsConfig.OperatorConfig.SigningConfig.PrivateKey)
+		if err != nil {
+			l.Sugar().Fatalw("Failed to decode ECDSA private key", "error", err)
+		}
+
+		transportSignerInstance, err = inMemoryTransportSigner.NewECDSAInMemoryTransportSigner(pkBytes, l)
+		if err != nil {
+			l.Sugar().Fatalw("Failed to create ECDSA in-memory transport signer", "error", err)
+		}
+
+		l.Sugar().Infow("Using local ECDSA private key for P2P authentication",
+			"operator_address", kmsConfig.OperatorAddress)
 	}
 
 	// Create attestation verifier
@@ -243,15 +329,38 @@ func runKMSServer(c *cli.Context) error {
 	}
 
 	// Wrap with production verifier adapter
-	attestationVerifier := attestation.NewProductionVerifier(attestationVerifierCore, provider)
+	attestationVerifierInstance := attestation.NewProductionVerifier(attestationVerifierCore, provider)
 
 	l.Sugar().Infow("Production attestation verification enabled",
 		"gcp_project_id", gcpProjectID,
 		"provider", providerStr,
 		"debug_mode", debugMode)
 
+	// Create Base Ethereum client for commitment registry
+	baseEthClient := ethereum.NewEthereumClient(&ethereum.EthereumClientConfig{
+		BaseUrl:   kmsConfig.BaseRpcUrl,
+		BlockType: ethereum.BlockType_Latest,
+	}, l)
+
+	baseL1Client, err := baseEthClient.GetEthereumContractCaller()
+	if err != nil {
+		l.Sugar().Fatalw("Failed to get Base contract caller", "error", err)
+	}
+
+	baseContractCaller, err := caller.NewContractCaller(baseL1Client, nil, l)
+	if err != nil {
+		l.Sugar().Fatalw("Failed to create Base contract caller", "error", err)
+	}
+
+	// Parse commitment registry address
+	commitmentRegistryAddr := common.HexToAddress(kmsConfig.CommitmentRegistryAddress)
+
+	l.Sugar().Infow("Base chain configuration",
+		"base_rpc_url", kmsConfig.BaseRpcUrl,
+		"commitment_registry_address", commitmentRegistryAddr.Hex())
+
 	// Create and configure the node
-	n, err := node.NewNode(nodeConfig, pdf, bh, poller, imts, attestationVerifier, l)
+	n, err := node.NewNode(nodeConfig, pdf, bh, poller, transportSignerInstance, attestationVerifierInstance, baseContractCaller, commitmentRegistryAddr, l)
 	if err != nil {
 		return fmt.Errorf("failed to create node: %w", err)
 	}
@@ -286,15 +395,48 @@ func runKMSServer(c *cli.Context) error {
 }
 
 func parseKMSConfig(c *cli.Context) (*config.KMSServerConfig, error) {
+	// Build OperatorConfig based on whether remote signer is used
+	var operatorConfig *config.OperatorConfig
+	useRemoteSigner := c.Bool("use-remote-signer")
+
+	if useRemoteSigner {
+		// Web3Signer configuration
+		operatorConfig = &config.OperatorConfig{
+			Address: c.String("operator-address"),
+			SigningConfig: &config.ECDSAKeyConfig{
+				UseRemoteSigner: true,
+				RemoteSignerConfig: &config.RemoteSignerConfig{
+					Url:         c.String("web3signer-url"),
+					CACert:      c.String("web3signer-ca-cert"),
+					Cert:        c.String("web3signer-cert"),
+					Key:         c.String("web3signer-key"),
+					FromAddress: c.String("web3signer-from-address"),
+					PublicKey:   c.String("web3signer-public-key"),
+				},
+			},
+		}
+	} else {
+		// Local private key configuration
+		operatorConfig = &config.OperatorConfig{
+			Address: c.String("operator-address"),
+			SigningConfig: &config.ECDSAKeyConfig{
+				UseRemoteSigner: false,
+				PrivateKey:      c.String("ecdsa-private-key"),
+			},
+		}
+	}
+
 	return &config.KMSServerConfig{
-		OperatorAddress: c.String("operator-address"),
-		Port:            c.Int("port"),
-		ChainID:         config.ChainId(c.Uint64("chain-id")),
-		BN254PrivateKey: c.String("bn254-private-key"),
-		RpcUrl:          c.String("rpc-url"),
-		AVSAddress:      c.String("avs-address"),
-		OperatorSetId:   uint32(c.Uint("operator-set-id")),
-		Debug:           c.Bool("verbose"),
-		Verbose:         c.Bool("verbose"),
+		OperatorAddress:           c.String("operator-address"),
+		Port:                      c.Int("port"),
+		ChainID:                   config.ChainId(c.Uint64("chain-id")),
+		RpcUrl:                    c.String("rpc-url"),
+		AVSAddress:                c.String("avs-address"),
+		OperatorSetId:             uint32(c.Uint("operator-set-id")),
+		Debug:                     c.Bool("verbose"),
+		Verbose:                   c.Bool("verbose"),
+		BaseRpcUrl:                c.String("base-rpc-url"),
+		CommitmentRegistryAddress: c.String("commitment-registry-address"),
+		OperatorConfig:            operatorConfig,
 	}, nil
 }

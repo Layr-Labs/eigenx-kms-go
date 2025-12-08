@@ -24,36 +24,26 @@ func (c *ContractCaller) SubmitCommitment(
 		return nil, fmt.Errorf("failed to create commitment registry instance: %w", err)
 	}
 
-	// Get transaction options
-	opts, err := c.signer.GetTransactOpts(ctx)
+	// Build transaction options
+	txOpts, err := c.buildTransactionOpts(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get transaction options: %w", err)
+		return nil, fmt.Errorf("failed to build transaction options: %w", err)
 	}
 
-	// Submit commitment
-	tx, err := registry.SubmitCommitment(opts, uint64(epoch), commitmentHash, ackMerkleRoot)
+	// Create transaction
+	tx, err := registry.SubmitCommitment(txOpts, uint64(epoch), commitmentHash, ackMerkleRoot)
 	if err != nil {
-		return nil, fmt.Errorf("failed to submit commitment: %w", err)
+		return nil, fmt.Errorf("failed to create transaction: %w", err)
 	}
 
-	// Wait for receipt
-	receipt, err := bind.WaitMined(ctx, c.ethclient, tx)
-	if err != nil {
-		return nil, fmt.Errorf("failed to wait for transaction: %w", err)
-	}
-
-	if receipt.Status != types.ReceiptStatusSuccessful {
-		return nil, fmt.Errorf("transaction failed with status %d", receipt.Status)
-	}
-
-	c.logger.Sugar().Infow("Submitted commitment to registry",
+	c.logger.Sugar().Infow("Submitting commitment to registry",
 		"epoch", epoch,
 		"commitmentHash", common.Bytes2Hex(commitmentHash[:]),
 		"ackMerkleRoot", common.Bytes2Hex(ackMerkleRoot[:]),
-		"txHash", tx.Hash().Hex(),
 	)
 
-	return receipt, nil
+	// Sign, send, and wait for transaction
+	return c.signAndSendTransaction(ctx, tx, "SubmitCommitment")
 }
 
 // GetCommitment queries commitment data from the registry contract

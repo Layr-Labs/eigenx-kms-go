@@ -15,16 +15,19 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering/localPeeringDataFetcher"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/registry"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner/inMemoryTransportSigner"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	kmsTypes "github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	ethTypes "github.com/ethereum/go-ethereum/core/types"
+	"github.com/stretchr/testify/mock"
 )
 
 // mockChainPoller is a no-op chain poller for testing
@@ -85,7 +88,6 @@ func testSecretsEndpointFlow(t *testing.T) {
 	cfg := Config{
 		OperatorAddress: chainConfig.OperatorAccountAddress1,
 		Port:            0,
-		BN254PrivateKey: chainConfig.OperatorAccountPrivateKey1,
 		ChainID:         config.ChainId_EthereumAnvil,
 		AVSAddress:      "0x1234567890123456789012345678901234567890",
 		OperatorSetId:   1,
@@ -106,17 +108,23 @@ func testSecretsEndpointFlow(t *testing.T) {
 	// Use mock attestation verifier for tests
 	mockVerifier := attestation.NewStubVerifier()
 
-	node, err := NewNode(cfg, peeringDataFetcher, bh, nil, imts, mockVerifier, testLogger)
+	// Create mock base contract caller
+	mockBaseContractCaller := contractCaller.NewMockIContractCaller(t)
+	mockBaseContractCaller.On("SubmitCommitment", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(&ethTypes.Receipt{Status: 1}, nil).Maybe()
+	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
+
+	node, err := NewNode(cfg, peeringDataFetcher, bh, nil, imts, mockVerifier, mockBaseContractCaller, mockRegistryAddress, testLogger)
 	if err != nil {
 		t.Fatalf("Failed to create node: %v", err)
 	}
 
 	// Add a test key share
 	testShare := new(fr.Element).SetInt64(42)
-	keyVersion := &types.KeyShareVersion{
+	keyVersion := &kmsTypes.KeyShareVersion{
 		Version:        time.Now().Unix(),
 		PrivateShare:   testShare,
-		Commitments:    []types.G2Point{},
+		Commitments:    []kmsTypes.G2Point{},
 		IsActive:       true,
 		ParticipantIDs: []int{1},
 	}
@@ -130,7 +138,7 @@ func testSecretsEndpointFlow(t *testing.T) {
 	}
 
 	// Add test release to registry
-	testRelease := &types.Release{
+	testRelease := &kmsTypes.Release{
 		ImageDigest:  "sha256:test123",
 		EncryptedEnv: "encrypted-env-data-for-test-app",
 		PublicEnv:    "PUBLIC_VAR=test-value",
@@ -143,7 +151,7 @@ func testSecretsEndpointFlow(t *testing.T) {
 	stubRegistry.AddTestRelease("test-app", testRelease)
 
 	// Create test attestation with matching claims
-	testClaims := types.AttestationClaims{
+	testClaims := kmsTypes.AttestationClaims{
 		AppID:       "test-app",
 		ImageDigest: "sha256:test123",
 		IssuedAt:    time.Now().Unix(),
@@ -152,7 +160,7 @@ func testSecretsEndpointFlow(t *testing.T) {
 	attestationBytes, _ := json.Marshal(testClaims)
 
 	// Create secrets request
-	req := types.SecretsRequestV1{
+	req := kmsTypes.SecretsRequestV1{
 		AppID:        "test-app",
 		Attestation:  attestationBytes,
 		RSAPubKeyTmp: pubKeyPEM,
@@ -177,7 +185,7 @@ func testSecretsEndpointFlow(t *testing.T) {
 	}
 
 	// Parse response
-	var resp types.SecretsResponseV1
+	var resp kmsTypes.SecretsResponseV1
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
 		t.Fatalf("Failed to parse response: %v", err)
 	}
@@ -202,7 +210,7 @@ func testSecretsEndpointFlow(t *testing.T) {
 	}
 
 	// Parse the partial signature
-	var partialSig types.G1Point
+	var partialSig kmsTypes.G1Point
 	if err := json.Unmarshal(decryptedSigBytes, &partialSig); err != nil {
 		t.Fatalf("Failed to parse partial signature: %v", err)
 	}
@@ -229,7 +237,6 @@ func testSecretsEndpointValidation(t *testing.T) {
 	cfg := Config{
 		OperatorAddress: chainConfig.OperatorAccountAddress1,
 		Port:            0,
-		BN254PrivateKey: chainConfig.OperatorAccountPrivateKey1,
 		ChainID:         config.ChainId_EthereumAnvil,
 		AVSAddress:      "0x1234567890123456789012345678901234567890",
 		OperatorSetId:   1,
@@ -249,13 +256,19 @@ func testSecretsEndpointValidation(t *testing.T) {
 	// Use mock attestation verifier for tests
 	mockVerifier := attestation.NewStubVerifier()
 
-	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockVerifier, testLogger)
+	// Create mock base contract caller
+	mockBaseContractCaller := contractCaller.NewMockIContractCaller(t)
+	mockBaseContractCaller.On("SubmitCommitment", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(&ethTypes.Receipt{Status: 1}, nil).Maybe()
+	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
+
+	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockVerifier, mockBaseContractCaller, mockRegistryAddress, testLogger)
 	if err != nil {
 		t.Fatalf("Failed to create node: %v", err)
 	}
 
 	// Test missing AppID
-	req := types.SecretsRequestV1{
+	req := kmsTypes.SecretsRequestV1{
 		AppID:        "", // Missing
 		Attestation:  []byte("test"),
 		RSAPubKeyTmp: []byte("test-key"),
@@ -286,7 +299,6 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 	cfg := Config{
 		OperatorAddress: chainConfig.OperatorAccountAddress1,
 		Port:            0,
-		BN254PrivateKey: chainConfig.OperatorAccountPrivateKey1,
 		ChainID:         config.ChainId_EthereumAnvil,
 		AVSAddress:      "0x1234567890123456789012345678901234567890",
 		OperatorSetId:   1,
@@ -306,13 +318,19 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 	// Use mock attestation verifier for tests
 	mockVerifier := attestation.NewStubVerifier()
 
-	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockVerifier, testLogger)
+	// Create mock base contract caller
+	mockBaseContractCaller := contractCaller.NewMockIContractCaller(t)
+	mockBaseContractCaller.On("SubmitCommitment", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
+		Return(&ethTypes.Receipt{Status: 1}, nil).Maybe()
+	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
+
+	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockVerifier, mockBaseContractCaller, mockRegistryAddress, testLogger)
 	if err != nil {
 		t.Fatalf("Failed to create node: %v", err)
 	}
 
 	// Add test release with specific digest
-	testRelease := &types.Release{
+	testRelease := &kmsTypes.Release{
 		ImageDigest:  "sha256:correct-digest",
 		EncryptedEnv: "env-data",
 		PublicEnv:    "PUBLIC=value",
@@ -322,7 +340,7 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 	stubRegistry.AddTestRelease("test-app", testRelease)
 
 	// Create attestation with DIFFERENT digest
-	testClaims := types.AttestationClaims{
+	testClaims := kmsTypes.AttestationClaims{
 		AppID:       "test-app",
 		ImageDigest: "sha256:wrong-digest", // Different from release
 		IssuedAt:    time.Now().Unix(),
@@ -330,7 +348,7 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 	}
 	attestationBytes, _ := json.Marshal(testClaims)
 
-	req := types.SecretsRequestV1{
+	req := kmsTypes.SecretsRequestV1{
 		AppID:        "test-app",
 		Attestation:  attestationBytes,
 		RSAPubKeyTmp: []byte("test-key"),

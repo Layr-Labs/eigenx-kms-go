@@ -93,3 +93,97 @@ func TestSendCommitmentBroadcast(t *testing.T) {
 	var c *Client
 	require.NotNil(t, c.sendCommitmentBroadcast)
 }
+
+// TestBroadcastCommitmentsWithProofs_SkipsSelf tests that broadcast skips self
+func TestBroadcastCommitmentsWithProofs_SkipsSelf(t *testing.T) {
+	myAddr := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	client := &Client{
+		nodeID:       addressToNodeID(myAddr),
+		operatorAddr: myAddr,
+	}
+
+	// Create operators including self
+	operators := []*peering.OperatorSetPeer{
+		{OperatorAddress: myAddr}, // Self - should be skipped
+		{
+			OperatorAddress: common.HexToAddress("0x2222222222222222222222222222222222222222"),
+			SocketAddress:   "localhost:7501",
+		},
+	}
+
+	// Create single ack for the other operator
+	otherNodeID := addressToNodeID(operators[1].OperatorAddress)
+	acks := []*types.Acknowledgement{
+		{
+			PlayerID:       otherNodeID,
+			DealerID:       client.nodeID,
+			Epoch:          5,
+			ShareHash:      [32]byte{1},
+			CommitmentHash: [32]byte{2},
+		},
+	}
+
+	// Build merkle tree
+	tree, err := merkle.BuildMerkleTree(acks)
+	require.NoError(t, err)
+
+	// This will skip self, then try to broadcast to the other operator
+	// It will fail the HTTP request but the function logs and continues (returns nil)
+	err = client.BroadcastCommitmentsWithProofs(
+		operators,
+		5, // epoch
+		[]types.G2Point{},
+		acks,
+		tree,
+	)
+
+	// The existing implementation logs errors but returns nil (resilient design)
+	require.NoError(t, err)
+}
+
+// TestBroadcastCommitmentsWithProofs_NoAckForOperator tests handling of missing acks
+func TestBroadcastCommitmentsWithProofs_NoAckForOperator(t *testing.T) {
+	myAddr := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	client := &Client{
+		nodeID:       addressToNodeID(myAddr),
+		operatorAddr: myAddr,
+	}
+
+	operators := []*peering.OperatorSetPeer{
+		{
+			OperatorAddress: common.HexToAddress("0x2222222222222222222222222222222222222222"),
+			SocketAddress:   "localhost:7501",
+		},
+		{
+			OperatorAddress: common.HexToAddress("0x3333333333333333333333333333333333333333"),
+			SocketAddress:   "localhost:7502",
+		},
+	}
+
+	// Create ack for only ONE operator (missing ack for the other)
+	acks := []*types.Acknowledgement{
+		{
+			PlayerID:       addressToNodeID(operators[0].OperatorAddress),
+			DealerID:       client.nodeID,
+			Epoch:          5,
+			ShareHash:      [32]byte{1},
+			CommitmentHash: [32]byte{2},
+		},
+		// Missing ack for operators[1]
+	}
+
+	tree, err := merkle.BuildMerkleTree(acks)
+	require.NoError(t, err)
+
+	// Should fail because we can't broadcast to any operators successfully
+	// (one has no ack, one will fail to connect)
+	err = client.BroadcastCommitmentsWithProofs(
+		operators,
+		5, // epoch
+		[]types.G2Point{},
+		acks,
+		tree,
+	)
+
+	require.Error(t, err)
+}

@@ -26,7 +26,7 @@ func main() {
 
 	keyGen := awsKms.NewAWSKMSKeyGenerator(awsCfg, "us-east-1", cfg, l)
 
-	generatedKey, err := keyGen.GenerateECDSAKey(context.Background(), "eigenx-kms-preprod-sepolia-operator-0", "alias/eigenx-kms-preprod-sepolia-operator-0")
+	generatedKey, err := keyGen.GenerateECDSAKey(context.Background(), "eigenx-kms-preprod-sepolia-operator-0", "alias/eigenx-kms-preprod-sepolia-operator-2")
 	if err != nil {
 		l.Fatal("failed to generate ECDSA key", zap.Error(err))
 	}

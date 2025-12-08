@@ -96,3 +96,65 @@ func (_c *MockITransportSigner_CreateAuthenticatedMessage_Call) RunAndReturn(run
 	_c.Call.Return(run)
 	return _c
 }
+
+// SignMessage provides a mock function for the type MockITransportSigner
+func (_mock *MockITransportSigner) SignMessage(data []byte) ([]byte, error) {
+	ret := _mock.Called(data)
+
+	if len(ret) == 0 {
+		panic("no return value specified for SignMessage")
+	}
+
+	var r0 []byte
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func([]byte) ([]byte, error)); ok {
+		return returnFunc(data)
+	}
+	if returnFunc, ok := ret.Get(0).(func([]byte) []byte); ok {
+		r0 = returnFunc(data)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([]byte)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func([]byte) error); ok {
+		r1 = returnFunc(data)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockITransportSigner_SignMessage_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SignMessage'
+type MockITransportSigner_SignMessage_Call struct {
+	*mock.Call
+}
+
+// SignMessage is a helper method to define mock.On call
+//   - data []byte
+func (_e *MockITransportSigner_Expecter) SignMessage(data interface{}) *MockITransportSigner_SignMessage_Call {
+	return &MockITransportSigner_SignMessage_Call{Call: _e.mock.On("SignMessage", data)}
+}
+
+func (_c *MockITransportSigner_SignMessage_Call) Run(run func(data []byte)) *MockITransportSigner_SignMessage_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 []byte
+		if args[0] != nil {
+			arg0 = args[0].([]byte)
+		}
+		run(
+			arg0,
+		)
+	})
+	return _c
+}
+
+func (_c *MockITransportSigner_SignMessage_Call) Return(bytes []byte, err error) *MockITransportSigner_SignMessage_Call {
+	_c.Call.Return(bytes, err)
+	return _c
+}
+
+func (_c *MockITransportSigner_SignMessage_Call) RunAndReturn(run func(data []byte) ([]byte, error)) *MockITransportSigner_SignMessage_Call {
+	_c.Call.Return(run)
+	return _c
+}
