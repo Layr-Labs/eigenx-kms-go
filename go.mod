@@ -3,7 +3,7 @@ module github.com/Layr-Labs/eigenx-kms-go
 go 1.24.2
 
 require (
-	github.com/Layr-Labs/chain-indexer v0.1.1-0.20251030152338-0e3be49f2ac8
+	github.com/Layr-Labs/chain-indexer v0.1.1-0.20251208022649-63718013830e
 	github.com/Layr-Labs/crypto-libs v0.0.5-0.20250813195719-721609a5aa3d
 	github.com/Layr-Labs/eigenlayer-contracts v1.8.1
 	github.com/aws/aws-sdk-go-v2 v1.38.0

@@ -217,7 +217,7 @@ func (c *Client) BroadcastReshareCommitments(operators []*peering.OperatorSetPee
 		}
 		msg := types.CommitmentMessage{
 			FromOperatorAddress: c.operatorAddr,
-			ToOperatorAddress:   op.OperatorAddress, // Zero address for broadcast
+			ToOperatorAddress:   op.OperatorAddress,
 			SessionTimestamp:    sessionTimestamp,
 			Commitments:         commitments,
 		}

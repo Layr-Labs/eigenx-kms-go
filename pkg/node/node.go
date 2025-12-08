@@ -819,6 +819,9 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	// Use validShares (only verified shares) for finalization
 	keyVersion := n.dkg.FinalizeKeyShare(validShares, allCommitments, participantIDs)
 	keyVersion.Version = session.SessionTimestamp // Use session timestamp as version
+	// Store THIS node's commitments (not allCommitments[0]) so that when the client
+	// queries all operators and sums their commitments[0], it computes the correct master public key
+	keyVersion.Commitments = commitments
 	n.keyStore.AddVersion(keyVersion)
 
 	n.logger.Sugar().Infow("DKG complete",
@@ -912,13 +915,75 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		return err
 	}
 
+	// Phase 1b: Verify shares and send acknowledgements
+	n.logger.Sugar().Infow("Reshare Phase 1b: Verifying shares and sending acknowledgements",
+		"operator_address", n.OperatorAddress.Hex(),
+		"node_id", thisNodeID)
+
+	// Get shares and commitments from session
+	session.mu.RLock()
+	receivedShares := session.shares
+	receivedCommitments := session.commitments
+	session.mu.RUnlock()
+
+	validShares := make(map[int]*fr.Element)
+	for dealerID, share := range receivedShares {
+		commitments := receivedCommitments[dealerID]
+		if n.resharer.VerifyNewShare(dealerID, share, commitments) {
+			validShares[dealerID] = share
+
+			// Create acknowledgement for verified share
+			ack := reshare.CreateAcknowledgement(thisNodeID, dealerID, sessionTimestamp, share, commitments, n.signAcknowledgement)
+
+			// Find dealer's peer info for transport
+			var dealerPeer *peering.OperatorSetPeer
+			for _, op := range operators {
+				if addressToNodeID(op.OperatorAddress) == dealerID {
+					dealerPeer = op
+					break
+				}
+			}
+
+			if dealerPeer != nil {
+				// Send acknowledgement to dealer
+				err := n.transport.SendReshareAcknowledgement(ack, dealerPeer, session.SessionTimestamp)
+				if err != nil {
+					n.logger.Sugar().Warnw("Failed to send reshare acknowledgement",
+						"operator_address", n.OperatorAddress.Hex(),
+						"dealer_address", dealerPeer.OperatorAddress.Hex(),
+						"error", err)
+				} else {
+					n.logger.Sugar().Debugw("Sent reshare acknowledgement",
+						"operator_address", n.OperatorAddress.Hex(),
+						"dealer_address", dealerPeer.OperatorAddress.Hex(),
+						"dealer_id", dealerID)
+				}
+			}
+
+			n.logger.Sugar().Infow("Verified and acked reshare share",
+				"operator_address", n.OperatorAddress.Hex(),
+				"node_id", thisNodeID,
+				"dealer_id", dealerID)
+		} else {
+			n.logger.Sugar().Warnw("Invalid reshare share received",
+				"operator_address", n.OperatorAddress.Hex(),
+				"node_id", thisNodeID,
+				"dealer_id", dealerID)
+		}
+	}
+
+	// Wait for acknowledgements (as a dealer)
+	myNodeID := addressToNodeID(n.OperatorAddress)
+	if err := waitForAcks(session, myNodeID, protocolTimeout); err != nil {
+		return fmt.Errorf("insufficient reshare acknowledgements: %v", err)
+	}
+
 	// Phase 2: Build Merkle Tree and Submit to Contract
 	n.logger.Sugar().Infow("Reshare Phase 2: Building merkle tree and submitting to contract",
 		"operator_address", n.OperatorAddress.Hex(),
 		"session", session.SessionTimestamp)
 
 	// Collect acknowledgements from session where I am the dealer
-	myNodeID := addressToNodeID(n.OperatorAddress)
 	session.mu.RLock()
 	myAcks := make([]*types.Acknowledgement, 0)
 	if ackMap, ok := session.acks[myNodeID]; ok {
@@ -1027,6 +1092,25 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDsForFinalize, receivedSharesForFinalize, allCommitmentsForFinalize)
 	newKeyVersion.Version = sessionTimestamp // Use session timestamp as version
 	newKeyVersion.IsActive = true            // Activate immediately (all operators must participate)
+
+	// Scale this node's first commitment by its Lagrange coefficient
+	// This ensures that when the client sums all operators' commitments[0], it gets g^s (master public key)
+	// In reshare: C[0] = g^{x_i} where x_i is old share
+	// Master public key = g^s = g^{Σ λ_i * x_i} = Σ λ_i * C[0]
+	// So we store λ_i * C[0] as our contribution to the master public key sum
+	lambda := eigenxcrypto.ComputeLagrangeCoefficient(thisNodeID, participantIDsForFinalize)
+	scaledFirstCommitment, err := eigenxcrypto.ScalarMulG2(commitments[0], lambda)
+	if err != nil {
+		return fmt.Errorf("failed to scale commitment: %w", err)
+	}
+
+	// Create scaled commitments (only first one is scaled for master public key computation)
+	scaledCommitments := make([]types.G2Point, len(commitments))
+	scaledCommitments[0] = *scaledFirstCommitment
+	for i := 1; i < len(commitments); i++ {
+		scaledCommitments[i] = commitments[i]
+	}
+	newKeyVersion.Commitments = scaledCommitments
 
 	// Add new version to keystore
 	n.keyStore.AddVersion(newKeyVersion)
@@ -1165,25 +1249,43 @@ func waitForCommitments(session *ProtocolSession, timeout time.Duration) error {
 	}
 }
 
-// waitForAcks waits for all acknowledgements to be received for a dealer using channel signaling
+// waitForAcks waits for all acknowledgements to be received for a specific dealer using polling
+// Note: We poll instead of using acksCompleteChan because the channel signals when ANY dealer
+// completes, not when THIS specific dealer completes. Each dealer needs to wait for their own acks.
 func waitForAcks(session *ProtocolSession, dealerNodeID int, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	select {
-	case <-session.acksCompleteChan:
-		return nil
+	expected := len(session.Operators) - 1 // All operators except dealer itself
 
-	case <-ctx.Done():
-		session.mu.RLock()
-		ackMap := session.acks[dealerNodeID]
-		received := 0
-		if ackMap != nil {
-			received = len(ackMap)
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			session.mu.RLock()
+			ackMap := session.acks[dealerNodeID]
+			received := 0
+			if ackMap != nil {
+				received = len(ackMap)
+			}
+			session.mu.RUnlock()
+			return fmt.Errorf("timeout waiting for acks: got %d/%d", received, expected)
+
+		case <-ticker.C:
+			session.mu.RLock()
+			ackMap := session.acks[dealerNodeID]
+			received := 0
+			if ackMap != nil {
+				received = len(ackMap)
+			}
+			session.mu.RUnlock()
+
+			if received >= expected {
+				return nil
+			}
 		}
-		expected := len(session.Operators) - 1
-		session.mu.RUnlock()
-		return fmt.Errorf("timeout waiting for acks: got %d/%d", received, expected)
 	}
 }
 
