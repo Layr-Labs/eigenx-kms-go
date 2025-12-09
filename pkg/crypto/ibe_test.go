@@ -335,17 +335,14 @@ func testEncryptionPersistenceAcrossReshare(t *testing.T) {
 	appHash, err := HashToG1(appID)
 	require.NoError(t, err, "Failed to hash to G1")
 
-	firstShare, err := ScalarMulG1(*appHash, initialShares[0])
-	require.NoError(t, err, "Failed to scalar multiply G1")
-	secondShare, err := ScalarMulG1(*appHash, initialShares[1])
-	require.NoError(t, err, "Failed to scalar multiply G1")
-	thirdShare, err := ScalarMulG1(*appHash, initialShares[2])
-	require.NoError(t, err, "Failed to scalar multiply G1")
-	initialAppPrivateKey, err := RecoverAppPrivateKey(appID, map[int64]types.G1Point{
-		1: *firstShare,
-		2: *secondShare,
-		3: *thirdShare,
-	}, initialThreshold)
+	// Create partial signatures for threshold number of nodes.
+	initialPartialSigs := make(map[int64]types.G1Point)
+	for i := 0; i < initialThreshold; i++ {
+		partialSig, err := ScalarMulG1(*appHash, initialShares[i])
+		require.NoError(t, err, "Failed to scalar multiply G1 for node %d", i+1)
+		initialPartialSigs[int64(i+1)] = *partialSig
+	}
+	initialAppPrivateKey, err := RecoverAppPrivateKey(appID, initialPartialSigs, initialThreshold)
 	require.NoError(t, err, "Failed to recover app private key")
 	decrypted1, err := DecryptForApp(appID, *initialAppPrivateKey, ciphertext)
 	require.NoError(t, err, "Initial decryption failed")
@@ -446,7 +443,7 @@ func testThresholdSignatureRecovery(t *testing.T) {
 		partialSigs[int64(nodeID)] = *partialSig
 	}
 
-	// Test recovery with exactly threshold signatures
+	// Test recovery with exactly threshold signatures (threshold=4 for 5 nodes)
 	thresholdSigs := make(map[int64]types.G1Point)
 	nodeIDs := []int64{1, 2, 3, 4} // Use first `threshold` nodes
 	for _, id := range nodeIDs {
