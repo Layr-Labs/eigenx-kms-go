@@ -261,7 +261,9 @@ func testDKGContractSubmissionAndSessionState(t *testing.T) {
 	// Verify all nodes have same master public key
 	masterPubKey := cluster.GetMasterPublicKey()
 	require.NotNil(t, masterPubKey.CompressedBytes)
-	require.False(t, masterPubKey.IsZero(), "Master public key should not be zero")
+	isMasterPubKeyZero, err := masterPubKey.IsZero()
+	require.NoError(t, err)
+	require.False(t, isMasterPubKeyZero, "Master public key should not be zero")
 
 	// The fact that DKG completed means:
 	// 1. Merkle trees were built (or code would have errored)
@@ -304,7 +306,9 @@ func testReshareContractSubmissionAndSessionState(t *testing.T) {
 	// Verify master public key unchanged after reshare
 	masterPubKey := cluster.GetMasterPublicKey()
 	require.NotNil(t, masterPubKey.CompressedBytes)
-	require.False(t, masterPubKey.IsZero())
+	isMasterPubKeyZero, err := masterPubKey.IsZero()
+	require.NoError(t, err)
+	require.False(t, isMasterPubKeyZero)
 
 	t.Logf("✓ Reshare with contract submission state tracking passed")
 }

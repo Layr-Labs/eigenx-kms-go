@@ -301,7 +301,9 @@ func Test_OnChainIntegration(t *testing.T) {
 
 	masterPubKey, err := client.GetMasterPublicKey()
 	require.NoError(t, err)
-	require.False(t, masterPubKey.IsZero(), "Master public key should not be zero")
+	isMasterPubKeyZero, err := masterPubKey.IsZero()
+	require.NoError(t, err)
+	require.False(t, isMasterPubKeyZero, "Master public key should not be zero")
 
 	t.Logf("✓ Master public key retrieved via KMSClient")
 

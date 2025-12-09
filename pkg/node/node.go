@@ -15,7 +15,6 @@ import (
 	"github.com/Layr-Labs/crypto-libs/pkg/ecdsa"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"go.uber.org/zap"
@@ -477,7 +476,7 @@ func (n *Node) createSession(sessionType string, operators []*peering.OperatorSe
 
 	// Initialize acks map for each operator (as dealer)
 	for _, op := range operators {
-		nodeID := addressToNodeID(op.OperatorAddress)
+		nodeID := util.AddressToNodeID(op.OperatorAddress)
 		session.acks[nodeID] = make(map[int]*types.Acknowledgement)
 	}
 
@@ -705,7 +704,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	// No need to store validShares globally - just use them for finalization later
 
 	// Wait for acknowledgements (as a dealer) - need ALL operators for DKG
-	myNodeID := addressToNodeID(n.OperatorAddress)
+	myNodeID := util.AddressToNodeID(n.OperatorAddress)
 	if err := waitForAcks(session, myNodeID, protocolTimeout); err != nil {
 		return fmt.Errorf("insufficient acknowledgements: %v", err)
 	}
@@ -1070,7 +1069,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	participantIDsForFinalize := make([]int, 0, len(session.commitments))
 
 	for _, op := range operators {
-		opNodeID := addressToNodeID(op.OperatorAddress)
+		opNodeID := util.AddressToNodeID(op.OperatorAddress)
 		if comm, ok := session.commitments[opNodeID]; ok {
 			allCommitmentsForFinalize = append(allCommitmentsForFinalize, comm)
 			participantIDsForFinalize = append(participantIDsForFinalize, opNodeID)

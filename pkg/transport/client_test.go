@@ -99,7 +99,7 @@ func TestSendCommitmentBroadcast(t *testing.T) {
 func TestBroadcastCommitmentsWithProofs_SkipsSelf(t *testing.T) {
 	myAddr := common.HexToAddress("0x1111111111111111111111111111111111111111")
 	client := &Client{
-		nodeID:       addressToNodeID(myAddr),
+		nodeID:       util.AddressToNodeID(myAddr),
 		operatorAddr: myAddr,
 	}
 
@@ -113,7 +113,7 @@ func TestBroadcastCommitmentsWithProofs_SkipsSelf(t *testing.T) {
 	}
 
 	// Create single ack for the other operator
-	otherNodeID := addressToNodeID(operators[1].OperatorAddress)
+	otherNodeID := util.AddressToNodeID(operators[1].OperatorAddress)
 	acks := []*types.Acknowledgement{
 		{
 			PlayerID:       otherNodeID,
@@ -146,7 +146,7 @@ func TestBroadcastCommitmentsWithProofs_SkipsSelf(t *testing.T) {
 func TestBroadcastCommitmentsWithProofs_NoAckForOperator(t *testing.T) {
 	myAddr := common.HexToAddress("0x1111111111111111111111111111111111111111")
 	client := &Client{
-		nodeID:       addressToNodeID(myAddr),
+		nodeID:       util.AddressToNodeID(myAddr),
 		operatorAddr: myAddr,
 	}
 
@@ -164,7 +164,7 @@ func TestBroadcastCommitmentsWithProofs_NoAckForOperator(t *testing.T) {
 	// Create ack for only ONE operator (missing ack for the other)
 	acks := []*types.Acknowledgement{
 		{
-			PlayerID:       addressToNodeID(operators[0].OperatorAddress),
+			PlayerID:       util.AddressToNodeID(operators[0].OperatorAddress),
 			DealerID:       client.nodeID,
 			Epoch:          5,
 			ShareHash:      [32]byte{1},

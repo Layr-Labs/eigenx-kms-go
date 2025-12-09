@@ -374,7 +374,7 @@ func (s *Server) handleReshareCommitment(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Convert sender address to node ID
-	senderNodeID := addressToNodeID(senderPeer.OperatorAddress)
+	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
 
 	// Store commitment in session
 	if err := session.HandleReceivedCommitment(senderNodeID, commitMsg.Commitments); err != nil {
@@ -426,7 +426,7 @@ func (s *Server) handleReshareShare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Convert addresses to node IDs
-	senderNodeID := addressToNodeID(senderPeer.OperatorAddress)
+	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
 	share := types.DeserializeFr(shareMsg.Share)
 
 	// Store share in session
@@ -477,8 +477,8 @@ func (s *Server) handleReshareAck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Convert sender address to node ID
-	senderNodeID := addressToNodeID(senderPeer.OperatorAddress)
-	thisNodeID := addressToNodeID(s.node.OperatorAddress)
+	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
+	thisNodeID := util.AddressToNodeID(s.node.OperatorAddress)
 
 	// Store ack in session
 	if err := session.HandleReceivedAck(thisNodeID, senderNodeID, ackMsg.Ack); err != nil {
