@@ -339,15 +339,11 @@ func testEncryptionPersistenceAcrossReshare(t *testing.T) {
 	initialPartialSigs := make(map[int]types.G1Point)
 	for i := 0; i < initialThreshold; i++ {
 		partialSig, err := ScalarMulG1(*appHash, initialShares[i])
-		if err != nil {
-			t.Fatalf("Failed to scalar multiply G1 for node %d: %v", i+1, err)
-		}
+		require.NoError(t, err, "Failed to scalar multiply G1 for node %d", i+1)
 		initialPartialSigs[i+1] = *partialSig
 	}
 	initialAppPrivateKey, err := RecoverAppPrivateKey(appID, initialPartialSigs, initialThreshold)
-	if err != nil {
-		t.Fatalf("Failed to recover app private key: %v", err)
-	}
+	require.NoError(t, err, "Failed to recover app private key")
 	decrypted1, err := DecryptForApp(appID, *initialAppPrivateKey, ciphertext)
 	require.NoError(t, err, "Initial decryption failed")
 
@@ -392,12 +388,23 @@ func testEncryptionPersistenceAcrossReshare(t *testing.T) {
 	newSecondShare, err := ScalarMulG1(*newAppHash, newShares[2])
 	require.NoError(t, err, "Failed to scalar multiply G1")
 	newThirdShare, err := ScalarMulG1(*newAppHash, newShares[3])
+<<<<<<< HEAD
 	require.NoError(t, err, "Failed to scalar multiply G1")
+=======
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G1: %v", err)
+	}
+	newFourthShare, err := ScalarMulG1(*newAppHash, newShares[4])
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G1: %v", err)
+	}
+>>>>>>> 6acc9f4 (fixing test)
 	// Recover app private key using new shares
 	newAppPrivateKey, err := RecoverAppPrivateKey(appID, map[int]types.G1Point{
 		1: *newFirstShare,
 		2: *newSecondShare,
 		3: *newThirdShare,
+		4: *newFourthShare,
 	}, newThreshold)
 	require.NoError(t, err, "Failed to recover app private key")
 	// Decrypt with new key - should still work!
