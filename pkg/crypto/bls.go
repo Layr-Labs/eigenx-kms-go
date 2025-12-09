@@ -240,22 +240,18 @@ func ComputeMasterPublicKey(allCommitments [][]types.G2Point) (*types.G2Point, e
 	for _, commitments := range allCommitments {
 		if len(commitments) > 0 {
 			sum, err := AddG2(*masterPK, commitments[0])
-		sum, err := AddG2(*masterPK, commitments[0])
-		if err != nil {
-			return nil, fmt.Errorf("failed to add commitment at index %d: %w", len(allCommitments)-1, err)
-		}
-		masterPK = sum
-				return nil, err
+			if err != nil {
+				return nil, fmt.Errorf("failed to add commitment at index %d: %w", len(allCommitments)-1, err)
 			}
 			masterPK = sum
 		}
 	}
 
-	isZero, err := masterPK.IsZero()
+	isMasterPKZero, err := masterPK.IsZero()
 	if err != nil {
 		return nil, err
 	}
-	if isZero {
+	if isMasterPKZero {
 		return nil, errors.New("computed master public key is zero")
 	}
 	return masterPK, nil
@@ -327,8 +323,6 @@ func EncryptForApp(appID string, masterPublicKey types.G2Point, plaintext []byte
 	// Validate appID
 	if err := util.ValidateAppID(appID); err != nil {
 		return nil, fmt.Errorf("invalid app ID for encryption: %w", err)
-	}
-		return nil, err
 	}
 
 	// Step 1: Compute QiD = H_1(app_id) ∈ G1
