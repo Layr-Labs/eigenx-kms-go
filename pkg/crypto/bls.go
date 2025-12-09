@@ -240,7 +240,11 @@ func ComputeMasterPublicKey(allCommitments [][]types.G2Point) (*types.G2Point, e
 	for _, commitments := range allCommitments {
 		if len(commitments) > 0 {
 			sum, err := AddG2(*masterPK, commitments[0])
-			if err != nil {
+		sum, err := AddG2(*masterPK, commitments[0])
+		if err != nil {
+			return nil, fmt.Errorf("failed to add commitment at index %d: %w", len(allCommitments)-1, err)
+		}
+		masterPK = sum
 				return nil, err
 			}
 			masterPK = sum
