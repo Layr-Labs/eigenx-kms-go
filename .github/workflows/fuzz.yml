@@ -36,6 +36,8 @@ jobs:
           GOFLAGS: "-count=1"
         shell: bash -euo pipefail {0}
         run: |
+          # FUZZ_TIME can be overridden for manual runs via workflow_dispatch
+          # Default: 30m per package, respecting 2h total budget
           FUZZ_TIME=${FUZZ_TIME:-30m}
           packages=(
             "./pkg/bls"
