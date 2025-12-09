@@ -235,16 +235,17 @@ func RecoverAppPrivateKey(appID string, partialSigs map[int]types.G1Point, thres
 // ComputeMasterPublicKey computes the master public key from commitments
 func ComputeMasterPublicKey(allCommitments [][]types.G2Point) (*types.G2Point, error) {
 	masterPK := types.ZeroG2Point()
-	var err error
 
-	for _, commitments := range allCommitments {
-		if len(commitments) > 0 {
-			sum, err := AddG2(*masterPK, commitments[0])
-			if err != nil {
-				return nil, fmt.Errorf("failed to add commitment at index %d: %w", len(allCommitments)-1, err)
-			}
-			masterPK = sum
+	for i, commitments := range allCommitments {
+		if len(commitments) == 0 {
+			continue
 		}
+
+		sum, err := AddG2(*masterPK, commitments[0])
+		if err != nil {
+			return nil, fmt.Errorf("failed to add commitment at index %d: %w", i, err)
+		}
+		masterPK = sum
 	}
 
 	isMasterPKZero, err := masterPK.IsZero()
