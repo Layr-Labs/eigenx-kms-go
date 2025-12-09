@@ -286,11 +286,16 @@ func testEncryptionPersistenceAcrossReshare(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to scalar multiply G1: %v", err)
 	}
+	newFourthShare, err := ScalarMulG1(*newAppHash, newShares[4])
+	if err != nil {
+		t.Fatalf("Failed to scalar multiply G1: %v", err)
+	}
 	// Recover app private key using new shares
 	newAppPrivateKey, err := RecoverAppPrivateKey(appID, map[int]types.G1Point{
 		1: *newFirstShare,
 		2: *newSecondShare,
 		3: *newThirdShare,
+		4: *newFourthShare,
 	}, newThreshold)
 	if err != nil {
 		t.Fatalf("Failed to recover app private key: %v", err)
