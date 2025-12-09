@@ -1,0 +1,71 @@
+name: Weekly Fuzz
+
+on:
+  schedule:
+    - cron: "0 3 * * 1" # Mondays at 03:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150 # padding over the 2h fuzz window
+    strategy:
+      fail-fast: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@cdcb36043654635271a94b9a6d1392de5bb323a7 # v5.1.0
+        with:
+          go-version: '1.24.x'
+          cache: true
+
+      - name: Install Go tools (fuzz deps)
+        shell: bash -euo pipefail {0}
+        run: |
+          go env
+
+      - name: Run fuzzers (2h budget)
+        env:
+          GOFLAGS: "-count=1"
+        shell: bash -euo pipefail {0}
+        run: |
+          FUZZ_TIME=${FUZZ_TIME:-30m}
+          packages=(
+            "./pkg/bls"
+            "./pkg/crypto"
+            "./pkg/dkg"
+            "./pkg/reshare"
+            "./pkg/encryption"
+          )
+
+          total_deadline=$((2 * 60 * 60)) # 2h in seconds
+          start_ts=$(date +%s)
+
+          for pkg in "${packages[@]}"; do
+            echo "==> Fuzzing $pkg for ${FUZZ_TIME}"
+            go test "$pkg" -run=^$ -fuzz=Fuzz -fuzztime="${FUZZ_TIME}"
+            now=$(date +%s)
+            elapsed=$((now - start_ts))
+            if [ $elapsed -ge $total_deadline ]; then
+              echo "Reached total fuzz budget (${elapsed}s). Stopping."
+              break
+            fi
+          done
+
+      - name: Upload crashers
+        if: failure()
+        uses: actions/upload-artifact@66b67f953a5c19c2e955af559910c17c98f19a5c # v4.4.3
+        with:
+          name: fuzz-crashers
+          path: |
+            pkg/**/testdata/fuzz
+            **/testdata/fuzz
+          if-no-files-found: ignore
+
