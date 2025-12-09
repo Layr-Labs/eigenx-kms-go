@@ -10,6 +10,7 @@ import (
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -210,7 +211,7 @@ func (s *Server) handleDKGCommitment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Convert sender address to node ID and store commitments
-	senderNodeID := addressToNodeID(senderPeer.OperatorAddress)
+	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
 
 	// Store commitment in session (handles duplicate detection and completion signaling)
 	if err := session.HandleReceivedCommitment(senderNodeID, commitMsg.Commitments); err != nil {
@@ -264,7 +265,7 @@ func (s *Server) handleDKGShare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Convert addresses to node IDs
-	senderNodeID := addressToNodeID(senderPeer.OperatorAddress)
+	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
 	share := types.DeserializeFr(shareMsg.Share)
 
 	// Store share in session (handles duplicate detection and completion signaling)
@@ -318,8 +319,8 @@ func (s *Server) handleDKGAck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Convert sender address to node ID and store acknowledgement
-	senderNodeID := addressToNodeID(senderPeer.OperatorAddress)
-	thisNodeID := addressToNodeID(s.node.OperatorAddress)
+	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
+	thisNodeID := util.AddressToNodeID(s.node.OperatorAddress)
 
 	// Store ack in session (handles duplicate detection and completion signaling)
 	if err := session.HandleReceivedAck(thisNodeID, senderNodeID, ackMsg.Ack); err != nil {
@@ -373,7 +374,7 @@ func (s *Server) handleReshareCommitment(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Convert sender address to node ID
-	senderNodeID := addressToNodeID(senderPeer.OperatorAddress)
+	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
 
 	// Store commitment in session
 	if err := session.HandleReceivedCommitment(senderNodeID, commitMsg.Commitments); err != nil {
@@ -425,7 +426,7 @@ func (s *Server) handleReshareShare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Convert addresses to node IDs
-	senderNodeID := addressToNodeID(senderPeer.OperatorAddress)
+	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
 	share := types.DeserializeFr(shareMsg.Share)
 
 	// Store share in session
@@ -476,8 +477,8 @@ func (s *Server) handleReshareAck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Convert sender address to node ID
-	senderNodeID := addressToNodeID(senderPeer.OperatorAddress)
-	thisNodeID := addressToNodeID(s.node.OperatorAddress)
+	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
+	thisNodeID := util.AddressToNodeID(s.node.OperatorAddress)
 
 	// Store ack in session
 	if err := session.HandleReceivedAck(thisNodeID, senderNodeID, ackMsg.Ack); err != nil {

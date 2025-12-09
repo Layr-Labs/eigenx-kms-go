@@ -306,7 +306,11 @@ func ComputeMasterPublicKey(cluster *TestCluster) types.G2Point {
 		return types.G2Point{}
 	}
 
-	return *crypto.ComputeMasterPublicKey(allCommitments)
+	masterPubKey, err := crypto.ComputeMasterPublicKey(allCommitments)
+	if err != nil {
+		return types.G2Point{}
+	}
+	return *masterPubKey
 }
 
 // GetMasterPublicKey returns the master public key

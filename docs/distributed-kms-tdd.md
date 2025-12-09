@@ -669,7 +669,7 @@ OperatorSetPeer {
 The system uses an **address-based identity model** where:
 
 1. **Operator Identity**: Each operator is identified by their Ethereum address (not sequential IDs)
-2. **Node ID Derivation**: `nodeID = addressToNodeID(keccak256(address))`
+2. **Node ID Derivation**: `nodeID = util.AddressToNodeID(address)` (keccak256-based)
    - Provides deterministic, unique node IDs for cryptographic protocols
    - Ensures consistent identity across all protocol runs
 3. **Key Pairs**:

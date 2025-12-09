@@ -1,7 +1,6 @@
 package testutil
 
 import (
-	"math/big"
 	"testing"
 
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
@@ -11,7 +10,6 @@ import (
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
-	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 )
 
 // CreateTestOperators creates test operators from ChainConfig data
@@ -79,21 +77,16 @@ func CreateTestCommitments(t *testing.T, n int) []types.G2Point {
 
 	commitments := make([]types.G2Point, n)
 	for i := 0; i < n; i++ {
-		// Create test commitments by scalar multiplying the generator
-		scalar := fr.NewElement(uint64(i + 1))
-		var commitment bls12381.G2Affine
-		commitment.ScalarMultiplication(g2Gen, scalar.BigInt(new(big.Int)))
-
-		commitments[i] = types.G2Point{
-			CompressedBytes: commitment.Marshal(),
+		// random g2 point
+		randomElement, err := new(fr.Element).SetRandom()
+		if err != nil {
+			t.Fatalf("Failed to create random element: %v", err)
 		}
+		commitment, err := crypto.ScalarMulG2(crypto.G2Generator, randomElement)
+		if err != nil {
+			t.Fatalf("Failed to create commitment: %v", err)
+		}
+		commitments[i] = *commitment
 	}
 	return commitments
-}
-
-// AddressToNodeID converts an Ethereum address to a node ID using keccak256 hash
-func AddressToNodeID(address common.Address) int {
-	hash := ethcrypto.Keccak256(address.Bytes())
-	nodeID := int(common.BytesToHash(hash).Big().Uint64())
-	return nodeID
 }

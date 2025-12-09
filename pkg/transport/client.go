@@ -11,9 +11,9 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/crypto"
 )
 
 // RetryConfig configures retry behavior
@@ -369,7 +369,7 @@ func (c *Client) BroadcastCommitmentsWithProofs(
 		var recipientAck *types.Acknowledgement
 		var leafIndex int
 		for idx, ack := range acks {
-			opNodeID := addressToNodeID(op.OperatorAddress)
+			opNodeID := util.AddressToNodeID(op.OperatorAddress)
 			if ack.PlayerID == opNodeID {
 				recipientAck = ack
 				leafIndex = idx
@@ -412,7 +412,7 @@ func (c *Client) sendCommitmentBroadcast(
 	broadcast *types.CommitmentBroadcast,
 	sessionTimestamp int64,
 ) error {
-	toNodeID := addressToNodeID(toOperator.OperatorAddress)
+	toNodeID := util.AddressToNodeID(toOperator.OperatorAddress)
 
 	// Create message wrapper
 	msg := types.CommitmentBroadcastMessage{
@@ -441,11 +441,4 @@ func (c *Client) sendCommitmentBroadcast(
 	}
 
 	return nil
-}
-
-// addressToNodeID converts an Ethereum address to a node ID using keccak256 hash
-func addressToNodeID(address common.Address) int {
-	hash := crypto.Keccak256(address.Bytes())
-	nodeID := int(common.BytesToHash(hash).Big().Uint64())
-	return nodeID
 }

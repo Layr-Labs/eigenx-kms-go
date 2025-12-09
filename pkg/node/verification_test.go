@@ -8,6 +8,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/merkle"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
@@ -88,7 +89,7 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 	t.Run("No share received error", func(t *testing.T) {
 		logger, _ := zap.NewDevelopment()
 		myAddr := common.HexToAddress("0x0000000000000000000000000000000000000001")
-		myNodeID := addressToNodeID(myAddr)
+		myNodeID := util.AddressToNodeID(myAddr)
 
 		session := &ProtocolSession{
 			SessionTimestamp:  12345,
@@ -122,7 +123,7 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 	t.Run("Share hash mismatch error", func(t *testing.T) {
 		logger, _ := zap.NewDevelopment()
 		myAddr := common.HexToAddress("0x0000000000000000000000000000000000000001")
-		myNodeID := addressToNodeID(myAddr)
+		myNodeID := util.AddressToNodeID(myAddr)
 
 		// Create a real share
 		realShare := fr.NewElement(12345)
@@ -169,7 +170,7 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 	t.Run("Successful verification", func(t *testing.T) {
 		logger, _ := zap.NewDevelopment()
 		myAddr := common.HexToAddress("0x0000000000000000000000000000000000000001")
-		myNodeID := addressToNodeID(myAddr)
+		myNodeID := util.AddressToNodeID(myAddr)
 
 		// Create a real share
 		realShare := fr.NewElement(12345)

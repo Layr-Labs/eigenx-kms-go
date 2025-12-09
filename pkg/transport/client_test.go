@@ -6,6 +6,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/merkle"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
@@ -76,14 +77,14 @@ func TestAddressToNodeID(t *testing.T) {
 	addr1 := common.HexToAddress("0x1234567890123456789012345678901234567890")
 	addr2 := common.HexToAddress("0xABCDEF1234567890ABCDEF1234567890ABCDEF12")
 
-	id1 := addressToNodeID(addr1)
-	id2 := addressToNodeID(addr2)
+	id1 := util.AddressToNodeID(addr1)
+	id2 := util.AddressToNodeID(addr2)
 
 	// Different addresses should produce different IDs
 	require.NotEqual(t, id1, id2)
 
 	// Same address should produce same ID (deterministic)
-	id1_again := addressToNodeID(addr1)
+	id1_again := util.AddressToNodeID(addr1)
 	require.Equal(t, id1, id1_again)
 }
 
@@ -98,7 +99,7 @@ func TestSendCommitmentBroadcast(t *testing.T) {
 func TestBroadcastCommitmentsWithProofs_SkipsSelf(t *testing.T) {
 	myAddr := common.HexToAddress("0x1111111111111111111111111111111111111111")
 	client := &Client{
-		nodeID:       addressToNodeID(myAddr),
+		nodeID:       util.AddressToNodeID(myAddr),
 		operatorAddr: myAddr,
 	}
 
@@ -112,7 +113,7 @@ func TestBroadcastCommitmentsWithProofs_SkipsSelf(t *testing.T) {
 	}
 
 	// Create single ack for the other operator
-	otherNodeID := addressToNodeID(operators[1].OperatorAddress)
+	otherNodeID := util.AddressToNodeID(operators[1].OperatorAddress)
 	acks := []*types.Acknowledgement{
 		{
 			PlayerID:       otherNodeID,
@@ -145,7 +146,7 @@ func TestBroadcastCommitmentsWithProofs_SkipsSelf(t *testing.T) {
 func TestBroadcastCommitmentsWithProofs_NoAckForOperator(t *testing.T) {
 	myAddr := common.HexToAddress("0x1111111111111111111111111111111111111111")
 	client := &Client{
-		nodeID:       addressToNodeID(myAddr),
+		nodeID:       util.AddressToNodeID(myAddr),
 		operatorAddr: myAddr,
 	}
 
@@ -163,7 +164,7 @@ func TestBroadcastCommitmentsWithProofs_NoAckForOperator(t *testing.T) {
 	// Create ack for only ONE operator (missing ack for the other)
 	acks := []*types.Acknowledgement{
 		{
-			PlayerID:       addressToNodeID(operators[0].OperatorAddress),
+			PlayerID:       util.AddressToNodeID(operators[0].OperatorAddress),
 			DealerID:       client.nodeID,
 			Epoch:          5,
 			ShareHash:      [32]byte{1},

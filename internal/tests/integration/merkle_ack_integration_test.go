@@ -9,6 +9,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/merkle"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/reshare"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/testutil"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -54,9 +55,10 @@ func testDKGWithMerkleAcknowledgements(t *testing.T) {
 
 	// Verify all nodes have same master public key
 	masterPubKey := cluster.GetMasterPublicKey()
-	require.NotNil(t, masterPubKey.CompressedBytes)
-	require.False(t, masterPubKey.IsZero(), "Master public key should not be zero")
-
+	require.NotNil(t, masterPubKey)
+	masterPubKeyIsZero, err := masterPubKey.IsZero()
+	require.NoError(t, err)
+	require.False(t, masterPubKeyIsZero, "Master public key should not be zero")
 	// Verify threshold calculation
 	expectedThreshold := dkg.CalculateThreshold(4)
 	require.Equal(t, 3, expectedThreshold, "Threshold should be 3 for 4 nodes")
@@ -148,8 +150,8 @@ func testAcknowledgementWithNewFields(t *testing.T) {
 	require.Len(t, operators, 3)
 
 	// Get node IDs
-	nodeID := testutil.AddressToNodeID(operators[0].OperatorAddress)
-	dealerID := testutil.AddressToNodeID(operators[1].OperatorAddress)
+	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
+	dealerID := util.AddressToNodeID(operators[1].OperatorAddress)
 	epoch := int64(12345)
 
 	// Create a test share
@@ -259,7 +261,9 @@ func testDKGContractSubmissionAndSessionState(t *testing.T) {
 	// Verify all nodes have same master public key
 	masterPubKey := cluster.GetMasterPublicKey()
 	require.NotNil(t, masterPubKey.CompressedBytes)
-	require.False(t, masterPubKey.IsZero(), "Master public key should not be zero")
+	isMasterPubKeyZero, err := masterPubKey.IsZero()
+	require.NoError(t, err)
+	require.False(t, isMasterPubKeyZero, "Master public key should not be zero")
 
 	// The fact that DKG completed means:
 	// 1. Merkle trees were built (or code would have errored)
@@ -302,7 +306,9 @@ func testReshareContractSubmissionAndSessionState(t *testing.T) {
 	// Verify master public key unchanged after reshare
 	masterPubKey := cluster.GetMasterPublicKey()
 	require.NotNil(t, masterPubKey.CompressedBytes)
-	require.False(t, masterPubKey.IsZero())
+	isMasterPubKeyZero, err := masterPubKey.IsZero()
+	require.NoError(t, err)
+	require.False(t, isMasterPubKeyZero)
 
 	t.Logf("✓ Reshare with contract submission state tracking passed")
 }

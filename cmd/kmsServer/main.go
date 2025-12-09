@@ -127,24 +127,6 @@ This server implements:
 				Value:   0,
 				EnvVars: []string{config.EnvKMSOperatorSetID},
 			},
-			&cli.StringFlag{
-				Name:     "gcp-project-id",
-				Usage:    "GCP project ID for TEE attestation verification",
-				EnvVars:  []string{"KMS_GCP_PROJECT_ID"},
-				Required: true,
-			},
-			&cli.StringFlag{
-				Name:    "attestation-provider",
-				Usage:   "Attestation provider: 'google' or 'intel'",
-				Value:   "google",
-				EnvVars: []string{"KMS_ATTESTATION_PROVIDER"},
-			},
-			&cli.BoolFlag{
-				Name:    "attestation-debug-mode",
-				Usage:   "Enable debug mode for attestation (allows debug TEEs)",
-				EnvVars: []string{"KMS_ATTESTATION_DEBUG_MODE"},
-				Value:   false,
-			},
 			&cli.BoolFlag{
 				Name:    "verbose",
 				Usage:   "Enable verbose logging",

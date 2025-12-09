@@ -5,18 +5,10 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/merkle"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
-	"github.com/ethereum/go-ethereum/common"
-	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 )
-
-// addressToNodeID converts an Ethereum address to a node ID using keccak256 hash
-func addressToNodeID(address common.Address) int {
-	hash := ethcrypto.Keccak256(address.Bytes())
-	nodeID := int(common.BytesToHash(hash).Big().Uint64())
-	return nodeID
-}
 
 // Protocol represents the DKG protocol interface
 type Protocol interface {
@@ -56,7 +48,7 @@ func (d *DKG) GenerateShares() (map[int]*fr.Element, []types.G2Point, error) {
 	// Compute shares for all operators
 	shares := make(map[int]*fr.Element)
 	for _, op := range d.operators {
-		opNodeID := addressToNodeID(op.OperatorAddress)
+		opNodeID := util.AddressToNodeID(op.OperatorAddress)
 		share := crypto.EvaluatePolynomial(d.poly, int64(opNodeID))
 		shares[opNodeID] = share
 	}
@@ -98,7 +90,6 @@ func (d *DKG) VerifyShare(fromID int, share *fr.Element, commitments []types.G2P
 		}
 		rightSide = *tmpRightSide
 	}
-
 	return leftSide.IsEqual(&rightSide)
 }
 
@@ -110,10 +101,28 @@ func (d *DKG) FinalizeKeyShare(shares map[int]*fr.Element, allCommitments [][]ty
 		privateShare.Add(privateShare, share)
 	}
 
+	// Combine commitments from all dealers element-wise
+	combinedCommitments := make([]types.G2Point, 0)
+	if len(allCommitments) > 0 {
+		combinedCommitments = make([]types.G2Point, len(allCommitments[0]))
+		for i := range combinedCommitments {
+			combinedCommitments[i] = *types.ZeroG2Point()
+		}
+		for _, commitments := range allCommitments {
+			for idx, commitment := range commitments {
+				sum, err := crypto.AddG2(combinedCommitments[idx], commitment)
+				if err != nil {
+					continue
+				}
+				combinedCommitments[idx] = *sum
+			}
+		}
+	}
+
 	return &types.KeyShareVersion{
 		Version:        GetReshareEpoch(),
 		PrivateShare:   privateShare,
-		Commitments:    allCommitments[0],
+		Commitments:    combinedCommitments,
 		IsActive:       true,
 		ParticipantIDs: participantIDs,
 	}

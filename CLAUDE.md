@@ -97,7 +97,7 @@ eigenx-kms-go/
 ### Node Infrastructure (`pkg/node/`)
 - **`Node`**: Main KMS node with BN254 private key for P2P authentication
 - **`Server`**: HTTP server handling authenticated inter-node communication
-- **Address-based Identity**: Operators identified by Ethereum addresses, node IDs derived via `addressToNodeID()`
+- **Address-based Identity**: Operators identified by Ethereum addresses, node IDs derived via `util.AddressToNodeID()`
 
 ### Authenticated Messaging (`pkg/transport/`, `pkg/types/`)
 - **`AuthenticatedMessage`**: All P2P messages wrapped with `Payload`, `Hash`, `Signature`

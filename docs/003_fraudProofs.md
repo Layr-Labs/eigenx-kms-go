@@ -27,7 +27,7 @@ This document describes the fraud proof system for detecting and slashing malici
 **Detection**:
 ```
 Receiver j gets share s_ij from dealer i
-Verification fails: g^s_ij ` £(C_ik * j^k)
+Verification fails: g^s_ij ` ï¿½(C_ik * j^k)
 ```
 
 **Evidence Required**:
@@ -45,7 +45,7 @@ function verifyShareAgainstCommitments(
     // Left side: g^share
     G2Point memory leftSide = g2Mul(G2_GENERATOR, share);
 
-    // Right side: £(commitments[k] * nodeID^k)
+    // Right side: ï¿½(commitments[k] * nodeID^k)
     G2Point memory rightSide = commitments[0];
     uint256 nodeIDPower = nodeID;
 
@@ -96,7 +96,7 @@ function verifyEquivocation(
     // Check if shares define consistent polynomial
     // Using Lagrange: if polynomial is degree t-1, any t points define it uniquely
     // Two shares should interpolate to same polynomial
-    // If they don't ’ equivocation
+    // If they don't ï¿½ equivocation
 
     return !sharesDefineConsistentPolynomial(
         share1, nodeID1,
@@ -418,7 +418,7 @@ contract EigenKMSSlashing {
         // Left side: g^share
         G2Point memory leftSide = BLS12381.g2Mul(BLS12381.G2_GENERATOR(), share);
 
-        // Right side: £(commitments[k] * nodeID^k)
+        // Right side: ï¿½(commitments[k] * nodeID^k)
         G2Point memory rightSide = commitments[0];
         uint256 nodeIDPower = nodeID;
 
@@ -444,9 +444,9 @@ contract EigenKMSSlashing {
         // Simple check: Use Lagrange interpolation at point 0
         // If shares are from same polynomial, they should interpolate to same f(0)
 
-        // »1 = nodeID2 / (nodeID2 - nodeID1)
-        // »2 = -nodeID1 / (nodeID2 - nodeID1)
-        // f(0) = »1 * share1 + »2 * share2
+        // ï¿½1 = nodeID2 / (nodeID2 - nodeID1)
+        // ï¿½2 = -nodeID1 / (nodeID2 - nodeID1)
+        // f(0) = ï¿½1 * share1 + ï¿½2 * share2
 
         // If we compute f(0) from both shares, they should match
         // For simplicity, we'll use a more direct check:
@@ -559,7 +559,7 @@ func NewFraudReporter(
 
 // SubmitInvalidShareProof submits proof of invalid share to smart contract
 func (fr *FraudReporter) SubmitInvalidShareProof(proof InvalidShareProof) error {
-    log.Printf("=Ë Submitting invalid share fraud proof against %s",
+    log.Printf("=ï¿½ Submitting invalid share fraud proof against %s",
         proof.Dealer.Hex())
 
     // Serialize proof for contract call
@@ -584,7 +584,7 @@ func (fr *FraudReporter) SubmitInvalidShareProof(proof InvalidShareProof) error 
 
 // SubmitEquivocationProof submits proof of equivocation to smart contract
 func (fr *FraudReporter) SubmitEquivocationProof(proof EquivocationProof) error {
-    log.Printf("=Ë Submitting equivocation fraud proof against %s",
+    log.Printf("=ï¿½ Submitting equivocation fraud proof against %s",
         proof.Dealer.Hex())
 
     tx, err := fr.contractCaller.SubmitEquivocationProof(
@@ -642,7 +642,7 @@ func (n *Node) handleDKGShare(w http.ResponseWriter, r *http.Request) {
 
     // Deserialize and verify share
     share := deserializeShare(shareMsg.Share)
-    dealerNodeID := addressToNodeID(shareMsg.FromOperatorAddress)
+    dealerNodeID := util.AddressToNodeID(shareMsg.FromOperatorAddress)
 
     valid := n.dkg.VerifyShare(
         dealerNodeID,
@@ -666,7 +666,7 @@ func (n *Node) handleDKGShare(w http.ResponseWriter, r *http.Request) {
         }
 
         if err := n.fraudReporter.SubmitInvalidShareProof(proof); err != nil {
-            log.Printf("   Failed to submit fraud proof: %v", err)
+            log.Printf("ï¿½  Failed to submit fraud proof: %v", err)
         }
 
         // Respond with error
@@ -755,7 +755,7 @@ func (m *Monitor) TrackFraudMetrics() {
     for {
         select {
         case event := <-fraudChan:
-            log.Printf("=¨ Fraud detected: %s by %s (count: %d)",
+            log.Printf("=ï¿½ Fraud detected: %s by %s (count: %d)",
                 event.FraudType,
                 event.Dealer.Hex(),
                 event.FraudCount,
@@ -862,7 +862,7 @@ func TestFraudProofSlashing(t *testing.T) {
 ## Future Enhancements
 
 1. **Reputation System**: Track long-term operator behavior
-2. **Graduated Penalties**: Warning ’ Temporary suspension ’ Ejection
+2. **Graduated Penalties**: Warning ï¿½ Temporary suspension ï¿½ Ejection
 3. **Insurance Pool**: Slashed funds go to insurance for affected applications
 4. **Cross-AVS Fraud Sharing**: Share fraud patterns across EigenLayer AVSs
 5. **ZK Fraud Proofs**: Privacy-preserving fraud proofs using zero-knowledge proofs

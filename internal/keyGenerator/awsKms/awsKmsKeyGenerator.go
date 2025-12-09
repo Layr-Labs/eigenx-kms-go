@@ -43,7 +43,7 @@ func (a *AWSKMSKeyGenerator) SignMessage(ctx context.Context, keyId string, mess
 }
 
 func (a *AWSKMSKeyGenerator) GenerateECDSAKey(ctx context.Context, keyName string, aliasName string) (*keyGenerator.GeneratedECDSAKey, error) {
-	keyRes, err := a.createEthereumSigningKey(ctx, keyName, a.globalConfig.ChainName)
+	keyRes, err := a.createEthereumSigningKey(ctx, keyName, string(a.globalConfig.ChainName))
 	if err != nil {
 		return nil, errors.Wrapf(err, "failed to create ECDSA key %s in region %s", keyName, a.awsRegion)
 	}
@@ -85,11 +85,7 @@ func (a *AWSKMSKeyGenerator) GetECDSAKeyById(ctx context.Context, keyId string) 
 }
 
 // createEthereumSigningKey creates an ECDSA key suitable for Ethereum transaction signing
-func (k *AWSKMSKeyGenerator) createEthereumSigningKey(ctx context.Context, keyName string, chainName config.ChainName) (*kms.CreateKeyOutput, error) {
-	envName, err := config.GetEnvironmentNameForChainName(chainName)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get environment name for chain %s: %w", chainName, err)
-	}
+func (k *AWSKMSKeyGenerator) createEthereumSigningKey(ctx context.Context, keyName, environment string) (*kms.CreateKeyOutput, error) {
 	// Create the KMS key with ECDSA_SECP256K1 spec (required for Ethereum)
 	input := &kms.CreateKeyInput{
 		KeyUsage:    types.KeyUsageTypeSignVerify,
@@ -102,7 +98,7 @@ func (k *AWSKMSKeyGenerator) createEthereumSigningKey(ctx context.Context, keyNa
 			},
 			{
 				TagKey:   aws.String("Environment"),
-				TagValue: aws.String(envName),
+				TagValue: aws.String(environment),
 			},
 			{
 				TagKey:   aws.String("Purpose"),
@@ -117,7 +113,7 @@ func (k *AWSKMSKeyGenerator) createEthereumSigningKey(ctx context.Context, keyNa
 				TagValue: aws.String("secp256k1"),
 			},
 			{
-				TagKey:   aws.String("EigenComputeKMS"),
+				TagKey:   aws.String("EigenCompute"),
 				TagValue: aws.String("true"),
 			},
 		},
