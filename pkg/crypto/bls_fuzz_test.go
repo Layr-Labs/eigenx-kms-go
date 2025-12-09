@@ -187,21 +187,10 @@ func FuzzRecoverAppPrivateKeyInsufficientShares(f *testing.F) {
 			insufficientSigs[i] = *partial
 		}
 
-		// RecoverAppPrivateKey currently doesn't check threshold before processing.
-		// It processes whatever shares are provided. This test documents this behavior.
-		// If we add threshold validation, this test should assert an error.
-		recovered, err := RecoverAppPrivateKey(appID, insufficientSigs, threshold)
-		// Current implementation: no error, but wrong result due to insufficient shares.
-		// The recovered key won't match the expected value.
-		if err == nil && recovered != nil {
-			expectedAppPriv, _ := ScalarMulG1(*appHash, secret)
-			// With insufficient shares, recovery produces incorrect result.
-			// This is expected behavior - caller must provide >= threshold shares.
-			if expectedAppPriv.IsEqual(recovered) {
-				// This would be surprising - indicates a bug or degenerate case.
-				t.Logf("Warning: insufficient shares produced correct result (degenerate input)")
-			}
-		}
+		// RecoverAppPrivateKey should reject insufficient shares.
+		_, err = RecoverAppPrivateKey(appID, insufficientSigs, threshold)
+		require.Error(t, err, "should reject insufficient shares")
+		require.Contains(t, err.Error(), "insufficient partial signatures")
 	})
 }
 

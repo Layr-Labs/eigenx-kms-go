@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"testing"
 
+	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/stretchr/testify/require"
 )
@@ -242,5 +243,174 @@ func FuzzScalarMultiplicationConsistency(f *testing.F) {
 		p2Again, err := ScalarMulG2(G2Generator, s)
 		require.NoError(t, err)
 		require.True(t, p2.point.Equal(p2Again.point), "scalar mul should be deterministic on G2")
+	})
+}
+
+// FuzzZeroScalarMultiplication tests that multiplying by zero produces identity.
+func FuzzZeroScalarMultiplication(f *testing.F) {
+	f.Add([]byte("seed"))
+
+	f.Fuzz(func(t *testing.T, seed []byte) {
+		zeroScalar := new(fr.Element).SetZero()
+
+		// 0 * G1 should produce the identity (point at infinity).
+		p1, err := ScalarMulG1(G1Generator, zeroScalar)
+		require.NoError(t, err)
+		require.True(t, p1.IsZero(), "0 * G1 should be identity")
+
+		// 0 * G2 should produce the identity (point at infinity).
+		p2, err := ScalarMulG2(G2Generator, zeroScalar)
+		require.NoError(t, err)
+		require.True(t, p2.IsZero(), "0 * G2 should be identity")
+	})
+}
+
+// FuzzAdditionWithIdentityG1 tests that adding identity doesn't change a point.
+func FuzzAdditionWithIdentityG1(f *testing.F) {
+	f.Add([]byte("seed"))
+
+	f.Fuzz(func(t *testing.T, seed []byte) {
+		s := deriveScalarOp(seed)
+		p, err := ScalarMulG1(G1Generator, s)
+		require.NoError(t, err)
+
+		// Create identity point (point at infinity).
+		identity := NewG1Point(new(bls12381.G1Affine).SetInfinity())
+
+		// p + identity = p
+		result, err := AddG1(p, identity)
+		require.NoError(t, err)
+		require.True(t, result.point.Equal(p.point), "p + identity should equal p")
+
+		// identity + p = p
+		result2, err := AddG1(identity, p)
+		require.NoError(t, err)
+		require.True(t, result2.point.Equal(p.point), "identity + p should equal p")
+	})
+}
+
+// FuzzAdditionWithIdentityG2 tests that adding identity doesn't change a point.
+func FuzzAdditionWithIdentityG2(f *testing.F) {
+	f.Add([]byte("seed"))
+
+	f.Fuzz(func(t *testing.T, seed []byte) {
+		s := deriveScalarOp(seed)
+		p, err := ScalarMulG2(G2Generator, s)
+		require.NoError(t, err)
+
+		// Create identity point (point at infinity).
+		identity := NewG2Point(new(bls12381.G2Affine).SetInfinity())
+
+		// p + identity = p
+		result, err := AddG2(p, identity)
+		require.NoError(t, err)
+		require.True(t, result.point.Equal(p.point), "p + identity should equal p")
+
+		// identity + p = p
+		result2, err := AddG2(identity, p)
+		require.NoError(t, err)
+		require.True(t, result2.point.Equal(p.point), "identity + p should equal p")
+	})
+}
+
+// FuzzAdditiveInverseG1 tests that p + (-p) = identity.
+func FuzzAdditiveInverseG1(f *testing.F) {
+	f.Add([]byte("seed"))
+
+	f.Fuzz(func(t *testing.T, seed []byte) {
+		s := deriveScalarOp(seed)
+		p, err := ScalarMulG1(G1Generator, s)
+		require.NoError(t, err)
+
+		// Compute -p by multiplying by -1 (or equivalently, field order - s).
+		negOne := new(fr.Element).SetInt64(-1)
+		negP, err := ScalarMulG1(p, negOne)
+		require.NoError(t, err)
+
+		// p + (-p) should be identity.
+		result, err := AddG1(p, negP)
+		require.NoError(t, err)
+		require.True(t, result.IsZero(), "p + (-p) should be identity")
+	})
+}
+
+// FuzzAdditiveInverseG2 tests that p + (-p) = identity.
+func FuzzAdditiveInverseG2(f *testing.F) {
+	f.Add([]byte("seed"))
+
+	f.Fuzz(func(t *testing.T, seed []byte) {
+		s := deriveScalarOp(seed)
+		p, err := ScalarMulG2(G2Generator, s)
+		require.NoError(t, err)
+
+		// Compute -p by multiplying by -1.
+		negOne := new(fr.Element).SetInt64(-1)
+		negP, err := ScalarMulG2(p, negOne)
+		require.NoError(t, err)
+
+		// p + (-p) should be identity.
+		result, err := AddG2(p, negP)
+		require.NoError(t, err)
+		require.True(t, result.IsZero(), "p + (-p) should be identity")
+	})
+}
+
+// FuzzScalarMultiplicationByOne tests that 1 * p = p.
+func FuzzScalarMultiplicationByOne(f *testing.F) {
+	f.Add([]byte("seed"))
+
+	f.Fuzz(func(t *testing.T, seed []byte) {
+		s := deriveScalarOp(seed)
+
+		// Create a point.
+		p1, err := ScalarMulG1(G1Generator, s)
+		require.NoError(t, err)
+		p2, err := ScalarMulG2(G2Generator, s)
+		require.NoError(t, err)
+
+		// 1 * p should equal p.
+		one := new(fr.Element).SetOne()
+
+		result1, err := ScalarMulG1(p1, one)
+		require.NoError(t, err)
+		require.True(t, result1.point.Equal(p1.point), "1 * p should equal p on G1")
+
+		result2, err := ScalarMulG2(p2, one)
+		require.NoError(t, err)
+		require.True(t, result2.point.Equal(p2.point), "1 * p should equal p on G2")
+	})
+}
+
+// FuzzDoubleVsAddSelf tests that 2*p = p + p.
+func FuzzDoubleVsAddSelf(f *testing.F) {
+	f.Add([]byte("seed"))
+
+	f.Fuzz(func(t *testing.T, seed []byte) {
+		s := deriveScalarOp(seed)
+
+		// G1: 2*p should equal p + p.
+		p1, err := ScalarMulG1(G1Generator, s)
+		require.NoError(t, err)
+
+		two := new(fr.Element).SetUint64(2)
+		doubled1, err := ScalarMulG1(p1, two)
+		require.NoError(t, err)
+
+		added1, err := AddG1(p1, p1)
+		require.NoError(t, err)
+
+		require.True(t, doubled1.point.Equal(added1.point), "2*p should equal p+p on G1")
+
+		// G2: 2*p should equal p + p.
+		p2, err := ScalarMulG2(G2Generator, s)
+		require.NoError(t, err)
+
+		doubled2, err := ScalarMulG2(p2, two)
+		require.NoError(t, err)
+
+		added2, err := AddG2(p2, p2)
+		require.NoError(t, err)
+
+		require.True(t, doubled2.point.Equal(added2.point), "2*p should equal p+p on G2")
 	})
 }

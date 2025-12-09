@@ -13,7 +13,8 @@ var (
 
 func init() {
 	// Generate once to avoid expensive keygen in each fuzz iteration.
-	priv, pub, err := GenerateKeyPair(1024)
+	// Uses 1024-bit keys for speed in fuzzing only - production code enforces 2048+.
+	priv, pub, err := GenerateKeyPairForTesting(1024)
 	if err == nil {
 		fuzzPrivKeyPEM = priv
 		fuzzPubKeyPEM = pub
@@ -36,11 +37,30 @@ func FuzzRSAEncryptDecrypt(f *testing.F) {
 
 		r := NewRSAEncryption()
 
-		ciphertext, err := r.Encrypt(plaintext, fuzzPubKeyPEM)
+		// Use testing variants that skip key size validation.
+		ciphertext, err := r.EncryptForTesting(plaintext, fuzzPubKeyPEM)
 		require.NoError(t, err)
 
-		decrypted, err := r.Decrypt(ciphertext, fuzzPrivKeyPEM)
+		decrypted, err := r.DecryptForTesting(ciphertext, fuzzPrivKeyPEM)
 		require.NoError(t, err)
 		require.Equal(t, plaintext, decrypted)
+	})
+}
+
+func FuzzRSARejectsWeakKeys(f *testing.F) {
+	// Test that production functions reject weak keys.
+	f.Add([]byte("test data"))
+
+	f.Fuzz(func(t *testing.T, plaintext []byte) {
+		if len(plaintext) > 80 {
+			plaintext = plaintext[:80]
+		}
+
+		r := NewRSAEncryption()
+
+		// Production Encrypt should reject 1024-bit keys.
+		_, err := r.Encrypt(plaintext, fuzzPubKeyPEM)
+		require.Error(t, err, "Encrypt should reject weak 1024-bit key")
+		require.Contains(t, err.Error(), "RSA key too weak")
 	})
 }
