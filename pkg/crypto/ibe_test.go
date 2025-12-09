@@ -215,23 +215,16 @@ func testEncryptionPersistenceAcrossReshare(t *testing.T) {
 		t.Fatalf("Failed to hash to G1: %v", err)
 	}
 
-	firstShare, err := ScalarMulG1(*appHash, initialShares[0])
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G1: %v", err)
+	// Create partial signatures for threshold number of nodes (4 for 5 nodes)
+	initialPartialSigs := make(map[int]types.G1Point)
+	for i := 0; i < initialThreshold; i++ {
+		partialSig, err := ScalarMulG1(*appHash, initialShares[i])
+		if err != nil {
+			t.Fatalf("Failed to scalar multiply G1 for node %d: %v", i+1, err)
+		}
+		initialPartialSigs[i+1] = *partialSig
 	}
-	secondShare, err := ScalarMulG1(*appHash, initialShares[1])
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G1: %v", err)
-	}
-	thirdShare, err := ScalarMulG1(*appHash, initialShares[2])
-	if err != nil {
-		t.Fatalf("Failed to scalar multiply G1: %v", err)
-	}
-	initialAppPrivateKey, err := RecoverAppPrivateKey(appID, map[int]types.G1Point{
-		1: *firstShare,
-		2: *secondShare,
-		3: *thirdShare,
-	}, initialThreshold)
+	initialAppPrivateKey, err := RecoverAppPrivateKey(appID, initialPartialSigs, initialThreshold)
 	if err != nil {
 		t.Fatalf("Failed to recover app private key: %v", err)
 	}
@@ -354,9 +347,9 @@ func testThresholdSignatureRecovery(t *testing.T) {
 		partialSigs[nodeID] = *partialSig
 	}
 
-	// Test recovery with exactly threshold signatures
+	// Test recovery with exactly threshold signatures (threshold=4 for 5 nodes)
 	thresholdSigs := make(map[int]types.G1Point)
-	nodeIDs := []int{1, 2, 3} // Use first `threshold` nodes
+	nodeIDs := []int{1, 2, 3, 4} // Use first `threshold` nodes
 	for _, id := range nodeIDs {
 		thresholdSigs[id] = partialSigs[id]
 	}
@@ -373,7 +366,7 @@ func testThresholdSignatureRecovery(t *testing.T) {
 
 	// Test recovery with different threshold subset
 	thresholdSigs2 := make(map[int]types.G1Point)
-	nodeIDs2 := []int{2, 4, 5} // Use different `threshold` nodes
+	nodeIDs2 := []int{2, 3, 4, 5} // Use different `threshold` nodes
 	for _, id := range nodeIDs2 {
 		thresholdSigs2[id] = partialSigs[id]
 	}

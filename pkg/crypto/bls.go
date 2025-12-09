@@ -145,8 +145,13 @@ func RecoverSecret(shares map[int]*fr.Element) (*fr.Element, error) {
 	return bls.RecoverSecret(shares)
 }
 
-// RecoverAppPrivateKey recovers app private key from partial signatures
+// RecoverAppPrivateKey recovers app private key from partial signatures.
+// Returns an error if fewer than threshold signatures are provided.
 func RecoverAppPrivateKey(appID string, partialSigs map[int]types.G1Point, threshold int) (*types.G1Point, error) {
+	if len(partialSigs) < threshold {
+		return nil, fmt.Errorf("insufficient partial signatures: got %d, need %d", len(partialSigs), threshold)
+	}
+
 	participants := make([]int, 0, len(partialSigs))
 	for id := range partialSigs {
 		participants = append(participants, id)
