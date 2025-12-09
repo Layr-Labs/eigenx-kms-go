@@ -322,6 +322,8 @@ func EncryptForApp(appID string, masterPublicKey types.G2Point, plaintext []byte
 
 	// Validate appID
 	if err := util.ValidateAppID(appID); err != nil {
+		return nil, fmt.Errorf("invalid app ID for encryption: %w", err)
+	}
 		return nil, err
 	}
 
