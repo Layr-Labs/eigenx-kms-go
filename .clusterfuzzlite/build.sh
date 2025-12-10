@@ -5,16 +5,32 @@ cd "$SRC/eigenx-kms-go"
 
 # Install the fuzzing build tool
 export PATH="$(go env GOPATH)/bin:${PATH}"
+export CGO_ENABLED=1
 go install github.com/AdamKorcz/go-118-fuzz-build@latest
+# Ensure the helper testing shim is available
+go get github.com/AdamKorcz/go-118-fuzz-build/testing@latest
 
+# Build a Go fuzz target into a libFuzzer binary
 compile_native_go_fuzzer() {
     local pkg=$1
     local func=$2
     local out_name=$3
 
-    if ! go-118-fuzz-build -func "$func" -o "$OUT/$out_name" "$pkg"; then
-        echo "Warning: Could not build $out_name"
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    local archive="${tmpdir}/${out_name}.a"
+
+    if ! go-118-fuzz-build -func "$func" -o "$archive" "$pkg"; then
+        echo "Warning: Could not build archive for $out_name"
+        rm -rf "$tmpdir"
+        return
     fi
+
+    if ! clang -fsanitize=fuzzer "$archive" -o "$OUT/$out_name"; then
+        echo "Warning: Could not link $out_name"
+    fi
+
+    rm -rf "$tmpdir"
 }
 
 # BLS package fuzzers
