@@ -388,9 +388,6 @@ func testEncryptionPersistenceAcrossReshare(t *testing.T) {
 	newSecondShare, err := ScalarMulG1(*newAppHash, newShares[2])
 	require.NoError(t, err, "Failed to scalar multiply G1")
 	newThirdShare, err := ScalarMulG1(*newAppHash, newShares[3])
-<<<<<<< HEAD
-	require.NoError(t, err, "Failed to scalar multiply G1")
-=======
 	if err != nil {
 		t.Fatalf("Failed to scalar multiply G1: %v", err)
 	}
@@ -398,7 +395,6 @@ func testEncryptionPersistenceAcrossReshare(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to scalar multiply G1: %v", err)
 	}
->>>>>>> 6acc9f4 (fixing test)
 	// Recover app private key using new shares
 	newAppPrivateKey, err := RecoverAppPrivateKey(appID, map[int]types.G1Point{
 		1: *newFirstShare,

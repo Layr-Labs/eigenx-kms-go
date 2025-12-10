@@ -141,7 +141,9 @@ func FuzzRecoverAppPrivateKeyRoundTrip(f *testing.F) {
 
 		recovered, err := RecoverAppPrivateKey(appID, thresholdSigs, threshold)
 		require.NoError(t, err)
-		require.False(t, recovered.IsZero(), "recovered key should not be zero")
+		isRecoveredZero, err := recovered.IsZero()
+		require.NoError(t, err)
+		require.False(t, isRecoveredZero, "recovered key should not be zero")
 
 		// Test 2: Recovery with all shares should produce the same result.
 		recoveredAll, err := RecoverAppPrivateKey(appID, allPartialSigs, threshold)

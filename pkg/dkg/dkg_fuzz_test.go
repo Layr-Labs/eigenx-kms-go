@@ -8,6 +8,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
@@ -57,7 +58,7 @@ func FuzzGenerateVerifyAndFinalize(f *testing.F) {
 		threshold := CalculateThreshold(len(operators))
 
 		// Use the first operator as the dealer for this fuzz run.
-		dealerID := addressToNodeID(operators[0].OperatorAddress)
+		dealerID := util.AddressToNodeID(operators[0].OperatorAddress)
 		d := NewDKG(dealerID, threshold, operators)
 
 		shares, commitments, err := d.GenerateShares()
@@ -66,7 +67,7 @@ func FuzzGenerateVerifyAndFinalize(f *testing.F) {
 
 		// Every participant should verify its own share against the commitments.
 		for _, op := range operators {
-			opID := addressToNodeID(op.OperatorAddress)
+			opID := util.AddressToNodeID(op.OperatorAddress)
 			verifier := NewDKG(opID, threshold, operators)
 			share, ok := shares[opID]
 			require.True(t, ok, "missing share for operator")
@@ -108,7 +109,7 @@ func FuzzVerifyShareRejectsTamperedShare(f *testing.F) {
 		operators := testOperators(n)
 		threshold := CalculateThreshold(len(operators))
 
-		dealerID := addressToNodeID(operators[0].OperatorAddress)
+		dealerID := util.AddressToNodeID(operators[0].OperatorAddress)
 		d := NewDKG(dealerID, threshold, operators)
 
 		shares, commitments, err := d.GenerateShares()
@@ -116,7 +117,7 @@ func FuzzVerifyShareRejectsTamperedShare(f *testing.F) {
 
 		// Tamper with a share by adding a delta derived from seed.
 		targetOp := operators[1]
-		targetID := addressToNodeID(targetOp.OperatorAddress)
+		targetID := util.AddressToNodeID(targetOp.OperatorAddress)
 		originalShare := shares[targetID]
 
 		delta := deriveScalar(seed)
@@ -150,7 +151,7 @@ func FuzzVerifyShareRejectsCorruptedCommitments(f *testing.F) {
 		operators := testOperators(n)
 		threshold := CalculateThreshold(len(operators))
 
-		dealerID := addressToNodeID(operators[0].OperatorAddress)
+		dealerID := util.AddressToNodeID(operators[0].OperatorAddress)
 		d := NewDKG(dealerID, threshold, operators)
 
 		shares, commitments, err := d.GenerateShares()
@@ -173,7 +174,7 @@ func FuzzVerifyShareRejectsCorruptedCommitments(f *testing.F) {
 
 		// Verification should fail against corrupted commitments.
 		targetOp := operators[1]
-		targetID := addressToNodeID(targetOp.OperatorAddress)
+		targetID := util.AddressToNodeID(targetOp.OperatorAddress)
 		verifier := NewDKG(targetID, threshold, operators)
 
 		require.False(t, verifier.VerifyShare(dealerID, shares[targetID], corruptedCommitments),
@@ -202,8 +203,8 @@ func FuzzVerifyShareRejectsMismatchedDealerCommitments(f *testing.F) {
 		threshold := CalculateThreshold(len(operators))
 
 		// Two different dealers generate their own shares/commitments.
-		dealer1ID := addressToNodeID(operators[0].OperatorAddress)
-		dealer2ID := addressToNodeID(operators[1].OperatorAddress)
+		dealer1ID := util.AddressToNodeID(operators[0].OperatorAddress)
+		dealer2ID := util.AddressToNodeID(operators[1].OperatorAddress)
 
 		d1 := NewDKG(dealer1ID, threshold, operators)
 		d2 := NewDKG(dealer2ID, threshold, operators)
@@ -215,7 +216,7 @@ func FuzzVerifyShareRejectsMismatchedDealerCommitments(f *testing.F) {
 
 		// Verify that share1 + commitments1 works.
 		targetOp := operators[2]
-		targetID := addressToNodeID(targetOp.OperatorAddress)
+		targetID := util.AddressToNodeID(targetOp.OperatorAddress)
 		verifier := NewDKG(targetID, threshold, operators)
 
 		require.True(t, verifier.VerifyShare(dealer1ID, shares1[targetID], commitments1),
@@ -258,7 +259,7 @@ func FuzzThresholdBoundaryConditions(f *testing.F) {
 
 		// Generate and verify with exactly threshold operators.
 		operators := testOperators(n)
-		dealerID := addressToNodeID(operators[0].OperatorAddress)
+		dealerID := util.AddressToNodeID(operators[0].OperatorAddress)
 		d := NewDKG(dealerID, threshold, operators)
 
 		shares, commitments, err := d.GenerateShares()
@@ -267,7 +268,7 @@ func FuzzThresholdBoundaryConditions(f *testing.F) {
 
 		// Verify all shares.
 		for _, op := range operators {
-			opID := addressToNodeID(op.OperatorAddress)
+			opID := util.AddressToNodeID(op.OperatorAddress)
 			verifier := NewDKG(opID, threshold, operators)
 			require.True(t, verifier.VerifyShare(dealerID, shares[opID], commitments))
 		}
@@ -289,7 +290,7 @@ func FuzzVerifyShareWithZeroShare(f *testing.F) {
 		operators := testOperators(n)
 		threshold := CalculateThreshold(len(operators))
 
-		dealerID := addressToNodeID(operators[0].OperatorAddress)
+		dealerID := util.AddressToNodeID(operators[0].OperatorAddress)
 		d := NewDKG(dealerID, threshold, operators)
 
 		_, commitments, err := d.GenerateShares()
@@ -300,7 +301,7 @@ func FuzzVerifyShareWithZeroShare(f *testing.F) {
 
 		// Zero share should fail verification (unless commitments are also zero, which is unlikely).
 		targetOp := operators[1]
-		targetID := addressToNodeID(targetOp.OperatorAddress)
+		targetID := util.AddressToNodeID(targetOp.OperatorAddress)
 		verifier := NewDKG(targetID, threshold, operators)
 
 		// A zero share is mathematically valid only if the polynomial evaluates to 0 at that point.
@@ -327,7 +328,7 @@ func FuzzVerifyShareWithEmptyCommitments(f *testing.F) {
 		operators := testOperators(n)
 		threshold := CalculateThreshold(len(operators))
 
-		dealerID := addressToNodeID(operators[0].OperatorAddress)
+		dealerID := util.AddressToNodeID(operators[0].OperatorAddress)
 		d := NewDKG(dealerID, threshold, operators)
 
 		shares, _, err := d.GenerateShares()
@@ -337,7 +338,7 @@ func FuzzVerifyShareWithEmptyCommitments(f *testing.F) {
 		emptyCommitments := []types.G2Point{}
 
 		targetOp := operators[1]
-		targetID := addressToNodeID(targetOp.OperatorAddress)
+		targetID := util.AddressToNodeID(targetOp.OperatorAddress)
 		verifier := NewDKG(targetID, threshold, operators)
 
 		// Verification with empty commitments should fail (or panic gracefully).
@@ -379,7 +380,7 @@ func FuzzFinalizeWithSubsetOfShares(f *testing.F) {
 			subsetSize = n
 		}
 
-		dealerID := addressToNodeID(operators[0].OperatorAddress)
+		dealerID := util.AddressToNodeID(operators[0].OperatorAddress)
 		d := NewDKG(dealerID, threshold, operators)
 
 		shares, commitments, err := d.GenerateShares()
