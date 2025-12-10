@@ -10,6 +10,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
@@ -65,7 +66,7 @@ func FuzzGenerateVerifyAndComputeNewKeyShare(f *testing.F) {
 		currentShare := deriveScalar(seed)
 
 		// Use first operator as dealer for generating shares.
-		dealerID := addressToNodeID(operators[0].OperatorAddress)
+		dealerID := util.AddressToNodeID(operators[0].OperatorAddress)
 		r := NewReshare(dealerID, operators)
 
 		shares, commitments, err := r.GenerateNewShares(currentShare, newThreshold)
@@ -79,7 +80,7 @@ func FuzzGenerateVerifyAndComputeNewKeyShare(f *testing.F) {
 
 		// Every participant verifies its own share against the commitments.
 		for _, op := range operators {
-			opID := addressToNodeID(op.OperatorAddress)
+			opID := util.AddressToNodeID(op.OperatorAddress)
 			verifier := NewReshare(opID, operators)
 			share, ok := shares[opID]
 			require.True(t, ok, "missing share for operator")
@@ -132,7 +133,7 @@ func FuzzVerifyShareRejectsTamperedShare(f *testing.F) {
 		newThreshold := threshold(len(operators))
 		currentShare := deriveScalar(seed)
 
-		dealerID := addressToNodeID(operators[0].OperatorAddress)
+		dealerID := util.AddressToNodeID(operators[0].OperatorAddress)
 		r := NewReshare(dealerID, operators)
 
 		shares, commitments, err := r.GenerateNewShares(currentShare, newThreshold)
@@ -140,7 +141,7 @@ func FuzzVerifyShareRejectsTamperedShare(f *testing.F) {
 
 		// Tamper with one share by adding 1.
 		targetOp := operators[1]
-		targetID := addressToNodeID(targetOp.OperatorAddress)
+		targetID := util.AddressToNodeID(targetOp.OperatorAddress)
 		originalShare := shares[targetID]
 		tamperedShare := new(fr.Element).Add(originalShare, new(fr.Element).SetUint64(1))
 
@@ -173,7 +174,7 @@ func FuzzVerifyShareRejectsMismatchedCommitments(f *testing.F) {
 		share1 := deriveScalar(seed1)
 		share2 := deriveScalar(seed2)
 
-		dealerID := addressToNodeID(operators[0].OperatorAddress)
+		dealerID := util.AddressToNodeID(operators[0].OperatorAddress)
 		r1 := NewReshare(dealerID, operators)
 		r2 := NewReshare(dealerID, operators)
 
@@ -189,7 +190,7 @@ func FuzzVerifyShareRejectsMismatchedCommitments(f *testing.F) {
 
 		// Try to verify share from set1 against commitments from set2.
 		targetOp := operators[1]
-		targetID := addressToNodeID(targetOp.OperatorAddress)
+		targetID := util.AddressToNodeID(targetOp.OperatorAddress)
 		verifier := NewReshare(targetID, operators)
 
 		// share1 + commitments1 should verify.
@@ -217,7 +218,7 @@ func FuzzComputeNewKeyShareThresholdSubset(f *testing.F) {
 		newThreshold := threshold(len(operators))
 		currentShare := deriveScalar(seed)
 
-		dealerID := addressToNodeID(operators[0].OperatorAddress)
+		dealerID := util.AddressToNodeID(operators[0].OperatorAddress)
 		r := NewReshare(dealerID, operators)
 
 		shares, commitments, err := r.GenerateNewShares(currentShare, newThreshold)
