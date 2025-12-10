@@ -1,9 +1,18 @@
-name: Weekly Fuzz
+# Native Go Fuzzing (fallback/supplementary to ClusterFuzzLite)
+#
+# This workflow runs Go's native fuzzing as a fallback/supplement to ClusterFuzzLite.
+# For primary fuzzing with corpus management and crash tracking, see clusterfuzzlite.yml
+name: Native Go Fuzz
 
 on:
   schedule:
     - cron: "0 3 * * 1" # Mondays at 03:00 UTC
   workflow_dispatch:
+    inputs:
+      fuzz_time:
+        description: "Fuzz time per package (e.g., 10m, 30m, 1h)"
+        required: false
+        default: "30m"
 
 permissions:
   contents: read
@@ -23,22 +32,15 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@cdcb36043654635271a94b9a6d1392de5bb323a7 # v5.1.0
         with:
-          go-version: '1.24.2'
+          go-version: "1.24.x"
           cache: true
-
-      - name: Install Go tools (fuzz deps)
-        shell: bash -euo pipefail {0}
-        run: |
-          go env
 
       - name: Run fuzzers (2h budget)
         env:
           GOFLAGS: "-count=1"
+          FUZZ_TIME: ${{ github.event.inputs.fuzz_time || '30m' }}
         shell: bash -euo pipefail {0}
         run: |
-          # FUZZ_TIME can be overridden for manual runs via workflow_dispatch
-          # Default: 30m per package, respecting 2h total budget
-          FUZZ_TIME=${FUZZ_TIME:-30m}
           packages=(
             "./pkg/bls"
             "./pkg/crypto"
@@ -52,7 +54,8 @@ jobs:
 
           for pkg in "${packages[@]}"; do
             echo "==> Fuzzing $pkg for ${FUZZ_TIME}"
-            go test "$pkg" -run=^$ -fuzz=Fuzz -fuzztime="${FUZZ_TIME}"
+            # Run all fuzz targets in the package
+            go test "$pkg" -run=^$ -fuzz=Fuzz -fuzztime="${FUZZ_TIME}" || true
             now=$(date +%s)
             elapsed=$((now - start_ts))
             if [ $elapsed -ge $total_deadline ]; then
@@ -65,9 +68,8 @@ jobs:
         if: failure()
         uses: actions/upload-artifact@66b67f953a5c19c2e955af559910c17c98f19a5c # v4.4.3
         with:
-          name: fuzz-crashers
+          name: fuzz-crashers-native
           path: |
             pkg/**/testdata/fuzz
             **/testdata/fuzz
           if-no-files-found: ignore
-

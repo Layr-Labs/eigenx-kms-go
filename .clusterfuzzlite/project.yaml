@@ -1,0 +1,9 @@
+homepage: "https://github.com/Layr-Labs/eigenx-kms-go"
+language: go
+primary_contact: "security@layr.io"
+main_repo: "https://github.com/Layr-Labs/eigenx-kms-go"
+fuzzing_engines:
+  - libfuzzer
+sanitizers:
+  - address
+
