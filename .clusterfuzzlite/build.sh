@@ -1,4 +1,4 @@
-#!/bin/bash -eu
+#!/bin/bash -euo pipefail
 # ClusterFuzzLite build script for eigenx-kms-go
 
 cd "$SRC/eigenx-kms-go"
@@ -6,9 +6,13 @@ cd "$SRC/eigenx-kms-go"
 # Install the fuzzing build tool
 export PATH="$(go env GOPATH)/bin:${PATH}"
 export CGO_ENABLED=1
+export GOOS=linux
+export GOARCH=amd64
 go install github.com/AdamKorcz/go-118-fuzz-build@latest
 # Ensure the helper testing shim is available
 go get github.com/AdamKorcz/go-118-fuzz-build/testing@latest
+
+mkdir -p "$OUT"
 
 # Build a Go fuzz target into a libFuzzer binary
 compile_native_go_fuzzer() {
@@ -28,8 +32,10 @@ compile_native_go_fuzzer() {
 
     # Link with sanitizer flags; $CXXFLAGS from base image already includes the selected sanitizer (ASan/UBSan).
     # We add -fsanitize=fuzzer,address explicitly to satisfy bad_build_check expectations.
-    if ! "$CXX" $CXXFLAGS "$archive" -o "$OUT/$out_name" $LIB_FUZZING_ENGINE -fsanitize=fuzzer,address; then
+    if ! "$CXX" $CXXFLAGS $LIB_FUZZING_ENGINE -fsanitize=fuzzer,address "$archive" -o "$OUT/$out_name"; then
         echo "Warning: Could not link $out_name"
+        rm -rf "$tmpdir"
+        return 1
     fi
 
     rm -rf "$tmpdir"
@@ -80,4 +86,10 @@ compile_native_go_fuzzer github.com/Layr-Labs/eigenx-kms-go/pkg/encryption FuzzR
 
 echo "Build complete. Fuzzers in $OUT:"
 ls -la "$OUT/" || true
+
+# Fail the build if no fuzz targets were produced
+if [ -z "$(find "$OUT" -maxdepth 1 -type f -perm -111 -print -quit)" ]; then
+    echo "ERROR: No fuzz targets produced in $OUT"
+    exit 1
+fi
 
