@@ -25,23 +25,34 @@ compile_native_go_fuzzer() {
     local pkg=$1
     local func=$2
     local out_name=$3
+    # optional="optional" allows best-effort builds without failing the script.
+    # default is "required" which fails the build on errors to avoid silently missing fuzzers.
+    local optional=${4:-required}
 
     local tmpdir
     tmpdir=$(mktemp -d)
     local archive="${tmpdir}/${out_name}.a"
 
     if ! go-118-fuzz-build -func "$func" -o "$archive" "$pkg"; then
-        echo "Warning: Could not build archive for $out_name"
+        echo "Error: Could not build archive for $out_name"
         rm -rf "$tmpdir"
-        return
+        if [[ "$optional" == "optional" ]]; then
+            echo "Proceeding without optional fuzzer $out_name"
+            return 0
+        fi
+        return 1
     fi
 
     # Link with sanitizer flags; $CXXFLAGS from base image already includes the selected sanitizer (ASan/UBSan).
     # CXX can include extra flags (e.g., "-lresolv"), so invoke via eval to preserve spacing.
     link_cmd="$CXX $CXXFLAGS $LIB_FUZZING_ENGINE -fsanitize=fuzzer,address \"$archive\" -o \"$OUT/$out_name\""
     if ! eval "$link_cmd"; then
-        echo "Warning: Could not link $out_name"
+        echo "Error: Could not link $out_name"
         rm -rf "$tmpdir"
+        if [[ "$optional" == "optional" ]]; then
+            echo "Proceeding without optional fuzzer $out_name"
+            return 0
+        fi
         return 1
     fi
 
