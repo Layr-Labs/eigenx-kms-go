@@ -28,6 +28,10 @@ func FuzzRSAEncryptDecrypt(f *testing.F) {
 
 	const maxOAEPMsgLen = 60 // conservatively below 1024-bit OAEP(SHA-256) limit (~62 bytes)
 	f.Add([]byte("hello"))
+	f.Add([]byte{})                                    // empty plaintext
+	f.Add(bytes.Repeat([]byte{0xFF}, 60))             // max bytes near OAEP limit
+	f.Add([]byte{0x00, 0x01, 0x02})                   // low bytes
+	f.Add([]byte("a very long message that tests boundary conditions"))
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, plaintext []byte) {
