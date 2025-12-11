@@ -1,7 +1,9 @@
 package crypto
 
 import (
+	"bytes"
 	"crypto/sha256"
+	"strings"
 	"testing"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
@@ -209,6 +211,9 @@ func FuzzEncryptDecryptRoundTrip(f *testing.F) {
 		if len(appID) > 64 {
 			appID = appID[:64]
 		}
+		if len(appID) < 5 {
+			appID = appID + strings.Repeat("a", 5-len(appID))
+		}
 		if len(plaintext) > 512 {
 			plaintext = plaintext[:512]
 		}
@@ -216,21 +221,23 @@ func FuzzEncryptDecryptRoundTrip(f *testing.F) {
 			appID = "default-app"
 		}
 
-		// Derive a deterministic but valid master public key.
+		// Derive a deterministic but valid master public key and matching app private key: s*H(appID).
 		scalar := deriveScalar([]byte(appID))
+		appHash, err := HashToG1(appID)
+		require.NoError(t, err)
 		masterPK, err := ScalarMulG2(G2Generator, scalar)
 		require.NoError(t, err)
 
 		ciphertext, err := EncryptForApp(appID, *masterPK, plaintext)
 		require.NoError(t, err)
 
-		// Use a matching private key (same scalar on G1) for the simplified stub.
-		appPriv, err := ScalarMulG1(G1Generator, scalar)
+		// Use matching app private key: s * H(appID).
+		appPriv, err := ScalarMulG1(*appHash, scalar)
 		require.NoError(t, err)
 
 		decrypted, err := DecryptForApp(appID, *appPriv, ciphertext)
 		require.NoError(t, err)
-		require.Equal(t, plaintext, decrypted)
+		require.True(t, bytes.Equal(plaintext, decrypted), "decrypted plaintext mismatch")
 	})
 }
 
@@ -242,8 +249,14 @@ func FuzzEncryptDecryptWrongAppID(f *testing.F) {
 		if correctAppID == "" {
 			correctAppID = "correct-app"
 		}
+		if len(correctAppID) < 5 {
+			correctAppID = correctAppID + strings.Repeat("a", 5-len(correctAppID))
+		}
 		if wrongAppID == "" || wrongAppID == correctAppID {
 			wrongAppID = correctAppID + "-wrong"
+		}
+		if len(wrongAppID) < 5 {
+			wrongAppID = wrongAppID + strings.Repeat("b", 5-len(wrongAppID))
 		}
 		if len(plaintext) > 256 {
 			plaintext = plaintext[:256]
@@ -261,7 +274,9 @@ func FuzzEncryptDecryptWrongAppID(f *testing.F) {
 
 		// Decrypt with wrong appID.
 		wrongScalar := deriveScalar([]byte(wrongAppID))
-		wrongAppPriv, err := ScalarMulG1(G1Generator, wrongScalar)
+		wrongHash, err := HashToG1(wrongAppID)
+		require.NoError(t, err)
+		wrongAppPriv, err := ScalarMulG1(*wrongHash, wrongScalar)
 		require.NoError(t, err)
 
 		decrypted, err := DecryptForApp(wrongAppID, *wrongAppPriv, ciphertext)
