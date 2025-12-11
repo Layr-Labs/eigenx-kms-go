@@ -102,7 +102,65 @@ compile_native_go_fuzzer github.com/Layr-Labs/eigenx-kms-go/pkg/reshare FuzzComp
 compile_native_go_fuzzer github.com/Layr-Labs/eigenx-kms-go/pkg/encryption FuzzRSAEncryptDecrypt encryption_rsa_roundtrip
 compile_native_go_fuzzer github.com/Layr-Labs/eigenx-kms-go/pkg/encryption FuzzRSARejectsWeakKeys encryption_rsa_weak_keys
 
-echo "Build complete. Fuzzers in $OUT:"
+# Add missing BLS fuzzers (found in operations_fuzz_test.go but not compiled)
+compile_native_go_fuzzer github.com/Layr-Labs/eigenx-kms-go/pkg/bls FuzzDoubleVsAddSelf bls_double_vs_add
+compile_native_go_fuzzer github.com/Layr-Labs/eigenx-kms-go/pkg/bls FuzzScalarMultiplicationByOne bls_scalar_one
+compile_native_go_fuzzer github.com/Layr-Labs/eigenx-kms-go/pkg/bls FuzzScalarMultiplicationConsistency bls_scalar_consistency
+
+# Copy dictionary files to output for libFuzzer
+cp "$SRC/eigenx-kms-go/.clusterfuzzlite/bls.dict" "$OUT/" || true
+cp "$SRC/eigenx-kms-go/.clusterfuzzlite/crypto.dict" "$OUT/" || true
+cp "$SRC/eigenx-kms-go/.clusterfuzzlite/dkg.dict" "$OUT/" || true
+cp "$SRC/eigenx-kms-go/.clusterfuzzlite/ibe.dict" "$OUT/" || true
+cp "$SRC/eigenx-kms-go/.clusterfuzzlite/rsa.dict" "$OUT/" || true
+
+# Create symlinks so fuzzers can find their dictionaries
+# libFuzzer automatically loads <fuzzer_name>.dict if present
+ln -sf crypto.dict "$OUT/crypto_recover_key.dict" || true
+ln -sf crypto.dict "$OUT/crypto_add_g1.dict" || true
+ln -sf crypto.dict "$OUT/crypto_add_g2.dict" || true
+ln -sf crypto.dict "$OUT/crypto_insufficient_shares.dict" || true
+ln -sf ibe.dict "$OUT/crypto_encrypt_decrypt.dict" || true
+ln -sf ibe.dict "$OUT/crypto_wrong_app.dict" || true
+
+ln -sf dkg.dict "$OUT/dkg_generate_verify.dict" || true
+ln -sf dkg.dict "$OUT/dkg_tampered_share.dict" || true
+ln -sf dkg.dict "$OUT/dkg_corrupted_commitments.dict" || true
+ln -sf dkg.dict "$OUT/dkg_mismatched_dealer.dict" || true
+ln -sf dkg.dict "$OUT/dkg_threshold_boundary.dict" || true
+ln -sf dkg.dict "$OUT/dkg_zero_share.dict" || true
+ln -sf dkg.dict "$OUT/dkg_empty_commitments.dict" || true
+ln -sf dkg.dict "$OUT/dkg_subset_shares.dict" || true
+
+ln -sf dkg.dict "$OUT/reshare_generate_verify.dict" || true
+ln -sf dkg.dict "$OUT/reshare_tampered_share.dict" || true
+ln -sf dkg.dict "$OUT/reshare_mismatched_commitments.dict" || true
+ln -sf dkg.dict "$OUT/reshare_threshold_subset.dict" || true
+
+ln -sf bls.dict "$OUT/bls_recover_secret.dict" || true
+ln -sf bls.dict "$OUT/bls_scalar_mul_g1.dict" || true
+ln -sf bls.dict "$OUT/bls_scalar_mul_g2.dict" || true
+ln -sf bls.dict "$OUT/bls_sign_verify_g1.dict" || true
+ln -sf bls.dict "$OUT/bls_sign_verify_g2.dict" || true
+ln -sf bls.dict "$OUT/bls_wrong_msg_g1.dict" || true
+ln -sf bls.dict "$OUT/bls_wrong_key_g1.dict" || true
+ln -sf bls.dict "$OUT/bls_aggregate_g1.dict" || true
+ln -sf bls.dict "$OUT/bls_zero_scalar.dict" || true
+ln -sf bls.dict "$OUT/bls_identity_g1.dict" || true
+ln -sf bls.dict "$OUT/bls_identity_g2.dict" || true
+ln -sf bls.dict "$OUT/bls_inverse_g1.dict" || true
+ln -sf bls.dict "$OUT/bls_inverse_g2.dict" || true
+ln -sf bls.dict "$OUT/bls_double_vs_add.dict" || true
+ln -sf bls.dict "$OUT/bls_scalar_one.dict" || true
+ln -sf bls.dict "$OUT/bls_scalar_consistency.dict" || true
+
+ln -sf rsa.dict "$OUT/encryption_rsa_roundtrip.dict" || true
+ln -sf rsa.dict "$OUT/encryption_rsa_weak_keys.dict" || true
+
+echo "Build complete. Fuzzers and dictionaries in $OUT:"
+echo "Dictionary files:"
+ls -lh "$OUT"/*.dict 2>/dev/null | wc -l
+echo "Fuzzer binaries:"
 ls -la "$OUT/" || true
 
 # Fail the build if no fuzz targets were produced

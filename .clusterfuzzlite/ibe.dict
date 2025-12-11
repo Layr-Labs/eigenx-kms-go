@@ -1,0 +1,59 @@
+# Dictionary for Identity-Based Encryption fuzzing
+# Optimized for IBE (Boneh-Franklin) operations
+# Date: 2025-12-11
+
+# IBE ciphertext format markers
+"IBE"                                # Magic bytes
+"\x01"                               # Version 1
+"\x02"                               # Future version
+
+# Ciphertext component sizes
+"\x60\x00\x00\x00"                   # 96 bytes (compressed G2 point)
+"\x0C\x00\x00\x00"                   # 12 bytes (nonce)
+"\x10\x00\x00\x00"                   # 16 bytes (GCM tag)
+
+# HKDF/KDF domain separation
+"eigenx-kms-go-ibe-encryption"
+"IBE-encryption|v1|"
+"IBE-encryption|v2|"
+
+# Common application IDs (for testing)
+"app-1"
+"app-2"
+"production-db"
+"staging-db"
+"default-app"
+"test-app"
+
+# AES-GCM nonce size
+"\x0c\x00\x00\x00"                   # 12 bytes (standard GCM nonce)
+
+# Pairing result patterns (GT group elements)
+# GT elements are 576 bytes in BLS12-381
+"\x40\x02\x00\x00"                   # 576 bytes
+
+# Zero points (invalid inputs to test)
+"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"  # Zero prefix
+"\xC0"                               # Compressed infinity point flag
+
+# Field element boundaries (from libFuzzer)
+"\377\377\377\377"                   # High frequency pattern
+"\001\000\000\007"                   # Field arithmetic pattern
+"\000\000\000\000\000\000\000\001"   # 64-bit boundary
+
+# Random r values (common test patterns)
+"\x01\x00\x00\x00\x00\x00\x00\x00"   # r = 1
+"\x02\x00\x00\x00\x00\x00\x00\x00"   # r = 2
+"\xff\xff\xff\xff\x00\x00\x00\x00"   # Large r
+
+# AES key material lengths
+"\x10\x00\x00\x00"                   # 16 bytes (AES-128)
+"\x20\x00\x00\x00"                   # 32 bytes (AES-256)
+
+# Message length boundaries
+"\x00\x00\x00\x00"                   # Empty message
+"\x01\x00\x00\x00"                   # 1 byte
+"\xff\x00\x00\x00"                   # 255 bytes
+"\x00\x01\x00\x00"                   # 256 bytes
+"\x00\x04\x00\x00"                   # 1024 bytes
+"\x00\x10\x00\x00"                   # 4096 bytes (max input)
