@@ -1,4 +1,6 @@
 name: build
+permissions:
+  contents: read
 
 on:
   push:
@@ -72,7 +74,8 @@ jobs:
   build-binaries:
     runs-on: ubuntu-24.04
     needs: [lint, test]
-    permissions: write-all
+    permissions:
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
