@@ -1,0 +1,43 @@
+# Dictionary for DKG protocol fuzzing
+# Auto-generated from libFuzzer recommendations
+# Date: 2025-12-11
+
+# Include all crypto dictionary entries
+@include="crypto.dict"
+
+# DKG-specific patterns
+# Operator count boundaries (n must be >= 3 for security)
+"3"                                   # Minimum operators
+"4"                                   # Common size
+"5"                                   # Common size
+"7"                                   # Common size
+"10"                                  # Medium cluster
+"20"                                  # Large cluster
+
+# Node ID values (derived from keccak256 of addresses)
+"\x00\x00\x00\x00"                   # Node ID 0 (special)
+"\x01\x00\x00\x00"                   # Node ID 1
+"\xff\xff\xff\xff"                   # Max 32-bit node ID
+
+# Session timestamps (Unix epoch, interval boundaries)
+"\x00\x00\x00\x00\x00\x00\x00\x00"   # Epoch 0
+"\x60\x00\x00\x00\x00\x00\x00\x00"   # ~96 decimal (interval boundary)
+"\x00\x09\x3a\x80\x00\x00\x00\x00"   # 600 seconds (10 minutes)
+
+# Threshold calculation edge cases
+# For n operators, threshold = ⌈2n/3⌉
+"\x02\x00\x00\x00"                   # n=3 → t=2
+"\x03\x00\x00\x00"                   # n=4 → t=3, n=5 → t=4
+"\x04\x00\x00\x00"                   # n=6 → t=4
+"\x05\x00\x00\x00"                   # n=7 → t=5, n=8 → t=6
+
+# Commitment count (equals threshold)
+"\x02"                               # 2 commitments
+"\x03"                               # 3 commitments
+"\x04"                               # 4 commitments
+"\x05"                               # 5 commitments
+
+# Share indices (participant IDs)
+"\x01"                               # Participant 1
+"\x02"                               # Participant 2
+"\x03"                               # Participant 3
