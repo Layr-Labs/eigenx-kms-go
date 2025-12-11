@@ -110,7 +110,8 @@ func FuzzRecoverAppPrivateKeyRoundTrip(f *testing.F) {
 		poly[0].Set(secret)
 		for i := 1; i < threshold; i++ {
 			// Deterministically derive higher coefficients from seed + index.
-			coeffSeed := append(seed, byte(i))
+			// Use a copy so we never mutate the fuzzer-provided seed (libFuzzer marks input const).
+			coeffSeed := append(append([]byte{}, seed...), byte(i))
 			poly[i].Set(deriveScalar(coeffSeed))
 		}
 
@@ -173,7 +174,7 @@ func FuzzRecoverAppPrivateKeyInsufficientShares(f *testing.F) {
 		poly := make(polynomial.Polynomial, threshold)
 		poly[0].Set(secret)
 		for i := 1; i < threshold; i++ {
-			coeffSeed := append(seed, byte(i))
+			coeffSeed := append(append([]byte{}, seed...), byte(i))
 			poly[i].Set(deriveScalar(coeffSeed))
 		}
 
