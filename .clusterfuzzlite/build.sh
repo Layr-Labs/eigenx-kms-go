@@ -3,6 +3,12 @@
 
 cd "$SRC/eigenx-kms-go"
 
+# Ensure toolchain is available
+if ! command -v clang++ >/dev/null 2>&1; then
+    apt-get update && apt-get install -y clang
+fi
+export CXX="${CXX:-clang++}"
+
 # Install the fuzzing build tool
 export PATH="$(go env GOPATH)/bin:${PATH}"
 export CGO_ENABLED=1
@@ -31,8 +37,9 @@ compile_native_go_fuzzer() {
     fi
 
     # Link with sanitizer flags; $CXXFLAGS from base image already includes the selected sanitizer (ASan/UBSan).
-    # We add -fsanitize=fuzzer,address explicitly to satisfy bad_build_check expectations.
-    if ! "$CXX" $CXXFLAGS $LIB_FUZZING_ENGINE -fsanitize=fuzzer,address "$archive" -o "$OUT/$out_name"; then
+    # CXX can include extra flags (e.g., "-lresolv"), so invoke via eval to preserve spacing.
+    link_cmd="$CXX $CXXFLAGS $LIB_FUZZING_ENGINE -fsanitize=fuzzer,address \"$archive\" -o \"$OUT/$out_name\""
+    if ! eval "$link_cmd"; then
         echo "Warning: Could not link $out_name"
         rm -rf "$tmpdir"
         return 1
