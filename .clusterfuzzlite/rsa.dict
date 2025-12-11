@@ -1,72 +1,8 @@
-# RSA Encryption Dictionary
-
-# Ultra-high frequency from encryption_rsa_weak_keys
 "~\000\000\000"
 "&\000\000\000\000\000\000\000"
 "\377\377\377\002"
-"\001\000\000\000\000\000\000\031"
-"\000\000\000\000\000\000\0000"
-
-# From encryption_rsa_roundtrip
-"~\000\000\000"
-
-# RSA key sizes (bits as bytes)
-"\x00\x04\x00\x00"
-"\x00\x08\x00\x00"
-"\x00\x0C\x00\x00"
-"\x00\x10\x00\x00"
-"\xff\x03\x00\x00"
-"\x01\x04\x00\x00"
-"\xff\x07\x00\x00"
-"\x01\x08\x00\x00"
-
-# RSA public exponents
-"\x03\x00\x00\x00"
-"\x11\x00\x00\x00"
-"\x01\x00\x01\x00"
-
-# Message length boundaries
-"\x00\x00\x00\x00"
-"\x01\x00\x00\x00"
-"\x50\x00\x00\x00"
-"\xBE\x00\x00\x00"
-"\xBF\x00\x00\x00"
-"\xFE\x00\x00\x00"
-"\xFF\x00\x00\x00"
-"\x00\x01\x00\x00"
-"\x01\x01\x00\x00"
-
-# PEM markers
 "-----BEGIN RSA PRIVATE KEY-----"
-"-----END RSA PRIVATE KEY-----"
 "-----BEGIN PUBLIC KEY-----"
-"-----END PUBLIC KEY-----"
 "PRIVATE KEY"
 "PUBLIC KEY"
-
-# Hash algorithm names
-"SHA-1"
 "SHA-256"
-"SHA-512"
-
-# MGF
-"MGF1"
-
-# PKCS markers
-"\x30\x82"
-"\x02\x01"
-"\x04\x20"
-"\x04\x40"
-
-# Ciphertext sizes
-"\x00\x01\x00\x00"
-"\x00\x02\x00\x00"
-
-# OAEP padding
-"\x00"
-"\x01"
-"\xFF"
-
-# Additional patterns
-"\377\377\377\377"
-"\000\000\000\000\000\000\000\000"

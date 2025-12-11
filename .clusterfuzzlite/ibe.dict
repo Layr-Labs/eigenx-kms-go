@@ -1,56 +1,6 @@
-# Identity-Based Encryption Dictionary
-
-# IBE ciphertext format
 "IBE"
-"\x01"
-"\x02"
-
-# Component sizes (as 4-byte little-endian)
-"\x60\x00\x00\x00"
-"\x0C\x00\x00\x00"
-"\x10\x00\x00\x00"
-
-# Common application IDs
 "app-1"
 "app-2"
-"production-db"
-"staging-db"
 "default-app"
-"test-app"
-
-# HKDF domain separation
 "eigenx-kms-go-ibe-encryption"
-"IBE-encryption"
-
-# From crypto_encrypt_decrypt fuzzer
 "\377\377\377\377"
-"Call"
-"\276\000"
-"A\000\000\000\000\000\000\000"
-"\037\000\000\000"
-"\001\000\000\000\000\000\000\004"
-"\000\017"
-"@\000\000\000\000\000\000\000"
-"\001\000\000\000\000\000\000@"
-"\017\000\000\000\000\000\000\000"
-"\001\000\000\000\000\000\000\020"
-"\301\001\000\000"
-"\223$\361["
-"\377\377\377\377\377\377\377\017"
-
-# AES-GCM parameters
-"\x0c"
-"\x10"
-"\x20"
-
-# Zero points (invalid)
-"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
-"\xC0"
-
-# Message lengths
-"\x00\x00\x00\x00"
-"\x01\x00\x00\x00"
-"\xff\x00\x00\x00"
-"\x00\x01\x00\x00"
-"\x00\x04\x00\x00"
-"\x00\x10\x00\x00"
