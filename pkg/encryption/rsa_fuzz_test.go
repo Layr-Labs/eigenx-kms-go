@@ -26,13 +26,14 @@ func FuzzRSAEncryptDecrypt(f *testing.F) {
 		f.Skip("failed to generate RSA keypair for fuzzing")
 	}
 
+	const maxOAEPMsgLen = 60 // conservatively below 1024-bit OAEP(SHA-256) limit (~62 bytes)
 	f.Add([]byte("hello"))
 	f.Add([]byte{})
 
 	f.Fuzz(func(t *testing.T, plaintext []byte) {
 		// Keep message within OAEP limit for 1024-bit keys (~86 bytes with SHA-256).
-		if len(plaintext) > 80 {
-			plaintext = plaintext[:80]
+		if len(plaintext) > maxOAEPMsgLen {
+			plaintext = plaintext[:maxOAEPMsgLen]
 		}
 
 		r := NewRSAEncryption()
@@ -52,8 +53,9 @@ func FuzzRSARejectsWeakKeys(f *testing.F) {
 	f.Add([]byte("test data"))
 
 	f.Fuzz(func(t *testing.T, plaintext []byte) {
-		if len(plaintext) > 80 {
-			plaintext = plaintext[:80]
+		const maxOAEPMsgLen = 60
+		if len(plaintext) > maxOAEPMsgLen {
+			plaintext = plaintext[:maxOAEPMsgLen]
 		}
 
 		r := NewRSAEncryption()
