@@ -26,7 +26,9 @@ compile_native_go_fuzzer() {
         return
     fi
 
-    if ! clang -fsanitize=fuzzer "$archive" -o "$OUT/$out_name"; then
+    # Link with sanitizer flags; $CXXFLAGS from base image already includes the selected sanitizer (ASan/UBSan).
+    # We add -fsanitize=fuzzer,address explicitly to satisfy bad_build_check expectations.
+    if ! "$CXX" $CXXFLAGS "$archive" -o "$OUT/$out_name" $LIB_FUZZING_ENGINE -fsanitize=fuzzer,address; then
         echo "Warning: Could not link $out_name"
     fi
 
