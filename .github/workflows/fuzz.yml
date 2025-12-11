@@ -16,6 +16,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 jobs:
   fuzz:
@@ -25,7 +26,7 @@ jobs:
       fail-fast: false
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
         with:
           fetch-depth: 0
 
@@ -54,8 +55,8 @@ jobs:
 
           for pkg in "${packages[@]}"; do
             echo "==> Fuzzing $pkg for ${FUZZ_TIME}"
-            # Run all fuzz targets in the package
-            go test "$pkg" -run=^$ -fuzz=Fuzz -fuzztime="${FUZZ_TIME}" || true
+            # Run all fuzz targets in the package; let failures bubble so artifacts upload.
+            go test "$pkg" -run=^$ -fuzz=Fuzz -fuzztime="${FUZZ_TIME}"
             now=$(date +%s)
             elapsed=$((now - start_ts))
             if [ $elapsed -ge $total_deadline ]; then
