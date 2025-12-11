@@ -123,7 +123,8 @@ func FuzzSignVerifyWrongMessageG1(f *testing.F) {
 			msg = []byte("original")
 		}
 		if len(wrongMsg) == 0 || string(wrongMsg) == string(msg) {
-			wrongMsg = append(msg, byte('X'))
+			// Copy before appending to avoid mutating fuzzer-provided input.
+			wrongMsg = append(append([]byte{}, msg...), byte('X'))
 		}
 
 		sum := sha256.Sum256(seed)
@@ -201,7 +202,8 @@ func FuzzAggregateG1Signatures(f *testing.F) {
 
 		sigs := make([]*SignatureG1, 0, n)
 		for i := 0; i < n; i++ {
-			derivedSeed := append(seed, byte(i))
+			// Copy before appending to avoid mutating fuzzer-provided input.
+			derivedSeed := append(append([]byte{}, seed...), byte(i))
 			sum := sha256.Sum256(derivedSeed)
 			sk, err := GeneratePrivateKeyFromSeed(sum[:])
 			require.NoError(t, err)
