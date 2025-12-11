@@ -74,7 +74,9 @@ func FuzzGenerateVerifyAndFinalize(f *testing.F) {
 			require.True(t, verifier.VerifyShare(opID, share, commitments), "share failed verification")
 		}
 
-		// Finalize and ensure the private share is the sum of all shares we computed.
+		// Finalize and ensure the private share matches the aggregation model used in FinalizeKeyShare.
+		// Note: FinalizeKeyShare sums shares across dealers for this participant; since this test only
+		// uses a single dealer distribution, we mirror that invariant here (sum of provided shares).
 		participantIDs := make([]int, 0, len(shares))
 		for id := range shares {
 			participantIDs = append(participantIDs, id)
@@ -84,11 +86,14 @@ func FuzzGenerateVerifyAndFinalize(f *testing.F) {
 		require.NotNil(t, keyVersion)
 		require.NotNil(t, keyVersion.PrivateShare)
 
+		// With one dealer in this test, shares map contains the per-participant share from that dealer.
+		// FinalizeKeyShare sums these to form the participant's final share.
 		expected := new(fr.Element).SetZero()
 		for _, share := range shares {
 			expected.Add(expected, share)
 		}
-		require.True(t, expected.Equal(keyVersion.PrivateShare), "finalized private share mismatch")
+
+		require.True(t, expected.Equal(keyVersion.PrivateShare), "finalized private share mismatch (sum of dealer shares)")
 	})
 }
 
