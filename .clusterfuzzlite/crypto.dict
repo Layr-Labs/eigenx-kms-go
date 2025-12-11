@@ -1,50 +1,64 @@
-# Dictionary for cryptographic fuzzing
-# Auto-generated from libFuzzer recommendations for crypto_recover_key
-# Date: 2025-12-11
+# Cryptographic Primitives Dictionary
+# From actual libFuzzer recommendations
 
-# Common field element patterns (little-endian)
-"\377\377\377\377"                    # 0xFFFFFFFF (field modulus component)
-"\001\000\000\007"                    # 0x07000001 (field arithmetic)
-"\000\000\000\000\000\000\000\001"    # 0x0100000000000000 (64-bit boundary)
-"\377\377\377\377\377\377\377\377"    # 0xFFFFFFFFFFFFFFFF (max uint64)
+# High-frequency patterns from crypto_recover_key
+"\377\377\377\377"
+"\001\000\000\007"
+"\031\001\021\3529\177\346\232"
+"\000\000\000\000\000\000\000\001"
+"I\000\000\000"
+"\024\000"
+"\016\000\000\000\000\000\000\000"
+"\001\000\001\025"
+"\377\377\377\377\377\377\377\377"
+"G\000"
+"\037\000\000\000\000\000\000\000"
+"\310\000"
 
-# Threshold and participant counts
-"\031\001\021\3529\177\346\232"       # Large value (found during execution)
-"I\000\000\000"                       # 0x00000049 = 73 decimal
-"\024\000"                            # 0x0014 = 20 decimal (typical operator count)
-"\016\000\000\000\000\000\000\000"    # 0x000000000000000E = 14 decimal
-"\037\000\000\000\000\000\000\000"    # 0x000000000000001F = 31 decimal
-"G\000"                               # 0x0047 = 71 decimal
-"\310\000"                            # 0x00C8 = 200 decimal
-"\001\000\001\025"                    # 0x15010001
+# Field boundaries
+"\000\000\000\000"
+"\001\000\000\000"
+"\377\377\377\377"
 
-# BLS12-381 field characteristic related values
-# r = 0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001
-"\001\000\000\000\377\377\377\377"    # Field modulus component
-"\377\377\377\377\000\000\000\001"    # Field modulus component
+# Threshold values
+"\002\000\000\000"
+"\003\000\000\000"
+"\004\000\000\000"
+"\005\000\000\000"
+"\006\000\000\000"
+"\007\000\000\000"
 
-# Common small values for threshold calculations
-"\x00\x00\x00\x00"                   # Zero
-"\x01\x00\x00\x00"                   # One
-"\x02\x00\x00\x00"                   # Two
-"\x03\x00\x00\x00"                   # Three (minimum operators)
-"\x04\x00\x00\x00"                   # Four
-"\x05\x00\x00\x00"                   # Five
-"\x06\x00\x00\x00"                   # Six
-"\x07\x00\x00\x00"                   # Seven
-"\x08\x00\x00\x00"                   # Eight
+# 64-bit values
+"\000\000\000\000\000\000\000\000"
+"\001\000\000\000\000\000\000\000"
+"\002\000\000\000\000\000\000\000"
+"\003\000\000\000\000\000\000\000"
+"\004\000\000\000\000\000\000\000"
+"\005\000\000\000\000\000\000\000"
+"\006\000\000\000\000\000\000\000"
+"\007\000\000\000\000\000\000\000"
 
-# Threshold values for common operator counts
-# n=3 → t=2, n=4 → t=3, n=5 → t=4, n=6 → t=4, n=7 → t=5
-"\x02\x00\x00\x00\x00\x00\x00\x00"   # threshold=2
-"\x03\x00\x00\x00\x00\x00\x00\x00"   # threshold=3
-"\x04\x00\x00\x00\x00\x00\x00\x00"   # threshold=4
-"\x05\x00\x00\x00\x00\x00\x00\x00"   # threshold=5
+# From crypto_add_g1/g2
+"\377+"
+"\377\377"
+"\236\002\000\000"
+"\001\000\000\000\000\000\000\010"
 
-# Edge case values
-"\xff\xff\xff\xff\xff\xff\xff\x7f"   # MAX_INT64
-"\x00\x00\x00\x00\x00\x00\x00\x80"   # MIN_INT64 (negative)
-
-# Point coordinates (compressed point prefixes)
-"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"  # Zero prefix
-"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"  # Max prefix
+# From crypto_insufficient_shares
+"\007\000\000\000"
+"\001\000\000\314"
+"\000\222"
+"\000\036\204\200"
+"\000\000\000\004"
+"/\000\000\000\000\000\000\000"
+"\377\377\377\377\377\377\377\003"
+"\000\000\000\000\000\001\000\000"
+"d\000\000\000"
+"{\000"
+"\000J"
+"\000\265"
+"Call"
+"&\000\000\000\000\000\000\000"
+"$\002\000\000"
+"\377\377\377\000"
+"\000\000\000\000\000\000\0000"

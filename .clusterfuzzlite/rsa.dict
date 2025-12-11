@@ -1,137 +1,72 @@
 # RSA Encryption Dictionary
-# Auto-generated from encryption_rsa_weak_keys and encryption_rsa_roundtrip
-# Date: 2025-12-11
 
-# ============================================================================
-# ULTRA HIGH FREQUENCY FROM FUZZER
-# ============================================================================
+# Ultra-high frequency from encryption_rsa_weak_keys
+"~\000\000\000"
+"&\000\000\000\000\000\000\000"
+"\377\377\377\002"
+"\001\000\000\000\000\000\000\031"
+"\000\000\000\000\000\000\0000"
 
-"~\000\000\000"              # Uses: 5991 (encryption_rsa_weak_keys) - CRITICAL!
-"&\000\000\000\000\000\000\000"     # Uses: 5411 - ULTRA HIGH
-"\377\377\377\002"           # Uses: 5544 - ULTRA HIGH
-"\001\000\000\000\000\000\000\031"  # Uses: 2155 - VERY HIGH
-"\000\000\000\000\000\000\0000"     # Uses: 2143 - VERY HIGH
+# From encryption_rsa_roundtrip
+"~\000\000\000"
 
-# ============================================================================
-# RSA KEY SIZES (bits)
-# ============================================================================
+# RSA key sizes (bits as bytes)
+"\x00\x04\x00\x00"
+"\x00\x08\x00\x00"
+"\x00\x0C\x00\x00"
+"\x00\x10\x00\x00"
+"\xff\x03\x00\x00"
+"\x01\x04\x00\x00"
+"\xff\x07\x00\x00"
+"\x01\x08\x00\x00"
 
-# Weak keys (should be rejected)
-"\x00\x04\x00\x00"           # 1024 bits (weak, for testing only)
-"\x00\x06\x00\x00"           # 1536 bits (weak)
+# RSA public exponents
+"\x03\x00\x00\x00"
+"\x11\x00\x00\x00"
+"\x01\x00\x01\x00"
 
-# Secure keys (minimum 2048 bits)
-"\x00\x08\x00\x00"           # 2048 bits (minimum production)
-"\x00\x0C\x00\x00"           # 3072 bits
-"\x00\x10\x00\x00"           # 4096 bits
+# Message length boundaries
+"\x00\x00\x00\x00"
+"\x01\x00\x00\x00"
+"\x50\x00\x00\x00"
+"\xBE\x00\x00\x00"
+"\xBF\x00\x00\x00"
+"\xFE\x00\x00\x00"
+"\xFF\x00\x00\x00"
+"\x00\x01\x00\x00"
+"\x01\x01\x00\x00"
 
-# Key size boundaries
-"\xff\x03\x00\x00"           # 1023 bits (just below 1024)
-"\x01\x04\x00\x00"           # 1025 bits (just above 1024)
-"\xff\x07\x00\x00"           # 2047 bits (just below secure threshold)
-"\x01\x08\x00\x00"           # 2049 bits (just above threshold)
-
-# ============================================================================
-# RSA OAEP PARAMETERS
-# ============================================================================
-
-# Hash algorithms
-"SHA-1"
-"SHA-224"
-"SHA-256"
-"SHA-384"
-"SHA-512"
-
-# MGF (Mask Generation Function)
-"MGF1"
-
-# Label (usually empty for OAEP)
-""
-"label"
-"test-label"
-
-# ============================================================================
-# RSA PUBLIC EXPONENTS
-# ============================================================================
-
-"\x03\x00\x00\x00"           # e=3 (weak, should reject)
-"\x11\x00\x00\x00"           # e=17 (weak)
-"\x01\x00\x01\x00"           # e=65537 (standard, 0x010001)
-
-# ============================================================================
-# MESSAGE LENGTH BOUNDARIES (for 2048-bit key)
-# ============================================================================
-
-# OAEP padding overhead for SHA-256: 2*32 + 2 = 66 bytes
-# Max message for 2048-bit (256 bytes): 256 - 66 = 190 bytes
-
-"\x00\x00\x00\x00"           # 0 bytes (empty)
-"\x01\x00\x00\x00"           # 1 byte
-"\x50\x00\x00\x00"           # 80 bytes (safe for 1024-bit testing)
-"\xBE\x00\x00\x00"           # 190 bytes (max for 2048-bit RSA with SHA-256 OAEP)
-"\xBF\x00\x00\x00"           # 191 bytes (just over limit - should fail)
-"\xFE\x00\x00\x00"           # 254 bytes (way over for 2048-bit)
-"\xFF\x00\x00\x00"           # 255 bytes
-"\x00\x01\x00\x00"           # 256 bytes (equal to key size - impossible)
-"\x01\x01\x00\x00"           # 257 bytes (over key size)
-
-# ============================================================================
-# PEM MARKERS
-# ============================================================================
-
+# PEM markers
 "-----BEGIN RSA PRIVATE KEY-----"
 "-----END RSA PRIVATE KEY-----"
-"-----BEGIN RSA PUBLIC KEY-----"
-"-----END RSA PUBLIC KEY-----"
 "-----BEGIN PUBLIC KEY-----"
 "-----END PUBLIC KEY-----"
-"-----BEGIN PRIVATE KEY-----"
-"-----END PRIVATE KEY-----"
-"PRIVATE KEY"                # Uses: 19 (found by fuzzer)
+"PRIVATE KEY"
 "PUBLIC KEY"
-"RSA PRIVATE"
-"RSA PUBLIC"
-"TESTING KEY"                # Found in fuzzer output
 
-# ============================================================================
-# PKCS#1 / PKCS#8 MARKERS
-# ============================================================================
+# Hash algorithm names
+"SHA-1"
+"SHA-256"
+"SHA-512"
 
-"\x30\x82"                   # ASN.1 SEQUENCE (common PEM start)
-"\x02\x01"                   # ASN.1 INTEGER version
-"\x04\x20"                   # ASN.1 OCTET STRING (32 bytes)
-"\x04\x40"                   # ASN.1 OCTET STRING (64 bytes)
+# MGF
+"MGF1"
 
-# ============================================================================
-# RSA CIPHERTEXT STRUCTURE
-# ============================================================================
+# PKCS markers
+"\x30\x82"
+"\x02\x01"
+"\x04\x20"
+"\x04\x40"
 
-# For 2048-bit RSA: ciphertext is always 256 bytes
-"\x00\x01\x00\x00"           # 256 bytes
-# For 4096-bit RSA: ciphertext is 512 bytes
-"\x00\x02\x00\x00"           # 512 bytes
+# Ciphertext sizes
+"\x00\x01\x00\x00"
+"\x00\x02\x00\x00"
 
-# ============================================================================
-# OAEP PADDING PATTERNS
-# ============================================================================
+# OAEP padding
+"\x00"
+"\x01"
+"\xFF"
 
-"\x00"                       # Null byte (OAEP separator)
-"\x01"                       # OAEP padding byte
-"\xFF"                       # Invalid OAEP byte (should fail)
-
-# ============================================================================
-# GO CRYPTO/RSA SPECIFIC
-# ============================================================================
-
-# Error strings that might appear
-"message too long"
-"decryption error"
-"crypto/rsa"
-"OAEP"
-
-# ============================================================================
-# ADDITIONAL PATTERNS FROM FUZZER
-# ============================================================================
-
-"\377\377\377\377"           # Uses: general pattern
-"\000\000\000\000\000\000\000\000"  # Zero padding
+# Additional patterns
+"\377\377\377\377"
+"\000\000\000\000\000\000\000\000"
