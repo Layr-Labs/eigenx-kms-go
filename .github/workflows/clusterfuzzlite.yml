@@ -58,7 +58,6 @@ jobs:
       - name: Run fuzzers
         id: run
         uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1
-        continue-on-error: true
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           fuzz-seconds: 600 # 10 minutes for PR checks
@@ -102,7 +101,6 @@ jobs:
       - name: Run fuzzers
         id: run
         uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1
-        continue-on-error: true
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           fuzz-seconds: 14400 # 4 hours
@@ -142,7 +140,6 @@ jobs:
       - name: Run fuzzers
         id: run
         uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1
-        continue-on-error: true
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           fuzz-seconds: 1800 # 30 minutes
@@ -182,7 +179,6 @@ jobs:
       - name: Prune corpus
         id: prune
         uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1
-        continue-on-error: true
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
           fuzz-seconds: 600
