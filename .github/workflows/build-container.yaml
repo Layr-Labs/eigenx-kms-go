@@ -1,4 +1,6 @@
 name: build kms container
+permissions:
+  contents: read
 
 on:
   workflow_call:
