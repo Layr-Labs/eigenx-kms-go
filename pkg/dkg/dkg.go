@@ -68,6 +68,10 @@ func (d *DKG) GenerateShares() (map[int]*fr.Element, []types.G2Point, error) {
 
 // VerifyShare verifies a share against commitments using polynomial commitment verification
 func (d *DKG) VerifyShare(fromID int, share *fr.Element, commitments []types.G2Point) bool {
+	if len(commitments) == 0 || share == nil {
+		return false
+	}
+
 	// Verify: share * G2 == Σ(commitment_k * nodeID^k)
 	leftSide, err := crypto.ScalarMulG2(crypto.G2Generator, share)
 	if err != nil {
