@@ -14,6 +14,9 @@ export PATH="$(go env GOPATH)/bin:${PATH}"
 export CGO_ENABLED=1
 export GOOS=linux
 export GOARCH=amd64
+# Go 1.24+ tries to stamp VCS info by default; in containerized builds the repo may not have
+# usable VCS metadata (or git may be unavailable), which breaks builds.
+export GOFLAGS="${GOFLAGS:-} -buildvcs=false"
 go install github.com/AdamKorcz/go-118-fuzz-build@latest
 # Ensure the helper testing shim is available
 go get github.com/AdamKorcz/go-118-fuzz-build/testing@latest
