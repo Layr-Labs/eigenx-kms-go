@@ -29,6 +29,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/keystore"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/merkle"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/persistence"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/registry"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/reshare"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transport"
@@ -62,6 +63,7 @@ type Node struct {
 	peeringDataFetcher  peering.IPeeringDataFetcher
 	logger              *zap.Logger
 	transportSigner     transportSigner.ITransportSigner
+	persistence         persistence.INodePersistence
 
 	// Dynamic components (created when needed)
 	dkg      *dkg.DKG
@@ -193,6 +195,64 @@ func (s *ProtocolSession) HandleReceivedAck(dealerNodeID, playerNodeID int, ack 
 	return nil
 }
 
+// toPersistenceState converts ProtocolSession to persistence.ProtocolSessionState for saving
+func (ps *ProtocolSession) toPersistenceState() *persistence.ProtocolSessionState {
+	ps.mu.RLock()
+	defer ps.mu.RUnlock()
+
+	// Convert operator peers to addresses
+	operatorAddresses := make([]string, len(ps.Operators))
+	for i, op := range ps.Operators {
+		operatorAddresses[i] = op.OperatorAddress.Hex()
+	}
+
+	// Convert shares (fr.Element -> string)
+	shares := make(map[int]string)
+	for nodeID, share := range ps.shares {
+		shares[nodeID] = types.SerializeFr(share).Data
+	}
+
+	// Commitments and acknowledgements are already serializable
+	commitments := make(map[int][]types.G2Point)
+	for k, v := range ps.commitments {
+		commitments[k] = v
+	}
+
+	acks := make(map[int]map[int]*types.Acknowledgement)
+	for k, v := range ps.acks {
+		acks[k] = v
+	}
+
+	return &persistence.ProtocolSessionState{
+		SessionTimestamp:  ps.SessionTimestamp,
+		Type:              ps.Type,
+		Phase:             ps.Phase,
+		StartTime:         ps.StartTime.Unix(),
+		OperatorAddresses: operatorAddresses,
+		Shares:            shares,
+		Commitments:       commitments,
+		Acknowledgements:  acks,
+	}
+}
+
+// saveSession persists the current protocol session state
+func (n *Node) saveSession(session *ProtocolSession) error {
+	if session == nil {
+		return nil
+	}
+
+	persistenceState := session.toPersistenceState()
+	if err := n.persistence.SaveProtocolSession(persistenceState); err != nil {
+		n.logger.Sugar().Errorw("Failed to persist protocol session",
+			"operator_address", n.OperatorAddress.Hex(),
+			"session_timestamp", session.SessionTimestamp,
+			"error", err)
+		return err
+	}
+
+	return nil
+}
+
 // Config holds node configuration
 type Config struct {
 	OperatorAddress string         // Ethereum address of the operator (hex string)
@@ -213,6 +273,7 @@ func NewNode(
 	attestationVerifier attestation.Verifier,
 	baseContractCaller contractCaller.IContractCaller,
 	commitmentRegistryAddress common.Address,
+	p persistence.INodePersistence,
 	l *zap.Logger,
 ) (*Node, error) {
 	// Validate required dependencies
@@ -254,6 +315,7 @@ func NewNode(
 		transportSigner:           tps,
 		baseContractCaller:        baseContractCaller,
 		commitmentRegistryAddress: commitmentRegistryAddress,
+		persistence:               p,
 	}
 
 	// Set node reference in server
@@ -300,6 +362,19 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 
 	// Step 5: Update last processed boundary
 	n.lastProcessedBoundary = blockNumber
+
+	// Persist block boundary
+	nodeState := &persistence.NodeState{
+		LastProcessedBoundary: blockNumber,
+		NodeStartTime:         time.Now().Unix(),
+		OperatorAddress:       n.OperatorAddress.Hex(),
+	}
+	if err := n.persistence.SaveNodeState(nodeState); err != nil {
+		n.logger.Sugar().Errorw("Failed to persist node state",
+			"operator_address", n.OperatorAddress.Hex(),
+			"error", err)
+		// Continue - non-fatal, can recover on next boundary
+	}
 
 	n.logger.Sugar().Infow("Block interval boundary reached",
 		"operator_address", n.OperatorAddress.Hex(),
@@ -367,6 +442,11 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 
 // Start starts the node's HTTP server and scheduler
 func (n *Node) Start() error {
+	// Restore state before starting services
+	if err := n.RestoreState(); err != nil {
+		return fmt.Errorf("failed to restore state: %w", err)
+	}
+
 	// Create context for managing server and scheduler lifecycle
 	ctx, cancel := context.WithCancel(context.Background())
 	n.cancelFunc = cancel
@@ -399,6 +479,123 @@ func (n *Node) Stop() error {
 
 	// Stop HTTP server
 	return n.server.Stop()
+}
+
+// RestoreState loads persisted state on node startup
+func (n *Node) RestoreState() error {
+	n.logger.Sugar().Infow("Restoring node state from persistence",
+		"operator_address", n.OperatorAddress.Hex())
+
+	// 1. Load node operational state
+	nodeState, err := n.persistence.LoadNodeState()
+	if err != nil {
+		return fmt.Errorf("failed to load node state: %w", err)
+	}
+
+	if nodeState != nil {
+		// Verify operator address matches
+		if nodeState.OperatorAddress != "" && nodeState.OperatorAddress != n.OperatorAddress.Hex() {
+			n.logger.Sugar().Warnw("Operator address mismatch in persisted state",
+				"expected", n.OperatorAddress.Hex(),
+				"persisted", nodeState.OperatorAddress)
+		}
+
+		if nodeState.LastProcessedBoundary > 0 {
+			n.lastProcessedBoundary = nodeState.LastProcessedBoundary
+			n.logger.Sugar().Infow("Restored last processed boundary",
+				"operator_address", n.OperatorAddress.Hex(),
+				"block_number", nodeState.LastProcessedBoundary)
+		}
+	}
+
+	// 2. Load all key share versions
+	versions, err := n.persistence.ListKeyShareVersions()
+	if err != nil {
+		return fmt.Errorf("failed to load key share versions: %w", err)
+	}
+
+	n.logger.Sugar().Infow("Loaded key share versions",
+		"operator_address", n.OperatorAddress.Hex(),
+		"count", len(versions))
+
+	for _, version := range versions {
+		n.keyStore.AddVersion(version)
+	}
+
+	// 3. Restore active version pointer
+	activeEpoch, err := n.persistence.GetActiveVersionEpoch()
+	if err != nil {
+		return fmt.Errorf("failed to load active version epoch: %w", err)
+	}
+
+	if activeEpoch > 0 {
+		// Find and set the active version in keystore
+		for _, version := range versions {
+			if version.Version == activeEpoch {
+				n.keyStore.SetActiveVersion(version)
+				n.logger.Sugar().Infow("Restored active key version",
+					"operator_address", n.OperatorAddress.Hex(),
+					"epoch", activeEpoch)
+				break
+			}
+		}
+	}
+
+	// 4. Check for incomplete protocol sessions
+	sessions, err := n.persistence.ListProtocolSessions()
+	if err != nil {
+		return fmt.Errorf("failed to load protocol sessions: %w", err)
+	}
+
+	if len(sessions) > 0 {
+		n.logger.Sugar().Warnw("Found incomplete protocol sessions",
+			"operator_address", n.OperatorAddress.Hex(),
+			"count", len(sessions))
+
+		// Get protocol timeout for this chain
+		protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
+		timeoutSeconds := int64(protocolTimeout.Seconds())
+
+		// Process each session
+		for _, sessionState := range sessions {
+			// Check if session has expired
+			if sessionState.IsExpired(timeoutSeconds) {
+				n.logger.Sugar().Warnw("Cleaning up expired session",
+					"operator_address", n.OperatorAddress.Hex(),
+					"session_timestamp", sessionState.SessionTimestamp,
+					"type", sessionState.Type,
+					"phase", sessionState.Phase,
+					"age_seconds", time.Now().Unix()-sessionState.StartTime)
+
+				if err := n.persistence.DeleteProtocolSession(sessionState.SessionTimestamp); err != nil {
+					n.logger.Sugar().Errorw("Failed to delete expired session",
+						"operator_address", n.OperatorAddress.Hex(),
+						"session_timestamp", sessionState.SessionTimestamp,
+						"error", err)
+				}
+			} else {
+				// Session not expired - could attempt resumption
+				// For now, still clean up (resumption is complex, future enhancement)
+				n.logger.Sugar().Warnw("Cleaning up incomplete session (resumption not yet implemented)",
+					"operator_address", n.OperatorAddress.Hex(),
+					"session_timestamp", sessionState.SessionTimestamp,
+					"type", sessionState.Type,
+					"phase", sessionState.Phase,
+					"age_seconds", time.Now().Unix()-sessionState.StartTime)
+
+				if err := n.persistence.DeleteProtocolSession(sessionState.SessionTimestamp); err != nil {
+					n.logger.Sugar().Errorw("Failed to delete incomplete session",
+						"operator_address", n.OperatorAddress.Hex(),
+						"session_timestamp", sessionState.SessionTimestamp,
+						"error", err)
+				}
+			}
+		}
+	}
+
+	n.logger.Sugar().Infow("State restoration complete",
+		"operator_address", n.OperatorAddress.Hex())
+	return nil
 }
 
 // fetchCurrentOperators fetches the current operator set from the peering system
@@ -542,11 +739,19 @@ func (n *Node) waitForSession(sessionTimestamp int64, timeout time.Duration) *Pr
 	}
 }
 
-// cleanupSession removes a completed or failed session
+// cleanupSession removes a completed or failed session from memory and persistence
 func (n *Node) cleanupSession(sessionTimestamp int64) {
 	n.sessionMutex.Lock()
 	delete(n.activeSessions, sessionTimestamp)
 	n.sessionMutex.Unlock()
+
+	// Delete from persistence
+	if err := n.persistence.DeleteProtocolSession(sessionTimestamp); err != nil {
+		n.logger.Sugar().Warnw("Failed to delete session from persistence",
+			"operator_address", n.OperatorAddress.Hex(),
+			"session_timestamp", sessionTimestamp,
+			"error", err)
+	}
 
 	n.logger.Sugar().Debugw("Cleaned up session",
 		"operator_address", n.OperatorAddress.Hex(),
@@ -588,6 +793,13 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	// Create session for this DKG run with provided timestamp
 	session := n.createSession("dkg", operators, sessionTimestamp)
 	defer n.cleanupSession(session.SessionTimestamp)
+
+	// Persist initial session state
+	if err := n.saveSession(session); err != nil {
+		n.logger.Sugar().Warnw("Failed to persist initial DKG session",
+			"operator_address", n.OperatorAddress.Hex(),
+			"error", err)
+	}
 
 	// Use keccak256 hash of operator address as node ID
 	thisNodeID := util.AddressToNodeID(n.OperatorAddress)
@@ -652,6 +864,16 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 		return err
 	}
 
+	// Update session to Phase 2 and persist
+	session.mu.Lock()
+	session.Phase = 2
+	session.mu.Unlock()
+	if err := n.saveSession(session); err != nil {
+		n.logger.Sugar().Warnw("Failed to persist DKG session after Phase 1",
+			"operator_address", n.OperatorAddress.Hex(),
+			"error", err)
+	}
+
 	// Phase 2: Verify and send acknowledgements
 	n.logger.Sugar().Infow("Starting DKG Phase 2", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "phase", "verify_and_ack")
 
@@ -707,6 +929,16 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	myNodeID := util.AddressToNodeID(n.OperatorAddress)
 	if err := waitForAcks(session, myNodeID, protocolTimeout); err != nil {
 		return fmt.Errorf("insufficient acknowledgements: %v", err)
+	}
+
+	// Update session to Phase 3 and persist
+	session.mu.Lock()
+	session.Phase = 3
+	session.mu.Unlock()
+	if err := n.saveSession(session); err != nil {
+		n.logger.Sugar().Warnw("Failed to persist DKG session after Phase 2",
+			"operator_address", n.OperatorAddress.Hex(),
+			"error", err)
 	}
 
 	// Phase 3: Build Merkle Tree and Submit to Contract
@@ -813,6 +1045,25 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	// Store THIS node's commitments (not allCommitments[0]) so that when the client
 	// queries all operators and sums their commitments[0], it computes the correct master public key
 	keyVersion.Commitments = commitments
+
+	// Persist key version BEFORE adding to keystore
+	// This ensures we fail if persistence fails, preventing state inconsistency
+	if err := n.persistence.SaveKeyShareVersion(keyVersion); err != nil {
+		n.logger.Sugar().Errorw("Failed to persist key share version - DKG cannot complete",
+			"operator_address", n.OperatorAddress.Hex(),
+			"error", err)
+		return fmt.Errorf("failed to persist key share version: %w", err)
+	}
+
+	// Persist active version pointer
+	if err := n.persistence.SetActiveVersionEpoch(keyVersion.Version); err != nil {
+		n.logger.Sugar().Errorw("Failed to persist active version pointer - DKG cannot complete",
+			"operator_address", n.OperatorAddress.Hex(),
+			"error", err)
+		return fmt.Errorf("failed to persist active version pointer: %w", err)
+	}
+
+	// Only add to keystore after successful persistence
 	n.keyStore.AddVersion(keyVersion)
 
 	n.logger.Sugar().Infow("DKG complete",
@@ -873,6 +1124,13 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	session := n.createSession("reshare", operators, sessionTimestamp)
 	defer n.cleanupSession(session.SessionTimestamp)
 
+	// Persist initial session state
+	if err := n.saveSession(session); err != nil {
+		n.logger.Sugar().Warnw("Failed to persist initial reshare session",
+			"operator_address", n.OperatorAddress.Hex(),
+			"error", err)
+	}
+
 	// Broadcast commitments
 	if err := n.transport.BroadcastReshareCommitments(operators, commitments, session.SessionTimestamp); err != nil {
 		n.logger.Sugar().Errorw("Failed to broadcast reshare commitments", "operator_address", n.OperatorAddress.Hex(), "error", err)
@@ -904,6 +1162,16 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	}
 	if err := waitForCommitments(session, protocolTimeout); err != nil {
 		return err
+	}
+
+	// Update session to Phase 2 and persist
+	session.mu.Lock()
+	session.Phase = 2
+	session.mu.Unlock()
+	if err := n.saveSession(session); err != nil {
+		n.logger.Sugar().Warnw("Failed to persist reshare session after Phase 1",
+			"operator_address", n.OperatorAddress.Hex(),
+			"error", err)
 	}
 
 	// Phase 1b: Verify shares and send acknowledgements
@@ -1090,20 +1358,37 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	// Master public key = g^s = g^{Σ λ_i * x_i} = Σ λ_i * C[0]
 	// So we store λ_i * C[0] as our contribution to the master public key sum
 	lambda := eigenxcrypto.ComputeLagrangeCoefficient(thisNodeID, participantIDsForFinalize)
-	scaledFirstCommitment, err := eigenxcrypto.ScalarMulG2(commitments[0], lambda)
+	scaledFirstCommitment, err := eigenxcrypto.ScalarMulG2(myCommitments[0], lambda)
 	if err != nil {
 		return fmt.Errorf("failed to scale commitment: %w", err)
 	}
 
 	// Create scaled commitments (only first one is scaled for master public key computation)
-	scaledCommitments := make([]types.G2Point, len(commitments))
+	scaledCommitments := make([]types.G2Point, len(myCommitments))
 	scaledCommitments[0] = *scaledFirstCommitment
-	for i := 1; i < len(commitments); i++ {
-		scaledCommitments[i] = commitments[i]
+	for i := 1; i < len(myCommitments); i++ {
+		scaledCommitments[i] = myCommitments[i]
 	}
 	newKeyVersion.Commitments = scaledCommitments
 
-	// Add new version to keystore
+	// Persist new key version BEFORE adding to keystore
+	// This ensures we fail if persistence fails, preventing state inconsistency
+	if err := n.persistence.SaveKeyShareVersion(newKeyVersion); err != nil {
+		n.logger.Sugar().Errorw("Failed to persist reshare key share version - reshare cannot complete",
+			"operator_address", n.OperatorAddress.Hex(),
+			"error", err)
+		return fmt.Errorf("failed to persist reshare key share version: %w", err)
+	}
+
+	// Update active version pointer
+	if err := n.persistence.SetActiveVersionEpoch(newKeyVersion.Version); err != nil {
+		n.logger.Sugar().Errorw("Failed to persist active version pointer - reshare cannot complete",
+			"operator_address", n.OperatorAddress.Hex(),
+			"error", err)
+		return fmt.Errorf("failed to persist active version pointer: %w", err)
+	}
+
+	// Only add to keystore after successful persistence
 	n.keyStore.AddVersion(newKeyVersion)
 
 	n.logger.Sugar().Infow("Reshare completed", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "new_version", newKeyVersion.Version)
@@ -1132,6 +1417,13 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	// Create session for this reshare (as recipient only)
 	session := n.createSession("reshare", operators, sessionTimestamp)
 	defer n.cleanupSession(session.SessionTimestamp)
+
+	// Persist initial session state
+	if err := n.saveSession(session); err != nil {
+		n.logger.Sugar().Warnw("Failed to persist initial reshare session (new operator)",
+			"operator_address", n.OperatorAddress.Hex(),
+			"error", err)
+	}
 
 	// New operators DON'T generate shares - only receive from existing operators
 	n.logger.Sugar().Infow("Waiting for shares from existing operators",
@@ -1168,7 +1460,24 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	newKeyVersion.Version = sessionTimestamp // Use session timestamp as version
 	newKeyVersion.IsActive = true            // First key version becomes active immediately
 
-	// Add new version to keystore
+	// Persist first key version BEFORE adding to keystore (critical for new operator)
+	// This ensures we fail if persistence fails, preventing state inconsistency
+	if err := n.persistence.SaveKeyShareVersion(newKeyVersion); err != nil {
+		n.logger.Sugar().Errorw("Failed to persist first key share version - cannot join cluster",
+			"operator_address", n.OperatorAddress.Hex(),
+			"error", err)
+		return fmt.Errorf("failed to persist first key share version: %w", err)
+	}
+
+	// Set as active version
+	if err := n.persistence.SetActiveVersionEpoch(newKeyVersion.Version); err != nil {
+		n.logger.Sugar().Errorw("Failed to persist active version pointer - cannot join cluster",
+			"operator_address", n.OperatorAddress.Hex(),
+			"error", err)
+		return fmt.Errorf("failed to persist active version pointer: %w", err)
+	}
+
+	// Only add to keystore after successful persistence
 	n.keyStore.AddVersion(newKeyVersion)
 
 	n.logger.Sugar().Infow("Successfully joined cluster via reshare",
@@ -1312,6 +1621,13 @@ func (n *Node) verifyMessage(authMsg *types.AuthenticatedMessage, senderPeer *pe
 	if !bytes.Equal(actualHash, authMsg.Hash[:]) {
 		return fmt.Errorf("payload digest mismatch")
 	}
+
+	n.logger.Sugar().Infow("Verifying message signature",
+		zap.String("sender_address", senderPeer.OperatorAddress.String()),
+		zap.String("public_key", senderPeer.WrappedPublicKey.ECDSAAddress.String()),
+		zap.String("curve_type", senderPeer.CurveType.String()),
+		zap.String("hash", fmt.Sprintf("0x%x", authMsg.Hash)),
+	)
 
 	//nolint:staticcheck
 	if senderPeer.CurveType == config.CurveTypeBN254 {
