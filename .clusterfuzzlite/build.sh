@@ -17,6 +17,33 @@ export GOARCH=amd64
 # Go 1.24+ tries to stamp VCS info by default; in containerized builds the repo may not have
 # usable VCS metadata (or git may be unavailable), which breaks builds.
 export GOFLAGS="${GOFLAGS:-} -buildvcs=false"
+
+# Some environments (especially local Docker runs) don't provide $LIB_FUZZING_ENGINE as a
+# standalone archive (e.g. /usr/lib/libFuzzingEngine.a). That's OK: clang can link the
+# libFuzzer runtime via -fsanitize=fuzzer (we pass -fsanitize=fuzzer,address below).
+# Prefer the env provided by the OSS-Fuzz base image, but fall back to a detected path.
+if [[ -n "${LIB_FUZZING_ENGINE:-}" && ! -f "${LIB_FUZZING_ENGINE:-}" ]]; then
+    unset LIB_FUZZING_ENGINE
+fi
+if [[ -z "${LIB_FUZZING_ENGINE:-}" ]]; then
+    for candidate in \
+        /usr/lib/libFuzzingEngine.a \
+        /usr/local/lib/libFuzzingEngine.a \
+        /usr/lib/llvm-*/lib/libFuzzingEngine.a \
+        /usr/local/lib/llvm-*/lib/libFuzzingEngine.a
+    do
+        # shellcheck disable=SC2086
+        found=$(ls -1 $candidate 2>/dev/null | head -n 1 || true)
+        if [[ -n "$found" && -f "$found" ]]; then
+            export LIB_FUZZING_ENGINE="$found"
+            break
+        fi
+    done
+fi
+
+if [[ -z "${LIB_FUZZING_ENGINE:-}" ]]; then
+    echo "Warning: libFuzzer engine archive not found; relying on clang's -fsanitize=fuzzer runtime."
+fi
 go install github.com/AdamKorcz/go-118-fuzz-build@latest
 # Ensure the helper testing shim is available
 go get github.com/AdamKorcz/go-118-fuzz-build/testing@latest
@@ -48,7 +75,8 @@ compile_native_go_fuzzer() {
 
     # Link with sanitizer flags; $CXXFLAGS from base image already includes the selected sanitizer (ASan/UBSan).
     # CXX can include extra flags (e.g., "-lresolv"), so invoke via eval to preserve spacing.
-    link_cmd="$CXX $CXXFLAGS $LIB_FUZZING_ENGINE -fsanitize=fuzzer,address \"$archive\" -o \"$OUT/$out_name\""
+    # Link using clang's sanitizer runtimes; $LIB_FUZZING_ENGINE (if present) is optional.
+    link_cmd="$CXX $CXXFLAGS ${LIB_FUZZING_ENGINE:-} -fsanitize=fuzzer,address \"$archive\" -o \"$OUT/$out_name\""
     if ! eval "$link_cmd"; then
         echo "Error: Could not link $out_name"
         rm -rf "$tmpdir"
