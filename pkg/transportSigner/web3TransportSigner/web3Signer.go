@@ -26,11 +26,11 @@ type Web3Signer struct {
 	logger      *zap.Logger
 }
 
-// NewWeb3Signer creates a new Web3Signer that implements the ISigner interface.
+// NewWeb3TransportSigner creates a new Web3Signer that implements the ISigner interface.
 // It only supports ECDSA curve type - attempting to use BN254 will result in errors.
 // The publicKey parameter should be the hex-encoded public key (with or without 0x prefix)
 // that corresponds to the fromAddress.
-func NewWeb3Signer(client *web3signer.Client, fromAddress common.Address, publicKey string, curveType config.CurveType, logger *zap.Logger) (*Web3Signer, error) {
+func NewWeb3TransportSigner(client *web3signer.Client, fromAddress common.Address, publicKey string, curveType config.CurveType, logger *zap.Logger) (*Web3Signer, error) {
 	if curveType != config.CurveTypeECDSA {
 		return nil, fmt.Errorf("web3signer only supports ECDSA curve type, got %s", curveType)
 	}
@@ -68,7 +68,9 @@ func NewWeb3Signer(client *web3signer.Client, fromAddress common.Address, public
 func (w3s *Web3Signer) CreateAuthenticatedMessage(data []byte) (*transportSigner.SignedMessage, error) {
 	hash := crypto.Keccak256Hash(data)
 
-	sig, err := w3s.SignMessageForSolidity(hash[:])
+	// NOTE: web3signer's /sign route will handle hashing the message
+	// so we dont need to hash it again here for signing. We can pass the raw data directly.
+	sig, err := w3s.SignMessageForSolidity(data)
 	if err != nil {
 		return nil, fmt.Errorf("failed to sign authenticated message: %w", err)
 	}

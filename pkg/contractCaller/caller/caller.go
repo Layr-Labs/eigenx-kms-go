@@ -350,7 +350,7 @@ func (cc *ContractCaller) RegisterKeyWithKeyRegistrar(
 		Id:  operatorSetId,
 	}
 
-	cc.logger.Sugar().Debugw("Registering key with KeyRegistrar",
+	cc.logger.Sugar().Infow("Registering key with KeyRegistrar",
 		"operatorAddress:", operatorAddress.String(),
 		"avsAddress:", avsAddress.String(),
 		"operatorSetId:", operatorSetId,
@@ -372,7 +372,7 @@ func (cc *ContractCaller) RegisterKeyWithKeyRegistrar(
 	return cc.signAndSendTransaction(ctx, tx, "ConfigureOperatorSet")
 }
 
-func (cc *ContractCaller) createOperator(ctx context.Context, operatorAddress common.Address, allocationDelay uint32, metadataUri string) (*types.Receipt, error) {
+func (cc *ContractCaller) CreateOperator(ctx context.Context, operatorAddress common.Address, allocationDelay uint32, metadataUri string) (*types.Receipt, error) {
 	noSendTxOpts, err := cc.buildTransactionOpts(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("failed to build transaction options: %w", err)
@@ -389,6 +389,11 @@ func (cc *ContractCaller) createOperator(ctx context.Context, operatorAddress co
 		return nil, nil
 	}
 
+	cc.logger.Sugar().Infow("Registering as operator",
+		zap.String("operatorAddress", operatorAddress.String()),
+		zap.Uint32("allocationDelay", allocationDelay),
+		zap.String("metadataUri", metadataUri),
+	)
 	tx, err := cc.delegationManager.RegisterAsOperator(
 		noSendTxOpts,
 		common.Address{},
@@ -402,7 +407,7 @@ func (cc *ContractCaller) createOperator(ctx context.Context, operatorAddress co
 	return cc.signAndSendTransaction(ctx, tx, "RegisterAsOperator")
 }
 
-func (cc *ContractCaller) registerOperatorWithAvs(
+func (cc *ContractCaller) RegisterOperatorWithAvs(
 	ctx context.Context,
 	operatorAddress common.Address,
 	avsAddress common.Address,
@@ -429,7 +434,7 @@ func (cc *ContractCaller) registerOperatorWithAvs(
 		return nil, fmt.Errorf("failed to create transaction: %w", err)
 	}
 
-	return cc.signAndSendTransaction(ctx, tx, "registerOperatorWithAvs")
+	return cc.signAndSendTransaction(ctx, tx, "RegisterOperatorWithAvs")
 }
 
 func (cc *ContractCaller) CreateOperatorAndRegisterWithAvs(
@@ -441,7 +446,7 @@ func (cc *ContractCaller) CreateOperatorAndRegisterWithAvs(
 	allocationDelay uint32,
 	metadataUri string,
 ) (*types.Receipt, error) {
-	createdOperator, err := cc.createOperator(ctx, operatorAddress, allocationDelay, metadataUri)
+	createdOperator, err := cc.CreateOperator(ctx, operatorAddress, allocationDelay, metadataUri)
 	if err != nil {
 		return nil, fmt.Errorf("failed to register as operator: %w", err)
 	}
@@ -449,8 +454,14 @@ func (cc *ContractCaller) CreateOperatorAndRegisterWithAvs(
 		zap.Any("receipt", createdOperator),
 	)
 
-	cc.logger.Sugar().Infow("Registering operator socket with AVS")
-	socketReceipt, err := cc.registerOperatorWithAvs(ctx, operatorAddress, avsAddress, operatorSetIds, socket)
+	cc.logger.Sugar().Infow("Registering operator socket with AVS",
+		zap.String("operatorAddress", operatorAddress.String()),
+		zap.String("avsAddress", avsAddress.String()),
+		zap.Uint32s("operatorSetIds", operatorSetIds),
+		zap.String("socket", socket),
+	)
+
+	socketReceipt, err := cc.RegisterOperatorWithAvs(ctx, operatorAddress, avsAddress, operatorSetIds, socket)
 	if err != nil {
 		return nil, fmt.Errorf("failed to register operator socket with AVS: %w", err)
 	}

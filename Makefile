@@ -87,11 +87,29 @@ test/contracts:
 	@echo "Running smart contract tests..."
 	forge test
 
-.PHONY: anvil/start
+.PHONY: anvil/start/l1
 anvil/start/l1:
 	anvil \
 		--fork-url https://practical-serene-mound.ethereum-sepolia.quiknode.pro/3aaa48bd95f3d6aed60e89a1a466ed1e2a440b61/ \
 		--load-state ./internal/testData/anvil-l1-state.json \
 		--chain-id 31337 \
-		--fork-block-number 9469897 \
-		--block-time 2
+		--fork-block-number 9778678 \
+		--block-time 2 \
+		--port 8545
+
+.PHONY: anvil/start/l1-live
+anvil/start/l1-live:
+	anvil \
+		--fork-url https://practical-serene-mound.ethereum-sepolia.quiknode.pro/3aaa48bd95f3d6aed60e89a1a466ed1e2a440b61/ \
+		--block-time 2 \
+		--port 8545
+
+.PHONY: anvil/start/l2
+anvil/start/l2:
+	anvil \
+		--fork-url https://soft-alpha-grass.base-sepolia.quiknode.pro/fd5e4bf346247d9b6e586008a9f13df72ce6f5b2/ \
+		--load-state ./internal/testData/anvil-l2-state.json \
+		--chain-id 31338 \
+		--fork-block-number 34610863 \
+		--block-time 2 \
+		--port 9545

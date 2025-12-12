@@ -16,13 +16,17 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
 	kmsClient "github.com/Layr-Labs/eigenx-kms-go/pkg/clients/kmsClient"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/web3signer"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/node"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering/peeringDataFetcher"
+	persistenceMemory "github.com/Layr-Labs/eigenx-kms-go/pkg/persistence/memory"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transactionSigner"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner/inMemoryTransportSigner"
+	web3Signer "github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner/web3TransportSigner"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/stretchr/testify/require"
@@ -149,9 +153,6 @@ func Test_OnChainIntegration(t *testing.T) {
 	l1ContractCaller, err := caller.NewContractCaller(l1EthClient, nil, l)
 	require.NoError(t, err)
 
-	l2EthClient, err := l2Client.GetEthereumContractCaller()
-	require.NoError(t, err)
-
 	commitmentRegistryAddress := common.HexToAddress(chainConfig.EigenCommitmentRegistryAddress)
 
 	t.Logf("Using Commitment Registry at: %s", commitmentRegistryAddress.Hex())
@@ -166,15 +167,24 @@ func Test_OnChainIntegration(t *testing.T) {
 		address    string
 		privateKey string
 		socket     string
+		publicKey  string
 	}{
-		{chainConfig.OperatorAccountAddress1, chainConfig.OperatorAccountPrivateKey1, chainConfig.OperatorSocket1},
-		{chainConfig.OperatorAccountAddress2, chainConfig.OperatorAccountPrivateKey2, chainConfig.OperatorSocket2},
-		{chainConfig.OperatorAccountAddress3, chainConfig.OperatorAccountPrivateKey3, chainConfig.OperatorSocket3},
-		{chainConfig.OperatorAccountAddress4, chainConfig.OperatorAccountPrivateKey4, chainConfig.OperatorSocket4},
-		{chainConfig.OperatorAccountAddress5, chainConfig.OperatorAccountPrivateKey5, chainConfig.OperatorSocket5},
+		{chainConfig.OperatorAccountAddress1, chainConfig.OperatorAccountPrivateKey1, chainConfig.OperatorSocket1, chainConfig.OperatorAccountPublicKey1},
+		{chainConfig.OperatorAccountAddress2, chainConfig.OperatorAccountPrivateKey2, chainConfig.OperatorSocket2, chainConfig.OperatorAccountPublicKey2},
+		{chainConfig.OperatorAccountAddress3, chainConfig.OperatorAccountPrivateKey3, chainConfig.OperatorSocket3, chainConfig.OperatorAccountPublicKey3},
+		{chainConfig.OperatorAccountAddress4, chainConfig.OperatorAccountPrivateKey4, chainConfig.OperatorSocket4, chainConfig.OperatorAccountPublicKey4},
+		{chainConfig.OperatorAccountAddress5, chainConfig.OperatorAccountPrivateKey5, chainConfig.OperatorSocket5, chainConfig.OperatorAccountPublicKey5},
 	}
 
 	for i := 0; i < 5; i++ {
+		// Wait for L2 to be ready
+		nodeL2Client := ethereum.NewEthereumClient(&ethereum.EthereumClientConfig{
+			BaseUrl:   L2RpcUrl,
+			BlockType: ethereum.BlockType_Latest,
+		}, l)
+		nodeL2EthClient, err := nodeL2Client.GetEthereumContractCaller()
+		require.NoError(t, err)
+
 		// Create block handler and chain poller for each node
 		bh := blockHandler.NewBlockHandler(l)
 
@@ -195,22 +205,49 @@ func Test_OnChainIntegration(t *testing.T) {
 		// Create peering data fetcher
 		pdf := peeringDataFetcher.NewPeeringDataFetcher(l1ContractCaller, l)
 
-		// Create ECDSA transport signer (production direction)
-		pkBytes, err := hexutil.Decode(operatorConfigs[i].privateKey)
-		require.NoError(t, err)
+		useWeb3Signer := true
 
-		transportSigner, err := inMemoryTransportSigner.NewECDSAInMemoryTransportSigner(pkBytes, l)
-		require.NoError(t, err)
+		var txSigner transactionSigner.ITransactionSigner
+		var tportSigner transportSigner.ITransportSigner
+		if useWeb3Signer {
+			web3SignerClient, err := web3signer.NewWeb3SignerClientFromRemoteSignerConfig(
+				&config.RemoteSignerConfig{
+					Url:         tests.L2Web3SignerUrl,
+					FromAddress: operatorConfigs[i].address,
+					PublicKey:   operatorConfigs[i].publicKey,
+				},
+				l,
+			)
+			if err != nil {
+				l.Sugar().Fatalw("Failed to create Web3Signer client", "error", err)
+			}
 
-		txSigner, err := transactionSigner.NewPrivateKeySigner(operatorConfigs[i].privateKey, l2EthClient, l)
-		require.NoError(t, err)
+			txSigner, err = transactionSigner.NewWeb3TransactionSigner(web3SignerClient, common.HexToAddress(operatorConfigs[i].address), nodeL2EthClient, l)
+			require.NoError(t, err)
 
-		nodeCc, err := caller.NewContractCaller(l2EthClient, txSigner, l)
+			tportSigner, err = web3Signer.NewWeb3TransportSigner(web3SignerClient, common.HexToAddress(operatorConfigs[i].address), operatorConfigs[i].publicKey, config.CurveTypeECDSA, l)
+			require.NoError(t, err)
+		} else {
+			// Create ECDSA transport signer (production direction)
+			pkBytes, err := hexutil.Decode(operatorConfigs[i].privateKey)
+			require.NoError(t, err)
+
+			tportSigner, err = inMemoryTransportSigner.NewECDSAInMemoryTransportSigner(pkBytes, l)
+			require.NoError(t, err)
+
+			txSigner, err = transactionSigner.NewPrivateKeySigner(operatorConfigs[i].privateKey, nodeL2EthClient, l)
+			require.NoError(t, err)
+		}
+
+		nodeCc, err := caller.NewContractCaller(nodeL2EthClient, txSigner, l)
 		require.NoError(t, err)
 
 		// Use stub attestation verifier for testing
 		// Production would use GoogleConfidentialSpace or IntelTrustAuthority
 		attestationVerifier := attestation.NewStubVerifier()
+
+		// Create in-memory persistence for testing
+		nodePersistence := persistenceMemory.NewMemoryPersistence()
 
 		// Create node
 		nodeConfig := node.Config{
@@ -226,10 +263,11 @@ func Test_OnChainIntegration(t *testing.T) {
 			pdf,
 			bh,
 			poller,
-			transportSigner,
+			tportSigner,
 			attestationVerifier,
 			nodeCc,
 			commitmentRegistryAddress,
+			nodePersistence,
 			l,
 		)
 		require.NoError(t, err)
@@ -256,10 +294,13 @@ func Test_OnChainIntegration(t *testing.T) {
 		time.Sleep(2 * time.Second)
 
 		allNodesReady := true
+		nodesReadyCount := 0
 		for _, n := range nodes {
 			if n.GetKeyStore().GetActiveVersion() == nil {
 				allNodesReady = false
 				break
+			} else {
+				nodesReadyCount++
 			}
 		}
 
@@ -268,7 +309,7 @@ func Test_OnChainIntegration(t *testing.T) {
 			t.Logf("✓ DKG completed after ~%d seconds", (attempt+1)*2)
 			break
 		}
-
+		t.Logf("%d/%d nodes have completed DKG", nodesReadyCount, len(nodes))
 		if attempt%5 == 0 {
 			t.Logf("Waiting for DKG... (%d seconds elapsed)", (attempt+1)*2)
 		}
