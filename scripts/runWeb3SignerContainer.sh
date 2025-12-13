@@ -12,7 +12,8 @@ web3signerL1ChainId=1
 
 cleanup_containers() {
     echo "Cleaning up containers..."
-    docker rm -f $web3signerL1Name || true
+    # Avoid noisy "No such container" messages during cleanup.
+    docker rm -f "$web3signerL1Name" >/dev/null 2>&1 || true
 }
 
 trap cleanup_containers ERR EXIT SIGINT SIGTERM
