@@ -35,5 +35,3 @@ func FuzzEncodeStringRoundTrip(f *testing.F) {
 		require.Equal(t, s, decoded)
 	})
 }
-
-
