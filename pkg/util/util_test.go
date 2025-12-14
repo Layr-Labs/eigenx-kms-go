@@ -23,5 +23,3 @@ func TestAddressToNodeID_Invariants(t *testing.T) {
 	require.GreaterOrEqual(t, id2, int64(0))
 	require.NotEqual(t, id1, id2)
 }
-
-

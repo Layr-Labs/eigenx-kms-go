@@ -652,6 +652,8 @@ func validateOperatorSetNoNodeIDCollisions(operators []*peering.OperatorSetPeer)
 		seenAddrs[addr] = struct{}{}
 
 		id := addressToNodeID(addr)
+		// Check for nodeID collision between different addresses.
+		// (If prev == addr, the duplicate-address check above would have already triggered.)
 		if prev, ok := seenNodeIDs[id]; ok && prev != addr {
 			return fmt.Errorf("derived nodeID collision: node_id=%d addr1=%s addr2=%s", id, prev.Hex(), addr.Hex())
 		}
@@ -1385,13 +1387,11 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 
 	// Collect all commitments and participant IDs for finalization from session
 	session.mu.RLock()
-	allCommitmentsForFinalize := make([][]types.G2Point, 0, len(session.commitments))
 	participantIDsForFinalize := make([]int64, 0, len(session.commitments))
 
 	for _, op := range operators {
 		opNodeID := addressToNodeID(op.OperatorAddress)
-		if comm, ok := session.commitments[opNodeID]; ok {
-			allCommitmentsForFinalize = append(allCommitmentsForFinalize, comm)
+		if _, ok := session.commitments[opNodeID]; ok {
 			participantIDsForFinalize = append(participantIDsForFinalize, opNodeID)
 		}
 	}
