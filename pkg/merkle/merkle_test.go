@@ -175,7 +175,7 @@ func TestAcknowledgementSorting(t *testing.T) {
 	}
 
 	// Ensure original slice is not modified
-	require.Equal(t, 5, acks[0].PlayerID)
+	require.Equal(t, int64(5), acks[0].PlayerID)
 }
 
 // TestSortAcknowledgementsDoesNotMutate verifies sorting doesn't modify the original slice
