@@ -117,6 +117,10 @@ type ProtocolSession struct {
 	mu sync.RWMutex
 }
 
+// addressToNodeID is a small seam for testability so we can force nodeID collisions in unit tests.
+// In production it always points to util.AddressToNodeID.
+var addressToNodeID = util.AddressToNodeID
+
 // HandleReceivedShare stores a share and signals completion if all shares received
 // Returns error if duplicate share detected
 func (s *ProtocolSession) HandleReceivedShare(senderNodeID int64, share *fr.Element) error {
@@ -612,15 +616,8 @@ func (n *Node) fetchCurrentOperators(ctx context.Context, avsAddress string, ope
 		return sortedPeers[i].OperatorAddress.Hex() < sortedPeers[j].OperatorAddress.Hex()
 	})
 
-	// Fail fast on derived nodeID collisions to avoid silent overwrites in protocol state.
-	// (Node IDs are used as map keys in sessions; collisions would cause split-brain / misrouting.)
-	seenNodeIDs := make(map[int64]common.Address, len(sortedPeers))
-	for _, op := range sortedPeers {
-		id := util.AddressToNodeID(op.OperatorAddress)
-		if prev, ok := seenNodeIDs[id]; ok && prev != op.OperatorAddress {
-			return nil, fmt.Errorf("derived nodeID collision: node_id=%d addr1=%s addr2=%s", id, prev.Hex(), op.OperatorAddress.Hex())
-		}
-		seenNodeIDs[id] = op.OperatorAddress
+	if err := validateOperatorSetNoNodeIDCollisions(sortedPeers); err != nil {
+		return nil, err
 	}
 
 	n.logger.Sugar().Infow("Fetched operators from chain",
@@ -631,6 +628,37 @@ func (n *Node) fetchCurrentOperators(ctx context.Context, avsAddress string, ope
 		}), ", "),
 	)
 	return sortedPeers, nil
+}
+
+// validateOperatorSetNoNodeIDCollisions fails fast if:
+// - the operator list contains duplicate addresses, or
+// - util.AddressToNodeID(address) collides for two different addresses.
+//
+// This is critical because node IDs are used as map keys in protocol sessions; collisions would
+// cause silent overwrites and split-brain / misrouting.
+func validateOperatorSetNoNodeIDCollisions(operators []*peering.OperatorSetPeer) error {
+	seenAddrs := make(map[common.Address]struct{}, len(operators))
+	seenNodeIDs := make(map[int64]common.Address, len(operators))
+
+	for _, op := range operators {
+		if op == nil {
+			return fmt.Errorf("operator is nil")
+		}
+
+		addr := op.OperatorAddress
+		if _, ok := seenAddrs[addr]; ok {
+			return fmt.Errorf("duplicate operator address in operator set: %s", addr.Hex())
+		}
+		seenAddrs[addr] = struct{}{}
+
+		id := addressToNodeID(addr)
+		if prev, ok := seenNodeIDs[id]; ok && prev != addr {
+			return fmt.Errorf("derived nodeID collision: node_id=%d addr1=%s addr2=%s", id, prev.Hex(), addr.Hex())
+		}
+		seenNodeIDs[id] = addr
+	}
+
+	return nil
 }
 
 // hasExistingShares returns true if this node has active key shares
@@ -666,7 +694,11 @@ func (n *Node) detectClusterState(operators []*peering.OperatorSetPeer) string {
 }
 
 // createSession creates a new protocol session with the provided timestamp
-func (n *Node) createSession(sessionType string, operators []*peering.OperatorSetPeer, sessionTimestamp int64) *ProtocolSession {
+func (n *Node) createSession(sessionType string, operators []*peering.OperatorSetPeer, sessionTimestamp int64) (*ProtocolSession, error) {
+	if err := validateOperatorSetNoNodeIDCollisions(operators); err != nil {
+		return nil, err
+	}
+
 	session := &ProtocolSession{
 		SessionTimestamp:        sessionTimestamp,
 		Type:                    sessionType,
@@ -705,7 +737,7 @@ func (n *Node) createSession(sessionType string, operators []*peering.OperatorSe
 		"session_timestamp", sessionTimestamp,
 		"type", sessionType)
 
-	return session
+	return session, nil
 }
 
 // getSession retrieves a session by timestamp
@@ -802,7 +834,10 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	}
 
 	// Create session for this DKG run with provided timestamp
-	session := n.createSession("dkg", operators, sessionTimestamp)
+	session, err := n.createSession("dkg", operators, sessionTimestamp)
+	if err != nil {
+		return fmt.Errorf("failed to create DKG session: %w", err)
+	}
 	defer n.cleanupSession(session.SessionTimestamp)
 
 	// Persist initial session state
@@ -1131,8 +1166,10 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		return err
 	}
 
-	// Create session for this reshare run with provided timestamp
-	session := n.createSession("reshare", operators, sessionTimestamp)
+	session, err := n.createSession("reshare", operators, sessionTimestamp)
+	if err != nil {
+		return fmt.Errorf("failed to create reshare session: %w", err)
+	}
 	defer n.cleanupSession(session.SessionTimestamp)
 
 	// Persist initial session state
@@ -1426,7 +1463,10 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	n.resharer = reshare.NewReshare(thisNodeID, operators)
 
 	// Create session for this reshare (as recipient only)
-	session := n.createSession("reshare", operators, sessionTimestamp)
+	session, err := n.createSession("reshare", operators, sessionTimestamp)
+	if err != nil {
+		return fmt.Errorf("failed to create reshare session: %w", err)
+	}
 	defer n.cleanupSession(session.SessionTimestamp)
 
 	// Persist initial session state
