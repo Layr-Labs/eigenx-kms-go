@@ -189,7 +189,7 @@ func testReshareSecretConsistency(t *testing.T) {
 
 	// Create test operators and derive their actual node IDs
 	testOperators := createTestOperatorsForReshare(t, 5)
-	nodeIDs := make([]int, 5)
+	nodeIDs := make([]int64, 5)
 	for i := 0; i < 5; i++ {
 		nodeIDs[i] = util.AddressToNodeID(testOperators[i].OperatorAddress)
 	}
@@ -203,13 +203,13 @@ func testReshareSecretConsistency(t *testing.T) {
 	}
 
 	// Generate shares by evaluating polynomial at actual node IDs
-	shares := make(map[int]*fr.Element)
+	shares := make(map[int64]*fr.Element)
 	for i := 0; i < 5; i++ {
 		shares[nodeIDs[i]] = eigenxcrypto.EvaluatePolynomial(poly, int64(nodeIDs[i]))
 	}
 
 	// Each node reshares preserving their share
-	allNewShares := make(map[int]map[int]*fr.Element) // dealerNodeID -> recipientNodeID -> share
+	allNewShares := make(map[int64]map[int64]*fr.Element) // dealerNodeID -> recipientNodeID -> share
 
 	for i := 0; i < 5; i++ {
 		dealerNodeID := nodeIDs[i]
@@ -223,7 +223,7 @@ func testReshareSecretConsistency(t *testing.T) {
 	}
 
 	// Compute new shares for each node using Lagrange
-	newFinalShares := make(map[int]*fr.Element)
+	newFinalShares := make(map[int64]*fr.Element)
 
 	for _, recipientNodeID := range nodeIDs {
 		nodeShare := new(fr.Element).SetZero()
@@ -242,7 +242,7 @@ func testReshareSecretConsistency(t *testing.T) {
 	}
 
 	// Use threshold of new shares to recover secret
-	thresholdShares := make(map[int]*fr.Element)
+	thresholdShares := make(map[int64]*fr.Element)
 	for i := 0; i < threshold; i++ {
 		thresholdShares[nodeIDs[i]] = newFinalShares[nodeIDs[i]]
 	}

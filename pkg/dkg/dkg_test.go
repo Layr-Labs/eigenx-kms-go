@@ -180,7 +180,7 @@ func testFinalizeKeyShare(t *testing.T) {
 	require.NoError(t, err, "GenerateShares failed")
 
 	// Create participant IDs from addresses
-	participantIDs := make([]int, len(operators))
+	participantIDs := make([]int64, len(operators))
 	allCommitments := [][]types.G2Point{commitments}
 	for i, op := range operators {
 		participantIDs[i] = util.AddressToNodeID(op.OperatorAddress)
@@ -218,7 +218,7 @@ func testCreateAcknowledgement(t *testing.T) {
 	share := fr.NewElement(789)
 
 	// Mock signer function
-	signer := func(dealer int, hash [32]byte) []byte {
+	signer := func(dealer int64, hash [32]byte) []byte {
 		return []byte("mock-signature")
 	}
 
@@ -262,7 +262,7 @@ func Test_BuildAcknowledgementMerkleTree(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		share := fr.NewElement(uint64(100 + i))
 		acks[i] = &types.Acknowledgement{
-			PlayerID:       i + 1,
+			PlayerID:       int64(i + 1),
 			DealerID:       99,
 			Epoch:          5,
 			ShareHash:      crypto.HashShareForAck(&share),

@@ -381,8 +381,8 @@ func getMasterPublicKey(operators *peering.OperatorSetPeers) (types.G2Point, err
 }
 
 // collectPartialSignatures collects partial signatures from threshold number of operators
-func collectPartialSignatures(appID string, operators *peering.OperatorSetPeers, threshold int) (map[int]types.G1Point, error) {
-	partialSigs := make(map[int]types.G1Point)
+func collectPartialSignatures(appID string, operators *peering.OperatorSetPeers, threshold int) (map[int64]types.G1Point, error) {
+	partialSigs := make(map[int64]types.G1Point)
 
 	// Generate a random attestation time for signature requests
 	attestationTime := int64(0) // Use current active key version
@@ -426,7 +426,7 @@ func collectPartialSignatures(appID string, operators *peering.OperatorSetPeers,
 
 		// Use operator index as node ID for collection
 		// In real implementation, this would use the actual node ID from the operator
-		partialSigs[i] = response.PartialSignature
+		partialSigs[int64(i)] = response.PartialSignature
 		collected++
 
 		fmt.Printf("📝 Collected partial signature from operator %d\n", i)

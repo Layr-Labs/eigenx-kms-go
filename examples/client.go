@@ -100,9 +100,9 @@ func ExampleAppClient() {
 	}
 
 	// Step 7: Recover application private key using Lagrange interpolation
-	partialSigMap := make(map[int]types.G1Point)
+	partialSigMap := make(map[int64]types.G1Point)
 	for i, sig := range partialSigs {
-		partialSigMap[i+1] = sig // Node IDs are 1-indexed
+		partialSigMap[int64(i+1)] = sig // Node IDs are 1-indexed
 	}
 
 	appPrivateKey, err := crypto.RecoverAppPrivateKey(appID, partialSigMap, threshold)

@@ -307,7 +307,7 @@ func deepCopyKeyShareVersion(v *types.KeyShareVersion) *types.KeyShareVersion {
 	}
 
 	// Copy participant IDs
-	participantIDs := make([]int, len(v.ParticipantIDs))
+	participantIDs := make([]int64, len(v.ParticipantIDs))
 	copy(participantIDs, v.ParticipantIDs)
 
 	return &types.KeyShareVersion{
@@ -329,13 +329,13 @@ func deepCopyProtocolSessionState(s *persistence.ProtocolSessionState) *persiste
 	copy(operatorAddresses, s.OperatorAddresses)
 
 	// Copy shares map
-	shares := make(map[int]string)
+	shares := make(map[int64]string)
 	for k, v := range s.Shares {
 		shares[k] = v
 	}
 
 	// Copy commitments map
-	commitments := make(map[int][]types.G2Point)
+	commitments := make(map[int64][]types.G2Point)
 	for k, v := range s.Commitments {
 		commitmentsCopy := make([]types.G2Point, len(v))
 		for i, c := range v {
@@ -347,9 +347,9 @@ func deepCopyProtocolSessionState(s *persistence.ProtocolSessionState) *persiste
 	}
 
 	// Copy acknowledgements map
-	acknowledgements := make(map[int]map[int]*types.Acknowledgement)
+	acknowledgements := make(map[int64]map[int64]*types.Acknowledgement)
 	for dealerID, ackMap := range s.Acknowledgements {
-		ackMapCopy := make(map[int]*types.Acknowledgement)
+		ackMapCopy := make(map[int64]*types.Acknowledgement)
 		for receiverID, ack := range ackMap {
 			ackCopy := &types.Acknowledgement{
 				PlayerID:       ack.PlayerID,

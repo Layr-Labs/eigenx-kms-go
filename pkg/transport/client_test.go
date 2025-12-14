@@ -50,7 +50,7 @@ func TestBroadcastCommitmentsWithProofs_MerkleProofGeneration(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		_ = fr.NewElement(uint64(100 + i)) // Used for test setup
 		acks[i] = &types.Acknowledgement{
-			PlayerID:       i + 1,
+			PlayerID:       int64(i + 1),
 			DealerID:       99,
 			Epoch:          5,
 			ShareHash:      [32]byte{byte(i)},

@@ -5,3 +5,4 @@
 /anvil-*.json
 /cloned-copies
 .idea
+pkg/crypto/testdata/

@@ -130,7 +130,7 @@ func testSecretsEndpointFlow(t *testing.T) {
 		PrivateShare:   testShare,
 		Commitments:    []kmsTypes.G2Point{},
 		IsActive:       true,
-		ParticipantIDs: []int{1},
+		ParticipantIDs: []int64{1},
 	}
 	node.keyStore.AddVersion(keyVersion)
 

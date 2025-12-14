@@ -178,29 +178,31 @@ func EvaluatePolynomial(poly polynomial.Polynomial, x int64) *fr.Element {
 }
 
 // ComputeLagrangeCoefficient computes the Lagrange coefficient for participant i
-func ComputeLagrangeCoefficient(i int, participants []int) *fr.Element {
+func ComputeLagrangeCoefficient(i int64, participants []int64) *fr.Element {
 	return bls.ComputeLagrangeCoefficient(i, participants)
 }
 
 // RecoverSecret recovers secret from shares using Lagrange interpolation
-func RecoverSecret(shares map[int]*fr.Element) (*fr.Element, error) {
+func RecoverSecret(shares map[int64]*fr.Element) (*fr.Element, error) {
 	return bls.RecoverSecret(shares)
 }
 
 // RecoverAppPrivateKey recovers app private key from partial signatures
-func RecoverAppPrivateKey(appID string, partialSigs map[int]types.G1Point, threshold int) (*types.G1Point, error) {
+func RecoverAppPrivateKey(appID string, partialSigs map[int64]types.G1Point, threshold int) (*types.G1Point, error) {
 	if len(partialSigs) < threshold {
 		return nil, fmt.Errorf("insufficient partial signatures: got %d, need %d", len(partialSigs), threshold)
 	}
 
 	// Collect all participant IDs and sort for deterministic selection
-	participants := make([]int, 0, len(partialSigs))
+	participants := make([]int64, 0, len(partialSigs))
 	for id := range partialSigs {
 		participants = append(participants, id)
 	}
 
 	// Sort participants for deterministic selection (any threshold subset should work)
-	sort.Ints(participants)
+	sort.Slice(participants, func(i, j int) bool {
+		return participants[i] < participants[j]
+	})
 	// We'll use the first threshold participants after sorting
 	if len(participants) > threshold {
 		participants = participants[:threshold]

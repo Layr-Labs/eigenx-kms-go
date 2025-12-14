@@ -2,6 +2,7 @@ package util
 
 import (
 	"crypto/ecdsa"
+	"encoding/binary"
 	"fmt"
 	"strings"
 
@@ -159,8 +160,9 @@ func ValidateAppID(appID string) error {
 
 // AddressToNodeID converts an Ethereum address into a deterministic node ID.
 // The node ID is derived from the keccak256 hash of the address, matching the on-chain encoding.
-// audit: Node ID Collision Vulnerability
-func AddressToNodeID(address common.Address) int {
-	hash := crypto.Keccak256(address.Bytes())
-	return int(common.BytesToHash(hash).Big().Uint64())
+func AddressToNodeID(address common.Address) int64 {
+	h := crypto.Keccak256Hash(address.Bytes())
+	low64 := binary.BigEndian.Uint64(h[24:32]) // matches Big().Uint64() (low 64 bits)
+	low63 := low64 & ((uint64(1) << 63) - 1)   // force non-negative
+	return int64(low63)
 }

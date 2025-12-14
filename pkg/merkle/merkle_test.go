@@ -15,7 +15,7 @@ func createTestAcknowledgements(n int) []*types.Acknowledgement {
 	acks := make([]*types.Acknowledgement, n)
 	for i := 0; i < n; i++ {
 		acks[i] = &types.Acknowledgement{
-			PlayerID:       i + 1, // Start from 1 to avoid zero address issues
+			PlayerID:       int64(i + 1), // Start from 1 to avoid zero address issues
 			DealerID:       100,
 			Epoch:          5,
 			ShareHash:      randomHash(),
@@ -181,7 +181,7 @@ func TestAcknowledgementSorting(t *testing.T) {
 // TestSortAcknowledgementsDoesNotMutate verifies sorting doesn't modify the original slice
 func TestSortAcknowledgementsDoesNotMutate(t *testing.T) {
 	original := createTestAcknowledgements(5)
-	originalIDs := make([]int, len(original))
+	originalIDs := make([]int64, len(original))
 	for i, ack := range original {
 		originalIDs[i] = ack.PlayerID
 	}

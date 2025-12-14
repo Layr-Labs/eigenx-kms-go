@@ -168,7 +168,7 @@ func testPolynomialSecretSharing(t *testing.T) {
 	}
 
 	// Recover secret using threshold shares (any 3 shares)
-	thresholdShares := make(map[int]*fr.Element)
+	thresholdShares := make(map[int64]*fr.Element)
 	thresholdShares[1] = shares[1]
 	thresholdShares[3] = shares[3]
 	thresholdShares[5] = shares[5]
@@ -182,7 +182,7 @@ func testPolynomialSecretSharing(t *testing.T) {
 	}
 
 	// Try with different subset
-	thresholdShares2 := make(map[int]*fr.Element)
+	thresholdShares2 := make(map[int64]*fr.Element)
 	thresholdShares2[2] = shares[2]
 	thresholdShares2[4] = shares[4]
 	thresholdShares2[5] = shares[5]
@@ -236,7 +236,7 @@ func testShareVerification(t *testing.T) {
 }
 
 func testLagrangeInterpolation(t *testing.T) {
-	participants := []int{1, 3, 5}
+	participants := []int64{1, 3, 5}
 
 	// Test that Lagrange coefficients sum to 1 at x=0
 	sum := new(fr.Element).SetZero()

@@ -97,9 +97,9 @@ type ProtocolSession struct {
 	Operators        []*peering.OperatorSetPeer
 
 	// Session-specific state (moved from global Node state)
-	shares      map[int]*fr.Element
-	commitments map[int][]types.G2Point
-	acks        map[int]map[int]*types.Acknowledgement
+	shares      map[int64]*fr.Element
+	commitments map[int64][]types.G2Point
+	acks        map[int64]map[int64]*types.Acknowledgement
 
 	// Completion channels (buffered, size 1) - signaled when all expected messages received
 	sharesCompleteChan      chan bool
@@ -112,14 +112,14 @@ type ProtocolSession struct {
 	contractSubmitted bool
 
 	// Phase 4: Verification state
-	verifiedOperators map[int]bool
+	verifiedOperators map[int64]bool
 
 	mu sync.RWMutex
 }
 
 // HandleReceivedShare stores a share and signals completion if all shares received
 // Returns error if duplicate share detected
-func (s *ProtocolSession) HandleReceivedShare(senderNodeID int, share *fr.Element) error {
+func (s *ProtocolSession) HandleReceivedShare(senderNodeID int64, share *fr.Element) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -143,7 +143,7 @@ func (s *ProtocolSession) HandleReceivedShare(senderNodeID int, share *fr.Elemen
 
 // HandleReceivedCommitment stores commitments and signals completion if all received
 // Returns error if duplicate commitment detected
-func (s *ProtocolSession) HandleReceivedCommitment(senderNodeID int, commitments []types.G2Point) error {
+func (s *ProtocolSession) HandleReceivedCommitment(senderNodeID int64, commitments []types.G2Point) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -167,7 +167,7 @@ func (s *ProtocolSession) HandleReceivedCommitment(senderNodeID int, commitments
 
 // HandleReceivedAck stores an acknowledgement and signals completion if all acks received for this dealer
 // Returns error if duplicate ack detected
-func (s *ProtocolSession) HandleReceivedAck(dealerNodeID, playerNodeID int, ack *types.Acknowledgement) error {
+func (s *ProtocolSession) HandleReceivedAck(dealerNodeID, playerNodeID int64, ack *types.Acknowledgement) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -179,7 +179,7 @@ func (s *ProtocolSession) HandleReceivedAck(dealerNodeID, playerNodeID int, ack 
 	}
 
 	if s.acks[dealerNodeID] == nil {
-		s.acks[dealerNodeID] = make(map[int]*types.Acknowledgement)
+		s.acks[dealerNodeID] = make(map[int64]*types.Acknowledgement)
 	}
 	s.acks[dealerNodeID][playerNodeID] = ack
 
@@ -207,18 +207,18 @@ func (ps *ProtocolSession) toPersistenceState() *persistence.ProtocolSessionStat
 	}
 
 	// Convert shares (fr.Element -> string)
-	shares := make(map[int]string)
+	shares := make(map[int64]string)
 	for nodeID, share := range ps.shares {
 		shares[nodeID] = types.SerializeFr(share).Data
 	}
 
 	// Commitments and acknowledgements are already serializable
-	commitments := make(map[int][]types.G2Point)
+	commitments := make(map[int64][]types.G2Point)
 	for k, v := range ps.commitments {
 		commitments[k] = v
 	}
 
-	acks := make(map[int]map[int]*types.Acknowledgement)
+	acks := make(map[int64]map[int64]*types.Acknowledgement)
 	for k, v := range ps.acks {
 		acks[k] = v
 	}
@@ -612,6 +612,17 @@ func (n *Node) fetchCurrentOperators(ctx context.Context, avsAddress string, ope
 		return sortedPeers[i].OperatorAddress.Hex() < sortedPeers[j].OperatorAddress.Hex()
 	})
 
+	// Fail fast on derived nodeID collisions to avoid silent overwrites in protocol state.
+	// (Node IDs are used as map keys in sessions; collisions would cause split-brain / misrouting.)
+	seenNodeIDs := make(map[int64]common.Address, len(sortedPeers))
+	for _, op := range sortedPeers {
+		id := util.AddressToNodeID(op.OperatorAddress)
+		if prev, ok := seenNodeIDs[id]; ok && prev != op.OperatorAddress {
+			return nil, fmt.Errorf("derived nodeID collision: node_id=%d addr1=%s addr2=%s", id, prev.Hex(), op.OperatorAddress.Hex())
+		}
+		seenNodeIDs[id] = op.OperatorAddress
+	}
+
 	n.logger.Sugar().Infow("Fetched operators from chain",
 		"operator_address", n.OperatorAddress.Hex(),
 		"count", len(sortedPeers),
@@ -662,19 +673,19 @@ func (n *Node) createSession(sessionType string, operators []*peering.OperatorSe
 		Phase:                   1,
 		StartTime:               time.Now(),
 		Operators:               operators,
-		shares:                  make(map[int]*fr.Element),
-		commitments:             make(map[int][]types.G2Point),
-		acks:                    make(map[int]map[int]*types.Acknowledgement),
+		shares:                  make(map[int64]*fr.Element),
+		commitments:             make(map[int64][]types.G2Point),
+		acks:                    make(map[int64]map[int64]*types.Acknowledgement),
 		sharesCompleteChan:      make(chan bool, 1),
 		commitmentsCompleteChan: make(chan bool, 1),
 		acksCompleteChan:        make(chan bool, 1),
-		verifiedOperators:       make(map[int]bool),
+		verifiedOperators:       make(map[int64]bool),
 	}
 
 	// Initialize acks map for each operator (as dealer)
 	for _, op := range operators {
 		nodeID := util.AddressToNodeID(op.OperatorAddress)
-		session.acks[nodeID] = make(map[int]*types.Acknowledgement)
+		session.acks[nodeID] = make(map[int64]*types.Acknowledgement)
 	}
 
 	n.sessionMutex.Lock()
@@ -883,7 +894,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	receivedCommitments := session.commitments
 	session.mu.RUnlock()
 
-	validShares := make(map[int]*fr.Element)
+	validShares := make(map[int64]*fr.Element)
 	for dealerID, share := range receivedShares {
 		commitments := receivedCommitments[dealerID]
 		if n.dkg.VerifyShare(dealerID, share, commitments) {
@@ -1029,7 +1040,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 		"node_id", thisNodeID)
 
 	allCommitments := make([][]types.G2Point, 0, len(receivedCommitments))
-	participantIDs := make([]int, 0, len(receivedCommitments))
+	participantIDs := make([]int64, 0, len(receivedCommitments))
 
 	for _, op := range operators {
 		opNodeID := util.AddressToNodeID(op.OperatorAddress)
@@ -1185,7 +1196,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	receivedCommitments := session.commitments
 	session.mu.RUnlock()
 
-	validShares := make(map[int]*fr.Element)
+	validShares := make(map[int64]*fr.Element)
 	for dealerID, share := range receivedShares {
 		commitments := receivedCommitments[dealerID]
 		if n.resharer.VerifyNewShare(dealerID, share, commitments) {
@@ -1334,7 +1345,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	// Collect all commitments and participant IDs for finalization from session
 	session.mu.RLock()
 	allCommitmentsForFinalize := make([][]types.G2Point, 0, len(session.commitments))
-	participantIDsForFinalize := make([]int, 0, len(session.commitments))
+	participantIDsForFinalize := make([]int64, 0, len(session.commitments))
 
 	for _, op := range operators {
 		opNodeID := util.AddressToNodeID(op.OperatorAddress)
@@ -1442,7 +1453,7 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	// Collect all commitments and participant IDs from session
 	session.mu.RLock()
 	allCommitments := make([][]types.G2Point, 0, len(session.commitments))
-	participantIDs := make([]int, 0, len(session.commitments))
+	participantIDs := make([]int64, 0, len(session.commitments))
 
 	for _, op := range operators {
 		opNodeID := util.AddressToNodeID(op.OperatorAddress)
@@ -1552,7 +1563,7 @@ func waitForCommitments(session *ProtocolSession, timeout time.Duration) error {
 // waitForAcks waits for all acknowledgements to be received for a specific dealer using polling
 // Note: We poll instead of using acksCompleteChan because the channel signals when ANY dealer
 // completes, not when THIS specific dealer completes. Each dealer needs to wait for their own acks.
-func waitForAcks(session *ProtocolSession, dealerNodeID int, timeout time.Duration) error {
+func waitForAcks(session *ProtocolSession, dealerNodeID int64, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -1607,7 +1618,7 @@ func (n *Node) GetKeyStore() *keystore.KeyStore {
 }
 
 // RunDKGPhase1 runs only phase 1 of DKG (for testing)
-func (n *Node) RunDKGPhase1() (map[int]*fr.Element, []types.G2Point, error) {
+func (n *Node) RunDKGPhase1() (map[int64]*fr.Element, []types.G2Point, error) {
 	return n.dkg.GenerateShares()
 }
 
@@ -1743,7 +1754,7 @@ func (n *Node) submitCommitmentWithRetry(
 }
 
 // signAcknowledgement signs an acknowledgement using ECDSA transport signer
-func (n *Node) signAcknowledgement(dealerID int, commitmentHash [32]byte) []byte {
+func (n *Node) signAcknowledgement(dealerID int64, commitmentHash [32]byte) []byte {
 	// Create message: dealerID || commitmentHash
 	dealerBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(dealerBytes, uint32(dealerID))

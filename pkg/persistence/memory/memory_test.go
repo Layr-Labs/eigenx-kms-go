@@ -24,7 +24,7 @@ func TestMemoryPersistence_SaveAndLoadKeyShare(t *testing.T) {
 			{CompressedBytes: []byte{1, 2, 3, 4}},
 		},
 		IsActive:       true,
-		ParticipantIDs: []int{1, 2, 3},
+		ParticipantIDs: []int64{1, 2, 3},
 	}
 
 	// Save
@@ -76,7 +76,7 @@ func TestMemoryPersistence_DeleteKeyShare(t *testing.T) {
 		PrivateShare:   &privateShare,
 		Commitments:    []types.G2Point{},
 		IsActive:       true,
-		ParticipantIDs: []int{1},
+		ParticipantIDs: []int64{1},
 	}
 	err := mp.SaveKeyShareVersion(version)
 	require.NoError(t, err)
@@ -117,7 +117,7 @@ func TestMemoryPersistence_ListKeyShareVersions(t *testing.T) {
 			PrivateShare:   &privateShare,
 			Commitments:    []types.G2Point{},
 			IsActive:       i == 4,
-			ParticipantIDs: []int{i},
+			ParticipantIDs: []int64{int64(i)},
 		}
 		err := mp.SaveKeyShareVersion(version)
 		require.NoError(t, err)
@@ -218,14 +218,14 @@ func TestMemoryPersistence_ProtocolSessions(t *testing.T) {
 		Phase:             2,
 		StartTime:         1234567800,
 		OperatorAddresses: []string{"0x1234", "0x5678"},
-		Shares: map[int]string{
+		Shares: map[int64]string{
 			1: "share1",
 			2: "share2",
 		},
-		Commitments: map[int][]types.G2Point{
+		Commitments: map[int64][]types.G2Point{
 			1: {{CompressedBytes: []byte{1, 2, 3}}},
 		},
-		Acknowledgements: map[int]map[int]*types.Acknowledgement{
+		Acknowledgements: map[int64]map[int64]*types.Acknowledgement{
 			1: {
 				2: {PlayerID: 2, DealerID: 1, Epoch: 1234567890},
 			},
@@ -278,9 +278,9 @@ func TestMemoryPersistence_DeleteProtocolSession(t *testing.T) {
 		Phase:             1,
 		StartTime:         100,
 		OperatorAddresses: []string{"0x1"},
-		Shares:            map[int]string{},
-		Commitments:       map[int][]types.G2Point{},
-		Acknowledgements:  map[int]map[int]*types.Acknowledgement{},
+		Shares:            map[int64]string{},
+		Commitments:       map[int64][]types.G2Point{},
+		Acknowledgements:  map[int64]map[int64]*types.Acknowledgement{},
 	}
 	err := mp.SaveProtocolSession(session)
 	require.NoError(t, err)
@@ -307,9 +307,9 @@ func TestMemoryPersistence_ListProtocolSessions(t *testing.T) {
 			Phase:             1,
 			StartTime:         int64(i * 100),
 			OperatorAddresses: []string{},
-			Shares:            map[int]string{},
-			Commitments:       map[int][]types.G2Point{},
-			Acknowledgements:  map[int]map[int]*types.Acknowledgement{},
+			Shares:            map[int64]string{},
+			Commitments:       map[int64][]types.G2Point{},
+			Acknowledgements:  map[int64]map[int64]*types.Acknowledgement{},
 		}
 		err := mp.SaveProtocolSession(session)
 		require.NoError(t, err)
@@ -394,7 +394,7 @@ func TestMemoryPersistence_ThreadSafety(t *testing.T) {
 					PrivateShare:   &privateShare,
 					Commitments:    []types.G2Point{},
 					IsActive:       false,
-					ParticipantIDs: []int{id},
+					ParticipantIDs: []int64{int64(id)},
 				}
 				err := mp.SaveKeyShareVersion(version)
 				assert.NoError(t, err)
@@ -440,7 +440,7 @@ func TestMemoryPersistence_DeepCopy_Mutation(t *testing.T) {
 		PrivateShare:   &privateShare,
 		Commitments:    []types.G2Point{{CompressedBytes: []byte{1, 2, 3}}},
 		IsActive:       true,
-		ParticipantIDs: []int{1, 2, 3},
+		ParticipantIDs: []int64{1, 2, 3},
 	}
 	err := mp.SaveKeyShareVersion(version)
 	require.NoError(t, err)
@@ -456,6 +456,6 @@ func TestMemoryPersistence_DeepCopy_Mutation(t *testing.T) {
 	loaded2, err := mp.LoadKeyShareVersion(123)
 	require.NoError(t, err)
 	assert.True(t, loaded2.IsActive)
-	assert.Equal(t, 1, loaded2.ParticipantIDs[0])
+	assert.Equal(t, int64(1), loaded2.ParticipantIDs[0])
 	assert.Equal(t, byte(1), loaded2.Commitments[0].CompressedBytes[0])
 }
