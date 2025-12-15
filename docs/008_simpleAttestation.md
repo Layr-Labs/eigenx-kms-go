@@ -59,23 +59,35 @@ For this feature, we want to modify the KMS server to support attesting through 
   - Test malformed request handling ✅
   - **Created**: `pkg/attestation/ecdsa_test.go` with 16 test cases + benchmark
 
-## Milestone 3: Update Web Server Endpoints
+## Milestone 3: Update Web Server Endpoints ✅
 **Goal**: Modify `/secrets` endpoint to accept attestation method parameter
 
 ### Tasks:
-- [ ] 3.1 Update `SecretsRequestV1` type in `pkg/types/types.go`
-  - Add `AttestationMethod string` field (default: "gpc")
+- [x] 3.1 Update `SecretsRequestV1` type in `pkg/types/types.go`
+  - Add `AttestationMethod string` field (default: "gcp")
+  - Add ECDSA-specific fields: `Challenge` and `PublicKey`
   - Keep existing `Attestation []byte` field for attestation data
+  - **Updated**: `pkg/types/types.go`
 
-- [ ] 3.2 Modify `handleSecretsRequest` in `pkg/node/handlers.go`
-  - Extract `attestationMethod` from request
-  - Pass to `AttestationManager.VerifyWithMethod()`
-  - Handle method-not-found errors gracefully
-  - Maintain existing flow after verification
+- [x] 3.2 Modify Node to use `AttestationManager`
+  - Added `attestationManager` field to Node struct
+  - Created `NewNodeWithManager()` function for multi-method attestation
+  - Maintained backward compatibility with existing `NewNode()` function
+  - **Updated**: `pkg/node/node.go`
 
-- [ ] 3.3 Update endpoint documentation in code comments
+- [x] 3.3 Update `handleSecretsRequest` in `pkg/node/handlers.go`
+  - Extract `attestationMethod` from request (defaults to "gcp")
+  - Build `AttestationRequest` with method-specific fields
+  - Use `AttestationManager.VerifyWithMethod()` when available
+  - Fallback to legacy `attestationVerifier` for backward compatibility
+  - Enhanced logging with attestation method
+  - **Updated**: `pkg/node/handlers.go`
+
+- [x] 3.4 Update endpoint documentation in code comments
   - Document new `attestationMethod` parameter
-  - Provide examples for both GPC and ECDSA methods
+  - Provide complete examples for GCP and ECDSA methods
+  - Document required fields for each method
+  - **Updated**: `pkg/node/server.go`
 
 ## Milestone 4: Add Runtime Configuration
 **Goal**: Enable/disable attestation methods via command-line flags
@@ -139,7 +151,7 @@ For this feature, we want to modify the KMS server to support attesting through 
 ## Progress Tracking
 - Milestone 1: ✅ **Complete** (Created pluggable attestation architecture)
 - Milestone 2: ✅ **Complete** (Implemented ECDSA attestation method with full tests)
-- Milestone 3: Not started
+- Milestone 3: ✅ **Complete** (Updated web server to support multiple attestation methods)
 - Milestone 4: Not started
 - Milestone 5: Not started
 - Milestone 6: Not started

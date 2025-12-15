@@ -103,10 +103,14 @@ type AppSignResponse struct {
 
 // SecretsRequestV1 represents a request for application secrets
 type SecretsRequestV1 struct {
-	AppID        string `json:"app_id"`
-	Attestation  []byte `json:"attestation"`    // GoogleCS attestation (stubbed)
-	RSAPubKeyTmp []byte `json:"rsa_pubkey_tmp"` // Ephemeral RSA public key
-	AttestTime   int64  `json:"attest_time"`    // For key versioning
+	AppID             string `json:"app_id"`
+	AttestationMethod string `json:"attestation_method"` // Attestation method: "gcp", "intel", "ecdsa" (default: "gcp")
+	Attestation       []byte `json:"attestation"`        // Attestation data (JWT for GCP/Intel, signature for ECDSA)
+	RSAPubKeyTmp      []byte `json:"rsa_pubkey_tmp"`     // Ephemeral RSA public key
+	AttestTime        int64  `json:"attest_time"`        // For key versioning
+	// ECDSA-specific fields (only used when attestation_method is "ecdsa")
+	Challenge []byte `json:"challenge,omitempty"` // Challenge for ECDSA attestation
+	PublicKey []byte `json:"public_key,omitempty"` // Public key for ECDSA attestation
 }
 
 // SecretsResponseV1 represents the response with encrypted secrets

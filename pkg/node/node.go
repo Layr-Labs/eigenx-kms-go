@@ -57,7 +57,8 @@ type Node struct {
 	keyStore            *keystore.KeyStore
 	transport           *transport.Client
 	server              *Server
-	attestationVerifier attestation.Verifier
+	attestationVerifier attestation.Verifier // Legacy single-method verifier (deprecated, use attestationManager)
+	attestationManager  *attestation.AttestationManager // Multi-method attestation manager
 	releaseRegistry     registry.Client
 	rsaEncryption       *encryption.RSAEncryption
 	peeringDataFetcher  peering.IPeeringDataFetcher
@@ -267,7 +268,7 @@ type Config struct {
 }
 
 // NewNode creates a new node instance with dependency injection
-// attestationVerifier is required and must not be nil
+// Either attestationVerifier or attestationManager must be provided (not both nil)
 func NewNode(
 	cfg Config,
 	pdf peering.IPeeringDataFetcher,
@@ -282,7 +283,7 @@ func NewNode(
 ) (*Node, error) {
 	// Validate required dependencies
 	if attestationVerifier == nil {
-		return nil, fmt.Errorf("attestationVerifier is required and cannot be nil")
+		return nil, fmt.Errorf("attestationVerifier is required and cannot be nil (use NewNodeWithManager for multi-method attestation)")
 	}
 	if baseContractCaller == nil {
 		return nil, fmt.Errorf("baseContractCaller is required")
@@ -306,6 +307,72 @@ func NewNode(
 		keyStore:                  keystore.NewKeyStore(),
 		server:                    NewServer(nil, cfg.Port), // Will set node reference later
 		attestationVerifier:       attestationVerifier,
+		releaseRegistry:           registry.NewStubClient(),
+		rsaEncryption:             encryption.NewRSAEncryption(),
+		peeringDataFetcher:        pdf,
+		logger:                    l,
+		activeSessions:            make(map[int64]*ProtocolSession),
+		sessionNotify:             make(map[int64]chan struct{}),
+		enableAutoReshare:         true, // Always enabled
+		blockHandler:              bh,
+		poller:                    cp,
+		lastProcessedBoundary:     0,
+		transportSigner:           tps,
+		baseContractCaller:        baseContractCaller,
+		commitmentRegistryAddress: commitmentRegistryAddress,
+		persistence:               p,
+	}
+
+	// Set node reference in server
+	n.server.node = n
+
+	// Initialize transport with authenticated messaging
+	// TODO(seanmcgary): this should be injected, not created here
+	n.transport = transport.NewClient(transportClientID, operatorAddress, tps)
+
+	return n, nil
+}
+
+// NewNodeWithManager creates a new node instance with AttestationManager for multi-method attestation
+func NewNodeWithManager(
+	cfg Config,
+	pdf peering.IPeeringDataFetcher,
+	bh blockHandler.IBlockHandler,
+	cp chainPoller.IChainPoller,
+	tps transportSigner.ITransportSigner,
+	attestationManager *attestation.AttestationManager,
+	baseContractCaller contractCaller.IContractCaller,
+	commitmentRegistryAddress common.Address,
+	p persistence.INodePersistence,
+	l *zap.Logger,
+) (*Node, error) {
+	// Validate required dependencies
+	if attestationManager == nil {
+		return nil, fmt.Errorf("attestationManager is required and cannot be nil")
+	}
+	if baseContractCaller == nil {
+		return nil, fmt.Errorf("baseContractCaller is required")
+	}
+	if commitmentRegistryAddress == (common.Address{}) {
+		return nil, fmt.Errorf("commitmentRegistryAddress is required")
+	}
+
+	// Parse operator address
+	operatorAddress := common.HexToAddress(cfg.OperatorAddress)
+
+	// Use operator address hash as transport client ID (for consistency)
+	transportClientID := addressToNodeID(operatorAddress)
+
+	n := &Node{
+		OperatorAddress:           operatorAddress,
+		Port:                      cfg.Port,
+		ChainID:                   cfg.ChainID,
+		AVSAddress:                cfg.AVSAddress,
+		OperatorSetId:             cfg.OperatorSetId,
+		keyStore:                  keystore.NewKeyStore(),
+		server:                    NewServer(nil, cfg.Port), // Will set node reference later
+		attestationVerifier:       nil,                      // Not used when manager is provided
+		attestationManager:        attestationManager,
 		releaseRegistry:           registry.NewStubClient(),
 		rsaEncryption:             encryption.NewRSAEncryption(),
 		peeringDataFetcher:        pdf,
