@@ -11,23 +11,28 @@ For this feature, we want to modify the KMS server to support attesting through 
 
 # Execution
 
-## Milestone 1: Refactor Attestation Architecture
+## Milestone 1: Refactor Attestation Architecture ✅
 **Goal**: Create pluggable attestation system supporting multiple methods
 
 ### Tasks:
-- [ ] 1.1 Create attestation method interface in `pkg/attestation/`
+- [x] 1.1 Create attestation method interface in `pkg/attestation/`
   - Define `AttestationMethod` interface with `Verify(request) (claims, error)` method
   - Define common `AttestationRequest` and `AttestationClaims` types
+  - **Created**: `pkg/attestation/method.go`
 
-- [ ] 1.2 Refactor existing GPC attestation to implement new interface
+- [x] 1.2 Refactor existing GCP attestation to implement new interface
   - Create `GCPAttestationMethod` struct wrapping `AttestationVerifier`
   - Implement interface methods
   - Maintain backward compatibility with existing `ProductionVerifier`
+  - **Created**: `pkg/attestation/gcp_method.go`
+  - **Updated**: `pkg/attestation/verifier.go` (added `ManagerVerifier` adapter)
 
-- [ ] 1.3 Create attestation registry/manager
+- [x] 1.3 Create attestation registry/manager
   - Create `AttestationManager` that holds map of enabled methods
   - Add `RegisterMethod(name string, method AttestationMethod)` function
   - Add `VerifyWithMethod(method string, request) (claims, error)` function
+  - **Created**: `pkg/attestation/manager.go`
+  - **Tests**: `pkg/attestation/manager_test.go`, `pkg/attestation/gcp_method_test.go`
 
 ## Milestone 2: Implement ECDSA Attestation Method
 **Goal**: Add simple ECDSA-based attestation as alternative to GPC
@@ -129,7 +134,7 @@ For this feature, we want to modify the KMS server to support attesting through 
   - Document performance characteristics
 
 ## Progress Tracking
-- Milestone 1: Not started
+- Milestone 1: ✅ **Complete** (Created pluggable attestation architecture)
 - Milestone 2: Not started
 - Milestone 3: Not started
 - Milestone 4: Not started
