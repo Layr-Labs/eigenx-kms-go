@@ -139,7 +139,7 @@ func GetDefaultPollerIntervalForChainId(chainId ChainId) time.Duration {
 // Block interval constants by chain (block-based scheduling)
 const (
 	ReshareBlockInterval_Mainnet = 50 // 50 blocks ~10 minutes (12s per block)
-	ReshareBlockInterval_Sepolia = 10 // 10 blocks ~2 minutes (12s per block)
+	ReshareBlockInterval_Sepolia = 25 // 25 blocks ~5 minutes (12s per block)
 	ReshareBlockInterval_Anvil   = 10 // 10 blocks for testing (20 seconds with 2s blocks)
 )
 
