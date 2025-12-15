@@ -43,7 +43,7 @@ type SecretsResult struct {
 	AppPrivateKey   types.G1Point
 	EncryptedEnv    string
 	PublicEnv       string
-	PartialSigs     map[int]types.G1Point
+	PartialSigs     map[int64]types.G1Point
 	ResponseCount   int
 	ThresholdNeeded int
 }
@@ -128,9 +128,9 @@ func (c *KMSClient) RetrieveSecrets(appID, imageDigest string) (*SecretsResult, 
 	fmt.Printf("KMS Client: ✓ Verified threshold agreement on environment data\n")
 
 	// Step 7: Recover application private key using threshold signatures
-	partialSigMap := make(map[int]types.G1Point)
+	partialSigMap := make(map[int64]types.G1Point)
 	for i, sig := range partialSigs {
-		partialSigMap[i+1] = sig // Node IDs are 1-indexed
+		partialSigMap[int64(i+1)] = sig // Node IDs are 1-indexed
 	}
 
 	appPrivateKey, err := crypto.RecoverAppPrivateKey(appID, partialSigMap, c.threshold)
@@ -238,13 +238,13 @@ func (c *KMSClient) GetMasterPublicKey() (types.G2Point, error) {
 }
 
 // CollectPartialSignatures collects partial signatures from threshold operators for an app
-func (c *KMSClient) CollectPartialSignatures(appID string, attestationTime int64) (map[int]types.G1Point, error) {
+func (c *KMSClient) CollectPartialSignatures(appID string, attestationTime int64) (map[int64]types.G1Point, error) {
 	c.logger.Sugar().Infow("Collecting partial signatures",
 		"app_id", appID,
 		"threshold", c.threshold,
 		"operators", len(c.operatorURLs))
 
-	partialSigs := make(map[int]types.G1Point)
+	partialSigs := make(map[int64]types.G1Point)
 	collected := 0
 
 	for i, operatorURL := range c.operatorURLs {

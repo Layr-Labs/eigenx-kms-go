@@ -59,10 +59,10 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 
 		session := &ProtocolSession{
 			SessionTimestamp:  12345,
-			shares:            make(map[int]*fr.Element),
-			commitments:       make(map[int][]types.G2Point),
-			acks:              make(map[int]map[int]*types.Acknowledgement),
-			verifiedOperators: make(map[int]bool),
+			shares:            make(map[int64]*fr.Element),
+			commitments:       make(map[int64][]types.G2Point),
+			acks:              make(map[int64]map[int64]*types.Acknowledgement),
+			verifiedOperators: make(map[int64]bool),
 		}
 
 		node := &Node{
@@ -93,10 +93,10 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 
 		session := &ProtocolSession{
 			SessionTimestamp:  12345,
-			shares:            make(map[int]*fr.Element), // Empty shares
-			commitments:       make(map[int][]types.G2Point),
-			acks:              make(map[int]map[int]*types.Acknowledgement),
-			verifiedOperators: make(map[int]bool),
+			shares:            make(map[int64]*fr.Element), // Empty shares
+			commitments:       make(map[int64][]types.G2Point),
+			acks:              make(map[int64]map[int64]*types.Acknowledgement),
+			verifiedOperators: make(map[int64]bool),
 		}
 
 		node := &Node{
@@ -131,12 +131,12 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 
 		session := &ProtocolSession{
 			SessionTimestamp: 12345,
-			shares: map[int]*fr.Element{
+			shares: map[int64]*fr.Element{
 				2: &realShare, // Share from operator 2
 			},
-			commitments:       make(map[int][]types.G2Point),
-			acks:              make(map[int]map[int]*types.Acknowledgement),
-			verifiedOperators: make(map[int]bool),
+			commitments:       make(map[int64][]types.G2Point),
+			acks:              make(map[int64]map[int64]*types.Acknowledgement),
+			verifiedOperators: make(map[int64]bool),
 		}
 
 		node := &Node{
@@ -178,12 +178,12 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 
 		session := &ProtocolSession{
 			SessionTimestamp: 12345,
-			shares: map[int]*fr.Element{
+			shares: map[int64]*fr.Element{
 				2: &realShare,
 			},
-			commitments:       make(map[int][]types.G2Point),
-			acks:              make(map[int]map[int]*types.Acknowledgement),
-			verifiedOperators: make(map[int]bool),
+			commitments:       make(map[int64][]types.G2Point),
+			acks:              make(map[int64]map[int64]*types.Acknowledgement),
+			verifiedOperators: make(map[int64]bool),
 		}
 
 		node := &Node{
@@ -245,7 +245,7 @@ func TestWaitForVerifications(t *testing.T) {
 			Operators: []*peering.OperatorSetPeer{
 				{}, {}, {}, // 3 operators total
 			},
-			verifiedOperators: make(map[int]bool),
+			verifiedOperators: make(map[int64]bool),
 		}
 
 		node := &Node{
@@ -269,7 +269,7 @@ func TestWaitForVerifications(t *testing.T) {
 			Operators: []*peering.OperatorSetPeer{
 				{}, {}, {}, // 3 operators total (need 2 verifications)
 			},
-			verifiedOperators: make(map[int]bool),
+			verifiedOperators: make(map[int64]bool),
 		}
 
 		node := &Node{
@@ -312,7 +312,7 @@ func TestMerkleProofVerification_Integration(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		share := fr.NewElement(uint64(100 + i))
 		acks[i] = &types.Acknowledgement{
-			PlayerID:       i + 1,
+			PlayerID:       int64(i + 1),
 			DealerID:       99,
 			Epoch:          5,
 			ShareHash:      crypto.HashShareForAck(&share),

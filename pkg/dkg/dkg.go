@@ -19,14 +19,14 @@ type Protocol interface {
 
 // DKG implements the distributed key generation protocol
 type DKG struct {
-	nodeID    int
+	nodeID    int64
 	threshold int
 	operators []*peering.OperatorSetPeer
 	poly      polynomial.Polynomial
 }
 
 // NewDKG creates a new DKG instance
-func NewDKG(nodeID int, threshold int, operators []*peering.OperatorSetPeer) *DKG {
+func NewDKG(nodeID int64, threshold int, operators []*peering.OperatorSetPeer) *DKG {
 	return &DKG{
 		nodeID:    nodeID,
 		threshold: threshold,
@@ -35,7 +35,7 @@ func NewDKG(nodeID int, threshold int, operators []*peering.OperatorSetPeer) *DK
 }
 
 // GenerateShares generates polynomial coefficients, shares, and commitments
-func (d *DKG) GenerateShares() (map[int]*fr.Element, []types.G2Point, error) {
+func (d *DKG) GenerateShares() (map[int64]*fr.Element, []types.G2Point, error) {
 	// Generate random polynomial of degree t-1
 	coeffs := make([]fr.Element, d.threshold)
 	for i := 0; i < d.threshold; i++ {
@@ -46,7 +46,7 @@ func (d *DKG) GenerateShares() (map[int]*fr.Element, []types.G2Point, error) {
 	d.poly = coeffs
 
 	// Compute shares for all operators
-	shares := make(map[int]*fr.Element)
+	shares := make(map[int64]*fr.Element)
 	for _, op := range d.operators {
 		opNodeID := util.AddressToNodeID(op.OperatorAddress)
 		share := crypto.EvaluatePolynomial(d.poly, int64(opNodeID))
@@ -67,7 +67,7 @@ func (d *DKG) GenerateShares() (map[int]*fr.Element, []types.G2Point, error) {
 }
 
 // VerifyShare verifies a share against commitments using polynomial commitment verification
-func (d *DKG) VerifyShare(fromID int, share *fr.Element, commitments []types.G2Point) bool {
+func (d *DKG) VerifyShare(fromID int64, share *fr.Element, commitments []types.G2Point) bool {
 	// Verify: share * G2 == Σ(commitment_k * nodeID^k)
 	leftSide, err := crypto.ScalarMulG2(crypto.G2Generator, share)
 	if err != nil {
@@ -94,7 +94,7 @@ func (d *DKG) VerifyShare(fromID int, share *fr.Element, commitments []types.G2P
 }
 
 // FinalizeKeyShare computes the final key share from all received shares
-func (d *DKG) FinalizeKeyShare(shares map[int]*fr.Element, allCommitments [][]types.G2Point, participantIDs []int) *types.KeyShareVersion {
+func (d *DKG) FinalizeKeyShare(shares map[int64]*fr.Element, allCommitments [][]types.G2Point, participantIDs []int64) *types.KeyShareVersion {
 	// Sum all received shares
 	privateShare := new(fr.Element).SetZero()
 	for _, share := range shares {
@@ -135,7 +135,7 @@ func GetReshareEpoch() int64 {
 
 // CreateAcknowledgement creates an acknowledgement for received shares
 // Phase 4: Updated to include shareHash and epoch
-func CreateAcknowledgement(nodeID, dealerID int, epoch int64, share *fr.Element, commitments []types.G2Point, signer func(int, [32]byte) []byte) *types.Acknowledgement {
+func CreateAcknowledgement(nodeID, dealerID int64, epoch int64, share *fr.Element, commitments []types.G2Point, signer func(int64, [32]byte) []byte) *types.Acknowledgement {
 	commitmentHash := crypto.HashCommitment(commitments)
 	shareHash := crypto.HashShareForAck(share)
 	signature := signer(dealerID, commitmentHash)

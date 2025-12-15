@@ -21,13 +21,13 @@ type Protocol interface {
 
 // Reshare implements the reshare protocol
 type Reshare struct {
-	nodeID    int
+	nodeID    int64
 	operators []*peering.OperatorSetPeer
 	poly      polynomial.Polynomial
 }
 
 // NewReshare creates a new reshare instance
-func NewReshare(nodeID int, operators []*peering.OperatorSetPeer) *Reshare {
+func NewReshare(nodeID int64, operators []*peering.OperatorSetPeer) *Reshare {
 	return &Reshare{
 		nodeID:    nodeID,
 		operators: operators,
@@ -35,7 +35,7 @@ func NewReshare(nodeID int, operators []*peering.OperatorSetPeer) *Reshare {
 }
 
 // GenerateNewShares generates new shares with the current share as the constant term
-func (r *Reshare) GenerateNewShares(currentShare *fr.Element, newThreshold int) (map[int]*fr.Element, []types.G2Point, error) {
+func (r *Reshare) GenerateNewShares(currentShare *fr.Element, newThreshold int) (map[int64]*fr.Element, []types.G2Point, error) {
 	if currentShare == nil {
 		return nil, nil, fmt.Errorf("no current share to reshare")
 	}
@@ -52,7 +52,7 @@ func (r *Reshare) GenerateNewShares(currentShare *fr.Element, newThreshold int) 
 	r.poly = coeffs
 
 	// Compute shares for all operators
-	newShares := make(map[int]*fr.Element)
+	newShares := make(map[int64]*fr.Element)
 	for _, op := range r.operators {
 		opNodeID := util.AddressToNodeID(op.OperatorAddress)
 		share := crypto.EvaluatePolynomial(r.poly, int64(opNodeID))
@@ -73,14 +73,14 @@ func (r *Reshare) GenerateNewShares(currentShare *fr.Element, newThreshold int) 
 }
 
 // VerifyNewShare verifies a reshared share against commitments
-func (r *Reshare) VerifyNewShare(fromID int, share *fr.Element, commitments []types.G2Point) bool {
+func (r *Reshare) VerifyNewShare(fromID int64, share *fr.Element, commitments []types.G2Point) bool {
 	// Same verification as DKG
 	leftSide, err := crypto.ScalarMulG2(crypto.G2Generator, share)
 	if err != nil {
 		return false
 	}
 
-	jFr := new(fr.Element).SetInt64(int64(r.nodeID))
+	jFr := new(fr.Element).SetInt64(r.nodeID)
 	jPower := new(fr.Element).SetOne()
 	rightSide := commitments[0]
 
@@ -101,7 +101,7 @@ func (r *Reshare) VerifyNewShare(fromID int, share *fr.Element, commitments []ty
 }
 
 // ComputeNewKeyShare computes the new key share using Lagrange interpolation
-func (r *Reshare) ComputeNewKeyShare(dealerIDs []int, shares map[int]*fr.Element, allCommitments [][]types.G2Point) *types.KeyShareVersion {
+func (r *Reshare) ComputeNewKeyShare(dealerIDs []int64, shares map[int64]*fr.Element, allCommitments [][]types.G2Point) *types.KeyShareVersion {
 	// Compute x'_j = Σ_{i∈dealers} λ_i * s'_{ij}
 	newShare := new(fr.Element).SetZero()
 
@@ -139,7 +139,7 @@ func CreateCompletionSignature(nodeID int, epoch int64, commitmentHash [32]byte,
 
 // CreateAcknowledgement creates an acknowledgement for received reshare (Phase 4)
 // Same signature as DKG for consistency
-func CreateAcknowledgement(nodeID, dealerID int, epoch int64, share *fr.Element, commitments []types.G2Point, signer func(int, [32]byte) []byte) *types.Acknowledgement {
+func CreateAcknowledgement(nodeID, dealerID, epoch int64, share *fr.Element, commitments []types.G2Point, signer func(int64, [32]byte) []byte) *types.Acknowledgement {
 	commitmentHash := crypto.HashCommitment(commitments)
 	shareHash := crypto.HashShareForAck(share)
 	signature := signer(dealerID, commitmentHash)

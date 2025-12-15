@@ -34,14 +34,14 @@ var DefaultRetryConfig = RetryConfig{
 
 // Client handles network communication
 type Client struct {
-	nodeID       int
+	nodeID       int64
 	operatorAddr common.Address
 	signer       transportSigner.ITransportSigner
 	retryConfig  RetryConfig
 }
 
 // NewClient creates a new transport client
-func NewClient(nodeID int, operatorAddr common.Address, signer transportSigner.ITransportSigner) *Client {
+func NewClient(nodeID int64, operatorAddr common.Address, signer transportSigner.ITransportSigner) *Client {
 	return &Client{
 		nodeID:       nodeID,
 		operatorAddr: operatorAddr,

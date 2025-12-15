@@ -47,12 +47,12 @@ func CreateTestOperators(t *testing.T, numOperators int) []*peering.OperatorSetP
 }
 
 // CreateTestAcknowledgements creates n test acknowledgements with specified epoch and dealer
-func CreateTestAcknowledgements(t *testing.T, n int, epoch int64, dealerID int) []*types.Acknowledgement {
+func CreateTestAcknowledgements(t *testing.T, n int, epoch int64, dealerID int64) []*types.Acknowledgement {
 	acks := make([]*types.Acknowledgement, n)
 	for i := 0; i < n; i++ {
 		share := CreateTestShare(uint64(100 + i))
 		acks[i] = &types.Acknowledgement{
-			PlayerID:       i + 1,
+			PlayerID:       int64(i + 1),
 			DealerID:       dealerID,
 			Epoch:          epoch,
 			ShareHash:      crypto.HashShareForAck(share),

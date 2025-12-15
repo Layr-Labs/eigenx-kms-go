@@ -21,7 +21,7 @@ func EvaluatePolynomial(poly polynomial.Polynomial, x int64) *fr.Element {
 // ComputeLagrangeCoefficient computes the Lagrange coefficient for participant i at x=0
 // audit: should participants register a random element than using their index ?
 // TODO(anup): there is an optimized cached version that can be done here.
-func ComputeLagrangeCoefficient(i int, participants []int) *fr.Element {
+func ComputeLagrangeCoefficient(i int64, participants []int64) *fr.Element {
 	numerator := new(fr.Element).SetOne()
 	denominator := new(fr.Element).SetOne()
 
@@ -49,8 +49,8 @@ func ComputeLagrangeCoefficient(i int, participants []int) *fr.Element {
 }
 
 // RecoverSecret recovers the secret from shares using Lagrange interpolation
-func RecoverSecret(shares map[int]*fr.Element) (*fr.Element, error) {
-	participants := make([]int, 0, len(shares))
+func RecoverSecret(shares map[int64]*fr.Element) (*fr.Element, error) {
+	participants := make([]int64, 0, len(shares))
 	for id := range shares {
 		participants = append(participants, id)
 	}

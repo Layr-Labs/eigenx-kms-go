@@ -174,8 +174,8 @@ func testComputeNewKeyShare(t *testing.T) {
 	r := NewReshare(nodeID, operators)
 
 	// Create test shares
-	dealerIDs := []int{1, 2, 3}
-	shares := make(map[int]*fr.Element)
+	dealerIDs := []int64{1, 2, 3}
+	shares := make(map[int64]*fr.Element)
 	for _, id := range dealerIDs {
 		shares[id] = new(fr.Element)
 		_, _ = shares[id].SetRandom()
@@ -230,8 +230,8 @@ func testCreateCompletionSignature(t *testing.T) {
 
 // Test_CreateAcknowledgement tests acknowledgement creation for reshare (Phase 4)
 func Test_CreateAcknowledgement(t *testing.T) {
-	nodeID := 1
-	dealerID := 2
+	nodeID := int64(1)
+	dealerID := int64(2)
 	epoch := int64(54321)
 
 	// Create test share
@@ -255,7 +255,7 @@ func Test_CreateAcknowledgement(t *testing.T) {
 	}
 
 	// Mock signer function
-	signer := func(dealer int, hash [32]byte) []byte {
+	signer := func(dealer int64, hash [32]byte) []byte {
 		return []byte("mock-signature")
 	}
 
@@ -299,7 +299,7 @@ func Test_BuildAcknowledgementMerkleTree_Reshare(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		share := fr.NewElement(uint64(200 + i))
 		acks[i] = &types.Acknowledgement{
-			PlayerID:       i + 1,
+			PlayerID:       int64(i + 1),
 			DealerID:       50,
 			Epoch:          10,
 			ShareHash:      crypto.HashShareForAck(&share),

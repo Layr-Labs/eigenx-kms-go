@@ -207,7 +207,7 @@ func testEvaluatePolynomial(t *testing.T) {
 
 // testComputeLagrangeCoefficient tests Lagrange coefficient computation
 func testComputeLagrangeCoefficient(t *testing.T) {
-	participants := []int{1, 2, 3}
+	participants := []int64{1, 2, 3}
 
 	// Test that sum of Lagrange coefficients at x=0 equals 1
 	sum := new(fr.Element).SetZero()
@@ -237,9 +237,9 @@ func testRecoverSecret(t *testing.T) {
 	}
 
 	// Generate shares
-	shares := make(map[int]*fr.Element)
+	shares := make(map[int64]*fr.Element)
 	for i := 1; i <= 3; i++ {
-		shares[i] = EvaluatePolynomial(poly, int64(i))
+		shares[int64(i)] = EvaluatePolynomial(poly, int64(i))
 	}
 
 	// Recover secret
@@ -251,7 +251,7 @@ func testRecoverSecret(t *testing.T) {
 	}
 
 	// Test with subset of shares (threshold)
-	subset := make(map[int]*fr.Element)
+	subset := make(map[int64]*fr.Element)
 	subset[1] = shares[1]
 	subset[2] = shares[2]
 	subset[3] = shares[3]
@@ -324,13 +324,13 @@ func testRecoverAppPrivateKey(t *testing.T) {
 	// Create partial signatures using the shares
 	msgPoint, err := HashToG1(appID)
 	require.NoError(t, err, "Failed to hash to G1")
-	partialSigs := make(map[int]types.G1Point)
+	partialSigs := make(map[int64]types.G1Point)
 
 	// Use first `threshold` shares
 	for i := 1; i <= threshold; i++ {
 		partialSig, err := ScalarMulG1(*msgPoint, shares[i])
 		require.NoError(t, err, "Failed to scalar multiply G1")
-		partialSigs[i] = *partialSig
+		partialSigs[int64(i)] = *partialSig
 	}
 
 	// Recover the key

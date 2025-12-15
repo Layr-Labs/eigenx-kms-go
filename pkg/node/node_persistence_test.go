@@ -156,7 +156,7 @@ func testNodeRestart_CleanShutdown(t *testing.T) {
 		PrivateShare:   &privateShare,
 		Commitments:    []types.G2Point{{CompressedBytes: []byte{1, 2, 3}}},
 		IsActive:       true,
-		ParticipantIDs: []int{1},
+		ParticipantIDs: []int64{1},
 	}
 
 	node1.keyStore.AddVersion(testVersion)
@@ -486,7 +486,7 @@ func testNodeRestart_MultipleKeyVersions(t *testing.T) {
 			PrivateShare:   &privateShare,
 			Commitments:    []types.G2Point{{CompressedBytes: []byte{byte(i), byte(i + 1)}}},
 			IsActive:       i == 2, // Last one is active
-			ParticipantIDs: []int{1},
+			ParticipantIDs: []int64{1},
 		}
 
 		node1.keyStore.AddVersion(versions[i])
@@ -722,9 +722,9 @@ func testNodeRestart_IncompleteSessions(t *testing.T) {
 		Phase:             2, // Incomplete (not finalized)
 		StartTime:         time.Now().Unix(),
 		OperatorAddresses: []string{chainConfig.OperatorAccountAddress1},
-		Shares:            map[int]string{1: "test"},
-		Commitments:       map[int][]types.G2Point{},
-		Acknowledgements:  map[int]map[int]*types.Acknowledgement{},
+		Shares:            map[int64]string{1: "test"},
+		Commitments:       map[int64][]types.G2Point{},
+		Acknowledgements:  map[int64]map[int64]*types.Acknowledgement{},
 	}
 
 	err = persistence1.SaveProtocolSession(incompleteSession)
@@ -859,10 +859,10 @@ func testSessionPersistence_DuringDKG(t *testing.T) {
 		Phase:             1,
 		StartTime:         time.Now(),
 		Operators:         opSet.Peers,
-		shares:            make(map[int]*fr.Element),
-		commitments:       make(map[int][]types.G2Point),
-		acks:              make(map[int]map[int]*types.Acknowledgement),
-		verifiedOperators: make(map[int]bool),
+		shares:            make(map[int64]*fr.Element),
+		commitments:       make(map[int64][]types.G2Point),
+		acks:              make(map[int64]map[int64]*types.Acknowledgement),
+		verifiedOperators: make(map[int64]bool),
 	}
 
 	// Convert and save
@@ -905,9 +905,9 @@ func testSessionPersistence_ExpirationCleanup(t *testing.T) {
 		Phase:             2,
 		StartTime:         time.Now().Unix() - 3600, // 1 hour ago
 		OperatorAddresses: []string{chainConfig.OperatorAccountAddress1},
-		Shares:            map[int]string{},
-		Commitments:       map[int][]types.G2Point{},
-		Acknowledgements:  map[int]map[int]*types.Acknowledgement{},
+		Shares:            map[int64]string{},
+		Commitments:       map[int64][]types.G2Point{},
+		Acknowledgements:  map[int64]map[int64]*types.Acknowledgement{},
 	}
 
 	err = persistence1.SaveProtocolSession(expiredSession)
@@ -1022,9 +1022,9 @@ func testSessionPersistence_CleanupOnCompletion(t *testing.T) {
 		Phase:             1,
 		StartTime:         time.Now().Unix(),
 		OperatorAddresses: []string{"0x1234"},
-		Shares:            map[int]string{},
-		Commitments:       map[int][]types.G2Point{},
-		Acknowledgements:  map[int]map[int]*types.Acknowledgement{},
+		Shares:            map[int64]string{},
+		Commitments:       map[int64][]types.G2Point{},
+		Acknowledgements:  map[int64]map[int64]*types.Acknowledgement{},
 	}
 
 	err = persistenceLayer.SaveProtocolSession(testSession)

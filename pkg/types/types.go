@@ -16,7 +16,7 @@ type KeyShareVersion struct {
 	PrivateShare   *fr.Element // This node's private key share
 	Commitments    []G2Point   // Public commitments (in G2 for master public key)
 	IsActive       bool        // Whether this version is the active one
-	ParticipantIDs []int       // Which participants were in the operator set for this version
+	ParticipantIDs []int64     // Which participants were in the operator set for this version
 }
 
 // G1Point represents a point on BLS12-381 G1 (used for signatures)
@@ -73,8 +73,8 @@ func (p *G2Point) IsZero() (bool, error) {
 
 // Acknowledgement is signed by players to prevent dealer equivocation
 type Acknowledgement struct {
-	DealerID       int
-	PlayerID       int
+	DealerID       int64
+	PlayerID       int64
 	Epoch          int64    // Which reshare round (Phase 3)
 	ShareHash      [32]byte // keccak256(share) - commits to received share (Phase 3)
 	CommitmentHash [32]byte
@@ -134,7 +134,7 @@ type Release struct {
 
 // CommitmentBroadcast represents a broadcast of commitments with acknowledgements and merkle proofs (Phase 3)
 type CommitmentBroadcast struct {
-	FromOperatorID   int                // Operator sending the broadcast
+	FromOperatorID   int64              // Operator sending the broadcast
 	Epoch            int64              // Which reshare round
 	Commitments      []G2Point          // Dealer's polynomial commitments
 	Acknowledgements []*Acknowledgement // All n-1 acks collected as dealer
@@ -143,8 +143,8 @@ type CommitmentBroadcast struct {
 
 // CommitmentBroadcastMessage wraps CommitmentBroadcast for authenticated transport (Phase 3)
 type CommitmentBroadcastMessage struct {
-	FromOperatorID int
-	ToOperatorID   int
+	FromOperatorID int64
+	ToOperatorID   int64
 	SessionID      int64 // Same as Epoch for correlation
 	Broadcast      *CommitmentBroadcast
 }
