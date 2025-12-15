@@ -10,6 +10,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func toInt64ShareMap(m map[int]*fr.Element) map[int64]*fr.Element {
+	out := make(map[int64]*fr.Element, len(m))
+	for id, share := range m {
+		out[int64(id)] = share
+	}
+	return out
+}
+
 // deriveScalarPoly deterministically maps bytes to a non-zero Fr element.
 func deriveScalarPoly(b []byte) *fr.Element {
 	h := sha256.Sum256(b)
@@ -64,7 +72,7 @@ func FuzzRecoverSecretRoundTrip(f *testing.F) {
 		}
 
 		shares := GenerateShares(poly, participantIDs)
-		recovered, err := RecoverSecret(shares)
+		recovered, err := RecoverSecret(toInt64ShareMap(shares))
 		require.NoError(t, err)
 		require.True(t, recovered.Equal(secret), "recovered secret mismatch")
 	})
@@ -106,7 +114,7 @@ func FuzzRecoverSecretTamperedShare(f *testing.F) {
 		tamperID := participantIDs[len(participantIDs)/2]
 		tamperedShares[tamperID].Add(tamperedShares[tamperID], new(fr.Element).SetUint64(1))
 
-		recovered, err := RecoverSecret(tamperedShares)
+		recovered, err := RecoverSecret(toInt64ShareMap(tamperedShares))
 		if err == nil {
 			require.False(t, recovered.Equal(secret), "tampered shares should not recover original secret")
 		}
@@ -148,7 +156,7 @@ func FuzzRecoverSecretInsufficientShares(f *testing.F) {
 			insufficient[id] = shares[id]
 		}
 
-		recovered, err := RecoverSecret(insufficient)
+		recovered, err := RecoverSecret(toInt64ShareMap(insufficient))
 		if err == nil {
 			require.False(t, recovered.Equal(secret), "insufficient shares should not recover original secret")
 		}
@@ -187,7 +195,7 @@ func FuzzRecoverSecretDuplicateParticipants(f *testing.F) {
 		}
 
 		shares := GenerateShares(poly, participantIDs)
-		recovered, err := RecoverSecret(shares)
+		recovered, err := RecoverSecret(toInt64ShareMap(shares))
 		require.NoError(t, err)
 		require.True(t, recovered.Equal(secret), "duplicates should not break recovery when enough unique IDs remain")
 	})
@@ -223,7 +231,7 @@ func FuzzRecoverSecretBoundaryDegrees(f *testing.F) {
 		}
 
 		shares := GenerateShares(poly, participantIDs)
-		recovered, err := RecoverSecret(shares)
+		recovered, err := RecoverSecret(toInt64ShareMap(shares))
 		require.NoError(t, err)
 		require.True(t, recovered.Equal(secret), "boundary degree recovery mismatch")
 	})

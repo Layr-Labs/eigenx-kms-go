@@ -77,7 +77,7 @@ func FuzzGenerateVerifyAndFinalize(f *testing.F) {
 		// Finalize and ensure the private share matches the aggregation model used in FinalizeKeyShare.
 		// Note: FinalizeKeyShare sums shares across dealers for this participant; since this test only
 		// uses a single dealer distribution, we mirror that invariant here (sum of provided shares).
-		participantIDs := make([]int, 0, len(shares))
+		participantIDs := make([]int64, 0, len(shares))
 		for id := range shares {
 			participantIDs = append(participantIDs, id)
 		}
@@ -392,8 +392,8 @@ func FuzzFinalizeWithSubsetOfShares(f *testing.F) {
 		require.NoError(t, err)
 
 		// Take a subset of shares.
-		subsetShares := make(map[int]*fr.Element)
-		participantIDs := make([]int, 0, subsetSize)
+		subsetShares := make(map[int64]*fr.Element)
+		participantIDs := make([]int64, 0, subsetSize)
 		count := 0
 		for id, share := range shares {
 			if count >= subsetSize {

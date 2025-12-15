@@ -118,25 +118,25 @@ func FuzzRecoverAppPrivateKeyRoundTrip(f *testing.F) {
 		}
 
 		// Generate shares by evaluating at participant IDs.
-		participants := make([]int, n)
+		participants := make([]int64, n)
 		for i := 0; i < n; i++ {
-			participants[i] = i + 1
+			participants[i] = int64(i + 1)
 		}
 
 		appHash, err := HashToG1(appID)
 		require.NoError(t, err)
 
 		// Create partial signatures: partialSig_i = share_i * H(appID)
-		allPartialSigs := make(map[int]types.G1Point, n)
+		allPartialSigs := make(map[int64]types.G1Point, n)
 		for _, id := range participants {
-			share := EvaluatePolynomial(poly, int64(id))
+			share := EvaluatePolynomial(poly, id)
 			partial, err := ScalarMulG1(*appHash, share)
 			require.NoError(t, err)
 			allPartialSigs[id] = *partial
 		}
 
 		// Test 1: Recovery with exactly threshold shares should succeed.
-		thresholdSigs := make(map[int]types.G1Point, threshold)
+		thresholdSigs := make(map[int64]types.G1Point, threshold)
 		for i := 0; i < threshold; i++ {
 			id := participants[i]
 			thresholdSigs[id] = allPartialSigs[id]
@@ -184,9 +184,9 @@ func FuzzRecoverAppPrivateKeyInsufficientShares(f *testing.F) {
 		require.NoError(t, err)
 
 		// Create only threshold-1 shares (insufficient).
-		insufficientSigs := make(map[int]types.G1Point, threshold-1)
-		for i := 1; i < threshold; i++ {
-			share := EvaluatePolynomial(poly, int64(i))
+		insufficientSigs := make(map[int64]types.G1Point, threshold-1)
+		for i := int64(1); i < int64(threshold); i++ {
+			share := EvaluatePolynomial(poly, i)
 			partial, err := ScalarMulG1(*appHash, share)
 			require.NoError(t, err)
 			insufficientSigs[i] = *partial

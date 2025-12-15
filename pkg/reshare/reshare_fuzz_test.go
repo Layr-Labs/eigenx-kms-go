@@ -88,7 +88,7 @@ func FuzzGenerateVerifyAndComputeNewKeyShare(f *testing.F) {
 		}
 
 		// Compute new key share using all collected shares/commitments.
-		dealerIDs := make([]int, 0, len(shares))
+		dealerIDs := make([]int64, 0, len(shares))
 		for id := range shares {
 			dealerIDs = append(dealerIDs, id)
 		}
@@ -225,14 +225,14 @@ func FuzzComputeNewKeyShareThresholdSubset(f *testing.F) {
 		require.NoError(t, err)
 
 		// Use only exactly threshold shares (a subset).
-		dealerIDs := make([]int, 0, len(shares))
+		dealerIDs := make([]int64, 0, len(shares))
 		for id := range shares {
 			dealerIDs = append(dealerIDs, id)
 		}
 
 		// Take exactly threshold dealers.
 		subsetDealerIDs := dealerIDs[:newThreshold]
-		subsetShares := make(map[int]*fr.Element, newThreshold)
+		subsetShares := make(map[int64]*fr.Element, newThreshold)
 		for _, id := range subsetDealerIDs {
 			subsetShares[id] = shares[id]
 		}
