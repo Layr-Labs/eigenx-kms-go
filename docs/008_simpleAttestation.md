@@ -34,27 +34,30 @@ For this feature, we want to modify the KMS server to support attesting through 
   - **Created**: `pkg/attestation/manager.go`
   - **Tests**: `pkg/attestation/manager_test.go`, `pkg/attestation/gcp_method_test.go`
 
-## Milestone 2: Implement ECDSA Attestation Method
+## Milestone 2: Implement ECDSA Attestation Method ✅
 **Goal**: Add simple ECDSA-based attestation as alternative to GPC
 
 ### Tasks:
-- [ ] 2.1 Design ECDSA attestation protocol
+- [x] 2.1 Design ECDSA attestation protocol
   - Define request format: `{ challenge, signature, publicKey, appID }`
-  - Challenge format: timestamp + nonce to prevent replay
+  - Challenge format: `<timestamp>-<nonce_hex>` to prevent replay
   - Document security properties and threat model
+  - **Created**: Comprehensive protocol documentation in `pkg/attestation/ecdsa.go`
 
-- [ ] 2.2 Implement `ECDSAAttestationMethod`
+- [x] 2.2 Implement `ECDSAAttestationMethod`
   - Create `pkg/attestation/ecdsa.go`
-  - Implement signature verification using ECDSA
-  - Validate challenge freshness (timestamp within acceptable window)
+  - Implement signature verification using ECDSA (Ethereum-compatible)
+  - Validate challenge freshness (configurable time window, default 5 minutes)
   - Extract app ID from signed payload
   - Return standardized `AttestationClaims`
+  - **Features**: Helper functions `GenerateChallenge()`, `SignChallenge()`, `RecoverAddress()`
 
-- [ ] 2.3 Add unit tests for ECDSA attestation
-  - Test valid signature verification
-  - Test invalid signature rejection
-  - Test expired challenge rejection
-  - Test malformed request handling
+- [x] 2.3 Add unit tests for ECDSA attestation
+  - Test valid signature verification ✅
+  - Test invalid signature rejection ✅
+  - Test expired challenge rejection ✅
+  - Test malformed request handling ✅
+  - **Created**: `pkg/attestation/ecdsa_test.go` with 16 test cases + benchmark
 
 ## Milestone 3: Update Web Server Endpoints
 **Goal**: Modify `/secrets` endpoint to accept attestation method parameter
@@ -135,7 +138,7 @@ For this feature, we want to modify the KMS server to support attesting through 
 
 ## Progress Tracking
 - Milestone 1: ✅ **Complete** (Created pluggable attestation architecture)
-- Milestone 2: Not started
+- Milestone 2: ✅ **Complete** (Implemented ECDSA attestation method with full tests)
 - Milestone 3: Not started
 - Milestone 4: Not started
 - Milestone 5: Not started
