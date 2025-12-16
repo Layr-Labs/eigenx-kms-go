@@ -89,23 +89,30 @@ For this feature, we want to modify the KMS server to support attesting through 
   - Document required fields for each method
   - **Updated**: `pkg/node/server.go`
 
-## Milestone 4: Add Runtime Configuration
+## Milestone 4: Add Runtime Configuration ✅
 **Goal**: Enable/disable attestation methods via command-line flags
 
 ### Tasks:
-- [ ] 4.1 Add CLI flags to `cmd/kmsServer/main.go`
-  - Add `--enable-gpc-attestation` flag (default: true)
+- [x] 4.1 Add CLI flags to `cmd/kmsServer/main.go`
+  - Add `--enable-gcp-attestation` flag (default: true)
   - Add `--enable-ecdsa-attestation` flag (default: false)
+  - Add `--gcp-project-id`, `--attestation-provider`, `--attestation-debug-mode` flags
   - Add corresponding environment variables
+  - **Updated**: `cmd/kmsServer/main.go`, `pkg/config/config.go`
 
-- [ ] 4.2 Update Node initialization
-  - Pass enabled methods to `AttestationManager` during setup
-  - Register only enabled methods with manager
-  - Log which methods are active at startup
+- [x] 4.2 Update Node initialization
+  - Create `AttestationManager` during startup
+  - Conditionally register GCP method when `--enable-gcp-attestation=true`
+  - Conditionally register ECDSA method when `--enable-ecdsa-attestation=true`
+  - Use `NewNodeWithManager()` instead of `NewNode()`
+  - Log which methods are active at startup with method names
+  - **Updated**: `cmd/kmsServer/main.go`
 
-- [ ] 4.3 Add validation
-  - Ensure at least one method is enabled
-  - Fail fast with clear error if no methods enabled
+- [x] 4.3 Add validation
+  - Validate at least one method is enabled at startup
+  - Fail fast with clear error message if no methods enabled
+  - Proper error handling for method registration failures
+  - **Updated**: `cmd/kmsServer/main.go`
 
 ## Milestone 5: Update Client Library and Documentation
 **Goal**: Update KMS client to support multiple attestation methods
@@ -152,6 +159,6 @@ For this feature, we want to modify the KMS server to support attesting through 
 - Milestone 1: ✅ **Complete** (Created pluggable attestation architecture)
 - Milestone 2: ✅ **Complete** (Implemented ECDSA attestation method with full tests)
 - Milestone 3: ✅ **Complete** (Updated web server to support multiple attestation methods)
-- Milestone 4: Not started
+- Milestone 4: ✅ **Complete** (Added runtime configuration with CLI flags)
 - Milestone 5: Not started
 - Milestone 6: Not started
