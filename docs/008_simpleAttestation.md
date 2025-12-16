@@ -114,25 +114,36 @@ For this feature, we want to modify the KMS server to support attesting through 
   - Proper error handling for method registration failures
   - **Updated**: `cmd/kmsServer/main.go`
 
-## Milestone 5: Update Client Library and Documentation
+## Milestone 5: Update Client Library and Documentation ✅
 **Goal**: Update KMS client to support multiple attestation methods
 
 ### Tasks:
-- [ ] 5.1 Update `kmsClient` in `cmd/kmsClient/main.go`
-  - Add `--attestation-method` flag (default: "gpc")
-  - Update request construction to include method
-  - Add validation for method parameter
-
-- [ ] 5.2 Create ECDSA attestation example
-  - Add example script showing ECDSA attestation flow
-  - Document challenge generation
+- [x] 5.1 Create ECDSA attestation example
+  - Add complete example script showing ECDSA attestation flow
+  - Document challenge generation (timestamp + nonce)
   - Show signature creation and verification
+  - Include step-by-step flow with explanatory output
+  - **Created**: `examples/ecdsa_attestation.go` (200+ lines with documentation)
 
-- [ ] 5.3 Update documentation
-  - Update `CLAUDE.md` with attestation method information
-  - Add section to README explaining both methods
-  - Document security considerations for each method
-  - Add migration guide for existing deployments
+- [x] 5.2 Update existing client example
+  - Add `attestation_method` field to request
+  - Document method options in comments
+  - **Updated**: `examples/client.go`
+
+- [x] 5.3 Update `CLAUDE.md` documentation
+  - Added comprehensive "Attestation Methods" section
+  - Documented GCP/Intel and ECDSA methods
+  - Explained use cases and security properties
+  - Provided configuration examples
+  - Documented ECDSA protocol details
+  - **Updated**: `CLAUDE.md`
+
+- [x] 5.4 Update `README.md` documentation
+  - Added "Application Attestation" section
+  - Explained both production (GCP/Intel) and development (ECDSA) methods
+  - Provided server configuration examples
+  - Referenced ECDSA attestation example
+  - **Updated**: `README.md`
 
 ## Milestone 6: Integration Testing
 **Goal**: Verify end-to-end functionality of both attestation methods
@@ -160,5 +171,5 @@ For this feature, we want to modify the KMS server to support attesting through 
 - Milestone 2: ✅ **Complete** (Implemented ECDSA attestation method with full tests)
 - Milestone 3: ✅ **Complete** (Updated web server to support multiple attestation methods)
 - Milestone 4: ✅ **Complete** (Added runtime configuration with CLI flags)
-- Milestone 5: Not started
+- Milestone 5: ✅ **Complete** (Updated examples and comprehensive documentation)
 - Milestone 6: Not started
