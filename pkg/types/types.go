@@ -109,7 +109,7 @@ type SecretsRequestV1 struct {
 	RSAPubKeyTmp      []byte `json:"rsa_pubkey_tmp"`     // Ephemeral RSA public key
 	AttestTime        int64  `json:"attest_time"`        // For key versioning
 	// ECDSA-specific fields (only used when attestation_method is "ecdsa")
-	Challenge []byte `json:"challenge,omitempty"` // Challenge for ECDSA attestation
+	Challenge []byte `json:"challenge,omitempty"`  // Challenge for ECDSA attestation
 	PublicKey []byte `json:"public_key,omitempty"` // Public key for ECDSA attestation
 }
 

@@ -57,7 +57,7 @@ type Node struct {
 	keyStore            *keystore.KeyStore
 	transport           *transport.Client
 	server              *Server
-	attestationVerifier attestation.Verifier // Legacy single-method verifier (deprecated, use attestationManager)
+	attestationVerifier attestation.Verifier            // Legacy single-method verifier (deprecated, use attestationManager)
 	attestationManager  *attestation.AttestationManager // Multi-method attestation manager
 	releaseRegistry     registry.Client
 	rsaEncryption       *encryption.RSAEncryption

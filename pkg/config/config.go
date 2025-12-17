@@ -37,11 +37,11 @@ const (
 	EnvKMSRedisDB        = "KMS_REDIS_DB"
 	EnvKMSRedisKeyPrefix = "KMS_REDIS_KEY_PREFIX"
 	// Attestation configuration
-	EnvKMSGCPProjectID            = "KMS_GCP_PROJECT_ID"
-	EnvKMSAttestationProvider     = "KMS_ATTESTATION_PROVIDER"
-	EnvKMSAttestationDebugMode    = "KMS_ATTESTATION_DEBUG_MODE"
-	EnvKMSEnableGCPAttestation    = "KMS_ENABLE_GCP_ATTESTATION"
-	EnvKMSEnableECDSAAttestation  = "KMS_ENABLE_ECDSA_ATTESTATION"
+	EnvKMSGCPProjectID           = "KMS_GCP_PROJECT_ID"
+	EnvKMSAttestationProvider    = "KMS_ATTESTATION_PROVIDER"
+	EnvKMSAttestationDebugMode   = "KMS_ATTESTATION_DEBUG_MODE"
+	EnvKMSEnableGCPAttestation   = "KMS_ENABLE_GCP_ATTESTATION"
+	EnvKMSEnableECDSAAttestation = "KMS_ENABLE_ECDSA_ATTESTATION"
 )
 
 type CurveType string
