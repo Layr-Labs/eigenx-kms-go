@@ -9,6 +9,12 @@ import (
 	"fmt"
 )
 
+const (
+	// MinRSAKeyBits is the minimum RSA key size (2048 bits per NIST guidelines).
+	// Keys smaller than this are considered cryptographically weak.
+	MinRSAKeyBits = 2048
+)
+
 // RSAEncryption provides RSA encryption/decryption functionality
 type RSAEncryption struct{}
 
@@ -34,6 +40,12 @@ func (e *RSAEncryption) Encrypt(plaintext, publicKeyPEM []byte) ([]byte, error) 
 	rsaPubKey, ok := pubkey.(*rsa.PublicKey)
 	if !ok {
 		return nil, fmt.Errorf("not an RSA public key")
+	}
+
+	// Enforce minimum key size for security
+	keyBits := rsaPubKey.N.BitLen()
+	if keyBits < MinRSAKeyBits {
+		return nil, fmt.Errorf("RSA key too weak: %d bits (minimum %d)", keyBits, MinRSAKeyBits)
 	}
 
 	// Encrypt using OAEP with SHA-256
@@ -69,6 +81,12 @@ func (e *RSAEncryption) Decrypt(ciphertext, privateKeyPEM []byte) ([]byte, error
 		}
 	}
 
+	// Enforce minimum key size for security
+	keyBits := privkey.N.BitLen()
+	if keyBits < MinRSAKeyBits {
+		return nil, fmt.Errorf("RSA key too weak: %d bits (minimum %d)", keyBits, MinRSAKeyBits)
+	}
+
 	// Decrypt using OAEP with SHA-256
 	plaintext, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, privkey, ciphertext, nil)
 	if err != nil {
@@ -78,8 +96,13 @@ func (e *RSAEncryption) Decrypt(ciphertext, privateKeyPEM []byte) ([]byte, error
 	return plaintext, nil
 }
 
-// GenerateKeyPair generates a new RSA key pair for testing
+// GenerateKeyPair generates a new RSA key pair.
+// Minimum key size is 2048 bits per NIST guidelines.
 func GenerateKeyPair(bits int) (privateKeyPEM, publicKeyPEM []byte, err error) {
+	if bits < MinRSAKeyBits {
+		return nil, nil, fmt.Errorf("RSA key size too small: %d bits (minimum %d)", bits, MinRSAKeyBits)
+	}
+
 	// Generate private key
 	privateKey, err := rsa.GenerateKey(rand.Reader, bits)
 	if err != nil {
@@ -105,4 +128,91 @@ func GenerateKeyPair(bits int) (privateKeyPEM, publicKeyPEM []byte, err error) {
 	})
 
 	return privKeyPEM, pubKeyPEM, nil
+}
+
+// GenerateKeyPairForTesting generates an RSA key pair for testing purposes only.
+// WARNING: Uses 1024-bit keys which are NOT secure for production use.
+// This function exists solely to speed up fuzz testing iterations.
+func GenerateKeyPairForTesting(bits int) (privateKeyPEM, publicKeyPEM []byte, err error) {
+	// Generate private key (no minimum check for testing)
+	privateKey, err := rsa.GenerateKey(rand.Reader, bits)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate key: %w", err)
+	}
+
+	// Encode private key to PEM
+	privKeyBytes := x509.MarshalPKCS1PrivateKey(privateKey)
+	privKeyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: privKeyBytes,
+	})
+
+	// Encode public key to PEM
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal public key: %w", err)
+	}
+
+	pubKeyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: pubKeyBytes,
+	})
+
+	return privKeyPEM, pubKeyPEM, nil
+}
+
+// EncryptForTesting encrypts without key size validation (for testing only).
+// WARNING: Do not use in production code.
+func (e *RSAEncryption) EncryptForTesting(plaintext, publicKeyPEM []byte) ([]byte, error) {
+	block, _ := pem.Decode(publicKeyPEM)
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM block")
+	}
+
+	pubkey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse public key: %w", err)
+	}
+
+	rsaPubKey, ok := pubkey.(*rsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("not an RSA public key")
+	}
+
+	ciphertext, err := rsa.EncryptOAEP(sha256.New(), rand.Reader, rsaPubKey, plaintext, nil)
+	if err != nil {
+		return nil, fmt.Errorf("encryption failed: %w", err)
+	}
+
+	return ciphertext, nil
+}
+
+// DecryptForTesting decrypts without key size validation (for testing only).
+// WARNING: Do not use in production code.
+func (e *RSAEncryption) DecryptForTesting(ciphertext, privateKeyPEM []byte) ([]byte, error) {
+	block, _ := pem.Decode(privateKeyPEM)
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM block")
+	}
+
+	privkey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		privkeyInterface, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse private key: %w", err)
+		}
+
+		var ok bool
+		privkey, ok = privkeyInterface.(*rsa.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("not an RSA private key")
+		}
+	}
+
+	plaintext, err := rsa.DecryptOAEP(sha256.New(), rand.Reader, privkey, ciphertext, nil)
+	if err != nil {
+		return nil, fmt.Errorf("decryption failed: %w", err)
+	}
+
+	return plaintext, nil
 }

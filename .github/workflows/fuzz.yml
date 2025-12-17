@@ -1,0 +1,76 @@
+# Native Go Fuzzing (fallback/supplementary to ClusterFuzzLite)
+#
+# This workflow runs Go's native fuzzing as a fallback/supplement to ClusterFuzzLite.
+# For primary fuzzing with corpus management and crash tracking, see clusterfuzzlite.yml
+name: Native Go Fuzz
+
+on:
+  schedule:
+    - cron: "0 3 * * 1" # Mondays at 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      fuzz_time:
+        description: "Fuzz time per package (e.g., 10m, 30m, 1h)"
+        required: false
+        default: "30m"
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150 # padding over the 2h fuzz window
+    strategy:
+      fail-fast: false
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@cdcb36043654635271a94b9a6d1392de5bb323a7 # v5.1.0
+        with:
+          go-version: "1.24.x"
+          cache: true
+
+      - name: Run fuzzers (2h budget)
+        env:
+          GOFLAGS: "-count=1"
+          FUZZ_TIME: ${{ github.event.inputs.fuzz_time || '30m' }}
+        shell: bash -euo pipefail {0}
+        run: |
+          packages=(
+            "./pkg/bls"
+            "./pkg/crypto"
+            "./pkg/dkg"
+            "./pkg/reshare"
+            "./pkg/encryption"
+          )
+
+          total_deadline=$((2 * 60 * 60)) # 2h in seconds
+          start_ts=$(date +%s)
+
+          for pkg in "${packages[@]}"; do
+            echo "==> Fuzzing $pkg for ${FUZZ_TIME}"
+            # Run all fuzz targets in the package; let failures bubble so artifacts upload.
+            go test "$pkg" -run=^$ -fuzz=Fuzz -fuzztime="${FUZZ_TIME}"
+            now=$(date +%s)
+            elapsed=$((now - start_ts))
+            if [ $elapsed -ge $total_deadline ]; then
+              echo "Reached total fuzz budget (${elapsed}s). Stopping."
+              break
+            fi
+          done
+
+      - name: Upload crashers
+        if: failure()
+        uses: actions/upload-artifact@66b67f953a5c19c2e955af559910c17c98f19a5c # v4.4.3
+        with:
+          name: fuzz-crashers-native
+          path: |
+            pkg/**/testdata/fuzz
+            **/testdata/fuzz
+          if-no-files-found: ignore
