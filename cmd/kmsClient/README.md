@@ -54,15 +54,51 @@ A CLI tool for interacting with EigenX KMS operators to encrypt and decrypt appl
 
 ## How It Works
 
-1. **Operator Discovery**: The client queries the blockchain using the AVS address and operator set ID to get the current list of operators and their socket addresses
+### CLI Tool (This Binary)
 
-2. **Master Public Key Retrieval**: Queries all active operators for their current commitments via the `/pubkey` endpoint and computes the master public key using `crypto.ComputeMasterPublicKey()`
+1. **Operator Discovery**: Queries the blockchain using AVS address and operator set ID to get operators
+2. **Master Public Key**: Queries `/pubkey` endpoint from all operators and computes master public key
+3. **Encryption**: Uses IBE where app public key = `H_1(app_id)`
+4. **Decryption**: Collects partial signatures from `/app/sign` endpoint (no attestation required)
+5. **Fault Tolerance**: Handles operator failures automatically
 
-3. **Encryption**: Uses Identity-Based Encryption (IBE) where the application's public key is derived from `H_1(app_id)` and encryption is performed with the master public key
+**Note**: The CLI decrypt command uses `/app/sign` which does NOT require attestation.
 
-4. **Decryption**: Collects threshold partial signatures from operators via the `/app/sign` endpoint, recovers the application's private key using Lagrange interpolation, and decrypts the data
+### Library (pkg/clients/kmsClient)
 
-5. **Fault Tolerance**: Automatically handles operator failures and collects signatures until the threshold is met
+The `KMSClient` Go library supports two modes:
+
+#### Mode 1: Basic IBE (No Attestation)
+- Use `CollectPartialSignatures()` + `DecryptForApp()`
+- Endpoint: `/app/sign`
+- No attestation required
+- Used by this CLI tool
+
+#### Mode 2: Secrets Retrieval (With Attestation)
+- Use `RetrieveSecretsWithOptions()`
+- Endpoint: `/secrets`
+- Requires attestation (GCP/Intel/ECDSA)
+- For TEE applications needing environment variables + attestation proof
+
+**Example with ECDSA attestation:**
+```go
+client := kmsClient.NewKMSClient(operatorURLs, logger)
+result, err := client.RetrieveSecretsWithOptions("my-app", &kmsClient.SecretsOptions{
+    AttestationMethod: "ecdsa",
+    ECDSAPrivateKey:   myPrivateKey, // or nil to generate
+})
+// Returns: app private key + encrypted environment variables
+```
+
+**Example with GCP attestation:**
+```go
+result, err := client.RetrieveSecretsWithOptions("my-app", &kmsClient.SecretsOptions{
+    AttestationMethod: "gcp",
+    ImageDigest:       "sha256:...",
+})
+```
+
+See `examples/ecdsa_attestation.go` for complete implementation.
 
 ## Security
 

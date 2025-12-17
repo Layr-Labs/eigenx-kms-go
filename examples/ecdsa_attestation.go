@@ -1,3 +1,7 @@
+// Build tags prevent this from being compiled with other examples
+//go:build ignore
+// +build ignore
+
 package main
 
 import (

@@ -20,7 +20,7 @@ func BenchmarkECDSAVerification(b *testing.B) {
 	appPrivateKey, _ := crypto.GenerateKey()
 	appPublicKey := crypto.FromECDSAPub(&appPrivateKey.PublicKey)
 	nonce := make([]byte, NonceLength)
-	rand.Read(nonce)
+	_, _ = rand.Read(nonce)
 	challenge, _ := GenerateChallenge(nonce)
 	signature, _ := SignChallenge(appPrivateKey, "bench-app", challenge)
 
@@ -41,7 +41,7 @@ func BenchmarkECDSAVerification(b *testing.B) {
 // BenchmarkECDSAChallengeGeneration benchmarks challenge generation
 func BenchmarkECDSAChallengeGeneration(b *testing.B) {
 	nonce := make([]byte, NonceLength)
-	rand.Read(nonce)
+	_, _ = rand.Read(nonce)
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -53,7 +53,7 @@ func BenchmarkECDSAChallengeGeneration(b *testing.B) {
 func BenchmarkECDSASignature(b *testing.B) {
 	appPrivateKey, _ := crypto.GenerateKey()
 	nonce := make([]byte, NonceLength)
-	rand.Read(nonce)
+	_, _ = rand.Read(nonce)
 	challenge, _ := GenerateChallenge(nonce)
 
 	b.ResetTimer()
@@ -75,7 +75,7 @@ func BenchmarkAttestationManager(b *testing.B) {
 	appPrivateKey, _ := crypto.GenerateKey()
 	appPublicKey := crypto.FromECDSAPub(&appPrivateKey.PublicKey)
 	nonce := make([]byte, NonceLength)
-	rand.Read(nonce)
+	_, _ = rand.Read(nonce)
 	challenge, _ := GenerateChallenge(nonce)
 	signature, _ := SignChallenge(appPrivateKey, "bench-app", challenge)
 
@@ -136,7 +136,7 @@ func BenchmarkMethodComparison(b *testing.B) {
 	appPrivateKey, _ := crypto.GenerateKey()
 	appPublicKey := crypto.FromECDSAPub(&appPrivateKey.PublicKey)
 	nonce := make([]byte, NonceLength)
-	rand.Read(nonce)
+	_, _ = rand.Read(nonce)
 	challenge, _ := GenerateChallenge(nonce)
 	signature, _ := SignChallenge(appPrivateKey, "bench-app", challenge)
 

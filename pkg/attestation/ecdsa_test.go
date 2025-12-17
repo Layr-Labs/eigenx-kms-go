@@ -523,7 +523,7 @@ func BenchmarkECDSAVerify(b *testing.B) {
 	privateKey, _ := crypto.GenerateKey()
 	appID := "bench-app"
 	nonce := make([]byte, NonceLength)
-	rand.Read(nonce)
+	_, _ = rand.Read(nonce)
 	challenge, _ := GenerateChallenge(nonce)
 	signature, _ := SignChallenge(privateKey, appID, challenge)
 	publicKey := crypto.FromECDSAPub(&privateKey.PublicKey)

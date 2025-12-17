@@ -431,7 +431,7 @@ func TestSecretsEndpoint_BothMethodsEnabled(t *testing.T) {
 	appPrivKey, _ := crypto.GenerateKey()
 	appPubKey := crypto.FromECDSAPub(&appPrivKey.PublicKey)
 	nonce := make([]byte, attestation.NonceLength)
-	rand.Read(nonce)
+	_, _ = rand.Read(nonce)
 	challenge, _ := attestation.GenerateChallenge(nonce)
 	signature, _ := attestation.SignChallenge(appPrivKey, "test-app-ecdsa", challenge)
 
