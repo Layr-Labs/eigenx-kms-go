@@ -53,6 +53,3 @@ func TestWaitForAcks_TimesOutIfInsufficient(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "timeout waiting for acks")
 }
-
-
-
