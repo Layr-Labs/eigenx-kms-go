@@ -963,15 +963,21 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 
 			n.logger.Sugar().Infow("Verified and acked share", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "dealer_id", dealerID)
 		} else {
-			n.logger.Sugar().Warnw("Invalid share received", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "dealer_id", dealerID)
+			n.logInvalidShareComplaint("dkg", sessionTimestamp, thisNodeID, dealerID, share, commitments)
 		}
 	}
 
 	// No need to store validShares globally - just use them for finalization later
 
-	// Wait for acknowledgements (as a dealer) - need ALL operators for DKG
+	// Wait for acknowledgements (as a dealer).
+	// We only need a threshold (t-1) of *other* operators to ack, because the dealer itself
+	// implicitly has its own (correct) share. This improves liveness under a single bad/missing ack.
 	myNodeID := addressToNodeID(n.OperatorAddress)
-	if err := waitForAcks(session, myNodeID, protocolTimeout); err != nil {
+	requiredAcks := threshold - 1
+	if requiredAcks < 0 {
+		requiredAcks = 0
+	}
+	if err := waitForAcks(session, myNodeID, requiredAcks, protocolTimeout); err != nil {
 		return fmt.Errorf("insufficient acknowledgements: %v", err)
 	}
 
@@ -1018,12 +1024,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 		"merkle_root", fmt.Sprintf("0x%x", merkleTree.Root))
 
 	// Submit to contract with retry logic
-	err = n.submitCommitmentWithRetry(
-		ctx,
-		session.SessionTimestamp,
-		myCommitmentHash,
-		merkleTree.Root,
-	)
+	err = n.submitCommitmentWithRetry(ctx, session.SessionTimestamp, myCommitmentHash, merkleTree.Root)
 	if err != nil {
 		return fmt.Errorf("failed to submit commitment after retries: %w", err)
 	}
@@ -1274,16 +1275,19 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 				"node_id", thisNodeID,
 				"dealer_id", dealerID)
 		} else {
-			n.logger.Sugar().Warnw("Invalid reshare share received",
-				"operator_address", n.OperatorAddress.Hex(),
-				"node_id", thisNodeID,
-				"dealer_id", dealerID)
+			n.logInvalidShareComplaint("reshare", sessionTimestamp, thisNodeID, dealerID, share, commitments)
 		}
 	}
 
-	// Wait for acknowledgements (as a dealer)
+	// Wait for acknowledgements (as a dealer).
+	// We only need a threshold (t-1) of *other* operators to ack, because the dealer itself
+	// implicitly has its own (correct) share. This improves liveness under a single bad/missing ack.
 	myNodeID := addressToNodeID(n.OperatorAddress)
-	if err := waitForAcks(session, myNodeID, protocolTimeout); err != nil {
+	requiredAcks := newThreshold - 1
+	if requiredAcks < 0 {
+		requiredAcks = 0
+	}
+	if err := waitForAcks(session, myNodeID, requiredAcks, protocolTimeout); err != nil {
 		return fmt.Errorf("insufficient reshare acknowledgements: %v", err)
 	}
 
@@ -1327,12 +1331,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		"merkle_root", fmt.Sprintf("0x%x", merkleTree.Root))
 
 	// Submit to contract with retry logic
-	err = n.submitCommitmentWithRetry(
-		ctx,
-		session.SessionTimestamp,
-		myCommitmentHash,
-		merkleTree.Root,
-	)
+	err = n.submitCommitmentWithRetry(ctx, session.SessionTimestamp, myCommitmentHash, merkleTree.Root)
 	if err != nil {
 		return fmt.Errorf("failed to submit commitment in reshare after retries: %w", err)
 	}
@@ -1608,14 +1607,21 @@ func waitForCommitments(session *ProtocolSession, timeout time.Duration) error {
 	}
 }
 
-// waitForAcks waits for all acknowledgements to be received for a specific dealer using polling
+// waitForAcks waits for at least required acknowledgements to be received for a specific dealer using polling.
 // Note: We poll instead of using acksCompleteChan because the channel signals when ANY dealer
 // completes, not when THIS specific dealer completes. Each dealer needs to wait for their own acks.
-func waitForAcks(session *ProtocolSession, dealerNodeID int64, timeout time.Duration) error {
+func waitForAcks(session *ProtocolSession, dealerNodeID int64, required int, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	expected := len(session.Operators) - 1 // All operators except dealer itself
+	// Clamp required to a sensible range.
+	maxPossible := len(session.Operators) - 1 // All operators except dealer itself
+	if required < 0 {
+		required = 0
+	}
+	if required > maxPossible {
+		required = maxPossible
+	}
 
 	ticker := time.NewTicker(50 * time.Millisecond)
 	defer ticker.Stop()
@@ -1630,7 +1636,7 @@ func waitForAcks(session *ProtocolSession, dealerNodeID int64, timeout time.Dura
 				received = len(ackMap)
 			}
 			session.mu.RUnlock()
-			return fmt.Errorf("timeout waiting for acks: got %d/%d", received, expected)
+			return fmt.Errorf("timeout waiting for acks: got %d/%d", received, required)
 
 		case <-ticker.C:
 			session.mu.RLock()
@@ -1641,7 +1647,7 @@ func waitForAcks(session *ProtocolSession, dealerNodeID int64, timeout time.Dura
 			}
 			session.mu.RUnlock()
 
-			if received >= expected {
+			if received >= required {
 				return nil
 			}
 		}
@@ -1721,6 +1727,35 @@ func (n *Node) verifyMessage(authMsg *types.AuthenticatedMessage, senderPeer *pe
 		return fmt.Errorf("unsupported curve type for sender: %v", senderPeer.CurveType)
 	}
 	return nil
+}
+
+func (n *Node) logInvalidShareComplaint(protocol string, sessionTimestamp int64, receiverNodeID int64, dealerID int64, share *fr.Element, commitments []types.G2Point) {
+	// We intentionally log a compact "complaint record" that is sufficient to correlate
+	// off-chain alerts and (future) on-chain fraud proofs without dumping huge payloads.
+	//
+	// Evidence included:
+	// - share hash (keccak256) and share value (field element string)
+	// - commitment hash (sha256) and commitment count
+	var shareHash [32]byte
+	shareStr := ""
+	if share != nil {
+		shareHash = eigenxcrypto.HashShareForAck(share)
+		shareStr = types.SerializeFr(share).Data
+	}
+
+	commitmentHash := eigenxcrypto.HashCommitment(commitments)
+
+	n.logger.Sugar().Warnw("ComplaintRecord: invalid share",
+		"protocol", protocol,
+		"operator_address", n.OperatorAddress.Hex(),
+		"receiver_node_id", receiverNodeID,
+		"session_timestamp", sessionTimestamp,
+		"dealer_id", dealerID,
+		"share_hash", fmt.Sprintf("0x%x", shareHash[:]),
+		"share", shareStr,
+		"commitment_hash", fmt.Sprintf("0x%x", commitmentHash[:]),
+		"commitment_count", len(commitments),
+	)
 }
 
 // findPeerByAddress finds a peer by their operator address
