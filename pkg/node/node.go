@@ -970,10 +970,10 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	// No need to store validShares globally - just use them for finalization later
 
 	// Wait for acknowledgements (as a dealer).
-	// We only need a threshold (t-1) of *other* operators to ack, because the dealer itself
-	// implicitly has its own (correct) share. This improves liveness under a single bad/missing ack.
+	// We require a threshold (t) of *other* operators to ack, so that there exist t non-dealer holders
+	// of this dealer's contribution (robust even if the dealer goes offline later).
 	myNodeID := addressToNodeID(n.OperatorAddress)
-	requiredAcks := threshold - 1
+	requiredAcks := threshold
 	if requiredAcks < 0 {
 		requiredAcks = 0
 	}
@@ -1280,10 +1280,10 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	}
 
 	// Wait for acknowledgements (as a dealer).
-	// We only need a threshold (t-1) of *other* operators to ack, because the dealer itself
-	// implicitly has its own (correct) share. This improves liveness under a single bad/missing ack.
+	// We require a threshold (t) of *other* operators to ack, so that there exist t non-dealer holders
+	// of this dealer's contribution (robust even if the dealer goes offline later).
 	myNodeID := addressToNodeID(n.OperatorAddress)
-	requiredAcks := newThreshold - 1
+	requiredAcks := newThreshold
 	if requiredAcks < 0 {
 		requiredAcks = 0
 	}
