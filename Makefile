@@ -33,7 +33,7 @@ build/cmd/kmsServer:
 build/cmd/registerOperator:
 	go build $(GO_FLAGS) -o ${BIN}/register-operator ./cmd/registerOperator
 
-.PHONY: cmd/kmsClient
+.PHONY: build/cmd/kmsClient
 build/cmd/kmsClient:
 	go build $(GO_FLAGS) -o ${BIN}/kms-client ./cmd/kmsClient
 
