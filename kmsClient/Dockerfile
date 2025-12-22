@@ -9,7 +9,7 @@ COPY . /build
 
 WORKDIR /build
 
-RUN make all
+RUN make cmd/kmsClient
 
 # Copy all binaries to a known location
 RUN cp bin/* /usr/local/bin/
