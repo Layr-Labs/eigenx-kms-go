@@ -183,3 +183,6 @@ make lint
 ## License
 
 See LICENSE file for details.
+
+## ⚠️ Warning: This is Alpha, non-audited code ⚠️
+eigenx-kms-go is in active development and is not yet audited. Use at your own risk.
