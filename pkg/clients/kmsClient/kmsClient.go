@@ -2,6 +2,8 @@ package kmsClient
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,7 +13,9 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/ethereum/go-ethereum/common"
+	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
@@ -48,9 +52,39 @@ type SecretsResult struct {
 	ThresholdNeeded int
 }
 
+// SecretsOptions configures secret retrieval behavior
+type SecretsOptions struct {
+	// AttestationMethod specifies which attestation method to use
+	// Options: "gcp" (default), "intel", "ecdsa"
+	AttestationMethod string
+
+	// For GCP/Intel attestation (production)
+	ImageDigest string
+
+	// For ECDSA attestation (development)
+	ECDSAPrivateKey *ecdsa.PrivateKey // Optional: if nil, generates new key
+}
+
 // RetrieveSecrets implements the complete application secret retrieval flow
+// Deprecated: Use RetrieveSecretsWithOptions for multi-method attestation support
 func (c *KMSClient) RetrieveSecrets(appID, imageDigest string) (*SecretsResult, error) {
-	fmt.Printf("KMS Client: Starting secret retrieval for app %s\n", appID)
+	// Use default GCP attestation for backward compatibility
+	return c.RetrieveSecretsWithOptions(appID, &SecretsOptions{
+		AttestationMethod: "gcp",
+		ImageDigest:       imageDigest,
+	})
+}
+
+// RetrieveSecretsWithOptions implements secret retrieval with configurable attestation method
+func (c *KMSClient) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) (*SecretsResult, error) {
+	if opts == nil {
+		opts = &SecretsOptions{AttestationMethod: "gcp"}
+	}
+	if opts.AttestationMethod == "" {
+		opts.AttestationMethod = "gcp"
+	}
+
+	fmt.Printf("KMS Client: Starting secret retrieval for app %s (method: %s)\n", appID, opts.AttestationMethod)
 
 	// Step 1: Generate ephemeral RSA key pair
 	privKeyPEM, pubKeyPEM, err := encryption.GenerateKeyPair(2048)
@@ -60,24 +94,40 @@ func (c *KMSClient) RetrieveSecrets(appID, imageDigest string) (*SecretsResult, 
 
 	fmt.Printf("KMS Client: Generated ephemeral RSA key pair\n")
 
-	// Step 2: Create runtime attestation (simulated)
-	attestationClaims := types.AttestationClaims{
-		AppID:       appID,
-		ImageDigest: imageDigest,
-		IssuedAt:    time.Now().Unix(),
-		PublicKey:   pubKeyPEM,
-	}
-	attestationBytes, err := json.Marshal(attestationClaims)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create attestation: %w", err)
-	}
+	// Step 2: Create attestation based on method
+	var req types.SecretsRequestV1
 
-	// Step 3: Create secrets request
-	req := types.SecretsRequestV1{
-		AppID:        appID,
-		Attestation:  attestationBytes,
-		RSAPubKeyTmp: pubKeyPEM,
-		AttestTime:   time.Now().Unix(),
+	switch opts.AttestationMethod {
+	case "ecdsa":
+		// ECDSA attestation flow
+		req, err = c.createECDSAAttestationRequest(appID, opts, pubKeyPEM)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create ECDSA attestation: %w", err)
+		}
+
+	case "gcp", "intel":
+		// GCP/Intel attestation flow (simulated for testing)
+		attestationClaims := types.AttestationClaims{
+			AppID:       appID,
+			ImageDigest: opts.ImageDigest,
+			IssuedAt:    time.Now().Unix(),
+			PublicKey:   pubKeyPEM,
+		}
+		attestationBytes, err := json.Marshal(attestationClaims)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create attestation: %w", err)
+		}
+
+		req = types.SecretsRequestV1{
+			AppID:             appID,
+			AttestationMethod: opts.AttestationMethod,
+			Attestation:       attestationBytes,
+			RSAPubKeyTmp:      pubKeyPEM,
+			AttestTime:        time.Now().Unix(),
+		}
+
+	default:
+		return nil, fmt.Errorf("unsupported attestation method: %s", opts.AttestationMethod)
 	}
 
 	// Step 4: Request secrets from all KMS servers
@@ -330,4 +380,57 @@ func (c *KMSClient) DecryptForApp(appID string, ciphertext []byte, attestationTi
 
 	// Decrypt using recovered key
 	return crypto.DecryptForApp(appID, *appPrivateKey, ciphertext)
+}
+
+// createECDSAAttestationRequest creates a SecretsRequestV1 with ECDSA attestation
+func (c *KMSClient) createECDSAAttestationRequest(appID string, opts *SecretsOptions, rsaPubKeyPEM []byte) (types.SecretsRequestV1, error) {
+	// Use provided private key or generate new one
+	var privateKey *ecdsa.PrivateKey
+	var err error
+
+	if opts.ECDSAPrivateKey != nil {
+		privateKey = opts.ECDSAPrivateKey
+		fmt.Printf("KMS Client: Using provided ECDSA private key\n")
+	} else {
+		privateKey, err = ethcrypto.GenerateKey()
+		if err != nil {
+			return types.SecretsRequestV1{}, fmt.Errorf("failed to generate ECDSA key: %w", err)
+		}
+		fmt.Printf("KMS Client: Generated new ECDSA private key\n")
+	}
+
+	publicKey := ethcrypto.FromECDSAPub(&privateKey.PublicKey)
+	address := ethcrypto.PubkeyToAddress(privateKey.PublicKey)
+	fmt.Printf("KMS Client: ECDSA address: %s\n", address.Hex())
+
+	// Generate challenge
+	nonce := make([]byte, attestation.NonceLength)
+	if _, err := rand.Read(nonce); err != nil {
+		return types.SecretsRequestV1{}, fmt.Errorf("failed to generate nonce: %w", err)
+	}
+
+	challenge, err := attestation.GenerateChallenge(nonce)
+	if err != nil {
+		return types.SecretsRequestV1{}, fmt.Errorf("failed to generate challenge: %w", err)
+	}
+
+	fmt.Printf("KMS Client: Generated challenge: %s\n", challenge[:50]+"...")
+
+	// Sign challenge
+	signature, err := attestation.SignChallenge(privateKey, appID, challenge)
+	if err != nil {
+		return types.SecretsRequestV1{}, fmt.Errorf("failed to sign challenge: %w", err)
+	}
+
+	fmt.Printf("KMS Client: Created ECDSA signature\n")
+
+	return types.SecretsRequestV1{
+		AppID:             appID,
+		AttestationMethod: "ecdsa",
+		Attestation:       signature,
+		Challenge:         []byte(challenge),
+		PublicKey:         publicKey,
+		RSAPubKeyTmp:      rsaPubKeyPEM,
+		AttestTime:        time.Now().Unix(),
+	}, nil
 }

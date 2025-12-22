@@ -148,6 +148,65 @@ eigenx-kms-go/
 - Dealers must receive threshold acknowledgements before proceeding
 - Uses same BN254 signing scheme as transport layer
 
+## Attestation Methods
+
+The KMS server supports multiple attestation methods for verifying application identity and integrity:
+
+### Google Confidential Space (GCP) / Intel Trust Authority
+- **Method Name**: `"gcp"` or `"intel"`
+- **Use Case**: Production environments requiring hardware TEE attestation
+- **Provides**: Proof of TEE execution environment, software image integrity
+- **Format**: JWT token from Confidential Space or Trust Authority
+- **Security**: Highest - cryptographically proves code running in secure enclave
+- **Configuration**: Requires `--gcp-project-id` and `--attestation-provider`
+- **Default**: Enabled by default (`--enable-gcp-attestation=true`)
+
+### ECDSA Signature-Based
+- **Method Name**: `"ecdsa"`
+- **Use Case**: Development, testing, non-TEE environments
+- **Provides**: Proof of ECDSA private key ownership
+- **Format**: Challenge-response with ECDSA signature
+- **Security**: Basic - only proves key ownership, not execution environment
+- **Configuration**: Enable with `--enable-ecdsa-attestation=true`
+- **Default**: Disabled by default
+
+### Attestation Method Selection
+
+Configure at server startup:
+```bash
+# GCP only (default)
+./bin/kms-server --gcp-project-id my-project ...
+
+# ECDSA only (development)
+./bin/kms-server --enable-gcp-attestation=false --enable-ecdsa-attestation=true ...
+
+# Both methods enabled
+./bin/kms-server --gcp-project-id my-project --enable-ecdsa-attestation=true ...
+```
+
+Client specifies method in `/secrets` request:
+```json
+{
+  "app_id": "my-app",
+  "attestation_method": "ecdsa",
+  "attestation": "<signature>",
+  "challenge": "<timestamp>-<nonce>",
+  "public_key": "<ecdsa-pubkey>"
+}
+```
+
+### ECDSA Attestation Protocol
+
+Challenge format: `<timestamp>-<nonce_hex>` (e.g., `1702857600-a1b2c3d4...`)
+- `timestamp`: Unix seconds (prevents replay attacks)
+- `nonce`: 32 bytes hex (prevents replay within time window)
+
+Signed message: `keccak256(appID || "-" || challenge || "-" || publicKey_hex)`
+
+Time window: 5 minutes (default, configurable)
+
+See `examples/ecdsa_attestation.go` for complete implementation example.
+
 ## KMS Client Usage
 
 The `kmsClient` CLI provides application developers with tools to encrypt/decrypt data using the distributed KMS:

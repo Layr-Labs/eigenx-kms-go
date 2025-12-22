@@ -1,3 +1,7 @@
+// Build tags prevent this from being compiled with other examples
+//go:build ignore
+// +build ignore
+
 package main
 
 import (
@@ -37,12 +41,14 @@ func ExampleAppClient() {
 	}
 	attestationBytes, _ := json.Marshal(testClaims)
 
-	// Step 3: Create secrets request
+	// Step 3: Create secrets request (using stub/test attestation)
+	// Note: In production, use "gcp" or "intel" with proper TEE attestation
 	req := types.SecretsRequestV1{
-		AppID:        appID,
-		Attestation:  attestationBytes,
-		RSAPubKeyTmp: pubKeyPEM,
-		AttestTime:   time.Now().Unix(),
+		AppID:             appID,
+		AttestationMethod: "gcp", // Can be "gcp", "intel", or "ecdsa"
+		Attestation:       attestationBytes,
+		RSAPubKeyTmp:      pubKeyPEM,
+		AttestTime:        time.Now().Unix(),
 	}
 
 	// Step 4: Request secrets from multiple KMS servers (threshold required)

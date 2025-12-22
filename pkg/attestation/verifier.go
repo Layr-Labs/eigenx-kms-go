@@ -93,3 +93,28 @@ func (v *StubVerifier) VerifyAttestation(attestation []byte) (*types.Attestation
 	fmt.Printf("Verified attestation for app_id: %s, image: %s\n", claims.AppID, claims.ImageDigest)
 	return &claims, nil
 }
+
+// ManagerVerifier adapts AttestationManager to implement the Verifier interface
+// for backward compatibility with existing code that uses the Verifier interface.
+type ManagerVerifier struct {
+	manager    *AttestationManager
+	methodName string // Default method to use when verifying
+}
+
+// NewManagerVerifier creates a verifier that uses AttestationManager with a default method
+func NewManagerVerifier(manager *AttestationManager, defaultMethod string) *ManagerVerifier {
+	return &ManagerVerifier{
+		manager:    manager,
+		methodName: defaultMethod,
+	}
+}
+
+// VerifyAttestation verifies an attestation using the default method
+func (v *ManagerVerifier) VerifyAttestation(attestation []byte) (*types.AttestationClaims, error) {
+	request := &AttestationRequest{
+		Method:      v.methodName,
+		Attestation: attestation,
+	}
+
+	return v.manager.VerifyWithMethod(v.methodName, request)
+}
