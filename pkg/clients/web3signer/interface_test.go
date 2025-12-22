@@ -20,7 +20,7 @@ func Test_ClientImplementsInterface(t *testing.T) {
 	var _ IWeb3Signer = client
 
 	// Verify we can assign the client to an interface variable
-	//nolint:gosimple,staticcheck
+	//nolint:staticcheck
 	var signer IWeb3Signer
 	signer = client
 	assert.NotNil(t, signer)
