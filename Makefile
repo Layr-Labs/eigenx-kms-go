@@ -37,6 +37,10 @@ build/cmd/registerOperator:
 build/cmd/kmsClient:
 	go build $(GO_FLAGS) -o ${BIN}/kms-client ./cmd/kmsClient
 
+.PHONY: build/cmd/kmsClient/static
+build/cmd/kmsClient/static:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build $(GO_FLAGS) -trimpath -buildvcs=false -ldflags="-s -w -extldflags '-static'"- o ${BIN}/kms-client ./cmd/kmsClient
+
 .PHONY: build/cmd
 build/cmd: build/cmd/kmsServer build/cmd/registerOperator build/cmd/kmsClient
 
