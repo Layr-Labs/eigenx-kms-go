@@ -15,8 +15,8 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
-	kmsClient "github.com/Layr-Labs/eigenx-kms-go/pkg/clients/kmsClient"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/web3signer"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/kmsclient"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
@@ -330,17 +330,21 @@ func Test_OnChainIntegration(t *testing.T) {
 	// ------------------------------------------------------------------------
 	t.Log("Using KMSClient to get master public key...")
 
-	operatorURLs := []string{
-		chainConfig.OperatorSocket1,
-		chainConfig.OperatorSocket2,
-		chainConfig.OperatorSocket3,
-		chainConfig.OperatorSocket4,
-		chainConfig.OperatorSocket5,
-	}
+	// Create KMS client with contract caller for fetching operators on-demand
+	client, err := kmsclient.NewClient(&kmsclient.ClientConfig{
+		AVSAddress:     chainConfig.AVSAccountAddress,
+		OperatorSetID:  0,
+		Logger:         l,
+		ContractCaller: l1ContractCaller,
+	})
+	require.NoError(t, err)
 
-	client := kmsClient.NewKMSClient(operatorURLs, l)
+	// Get operators and master public key
+	operators, err := client.GetOperators()
+	require.NoError(t, err)
+	require.NotEmpty(t, operators.Peers, "Should have operators")
 
-	masterPubKey, err := client.GetMasterPublicKey()
+	masterPubKey, err := client.GetMasterPublicKey(operators)
 	require.NoError(t, err)
 	isMasterPubKeyZero, err := masterPubKey.IsZero()
 	require.NoError(t, err)
@@ -357,7 +361,7 @@ func Test_OnChainIntegration(t *testing.T) {
 	plaintext := []byte("secret-integration-test-data")
 
 	// Encrypt using KMSClient
-	ciphertext, err := client.EncryptForApp(appID, masterPubKey, plaintext)
+	ciphertext, err := client.EncryptForApp(appID, plaintext)
 	require.NoError(t, err)
 	t.Logf("Encrypted %d bytes to %d bytes", len(plaintext), len(ciphertext))
 
@@ -389,15 +393,18 @@ func Test_OnChainIntegration(t *testing.T) {
 	}
 
 	// Get master public key again - should be unchanged after reshare
-	masterPubKeyAfter, err := client.GetMasterPublicKey()
+	operatorsAfterReshare, err := client.GetOperators()
 	require.NoError(t, err)
-	require.True(t, masterPubKey.IsEqual(&masterPubKeyAfter), "Master public key should be preserved after reshare")
+
+	masterPubKeyAfter, err := client.GetMasterPublicKey(operatorsAfterReshare)
+	require.NoError(t, err)
+	require.True(t, masterPubKey.IsEqual(masterPubKeyAfter), "Master public key should be preserved after reshare")
 
 	t.Logf("✓ Master public key verified after reshare period")
 
 	// Test encryption/decryption still works after reshare
 	plaintext2 := []byte("secret-after-reshare")
-	ciphertext2, err := client.EncryptForApp(appID, masterPubKeyAfter, plaintext2)
+	ciphertext2, err := client.EncryptForApp(appID, plaintext2)
 	require.NoError(t, err)
 
 	decrypted2, err := client.DecryptForApp(appID, ciphertext2, attestationTime)
