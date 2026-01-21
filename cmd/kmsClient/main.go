@@ -10,8 +10,8 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 	"github.com/urfave/cli/v2"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/kmsClient"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/kmsclient"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 )
 
@@ -114,7 +114,7 @@ This client can:
 }
 
 // createClient creates a new KMS client from CLI context
-func createClient(c *cli.Context) (*kmsclient.Client, error) {
+func createClient(c *cli.Context) (*kmsClient.Client, error) {
 	// Create logger
 	zapLogger, err := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 	if err != nil {
@@ -141,14 +141,14 @@ func createClient(c *cli.Context) (*kmsclient.Client, error) {
 	}
 
 	// Create KMS client with injected dependencies
-	config := &kmsclient.ClientConfig{
+	config := &kmsClient.ClientConfig{
 		AVSAddress:     c.String("avs-address"),
 		OperatorSetID:  uint32(c.Uint("operator-set-id")),
 		Logger:         zapLogger,
 		ContractCaller: contractCaller,
 	}
 
-	client, err := kmsclient.NewClient(config)
+	client, err := kmsClient.NewClient(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create KMS client: %w", err)
 	}

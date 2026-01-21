@@ -7,7 +7,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
 
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/kmsclient"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/kmsClient"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/testutil"
@@ -27,7 +27,7 @@ func Test_IBEIntegration(t *testing.T) {
 	}
 
 	// Create KMS client with mock contract caller for testing
-	client, err := kmsclient.NewClient(&kmsclient.ClientConfig{
+	client, err := kmsClient.NewClient(&kmsClient.ClientConfig{
 		AVSAddress:     "0x0000000000000000000000000000000000000000", // Mock address for test
 		OperatorSetID:  0,
 		Logger:         clientLogger,

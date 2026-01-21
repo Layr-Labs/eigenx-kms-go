@@ -15,8 +15,8 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/kmsClient"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/web3signer"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/kmsclient"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
@@ -331,7 +331,7 @@ func Test_OnChainIntegration(t *testing.T) {
 	t.Log("Using KMSClient to get master public key...")
 
 	// Create KMS client with contract caller for fetching operators on-demand
-	client, err := kmsclient.NewClient(&kmsclient.ClientConfig{
+	client, err := kmsClient.NewClient(&kmsClient.ClientConfig{
 		AVSAddress:     chainConfig.AVSAccountAddress,
 		OperatorSetID:  0,
 		Logger:         l,

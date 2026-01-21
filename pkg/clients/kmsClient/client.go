@@ -1,4 +1,4 @@
-package kmsclient
+package kmsClient
 
 import (
 	"bytes"
