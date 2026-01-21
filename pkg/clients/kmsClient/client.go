@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -34,6 +35,7 @@ type ClientConfig struct {
 	OperatorSetID  uint32
 	Logger         *zap.Logger
 	ContractCaller ContractCaller
+	HTTPClient     *http.Client // Optional: if nil, creates default client with 30s timeout
 }
 
 // Client provides a reusable library interface for KMS operations
@@ -41,6 +43,7 @@ type Client struct {
 	avsAddress     string
 	operatorSetID  uint32
 	contractCaller ContractCaller
+	httpClient     *http.Client
 	logger         *zap.Logger
 }
 
@@ -86,10 +89,19 @@ func NewClient(config *ClientConfig) (*Client, error) {
 		return nil, fmt.Errorf("contract caller is required")
 	}
 
+	// Use provided HTTP client or create default with 30s timeout
+	httpClient := config.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{
+			Timeout: 30 * time.Second,
+		}
+	}
+
 	return &Client{
 		avsAddress:     config.AVSAddress,
 		operatorSetID:  config.OperatorSetID,
 		contractCaller: config.ContractCaller,
+		httpClient:     httpClient,
 		logger:         config.Logger,
 	}, nil
 }
@@ -123,7 +135,7 @@ func (c *Client) GetOperators() (*peering.OperatorSetPeers, error) {
 	return operators, nil
 }
 
-// GetMasterPublicKey fetches the master public key from operators
+// GetMasterPublicKey fetches the master public key from operators concurrently
 func (c *Client) GetMasterPublicKey(operators *peering.OperatorSetPeers) (*types.G2Point, error) {
 	if operators == nil || len(operators.Peers) == 0 {
 		return nil, fmt.Errorf("no operators provided")
@@ -131,71 +143,92 @@ func (c *Client) GetMasterPublicKey(operators *peering.OperatorSetPeers) (*types
 
 	c.logger.Sugar().Infow("Collecting commitments from operators", "count", len(operators.Peers))
 
-	// Step 1: Collect commitments from all operators
-	var allCommitments [][]types.G2Point
-	successful := 0
-
-	for i, operator := range operators.Peers {
-		resp, err := http.Get(operator.SocketAddress + "/pubkey")
-		if err != nil {
-			c.logger.Sugar().Warnw("Failed to contact operator",
-				"operator_index", i,
-				"address", operator.SocketAddress,
-				"error", err,
-			)
-			continue
-		}
-		defer func() { _ = resp.Body.Close() }()
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			c.logger.Sugar().Warnw("Operator returned error",
-				"operator_index", i,
-				"status_code", resp.StatusCode,
-				"body", string(body),
-			)
-			continue
-		}
-
-		var response struct {
-			OperatorAddress string          `json:"operatorAddress"`
-			Commitments     []types.G2Point `json:"commitments"`
-			Version         int64           `json:"version"`
-			IsActive        bool            `json:"isActive"`
-		}
-
-		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-			c.logger.Sugar().Warnw("Failed to decode response from operator",
-				"operator_index", i,
-				"error", err,
-			)
-			continue
-		}
-
-		if !response.IsActive {
-			c.logger.Sugar().Warnw("Operator does not have active key version", "operator_index", i)
-			continue
-		}
-
-		if len(response.Commitments) == 0 {
-			c.logger.Sugar().Warnw("Operator has no commitments", "operator_index", i)
-			continue
-		}
-
-		allCommitments = append(allCommitments, response.Commitments)
-		successful++
-		c.logger.Sugar().Debugw("Collected commitments from operator",
-			"operator_index", i,
-			"operator_address", response.OperatorAddress,
-		)
+	type result struct {
+		commitments []types.G2Point
+		opAddress   string
 	}
 
-	if successful == 0 {
+	resultChan := make(chan result, len(operators.Peers))
+	var wg sync.WaitGroup
+
+	// Collect commitments from all operators concurrently
+	for i, operator := range operators.Peers {
+		wg.Add(1)
+		go func(idx int, op *peering.OperatorSetPeer) {
+			defer wg.Done()
+
+			resp, err := c.httpClient.Get(op.SocketAddress + "/pubkey")
+			if err != nil {
+				c.logger.Sugar().Warnw("Failed to contact operator",
+					"operator_index", idx,
+					"address", op.SocketAddress,
+					"error", err,
+				)
+				return
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				c.logger.Sugar().Warnw("Operator returned error",
+					"operator_index", idx,
+					"status_code", resp.StatusCode,
+					"body", string(body),
+				)
+				return
+			}
+
+			var response struct {
+				OperatorAddress string          `json:"operatorAddress"`
+				Commitments     []types.G2Point `json:"commitments"`
+				Version         int64           `json:"version"`
+				IsActive        bool            `json:"isActive"`
+			}
+
+			if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+				c.logger.Sugar().Warnw("Failed to decode response from operator",
+					"operator_index", idx,
+					"error", err,
+				)
+				return
+			}
+
+			if !response.IsActive {
+				c.logger.Sugar().Warnw("Operator does not have active key version", "operator_index", idx)
+				return
+			}
+
+			if len(response.Commitments) == 0 {
+				c.logger.Sugar().Warnw("Operator has no commitments", "operator_index", idx)
+				return
+			}
+
+			c.logger.Sugar().Debugw("Collected commitments from operator",
+				"operator_index", idx,
+				"operator_address", response.OperatorAddress,
+			)
+			resultChan <- result{commitments: response.Commitments, opAddress: response.OperatorAddress}
+		}(i, operator)
+	}
+
+	// Wait for all goroutines to complete
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Collect results
+	var allCommitments [][]types.G2Point
+	for res := range resultChan {
+		allCommitments = append(allCommitments, res.commitments)
+	}
+
+	if len(allCommitments) == 0 {
 		return nil, fmt.Errorf("failed to collect commitments from any operator")
 	}
 
-	// Step 2: Compute master public key from commitments
-	c.logger.Sugar().Infow("Computing master public key", "commitments", successful)
+	// Compute master public key from commitments
+	c.logger.Sugar().Infow("Computing master public key", "commitments", len(allCommitments))
 	masterPubKey, err := crypto.ComputeMasterPublicKey(allCommitments)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute master public key: %w", err)
@@ -233,7 +266,7 @@ func (c *Client) Encrypt(appID string, data []byte, operators *peering.OperatorS
 	return encryptedData, nil
 }
 
-// CollectPartialSignatures collects partial signatures from threshold number of operators
+// CollectPartialSignatures collects partial signatures from threshold number of operators concurrently
 func (c *Client) CollectPartialSignatures(appID string, operators *peering.OperatorSetPeers, threshold int) (map[int64]types.G1Point, error) {
 	if appID == "" {
 		return nil, fmt.Errorf("app ID is required")
@@ -251,92 +284,112 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 		"total_operators", len(operators.Peers),
 	)
 
-	partialSigs := make(map[int64]types.G1Point)
-
-	// Generate a random attestation time for signature requests
-	attestationTime := int64(0) // Use current active key version
-
-	collected := 0
-	for i, operator := range operators.Peers {
-		if collected >= threshold {
-			break
-		}
-
-		// Request partial signature from operator
-		req := types.AppSignRequest{
-			AppID:           appID,
-			AttestationTime: attestationTime,
-		}
-
-		reqBody, err := json.Marshal(req)
-		if err != nil {
-			c.logger.Sugar().Warnw("Failed to marshal request for operator",
-				"operator_index", i,
-				"error", err,
-			)
-			continue
-		}
-
-		resp, err := http.Post(operator.SocketAddress+"/app/sign", "application/json", bytes.NewReader(reqBody))
-		if err != nil {
-			c.logger.Sugar().Warnw("Failed to contact operator",
-				"operator_index", i,
-				"address", operator.SocketAddress,
-				"error", err,
-			)
-			continue
-		}
-		defer func() { _ = resp.Body.Close() }()
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			c.logger.Sugar().Warnw("Operator returned error",
-				"operator_index", i,
-				"status_code", resp.StatusCode,
-				"body", string(body),
-			)
-			continue
-		}
-
-		var response types.AppSignResponse
-		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-			c.logger.Sugar().Warnw("Failed to decode response from operator",
-				"operator_index", i,
-				"error", err,
-			)
-			continue
-		}
-
-		// Validate partial signature is not zero
-		isZero, err := response.PartialSignature.IsZero()
-		if err != nil {
-			c.logger.Sugar().Warnw("Failed to validate partial signature", "operator_index", i, "error", err)
-			continue
-		}
-		if isZero {
-			c.logger.Sugar().Warnw("Received zero partial signature", "operator_index", i)
-			continue
-		}
-
-		// Convert operator address to node ID (must match the IDs used during DKG)
-		operatorAddress := common.HexToAddress(response.OperatorAddress)
-		nodeID := util.AddressToNodeID(operatorAddress)
-
-		partialSigs[nodeID] = response.PartialSignature
-		collected++
-
-		c.logger.Sugar().Debugw("Collected partial signature from operator",
-			"operator_index", i,
-			"node_id", nodeID,
-			"operator_address", response.OperatorAddress)
+	type result struct {
+		nodeID    int64
+		signature types.G1Point
+		opAddress string
 	}
 
-	if collected < threshold {
-		return nil, fmt.Errorf("insufficient partial signatures: collected %d, needed %d", collected, threshold)
+	resultChan := make(chan result, len(operators.Peers))
+	var wg sync.WaitGroup
+
+	// Request partial signatures from all operators concurrently
+	attestationTime := int64(0) // Use current active key version
+
+	for i, operator := range operators.Peers {
+		wg.Add(1)
+		go func(idx int, op *peering.OperatorSetPeer) {
+			defer wg.Done()
+
+			req := types.AppSignRequest{
+				AppID:           appID,
+				AttestationTime: attestationTime,
+			}
+
+			reqBody, err := json.Marshal(req)
+			if err != nil {
+				c.logger.Sugar().Warnw("Failed to marshal request for operator",
+					"operator_index", idx,
+					"error", err,
+				)
+				return
+			}
+
+			resp, err := c.httpClient.Post(op.SocketAddress+"/app/sign", "application/json", bytes.NewReader(reqBody))
+			if err != nil {
+				c.logger.Sugar().Warnw("Failed to contact operator",
+					"operator_index", idx,
+					"address", op.SocketAddress,
+					"error", err,
+				)
+				return
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				c.logger.Sugar().Warnw("Operator returned error",
+					"operator_index", idx,
+					"status_code", resp.StatusCode,
+					"body", string(body),
+				)
+				return
+			}
+
+			var response types.AppSignResponse
+			if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+				c.logger.Sugar().Warnw("Failed to decode response from operator",
+					"operator_index", idx,
+					"error", err,
+				)
+				return
+			}
+
+			// Validate partial signature is not zero
+			isZero, err := response.PartialSignature.IsZero()
+			if err != nil {
+				c.logger.Sugar().Warnw("Failed to validate partial signature", "operator_index", idx, "error", err)
+				return
+			}
+			if isZero {
+				c.logger.Sugar().Warnw("Received zero partial signature", "operator_index", idx)
+				return
+			}
+
+			// Convert operator address to node ID (must match the IDs used during DKG)
+			operatorAddress := common.HexToAddress(response.OperatorAddress)
+			nodeID := util.AddressToNodeID(operatorAddress)
+
+			c.logger.Sugar().Debugw("Collected partial signature from operator",
+				"operator_index", idx,
+				"node_id", nodeID,
+				"operator_address", response.OperatorAddress)
+
+			resultChan <- result{nodeID: nodeID, signature: response.PartialSignature, opAddress: response.OperatorAddress}
+		}(i, operator)
+	}
+
+	// Wait for all goroutines to complete
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Collect results
+	partialSigs := make(map[int64]types.G1Point)
+	for res := range resultChan {
+		partialSigs[res.nodeID] = res.signature
+		if len(partialSigs) >= threshold {
+			break
+		}
+	}
+
+	if len(partialSigs) < threshold {
+		return nil, fmt.Errorf("insufficient partial signatures: collected %d, needed %d", len(partialSigs), threshold)
 	}
 
 	c.logger.Sugar().Infow("Successfully collected partial signatures",
-		"collected", collected,
+		"collected", len(partialSigs),
 		"threshold", threshold,
 	)
 	return partialSigs, nil
@@ -465,12 +518,8 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 	c.logger.Sugar().Info("Verified threshold agreement on environment data")
 
 	// Step 6: Recover application private key using threshold signatures
-	partialSigMap := make(map[int64]types.G1Point)
-	for i, sig := range partialSigs {
-		partialSigMap[int64(i+1)] = sig
-	}
-
-	appPrivateKey, err := crypto.RecoverAppPrivateKey(appID, partialSigMap, threshold)
+	// partialSigs is already a map[int64]types.G1Point with correct node IDs
+	appPrivateKey, err := crypto.RecoverAppPrivateKey(appID, partialSigs, threshold)
 	if err != nil {
 		return nil, fmt.Errorf("failed to recover app private key: %w", err)
 	}
@@ -481,62 +530,102 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 		AppPrivateKey:   *appPrivateKey,
 		EncryptedEnv:    responses[0].EncryptedEnv,
 		PublicEnv:       responses[0].PublicEnv,
-		PartialSigs:     partialSigMap,
+		PartialSigs:     partialSigs,
 		ResponseCount:   len(responses),
 		ThresholdNeeded: threshold,
 	}, nil
 }
 
-// GetEncryptedSecretsFromKMSNodesWithPartialSigs requests secrets from all KMS operators
+// GetEncryptedSecretsFromKMSNodesWithPartialSigs requests secrets from all KMS operators concurrently
 // and decrypts partial signatures using the provided RSA private key
+// Returns responses and partial signatures mapped by node ID
 func (c *Client) GetEncryptedSecretsFromKMSNodesWithPartialSigs(
 	operators *peering.OperatorSetPeers,
 	req types.SecretsRequestV1,
 	rsaPrivateKeyPEM []byte,
-) ([]types.SecretsResponseV1, []types.G1Point, error) {
+) ([]types.SecretsResponseV1, map[int64]types.G1Point, error) {
 	rsaEncryption := encryption.NewRSAEncryption()
 
-	var responses []types.SecretsResponseV1
-	var partialSigs []types.G1Point
+	type result struct {
+		response   types.SecretsResponseV1
+		partialSig types.G1Point
+		nodeID     int64
+		opAddress  string
+		opIndex    int
+	}
 
+	resultChan := make(chan result, len(operators.Peers))
+	var wg sync.WaitGroup
+
+	// Request secrets from all operators concurrently
 	for i, peer := range operators.Peers {
-		c.logger.Sugar().Debugw("Requesting secrets from operator",
-			"operator_index", i+1,
-			"url", peer.SocketAddress,
-		)
+		wg.Add(1)
+		go func(idx int, op *peering.OperatorSetPeer) {
+			defer wg.Done()
 
-		resp, err := c.requestSecretsFromKMS(peer.SocketAddress, req)
-		if err != nil {
-			c.logger.Sugar().Warnw("Failed to get secrets from operator",
-				"url", peer.SocketAddress,
-				"error", err,
+			c.logger.Sugar().Debugw("Requesting secrets from operator",
+				"operator_index", idx+1,
+				"url", op.SocketAddress,
 			)
-			continue
-		}
 
-		// Decrypt the partial signature
-		decryptedSigBytes, err := rsaEncryption.Decrypt(resp.EncryptedPartialSig, rsaPrivateKeyPEM)
-		if err != nil {
-			c.logger.Sugar().Warnw("Failed to decrypt partial signature",
-				"url", peer.SocketAddress,
-				"error", err,
-			)
-			continue
-		}
+			resp, err := c.requestSecretsFromKMS(op.SocketAddress, req)
+			if err != nil {
+				c.logger.Sugar().Warnw("Failed to get secrets from operator",
+					"url", op.SocketAddress,
+					"error", err,
+				)
+				return
+			}
 
-		var partialSig types.G1Point
-		if err := json.Unmarshal(decryptedSigBytes, &partialSig); err != nil {
-			c.logger.Sugar().Warnw("Failed to parse partial signature",
-				"url", peer.SocketAddress,
-				"error", err,
-			)
-			continue
-		}
+			// Decrypt the partial signature
+			decryptedSigBytes, err := rsaEncryption.Decrypt(resp.EncryptedPartialSig, rsaPrivateKeyPEM)
+			if err != nil {
+				c.logger.Sugar().Warnw("Failed to decrypt partial signature",
+					"url", op.SocketAddress,
+					"error", err,
+				)
+				return
+			}
 
-		responses = append(responses, *resp)
-		partialSigs = append(partialSigs, partialSig)
+			var partialSig types.G1Point
+			if err := json.Unmarshal(decryptedSigBytes, &partialSig); err != nil {
+				c.logger.Sugar().Warnw("Failed to parse partial signature",
+					"url", op.SocketAddress,
+					"error", err,
+				)
+				return
+			}
 
-		c.logger.Sugar().Debugw("Received valid response from operator", "operator_index", i+1)
+			// Convert operator address to node ID
+			nodeID := util.AddressToNodeID(op.OperatorAddress)
+
+			c.logger.Sugar().Debugw("Received valid response from operator",
+				"operator_index", idx+1,
+				"node_id", nodeID)
+
+			resultChan <- result{
+				response:   *resp,
+				partialSig: partialSig,
+				nodeID:     nodeID,
+				opAddress:  op.OperatorAddress.Hex(),
+				opIndex:    idx,
+			}
+		}(i, peer)
+	}
+
+	// Wait for all goroutines to complete
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Collect results
+	var responses []types.SecretsResponseV1
+	partialSigs := make(map[int64]types.G1Point)
+
+	for res := range resultChan {
+		responses = append(responses, res.response)
+		partialSigs[res.nodeID] = res.partialSig
 	}
 
 	if len(responses) == 0 {
@@ -553,7 +642,7 @@ func (c *Client) requestSecretsFromKMS(serverURL string, req types.SecretsReques
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	resp, err := http.Post(serverURL+"/secrets", "application/json", bytes.NewBuffer(reqBody))
+	resp, err := c.httpClient.Post(serverURL+"/secrets", "application/json", bytes.NewBuffer(reqBody))
 	if err != nil {
 		return nil, fmt.Errorf("HTTP request failed: %w", err)
 	}
@@ -669,67 +758,89 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 		"threshold", threshold,
 		"operators", len(operators.Peers))
 
-	partialSigs := make(map[int64]types.G1Point)
-	collected := 0
+	type result struct {
+		nodeID    int64
+		signature types.G1Point
+		opAddress string
+	}
 
+	resultChan := make(chan result, len(operators.Peers))
+	var wg sync.WaitGroup
+
+	// Request partial signatures from all operators concurrently
 	for i, peer := range operators.Peers {
-		if collected >= threshold {
+		wg.Add(1)
+		go func(idx int, op *peering.OperatorSetPeer) {
+			defer wg.Done()
+
+			req := types.AppSignRequest{
+				AppID:           appID,
+				AttestationTime: attestationTime,
+			}
+
+			reqBody, err := json.Marshal(req)
+			if err != nil {
+				c.logger.Sugar().Warnw("Failed to marshal request", "operator_index", idx, "error", err)
+				return
+			}
+
+			resp, err := c.httpClient.Post(op.SocketAddress+"/app/sign", "application/json", bytes.NewReader(reqBody))
+			if err != nil {
+				c.logger.Sugar().Warnw("Failed to contact operator", "operator_index", idx, "url", op.SocketAddress, "error", err)
+				return
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				c.logger.Sugar().Warnw("Operator returned error", "operator_index", idx, "status", resp.StatusCode, "body", string(body))
+				return
+			}
+
+			var response types.AppSignResponse
+			if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+				c.logger.Sugar().Warnw("Failed to decode response", "operator_index", idx, "error", err)
+				return
+			}
+
+			isZero, err := response.PartialSignature.IsZero()
+			if err != nil {
+				c.logger.Sugar().Warnw("Failed to validate partial signature", "operator_index", idx, "error", err)
+				return
+			}
+			if isZero {
+				c.logger.Sugar().Warnw("Received zero partial signature", "operator_index", idx, "operator_address", response.OperatorAddress)
+				return
+			}
+
+			// Convert operator address to node ID (must match the IDs used during DKG)
+			operatorAddress := common.HexToAddress(response.OperatorAddress)
+			nodeID := util.AddressToNodeID(operatorAddress)
+
+			c.logger.Sugar().Debugw("Collected partial signature", "operator_index", idx, "node_id", nodeID, "operator_address", response.OperatorAddress)
+			resultChan <- result{nodeID: nodeID, signature: response.PartialSignature, opAddress: response.OperatorAddress}
+		}(i, peer)
+	}
+
+	// Wait for all goroutines to complete
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Collect results
+	partialSigs := make(map[int64]types.G1Point)
+	for res := range resultChan {
+		partialSigs[res.nodeID] = res.signature
+		if len(partialSigs) >= threshold {
 			break
 		}
-
-		req := types.AppSignRequest{
-			AppID:           appID,
-			AttestationTime: attestationTime,
-		}
-
-		reqBody, err := json.Marshal(req)
-		if err != nil {
-			c.logger.Sugar().Warnw("Failed to marshal request", "operator_index", i, "error", err)
-			continue
-		}
-
-		resp, err := http.Post(peer.SocketAddress+"/app/sign", "application/json", bytes.NewReader(reqBody))
-		if err != nil {
-			c.logger.Sugar().Warnw("Failed to contact operator", "operator_index", i, "url", peer.SocketAddress, "error", err)
-			continue
-		}
-		defer func() { _ = resp.Body.Close() }()
-
-		if resp.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(resp.Body)
-			c.logger.Sugar().Warnw("Operator returned error", "operator_index", i, "status", resp.StatusCode, "body", string(body))
-			continue
-		}
-
-		var response types.AppSignResponse
-		if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
-			c.logger.Sugar().Warnw("Failed to decode response", "operator_index", i, "error", err)
-			continue
-		}
-
-		isZero, err := response.PartialSignature.IsZero()
-		if err != nil {
-			c.logger.Sugar().Warnw("Failed to validate partial signature", "operator_index", i, "error", err)
-			continue
-		}
-		if isZero {
-			c.logger.Sugar().Warnw("Received zero partial signature", "operator_index", i, "operator_address", response.OperatorAddress)
-			continue
-		}
-
-		// Convert operator address to node ID (must match the IDs used during DKG)
-		operatorAddress := common.HexToAddress(response.OperatorAddress)
-		nodeID := util.AddressToNodeID(operatorAddress)
-
-		partialSigs[nodeID] = response.PartialSignature
-		collected++
-		c.logger.Sugar().Debugw("Collected partial signature", "operator_index", i, "node_id", nodeID, "operator_address", response.OperatorAddress, "total", collected)
 	}
 
-	if collected < threshold {
-		return nil, fmt.Errorf("insufficient partial signatures: collected %d, needed %d", collected, threshold)
+	if len(partialSigs) < threshold {
+		return nil, fmt.Errorf("insufficient partial signatures: collected %d, needed %d", len(partialSigs), threshold)
 	}
 
-	c.logger.Sugar().Infow("Successfully collected threshold partial signatures", "collected", collected, "threshold", threshold)
+	c.logger.Sugar().Infow("Successfully collected threshold partial signatures", "collected", len(partialSigs), "threshold", threshold)
 	return partialSigs, nil
 }
