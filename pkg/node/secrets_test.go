@@ -27,8 +27,6 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	ethTypes "github.com/ethereum/go-ethereum/core/types"
-	"github.com/stretchr/testify/mock"
 )
 
 // mockChainPoller is a no-op chain poller for testing
@@ -110,9 +108,7 @@ func testSecretsEndpointFlow(t *testing.T) {
 	mockVerifier := attestation.NewStubVerifier()
 
 	// Create mock base contract caller
-	mockBaseContractCaller := contractCaller.NewMockIContractCaller(t)
-	mockBaseContractCaller.On("SubmitCommitment", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return(&ethTypes.Receipt{Status: 1}, nil).Maybe()
+	mockBaseContractCaller := &contractCaller.MockContractCallerStub{}
 	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
 
 	persistence := memory.NewMemoryPersistence()
@@ -265,9 +261,7 @@ func testSecretsEndpointValidation(t *testing.T) {
 	mockVerifier := attestation.NewStubVerifier()
 
 	// Create mock base contract caller
-	mockBaseContractCaller := contractCaller.NewMockIContractCaller(t)
-	mockBaseContractCaller.On("SubmitCommitment", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return(&ethTypes.Receipt{Status: 1}, nil).Maybe()
+	mockBaseContractCaller := &contractCaller.MockContractCallerStub{}
 	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
 
 	persistence := memory.NewMemoryPersistence()
@@ -330,9 +324,7 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 	mockVerifier := attestation.NewStubVerifier()
 
 	// Create mock base contract caller
-	mockBaseContractCaller := contractCaller.NewMockIContractCaller(t)
-	mockBaseContractCaller.On("SubmitCommitment", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return(&ethTypes.Receipt{Status: 1}, nil).Maybe()
+	mockBaseContractCaller := &contractCaller.MockContractCallerStub{}
 	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
 
 	persistence := memory.NewMemoryPersistence()

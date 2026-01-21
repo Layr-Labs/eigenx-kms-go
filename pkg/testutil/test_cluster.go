@@ -24,8 +24,6 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	ethTypes "github.com/ethereum/go-ethereum/core/types"
-	"github.com/stretchr/testify/mock"
 )
 
 // TestCluster represents a cluster of KMS nodes for testing
@@ -124,11 +122,7 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 		mockVerifier := attestation.NewStubVerifier()
 
 		// Create mock base contract caller for commitment registry
-		mockBaseContractCaller := contractCaller.NewMockIContractCaller(t)
-		// Configure mock to return success for SubmitCommitment calls
-		mockBaseContractCaller.On("SubmitCommitment",
-			mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-			Return(&ethTypes.Receipt{Status: 1}, nil).Maybe()
+		mockBaseContractCaller := &contractCaller.MockContractCallerStub{}
 
 		mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
 

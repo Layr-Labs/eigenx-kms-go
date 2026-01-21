@@ -31,10 +31,8 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	ethTypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -94,9 +92,7 @@ func createTestNodeWithManager(t *testing.T, manager *attestation.AttestationMan
 	require.NoError(t, err)
 
 	// Create mock base contract caller
-	mockBaseContractCaller := contractCaller.NewMockIContractCaller(t)
-	mockBaseContractCaller.On("SubmitCommitment", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return(&ethTypes.Receipt{Status: 1}, nil).Maybe()
+	mockBaseContractCaller := &contractCaller.MockContractCallerStub{}
 	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
 
 	persistence := memory.NewMemoryPersistence()

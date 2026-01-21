@@ -5,7 +5,9 @@ import (
 
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
+	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	ethereumTypes "github.com/ethereum/go-ethereum/core/types"
 )
@@ -79,4 +81,19 @@ type IContractCaller interface {
 		epoch int64,
 		operator common.Address,
 	) (commitmentHash [32]byte, ackMerkleRoot [32]byte, submittedAt uint64, err error)
+
+	// EigenCompute app management functions
+	SetAppController(appController caller.AppControllerInterface) error
+
+	GetAppCreator(app common.Address, opts *bind.CallOpts) (common.Address, error)
+
+	GetAppOperatorSetId(app common.Address, opts *bind.CallOpts) (uint32, error)
+
+	GetAppLatestReleaseBlockNumber(app common.Address, opts *bind.CallOpts) (uint32, error)
+
+	GetAppStatus(app common.Address, opts *bind.CallOpts) (uint8, error)
+
+	FilterAppUpgraded(apps []common.Address, filterOpts *bind.FilterOpts) (caller.AppUpgradedIterator, error)
+
+	GetLatestRelease(ctx context.Context, appID string) ([32]byte, caller.Env, []byte, error)
 }

@@ -28,9 +28,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	ethTypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,9 +38,7 @@ const (
 
 // createMockContractCaller creates a mock contract caller for tests
 func createMockContractCaller(t *testing.T) (contractCaller.IContractCaller, common.Address) {
-	mockCC := contractCaller.NewMockIContractCaller(t)
-	mockCC.On("SubmitCommitment", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return(&ethTypes.Receipt{Status: 1}, nil).Maybe()
+	mockCC := &contractCaller.MockContractCallerStub{}
 	return mockCC, common.HexToAddress("0x1111111111111111111111111111111111111111")
 }
 
