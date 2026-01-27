@@ -99,44 +99,30 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 
 	s.node.logger.Sugar().Infow("Processing secrets request", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "attestation_method", req.AttestationMethod)
 
-	// Step 1: Verify attestation
-	var claims *types.AttestationClaims
-	var err error
+	// Step 1: Verify attestation using AttestationManager
+	// Default to "gcp" if no method specified
+	method := req.AttestationMethod
+	if method == "" {
+		method = "gcp"
+	}
 
-	// Use AttestationManager if available (supports multiple methods)
-	if s.node.attestationManager != nil {
-		// Default to "gcp" if no method specified
-		method := req.AttestationMethod
-		if method == "" {
-			method = "gcp"
-		}
+	// Build attestation request based on method
+	attestReq := &attestation.AttestationRequest{
+		Method:      method,
+		AppID:       req.AppID,
+		Attestation: req.Attestation,
+		Challenge:   req.Challenge,
+		PublicKey:   req.PublicKey,
+	}
 
-		// Build attestation request based on method
-		attestReq := &attestation.AttestationRequest{
-			Method:      method,
-			AppID:       req.AppID,
-			Attestation: req.Attestation,
-			Challenge:   req.Challenge,
-			PublicKey:   req.PublicKey,
-		}
-
-		claims, err = s.node.attestationManager.VerifyWithMethod(method, attestReq)
-		if err != nil {
-			s.node.logger.Sugar().Warnw("Attestation verification failed",
-				"node_id", s.node.OperatorAddress.Hex(),
-				"method", method,
-				"error", err)
-			http.Error(w, fmt.Sprintf("Invalid attestation: %v", err), http.StatusUnauthorized)
-			return
-		}
-	} else {
-		// Fallback to legacy single-method verifier
-		claims, err = s.node.attestationVerifier.VerifyAttestation(req.Attestation)
-		if err != nil {
-			s.node.logger.Sugar().Warnw("Attestation verification failed", "node_id", s.node.OperatorAddress.Hex(), "error", err)
-			http.Error(w, "Invalid attestation", http.StatusUnauthorized)
-			return
-		}
+	claims, err := s.node.attestationManager.VerifyWithMethod(method, attestReq)
+	if err != nil {
+		s.node.logger.Sugar().Warnw("Attestation verification failed",
+			"node_id", s.node.OperatorAddress.Hex(),
+			"method", method,
+			"error", err)
+		http.Error(w, fmt.Sprintf("Invalid attestation: %v", err), http.StatusUnauthorized)
+		return
 	}
 
 	// Step 2: Query latest release from on-chain registry

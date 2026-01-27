@@ -105,7 +105,7 @@ func testSecretsEndpointFlow(t *testing.T) {
 	}
 
 	// Use mock attestation verifier for tests
-	mockVerifier := attestation.NewStubVerifier()
+	mockManager := attestation.NewStubManager()
 
 	// Create mock base contract caller
 	mockBaseContractCaller := &contractCaller.MockContractCallerStub{}
@@ -114,7 +114,7 @@ func testSecretsEndpointFlow(t *testing.T) {
 	persistence := memory.NewMemoryPersistence()
 	defer func() { _ = persistence.Close() }()
 
-	node, err := NewNode(cfg, peeringDataFetcher, bh, nil, imts, mockVerifier, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
+	node, err := NewNode(cfg, peeringDataFetcher, bh, nil, imts, mockManager, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
 	if err != nil {
 		t.Fatalf("Failed to create node: %v", err)
 	}
@@ -258,7 +258,7 @@ func testSecretsEndpointValidation(t *testing.T) {
 	}
 
 	// Use mock attestation verifier for tests
-	mockVerifier := attestation.NewStubVerifier()
+	mockManager := attestation.NewStubManager()
 
 	// Create mock base contract caller
 	mockBaseContractCaller := &contractCaller.MockContractCallerStub{}
@@ -267,7 +267,7 @@ func testSecretsEndpointValidation(t *testing.T) {
 	persistence := memory.NewMemoryPersistence()
 	defer func() { _ = persistence.Close() }()
 
-	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockVerifier, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
+	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockManager, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
 	if err != nil {
 		t.Fatalf("Failed to create node: %v", err)
 	}
@@ -321,7 +321,7 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 	}
 
 	// Use mock attestation verifier for tests
-	mockVerifier := attestation.NewStubVerifier()
+	mockManager := attestation.NewStubManager()
 
 	// Create mock base contract caller
 	mockBaseContractCaller := &contractCaller.MockContractCallerStub{}
@@ -330,7 +330,7 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 	persistence := memory.NewMemoryPersistence()
 	defer func() { _ = persistence.Close() }()
 
-	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockVerifier, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
+	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockManager, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
 	if err != nil {
 		t.Fatalf("Failed to create node: %v", err)
 	}

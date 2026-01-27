@@ -242,9 +242,9 @@ func Test_OnChainIntegration(t *testing.T) {
 		nodeCc, err := caller.NewContractCaller(nodeL2EthClient, txSigner, l)
 		require.NoError(t, err)
 
-		// Use stub attestation verifier for testing
-		// Production would use GoogleConfidentialSpace or IntelTrustAuthority
-		attestationVerifier := attestation.NewStubVerifier()
+		// Use stub attestation manager for testing
+		// Production would use registered GCP, Intel, or ECDSA methods
+		attestationManager := attestation.NewStubManager()
 
 		// Create in-memory persistence for testing
 		nodePersistence := persistenceMemory.NewMemoryPersistence()
@@ -264,7 +264,7 @@ func Test_OnChainIntegration(t *testing.T) {
 			bh,
 			poller,
 			tportSigner,
-			attestationVerifier,
+			attestationManager,
 			nodeCc,
 			commitmentRegistryAddress,
 			nodePersistence,

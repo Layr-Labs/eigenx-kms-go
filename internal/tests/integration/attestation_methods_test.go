@@ -98,7 +98,7 @@ func createTestNodeWithManager(t *testing.T, manager *attestation.AttestationMan
 	persistence := memory.NewMemoryPersistence()
 	t.Cleanup(func() { _ = persistence.Close() })
 
-	n, err := node.NewNodeWithManager(cfg, peeringDataFetcher, bh, mockPoller, imts, manager, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
+	n, err := node.NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, manager, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
 	require.NoError(t, err)
 
 	// Add a test key share

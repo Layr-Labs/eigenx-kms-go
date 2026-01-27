@@ -119,7 +119,7 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 		}
 
 		// Use mock attestation verifier for tests
-		mockVerifier := attestation.NewStubVerifier()
+		mockManager := attestation.NewStubManager()
 
 		// Create mock base contract caller for commitment registry
 		mockBaseContractCaller := &contractCaller.MockContractCallerStub{}
@@ -129,7 +129,7 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 		// Create in-memory persistence for each test node
 		persistence := memory.NewMemoryPersistence()
 
-		n, err := node.NewNode(cfg, peeringDataFetcher, nodeBlockHandlers[i], cluster.MockPoller, imts, mockVerifier, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
+		n, err := node.NewNode(cfg, peeringDataFetcher, nodeBlockHandlers[i], cluster.MockPoller, imts, mockManager, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
 		if err != nil {
 			t.Fatalf("Failed to create node %d: %v", i+1, err)
 		}
