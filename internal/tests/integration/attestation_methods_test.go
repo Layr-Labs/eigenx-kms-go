@@ -283,10 +283,10 @@ func TestSecretsEndpoint_DefaultsToGCP(t *testing.T) {
 	_, pubKeyPEM, err := encryption.GenerateKeyPair(2048)
 	require.NoError(t, err)
 
-	// Create request WITHOUT specifying method (should default to "gcp")
+	// Create request WITHOUT specifying method - should return error
 	req := kmsTypes.SecretsRequestV1{
 		AppID: "test-app",
-		// AttestationMethod not specified - should default to "gcp"
+		// AttestationMethod not specified - should return 400 error
 		Attestation:  []byte("dummy-attestation"),
 		RSAPubKeyTmp: pubKeyPEM,
 		AttestTime:   0,
@@ -301,7 +301,8 @@ func TestSecretsEndpoint_DefaultsToGCP(t *testing.T) {
 	server := node.NewServer(n, 0)
 	server.GetHandler().ServeHTTP(w, httpReq)
 
-	assert.Equal(t, http.StatusOK, w.Code, "Response body: %s", w.Body.String())
+	assert.Equal(t, http.StatusBadRequest, w.Code, "Should require attestation method. Response body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "Attestation method is required", "Error message should indicate missing attestation method")
 }
 
 func TestSecretsEndpoint_ExpiredECDSAChallenge(t *testing.T) {

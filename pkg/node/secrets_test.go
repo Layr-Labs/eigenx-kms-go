@@ -156,10 +156,11 @@ func testSecretsEndpointFlow(t *testing.T) {
 
 	// Create secrets request
 	req := kmsTypes.SecretsRequestV1{
-		AppID:        "test-app",
-		Attestation:  attestationBytes,
-		RSAPubKeyTmp: pubKeyPEM,
-		AttestTime:   time.Now().Unix(),
+		AppID:             "test-app",
+		AttestationMethod: "gcp",
+		Attestation:       attestationBytes,
+		RSAPubKeyTmp:      pubKeyPEM,
+		AttestTime:        time.Now().Unix(),
 	}
 
 	// Create HTTP request
@@ -349,9 +350,10 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 	attestationBytes, _ := json.Marshal(testClaims)
 
 	req := kmsTypes.SecretsRequestV1{
-		AppID:        "test-app",
-		Attestation:  attestationBytes,
-		RSAPubKeyTmp: []byte("test-key"),
+		AppID:             "test-app",
+		AttestationMethod: "gcp",
+		Attestation:       attestationBytes,
+		RSAPubKeyTmp:      []byte("test-key"),
 	}
 	reqBody, _ := json.Marshal(req)
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))

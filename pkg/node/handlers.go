@@ -99,33 +99,33 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 
 	s.node.logger.Sugar().Infow("Processing secrets request", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "attestation_method", req.AttestationMethod)
 
-	// Step 1: Verify attestation using AttestationManager
-	// Default to "gcp" if no method specified
-	method := req.AttestationMethod
-	if method == "" {
-		method = "gcp"
+	// Step 1: Validate attestation method is provided
+	if req.AttestationMethod == "" {
+		s.node.logger.Sugar().Warnw("Attestation method is required", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID)
+		http.Error(w, "Attestation method is required", http.StatusBadRequest)
+		return
 	}
 
-	// Build attestation request based on method
+	// Step 2: Verify attestation using AttestationManager
 	attestReq := &attestation.AttestationRequest{
-		Method:      method,
+		Method:      req.AttestationMethod,
 		AppID:       req.AppID,
 		Attestation: req.Attestation,
 		Challenge:   req.Challenge,
 		PublicKey:   req.PublicKey,
 	}
 
-	claims, err := s.node.attestationManager.VerifyWithMethod(method, attestReq)
+	claims, err := s.node.attestationManager.VerifyWithMethod(req.AttestationMethod, attestReq)
 	if err != nil {
 		s.node.logger.Sugar().Warnw("Attestation verification failed",
 			"node_id", s.node.OperatorAddress.Hex(),
-			"method", method,
+			"method", req.AttestationMethod,
 			"error", err)
 		http.Error(w, fmt.Sprintf("Invalid attestation: %v", err), http.StatusUnauthorized)
 		return
 	}
 
-	// Step 2: Query latest release from on-chain AppController
+	// Step 3: Query latest release from on-chain AppController
 	release, err := s.node.baseContractCaller.GetLatestReleaseAsRelease(r.Context(), req.AppID)
 	if err != nil {
 		s.node.logger.Sugar().Warnw("Failed to get release", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
@@ -133,14 +133,14 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 3: Verify image digest matches
+	// Step 4: Verify image digest matches
 	if claims.ImageDigest != release.ImageDigest {
 		s.node.logger.Sugar().Warnw("Image digest mismatch", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "expected", release.ImageDigest, "got", claims.ImageDigest)
 		http.Error(w, "Image digest mismatch - unauthorized image", http.StatusForbidden)
 		return
 	}
 
-	// Step 4: Get appropriate key share based on attestation time
+	// Step 5: Get appropriate key share based on attestation time
 	var keyVersion *types.KeyShareVersion
 	if req.AttestTime > 0 {
 		// Use key version from the specified time
