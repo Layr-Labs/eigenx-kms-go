@@ -7,6 +7,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	ethereumTypes "github.com/ethereum/go-ethereum/core/types"
@@ -96,4 +97,6 @@ type IContractCaller interface {
 	FilterAppUpgraded(apps []common.Address, filterOpts *bind.FilterOpts) (caller.AppUpgradedIterator, error)
 
 	GetLatestRelease(ctx context.Context, appID string) ([32]byte, caller.Env, []byte, error)
+
+	GetLatestReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error)
 }

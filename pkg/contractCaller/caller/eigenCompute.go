@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	"github.com/ethereum/go-ethereum/core/types"
+	ethTypes "github.com/ethereum/go-ethereum/core/types"
 )
 
 // Env represents environment variables as a map
@@ -36,7 +38,7 @@ type AppUpgradedEvent struct {
 	App          common.Address
 	RmsReleaseId [32]byte
 	Release      AppRelease
-	Raw          types.Log
+	Raw          ethTypes.Log
 }
 
 // AppRelease represents the release data structure
@@ -206,4 +208,36 @@ func (cc *ContractCaller) GetLatestRelease(ctx context.Context, appID string) ([
 	cc.logger.Sugar().Debug("Latest release data prepared", "app_id", appID, "public_env_vars_count", len(publicEnv))
 
 	return release.RmsRelease.Artifacts[0].Digest, publicEnv, release.EncryptedEnv, nil
+}
+
+// GetLatestReleaseAsRelease is an adapter that returns release data in the types.Release format
+// This provides compatibility with the legacy registry.Client interface
+func (cc *ContractCaller) GetLatestReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error) {
+	digest, publicEnv, encryptedEnv, err := cc.GetLatestRelease(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert digest from [32]byte to hex string
+	imageDigest := fmt.Sprintf("sha256:%x", digest)
+
+	// Convert public env from map to string (JSON encoding)
+	var publicEnvStr string
+	if len(publicEnv) > 0 {
+		envBytes, err := json.Marshal(publicEnv)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal public env: %w", err)
+		}
+		publicEnvStr = string(envBytes)
+	}
+
+	// Convert encrypted env from []byte to string
+	encryptedEnvStr := string(encryptedEnv)
+
+	return &types.Release{
+		ImageDigest:  imageDigest,
+		EncryptedEnv: encryptedEnvStr,
+		PublicEnv:    publicEnvStr,
+		Timestamp:    time.Now().Unix(),
+	}, nil
 }

@@ -125,8 +125,8 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 2: Query latest release from on-chain registry
-	release, err := s.node.releaseRegistry.GetLatestRelease(req.AppID)
+	// Step 2: Query latest release from on-chain AppController
+	release, err := s.node.baseContractCaller.GetLatestReleaseAsRelease(r.Context(), req.AppID)
 	if err != nil {
 		s.node.logger.Sugar().Warnw("Failed to get release", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
 		http.Error(w, "Release not found", http.StatusNotFound)

@@ -30,7 +30,6 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/merkle"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/persistence"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/registry"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/reshare"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transport"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
@@ -58,7 +57,6 @@ type Node struct {
 	transport          *transport.Client
 	server             *Server
 	attestationManager *attestation.AttestationManager // Multi-method attestation manager
-	releaseRegistry    registry.Client
 	rsaEncryption       *encryption.RSAEncryption
 	peeringDataFetcher  peering.IPeeringDataFetcher
 	logger              *zap.Logger
@@ -305,7 +303,6 @@ func NewNode(
 		keyStore:                  keystore.NewKeyStore(),
 		server:                    NewServer(nil, cfg.Port), // Will set node reference later
 		attestationManager:        attestationManager,
-		releaseRegistry:           registry.NewStubClient(),
 		rsaEncryption:             encryption.NewRSAEncryption(),
 		peeringDataFetcher:        pdf,
 		logger:                    l,
@@ -1656,11 +1653,6 @@ func waitForAcks(session *ProtocolSession, dealerNodeID int64, timeout time.Dura
 // GetOperatorAddress returns the operator's address
 func (n *Node) GetOperatorAddress() common.Address {
 	return n.OperatorAddress
-}
-
-// GetReleaseRegistry returns the release registry client (for testing)
-func (n *Node) GetReleaseRegistry() registry.Client {
-	return n.releaseRegistry
 }
 
 // GetKeyStore returns the keystore (for testing)

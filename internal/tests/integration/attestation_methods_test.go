@@ -25,7 +25,6 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering/localPeeringDataFetcher"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/persistence/memory"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/registry"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner/inMemoryTransportSigner"
 	kmsTypes "github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
@@ -44,7 +43,7 @@ func (m *mockChainPoller) Start(ctx context.Context) error {
 }
 
 // createTestNode creates a node with AttestationManager for testing
-func createTestNodeWithManager(t *testing.T, manager *attestation.AttestationManager) *node.Node {
+func createTestNodeWithManager(t *testing.T, manager *attestation.AttestationManager) (*node.Node, *contractCaller.TestableContractCallerStub) {
 	projectRoot := tests.GetProjectRootPath()
 	chainConfig, err := tests.ReadChainConfig(projectRoot)
 	require.NoError(t, err)
@@ -91,8 +90,8 @@ func createTestNodeWithManager(t *testing.T, manager *attestation.AttestationMan
 	imts, err := inMemoryTransportSigner.NewBn254InMemoryTransportSigner(pkBytes, testLogger)
 	require.NoError(t, err)
 
-	// Create mock base contract caller
-	mockBaseContractCaller := &contractCaller.MockContractCallerStub{}
+	// Create testable contract caller with configurable releases
+	mockBaseContractCaller := contractCaller.NewTestableContractCallerStub()
 	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
 
 	persistence := memory.NewMemoryPersistence()
@@ -112,7 +111,7 @@ func createTestNodeWithManager(t *testing.T, manager *attestation.AttestationMan
 	}
 	n.GetKeyStore().AddVersion(keyVersion)
 
-	return n
+	return n, mockBaseContractCaller
 }
 
 func TestSecretsEndpoint_ECDSAAttestation(t *testing.T) {
@@ -124,7 +123,7 @@ func TestSecretsEndpoint_ECDSAAttestation(t *testing.T) {
 	err := manager.RegisterMethod(ecdsaMethod)
 	require.NoError(t, err)
 
-	n := createTestNodeWithManager(t, manager)
+	n, mockCC := createTestNodeWithManager(t, manager)
 
 	// Add test release
 	testRelease := &kmsTypes.Release{
@@ -133,8 +132,7 @@ func TestSecretsEndpoint_ECDSAAttestation(t *testing.T) {
 		PublicEnv:    "PUBLIC_VAR=test-value",
 		Timestamp:    time.Now().Unix(),
 	}
-	stubRegistry := n.GetReleaseRegistry().(*registry.StubClient)
-	stubRegistry.AddTestRelease("ecdsa-test-app", testRelease)
+	mockCC.AddTestRelease("ecdsa-test-app", testRelease)
 
 	// Generate ECDSA key pair for attestation
 	appPrivateKey, err := crypto.GenerateKey()
@@ -214,7 +212,7 @@ func TestSecretsEndpoint_MethodNotEnabled(t *testing.T) {
 	err := manager.RegisterMethod(stubMethod)
 	require.NoError(t, err)
 
-	n := createTestNodeWithManager(t, manager)
+	n, _ := createTestNodeWithManager(t, manager)
 
 	// Try to use ECDSA method (not registered)
 	appPrivateKey, err := crypto.GenerateKey()
@@ -270,7 +268,7 @@ func TestSecretsEndpoint_DefaultsToGCP(t *testing.T) {
 	err := manager.RegisterMethod(stubMethod)
 	require.NoError(t, err)
 
-	n := createTestNodeWithManager(t, manager)
+	n, mockCC := createTestNodeWithManager(t, manager)
 
 	// Add test release
 	testRelease := &kmsTypes.Release{
@@ -279,8 +277,7 @@ func TestSecretsEndpoint_DefaultsToGCP(t *testing.T) {
 		PublicEnv:    "PUBLIC=value",
 		Timestamp:    time.Now().Unix(),
 	}
-	stubRegistry := n.GetReleaseRegistry().(*registry.StubClient)
-	stubRegistry.AddTestRelease("test-app", testRelease)
+	mockCC.AddTestRelease("test-app", testRelease)
 
 	// Generate RSA keys
 	_, pubKeyPEM, err := encryption.GenerateKeyPair(2048)
@@ -318,7 +315,7 @@ func TestSecretsEndpoint_ExpiredECDSAChallenge(t *testing.T) {
 	err := manager.RegisterMethod(ecdsaMethod)
 	require.NoError(t, err)
 
-	n := createTestNodeWithManager(t, manager)
+	n, _ := createTestNodeWithManager(t, manager)
 
 	// Generate ECDSA key pair
 	appPrivateKey, err := crypto.GenerateKey()
@@ -382,7 +379,7 @@ func TestSecretsEndpoint_BothMethodsEnabled(t *testing.T) {
 	assert.True(t, manager.HasMethod("gcp"))
 	assert.True(t, manager.HasMethod("ecdsa"))
 
-	n := createTestNodeWithManager(t, manager)
+	n, mockCC := createTestNodeWithManager(t, manager)
 
 	// Add release for GCP
 	releaseGCP := &kmsTypes.Release{
@@ -391,8 +388,7 @@ func TestSecretsEndpoint_BothMethodsEnabled(t *testing.T) {
 		PublicEnv:    "PUBLIC=gcp",
 		Timestamp:    time.Now().Unix(),
 	}
-	stubRegistry := n.GetReleaseRegistry().(*registry.StubClient)
-	stubRegistry.AddTestRelease("test-app-gcp", releaseGCP)
+	mockCC.AddTestRelease("test-app-gcp", releaseGCP)
 
 	// Add release for ECDSA
 	releaseECDSA := &kmsTypes.Release{
@@ -401,7 +397,7 @@ func TestSecretsEndpoint_BothMethodsEnabled(t *testing.T) {
 		PublicEnv:    "PUBLIC=ecdsa",
 		Timestamp:    time.Now().Unix(),
 	}
-	stubRegistry.AddTestRelease("test-app-ecdsa", releaseECDSA)
+	mockCC.AddTestRelease("test-app-ecdsa", releaseECDSA)
 
 	_, pubKeyPEM, err := encryption.GenerateKeyPair(2048)
 	require.NoError(t, err)

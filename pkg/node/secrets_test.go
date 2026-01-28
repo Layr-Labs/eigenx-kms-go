@@ -21,7 +21,6 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering/localPeeringDataFetcher"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/persistence/memory"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/registry"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner/inMemoryTransportSigner"
 	kmsTypes "github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
@@ -107,9 +106,18 @@ func testSecretsEndpointFlow(t *testing.T) {
 	// Use mock attestation verifier for tests
 	mockManager := attestation.NewStubManager()
 
-	// Create mock base contract caller
-	mockBaseContractCaller := &contractCaller.MockContractCallerStub{}
+	// Create testable contract caller with configurable releases
+	mockBaseContractCaller := contractCaller.NewTestableContractCallerStub()
 	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
+
+	// Add test release
+	testRelease := &kmsTypes.Release{
+		ImageDigest:  "sha256:test123",
+		EncryptedEnv: "encrypted-env-data-for-test-app",
+		PublicEnv:    "PUBLIC_VAR=test-value",
+		Timestamp:    time.Now().Unix(),
+	}
+	mockBaseContractCaller.AddTestRelease("test-app", testRelease)
 
 	persistence := memory.NewMemoryPersistence()
 	defer func() { _ = persistence.Close() }()
@@ -136,19 +144,6 @@ func testSecretsEndpointFlow(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to generate RSA key pair: %v", err)
 	}
-
-	// Add test release to registry
-	testRelease := &kmsTypes.Release{
-		ImageDigest:  "sha256:test123",
-		EncryptedEnv: "encrypted-env-data-for-test-app",
-		PublicEnv:    "PUBLIC_VAR=test-value",
-		Timestamp:    time.Now().Unix(),
-	}
-	stubRegistry, ok := node.releaseRegistry.(*registry.StubClient)
-	if !ok {
-		t.Fatal("Expected StubClient for release registry")
-	}
-	stubRegistry.AddTestRelease("test-app", testRelease)
 
 	// Create test attestation with matching claims
 	testClaims := kmsTypes.AttestationClaims{
@@ -260,8 +255,8 @@ func testSecretsEndpointValidation(t *testing.T) {
 	// Use mock attestation verifier for tests
 	mockManager := attestation.NewStubManager()
 
-	// Create mock base contract caller
-	mockBaseContractCaller := &contractCaller.MockContractCallerStub{}
+	// Create testable contract caller with configurable releases
+	mockBaseContractCaller := contractCaller.NewTestableContractCallerStub()
 	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
 
 	persistence := memory.NewMemoryPersistence()
@@ -323,17 +318,9 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 	// Use mock attestation verifier for tests
 	mockManager := attestation.NewStubManager()
 
-	// Create mock base contract caller
-	mockBaseContractCaller := &contractCaller.MockContractCallerStub{}
+	// Create testable contract caller with configurable releases
+	mockBaseContractCaller := contractCaller.NewTestableContractCallerStub()
 	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
-
-	persistence := memory.NewMemoryPersistence()
-	defer func() { _ = persistence.Close() }()
-
-	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockManager, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
-	if err != nil {
-		t.Fatalf("Failed to create node: %v", err)
-	}
 
 	// Add test release with specific digest
 	testRelease := &kmsTypes.Release{
@@ -342,8 +329,15 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 		PublicEnv:    "PUBLIC=value",
 		Timestamp:    time.Now().Unix(),
 	}
-	stubRegistry := node.releaseRegistry.(*registry.StubClient)
-	stubRegistry.AddTestRelease("test-app", testRelease)
+	mockBaseContractCaller.AddTestRelease("test-app", testRelease)
+
+	persistence := memory.NewMemoryPersistence()
+	defer func() { _ = persistence.Close() }()
+
+	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockManager, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
+	if err != nil {
+		t.Fatalf("Failed to create node: %v", err)
+	}
 
 	// Create attestation with DIFFERENT digest
 	testClaims := kmsTypes.AttestationClaims{
