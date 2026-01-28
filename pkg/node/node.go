@@ -57,11 +57,11 @@ type Node struct {
 	transport          *transport.Client
 	server             *Server
 	attestationManager *attestation.AttestationManager // Multi-method attestation manager
-	rsaEncryption       *encryption.RSAEncryption
-	peeringDataFetcher  peering.IPeeringDataFetcher
-	logger              *zap.Logger
-	transportSigner     transportSigner.ITransportSigner
-	persistence         persistence.INodePersistence
+	rsaEncryption      *encryption.RSAEncryption
+	peeringDataFetcher peering.IPeeringDataFetcher
+	logger             *zap.Logger
+	transportSigner    transportSigner.ITransportSigner
+	persistence        persistence.INodePersistence
 
 	// Dynamic components (created when needed)
 	dkg      *dkg.DKG
