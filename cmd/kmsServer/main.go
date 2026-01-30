@@ -508,7 +508,7 @@ func runKMSServer(c *cli.Context) error {
 	}
 
 	// Create and configure the node with attestation manager
-	n, err := node.NewNodeWithManager(
+	n, err := node.NewNode(
 		nodeConfig,
 		pdf,
 		bh,

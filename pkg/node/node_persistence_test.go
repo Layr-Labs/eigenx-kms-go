@@ -28,9 +28,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	ethTypes "github.com/ethereum/go-ethereum/core/types"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,9 +38,7 @@ const (
 
 // createMockContractCaller creates a mock contract caller for tests
 func createMockContractCaller(t *testing.T) (contractCaller.IContractCaller, common.Address) {
-	mockCC := contractCaller.NewMockIContractCaller(t)
-	mockCC.On("SubmitCommitment", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return(&ethTypes.Receipt{Status: 1}, nil).Maybe()
+	mockCC := &contractCaller.MockContractCallerStub{}
 	return mockCC, common.HexToAddress("0x1111111111111111111111111111111111111111")
 }
 
@@ -121,7 +117,7 @@ func testNodeRestart_CleanShutdown(t *testing.T) {
 	imts1, err := inMemoryTransportSigner.NewECDSAInMemoryTransportSigner(pkBytes, testLogger)
 	require.NoError(t, err)
 
-	attestationVerifier := attestation.NewStubVerifier()
+	attestationManager := attestation.NewStubManager()
 
 	mockCC1, mockRegistryAddr := createMockContractCaller(t)
 
@@ -137,7 +133,7 @@ func testNodeRestart_CleanShutdown(t *testing.T) {
 		bh1,
 		poller1,
 		imts1,
-		attestationVerifier,
+		attestationManager,
 		mockCC1,
 		mockRegistryAddr,
 		persistence1,
@@ -209,7 +205,7 @@ func testNodeRestart_CleanShutdown(t *testing.T) {
 		bh2,
 		poller2,
 		imts2,
-		attestationVerifier,
+		attestationManager,
 		mockCC2,
 		mockRegistryAddr2,
 		persistence2,
@@ -291,7 +287,7 @@ func testNodeRestart_BlockBoundaryTracking(t *testing.T) {
 	imts1, err := inMemoryTransportSigner.NewECDSAInMemoryTransportSigner(pkBytes, testLogger)
 	require.NoError(t, err)
 
-	attestationVerifier := attestation.NewStubVerifier()
+	attestationManager := attestation.NewStubManager()
 
 	mockCC1, mockRegistryAddr := createMockContractCaller(t)
 
@@ -307,7 +303,7 @@ func testNodeRestart_BlockBoundaryTracking(t *testing.T) {
 		bh1,
 		poller1,
 		imts1,
-		attestationVerifier,
+		attestationManager,
 		mockCC1,
 		mockRegistryAddr,
 		persistence1,
@@ -371,7 +367,7 @@ func testNodeRestart_BlockBoundaryTracking(t *testing.T) {
 		bh2,
 		poller2,
 		imts2,
-		attestationVerifier,
+		attestationManager,
 		mockCC2,
 		mockRegistryAddr2,
 		persistence2,
@@ -450,7 +446,7 @@ func testNodeRestart_MultipleKeyVersions(t *testing.T) {
 	imts1, err := inMemoryTransportSigner.NewECDSAInMemoryTransportSigner(pkBytes, testLogger)
 	require.NoError(t, err)
 
-	attestationVerifier := attestation.NewStubVerifier()
+	attestationManager := attestation.NewStubManager()
 
 	mockCC1, mockRegistryAddr := createMockContractCaller(t)
 
@@ -466,7 +462,7 @@ func testNodeRestart_MultipleKeyVersions(t *testing.T) {
 		bh1,
 		poller1,
 		imts1,
-		attestationVerifier,
+		attestationManager,
 		mockCC1,
 		mockRegistryAddr,
 		persistence1,
@@ -540,7 +536,7 @@ func testNodeRestart_MultipleKeyVersions(t *testing.T) {
 		bh2,
 		poller2,
 		imts2,
-		attestationVerifier,
+		attestationManager,
 		mockCC2,
 		mockRegistryAddr2,
 		persistence2,
@@ -637,7 +633,7 @@ func testNodeRestart_EmptyState(t *testing.T) {
 	imts, err := inMemoryTransportSigner.NewECDSAInMemoryTransportSigner(pkBytes, testLogger)
 	require.NoError(t, err)
 
-	attestationVerifier := attestation.NewStubVerifier()
+	attestationManager := attestation.NewStubManager()
 
 	mockCC, mockRegistryAddr := createMockContractCaller(t)
 
@@ -653,7 +649,7 @@ func testNodeRestart_EmptyState(t *testing.T) {
 		bh,
 		poller,
 		imts,
-		attestationVerifier,
+		attestationManager,
 		mockCC,
 		mockRegistryAddr,
 		persistence,
@@ -766,7 +762,7 @@ func testNodeRestart_IncompleteSessions(t *testing.T) {
 	imts, err := inMemoryTransportSigner.NewECDSAInMemoryTransportSigner(pkBytes, testLogger)
 	require.NoError(t, err)
 
-	attestationVerifier := attestation.NewStubVerifier()
+	attestationManager := attestation.NewStubManager()
 
 	mockCC, mockRegistryAddr := createMockContractCaller(t)
 
@@ -782,7 +778,7 @@ func testNodeRestart_IncompleteSessions(t *testing.T) {
 		bh,
 		poller,
 		imts,
-		attestationVerifier,
+		attestationManager,
 		mockCC,
 		mockRegistryAddr,
 		persistence2,
@@ -969,7 +965,7 @@ func testSessionPersistence_ExpirationCleanup(t *testing.T) {
 	imts, err := inMemoryTransportSigner.NewECDSAInMemoryTransportSigner(pkBytes, testLogger)
 	require.NoError(t, err)
 
-	attestationVerifier := attestation.NewStubVerifier()
+	attestationManager := attestation.NewStubManager()
 
 	mockCC, mockRegistryAddr := createMockContractCaller(t)
 
@@ -985,7 +981,7 @@ func testSessionPersistence_ExpirationCleanup(t *testing.T) {
 		bh,
 		poller,
 		imts,
-		attestationVerifier,
+		attestationManager,
 		mockCC,
 		mockRegistryAddr,
 		persistence2,

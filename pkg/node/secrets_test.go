@@ -21,14 +21,11 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering/localPeeringDataFetcher"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/persistence/memory"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/registry"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner/inMemoryTransportSigner"
 	kmsTypes "github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
-	ethTypes "github.com/ethereum/go-ethereum/core/types"
-	"github.com/stretchr/testify/mock"
 )
 
 // mockChainPoller is a no-op chain poller for testing
@@ -107,18 +104,25 @@ func testSecretsEndpointFlow(t *testing.T) {
 	}
 
 	// Use mock attestation verifier for tests
-	mockVerifier := attestation.NewStubVerifier()
+	mockManager := attestation.NewStubManager()
 
-	// Create mock base contract caller
-	mockBaseContractCaller := contractCaller.NewMockIContractCaller(t)
-	mockBaseContractCaller.On("SubmitCommitment", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return(&ethTypes.Receipt{Status: 1}, nil).Maybe()
+	// Create testable contract caller with configurable releases
+	mockBaseContractCaller := contractCaller.NewTestableContractCallerStub()
 	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
+
+	// Add test release
+	testRelease := &kmsTypes.Release{
+		ImageDigest:  "sha256:test123",
+		EncryptedEnv: "encrypted-env-data-for-test-app",
+		PublicEnv:    "PUBLIC_VAR=test-value",
+		Timestamp:    time.Now().Unix(),
+	}
+	mockBaseContractCaller.AddTestRelease("test-app", testRelease)
 
 	persistence := memory.NewMemoryPersistence()
 	defer func() { _ = persistence.Close() }()
 
-	node, err := NewNode(cfg, peeringDataFetcher, bh, nil, imts, mockVerifier, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
+	node, err := NewNode(cfg, peeringDataFetcher, bh, nil, imts, mockManager, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
 	if err != nil {
 		t.Fatalf("Failed to create node: %v", err)
 	}
@@ -141,19 +145,6 @@ func testSecretsEndpointFlow(t *testing.T) {
 		t.Fatalf("Failed to generate RSA key pair: %v", err)
 	}
 
-	// Add test release to registry
-	testRelease := &kmsTypes.Release{
-		ImageDigest:  "sha256:test123",
-		EncryptedEnv: "encrypted-env-data-for-test-app",
-		PublicEnv:    "PUBLIC_VAR=test-value",
-		Timestamp:    time.Now().Unix(),
-	}
-	stubRegistry, ok := node.releaseRegistry.(*registry.StubClient)
-	if !ok {
-		t.Fatal("Expected StubClient for release registry")
-	}
-	stubRegistry.AddTestRelease("test-app", testRelease)
-
 	// Create test attestation with matching claims
 	testClaims := kmsTypes.AttestationClaims{
 		AppID:       "test-app",
@@ -165,10 +156,11 @@ func testSecretsEndpointFlow(t *testing.T) {
 
 	// Create secrets request
 	req := kmsTypes.SecretsRequestV1{
-		AppID:        "test-app",
-		Attestation:  attestationBytes,
-		RSAPubKeyTmp: pubKeyPEM,
-		AttestTime:   time.Now().Unix(),
+		AppID:             "test-app",
+		AttestationMethod: "gcp",
+		Attestation:       attestationBytes,
+		RSAPubKeyTmp:      pubKeyPEM,
+		AttestTime:        time.Now().Unix(),
 	}
 
 	// Create HTTP request
@@ -262,18 +254,16 @@ func testSecretsEndpointValidation(t *testing.T) {
 	}
 
 	// Use mock attestation verifier for tests
-	mockVerifier := attestation.NewStubVerifier()
+	mockManager := attestation.NewStubManager()
 
-	// Create mock base contract caller
-	mockBaseContractCaller := contractCaller.NewMockIContractCaller(t)
-	mockBaseContractCaller.On("SubmitCommitment", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return(&ethTypes.Receipt{Status: 1}, nil).Maybe()
+	// Create testable contract caller with configurable releases
+	mockBaseContractCaller := contractCaller.NewTestableContractCallerStub()
 	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
 
 	persistence := memory.NewMemoryPersistence()
 	defer func() { _ = persistence.Close() }()
 
-	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockVerifier, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
+	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockManager, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
 	if err != nil {
 		t.Fatalf("Failed to create node: %v", err)
 	}
@@ -327,21 +317,11 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 	}
 
 	// Use mock attestation verifier for tests
-	mockVerifier := attestation.NewStubVerifier()
+	mockManager := attestation.NewStubManager()
 
-	// Create mock base contract caller
-	mockBaseContractCaller := contractCaller.NewMockIContractCaller(t)
-	mockBaseContractCaller.On("SubmitCommitment", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).
-		Return(&ethTypes.Receipt{Status: 1}, nil).Maybe()
+	// Create testable contract caller with configurable releases
+	mockBaseContractCaller := contractCaller.NewTestableContractCallerStub()
 	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
-
-	persistence := memory.NewMemoryPersistence()
-	defer func() { _ = persistence.Close() }()
-
-	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockVerifier, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
-	if err != nil {
-		t.Fatalf("Failed to create node: %v", err)
-	}
 
 	// Add test release with specific digest
 	testRelease := &kmsTypes.Release{
@@ -350,8 +330,15 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 		PublicEnv:    "PUBLIC=value",
 		Timestamp:    time.Now().Unix(),
 	}
-	stubRegistry := node.releaseRegistry.(*registry.StubClient)
-	stubRegistry.AddTestRelease("test-app", testRelease)
+	mockBaseContractCaller.AddTestRelease("test-app", testRelease)
+
+	persistence := memory.NewMemoryPersistence()
+	defer func() { _ = persistence.Close() }()
+
+	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockManager, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
+	if err != nil {
+		t.Fatalf("Failed to create node: %v", err)
+	}
 
 	// Create attestation with DIFFERENT digest
 	testClaims := kmsTypes.AttestationClaims{
@@ -363,9 +350,10 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 	attestationBytes, _ := json.Marshal(testClaims)
 
 	req := kmsTypes.SecretsRequestV1{
-		AppID:        "test-app",
-		Attestation:  attestationBytes,
-		RSAPubKeyTmp: []byte("test-key"),
+		AppID:             "test-app",
+		AttestationMethod: "gcp",
+		Attestation:       attestationBytes,
+		RSAPubKeyTmp:      []byte("test-key"),
 	}
 	reqBody, _ := json.Marshal(req)
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
