@@ -41,7 +41,7 @@ jobs:
   # PR fuzzing - quick check for regressions
   pr-fuzzing:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 30
     permissions:
       contents: read
@@ -88,7 +88,7 @@ jobs:
   # Batch fuzzing - longer runs for corpus building
   batch-fuzzing:
     if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'batch')
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 360 # 6 hours max
     permissions:
       contents: write # push corpus updates to clusterfuzz-corpus
@@ -129,7 +129,7 @@ jobs:
   # Push to main - brief fuzzing + corpus update
   push-fuzzing:
     if: github.event_name == 'push'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 60
     permissions:
       contents: write # push corpus updates to clusterfuzz-corpus
@@ -170,7 +170,7 @@ jobs:
   # Corpus pruning
   prune:
     if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'prune'
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 60
     permissions:
       contents: write # update clusterfuzz-corpus branch
