@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   fuzz:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     timeout-minutes: 150 # padding over the 2h fuzz window
     strategy:
       fail-fast: false
