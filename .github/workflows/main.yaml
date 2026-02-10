@@ -30,6 +30,11 @@ jobs:
   lint:
     runs-on: self-hosted
     steps:
+      - name: Install build tools
+        run: |
+          if ! command -v make &> /dev/null; then
+            sudo apt-get update && sudo apt-get install -y make build-essential
+          fi
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
       - name: Set up Go
@@ -77,6 +82,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Install build tools
+        run: |
+          if ! command -v make &> /dev/null; then
+            sudo apt-get update && sudo apt-get install -y make build-essential
+          fi
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
       - name: Set up Go
@@ -113,6 +123,11 @@ jobs:
     permissions:
       contents: write
     steps:
+      - name: Install build tools
+        run: |
+          if ! command -v make &> /dev/null; then
+            sudo apt-get update && sudo apt-get install -y make build-essential
+          fi
       - name: Checkout
         uses: actions/checkout@v4
         with:
