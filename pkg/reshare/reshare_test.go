@@ -192,7 +192,10 @@ func testComputeNewKeyShare(t *testing.T) {
 		{{CompressedBytes: point1.Marshal()}},
 	}
 
-	keyVersion := r.ComputeNewKeyShare(dealerIDs, shares, allCommitments)
+	keyVersion, err := r.ComputeNewKeyShare(dealerIDs, shares, allCommitments)
+	if err != nil {
+		t.Fatalf("ComputeNewKeyShare failed: %v", err)
+	}
 	if keyVersion == nil {
 		t.Fatal("Expected non-nil key version")
 	}
@@ -240,7 +243,10 @@ func testComputeNewKeyShareScaledCommitmentForNewOperator(t *testing.T) {
 		{*identity},
 	}
 
-	keyVersion := r.ComputeNewKeyShare(dealerIDs, shares, allCommitments)
+	keyVersion, err := r.ComputeNewKeyShare(dealerIDs, shares, allCommitments)
+	if err != nil {
+		t.Fatalf("ComputeNewKeyShare failed: %v", err)
+	}
 	if keyVersion == nil || keyVersion.PrivateShare == nil {
 		t.Fatal("Expected computed key version with non-nil private share")
 	}
