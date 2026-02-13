@@ -116,10 +116,27 @@ func (r *Reshare) ComputeNewKeyShare(dealerIDs []int64, shares map[int64]*fr.Ele
 		newShare.Add(newShare, term)
 	}
 
+	// Publish commitments in the same form as normal reshare nodes:
+	// λ_j * (g2^x'_j). This keeps /pubkey semantics consistent across paths.
+	commitments := make([]types.G2Point, 0, 1)
+	shareCommitment, err := crypto.ScalarMulG2(crypto.G2Generator, newShare)
+	if err == nil {
+		lambdaJ := crypto.ComputeLagrangeCoefficient(r.nodeID, dealerIDs)
+		scaledCommitment, scaleErr := crypto.ScalarMulG2(*shareCommitment, lambdaJ)
+		if scaleErr == nil {
+			commitments = append(commitments, *scaledCommitment)
+		}
+	}
+
+	// Preserve backward compatibility if commitment derivation fails unexpectedly.
+	if len(commitments) == 0 && len(allCommitments) > 0 {
+		commitments = allCommitments[0]
+	}
+
 	return &types.KeyShareVersion{
 		Version:        0, // TODO: Use proper epoch calculation
 		PrivateShare:   newShare,
-		Commitments:    allCommitments[0],
+		Commitments:    commitments,
 		IsActive:       false,
 		ParticipantIDs: dealerIDs,
 	}

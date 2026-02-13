@@ -196,6 +196,23 @@ func testComputeNewKeyShare(t *testing.T) {
 	if keyVersion.PrivateShare == nil {
 		t.Error("Expected non-nil private share")
 	}
+	if len(keyVersion.Commitments) == 0 {
+		t.Fatal("Expected non-empty commitments")
+	}
+
+	// New operator commitments should be published as λ_j * (g2^x'_j).
+	expectedShareCommitment, err := crypto.ScalarMulG2(crypto.G2Generator, keyVersion.PrivateShare)
+	if err != nil {
+		t.Fatalf("Failed to compute expected share commitment: %v", err)
+	}
+	lambda := crypto.ComputeLagrangeCoefficient(nodeID, dealerIDs)
+	expectedScaled, err := crypto.ScalarMulG2(*expectedShareCommitment, lambda)
+	if err != nil {
+		t.Fatalf("Failed to compute expected scaled commitment: %v", err)
+	}
+	if !expectedScaled.IsEqual(&keyVersion.Commitments[0]) {
+		t.Error("Expected first commitment to be lambda-scaled share commitment")
+	}
 }
 
 // testCreateCompletionSignature tests completion signature creation
