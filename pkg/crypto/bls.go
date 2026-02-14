@@ -156,7 +156,7 @@ func PointsEqualG2(a, b types.G2Point) (bool, error) {
 
 // HashToG1 hashes a string to a G1 point using proper hash-to-curve
 func HashToG1(appID string) (*types.G1Point, error) {
-	g1Point, err := bls.HashToG1([]byte(appID))
+	g1Point, err := bls.HashToG1ForIBE([]byte(appID))
 	if err != nil {
 		return nil, err
 	}
