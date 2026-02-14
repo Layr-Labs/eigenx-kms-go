@@ -12,7 +12,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.37.0
 	github.com/consensys/gnark-crypto v0.19.2
 	github.com/dgraph-io/badger/v3 v3.2103.5
-	github.com/ethereum/go-ethereum v1.16.7
+	github.com/ethereum/go-ethereum v1.16.8
 	github.com/google/uuid v1.6.0
 	github.com/lestrrat-go/httprc/v3 v3.0.2
 	github.com/lestrrat-go/jwx/v3 v3.0.12
@@ -58,7 +58,7 @@ require (
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/goccy/go-json v0.10.4 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/golang/glog v0.0.0-20160126235308-23def4e6c14b // indirect
+	github.com/golang/glog v1.2.4 // indirect
 	github.com/golang/groupcache v0.0.0-20190702054246-869f871628b6 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/golang/snappy v1.0.0 // indirect
