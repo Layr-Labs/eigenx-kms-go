@@ -23,6 +23,9 @@ func Test_ReshareProtocol(t *testing.T) {
 	t.Run("GenerateNewSharesNilCurrentShare", func(t *testing.T) { testGenerateNewSharesNilCurrentShare(t) })
 	t.Run("VerifyNewShare", func(t *testing.T) { testVerifyNewShare(t) })
 	t.Run("ComputeNewKeyShare", func(t *testing.T) { testComputeNewKeyShare(t) })
+	t.Run("ComputeNewKeyShareScaledCommitmentForNewOperator", func(t *testing.T) {
+		testComputeNewKeyShareScaledCommitmentForNewOperator(t)
+	})
 	t.Run("CreateCompletionSignature", func(t *testing.T) { testCreateCompletionSignature(t) })
 }
 
@@ -189,12 +192,89 @@ func testComputeNewKeyShare(t *testing.T) {
 		{{CompressedBytes: point1.Marshal()}},
 	}
 
-	keyVersion := r.ComputeNewKeyShare(dealerIDs, shares, allCommitments)
+	keyVersion, err := r.ComputeNewKeyShare(dealerIDs, shares, allCommitments)
+	if err != nil {
+		t.Fatalf("ComputeNewKeyShare failed: %v", err)
+	}
 	if keyVersion == nil {
 		t.Fatal("Expected non-nil key version")
 	}
 	if keyVersion.PrivateShare == nil {
 		t.Error("Expected non-nil private share")
+	}
+	if len(keyVersion.Commitments) == 0 {
+		t.Fatal("Expected non-empty commitments")
+	}
+
+	// New operator commitments should be published as λ_j * (g2^x'_j).
+	expectedShareCommitment, err := crypto.ScalarMulG2(crypto.G2Generator, keyVersion.PrivateShare)
+	if err != nil {
+		t.Fatalf("Failed to compute expected share commitment: %v", err)
+	}
+	lambda := crypto.ComputeLagrangeCoefficient(nodeID, dealerIDs)
+	expectedScaled, err := crypto.ScalarMulG2(*expectedShareCommitment, lambda)
+	if err != nil {
+		t.Fatalf("Failed to compute expected scaled commitment: %v", err)
+	}
+	if !expectedScaled.IsEqual(&keyVersion.Commitments[0]) {
+		t.Error("Expected first commitment to be lambda-scaled share commitment")
+	}
+}
+
+// testComputeNewKeyShareScaledCommitmentForNewOperator verifies that new operators
+// publish lambda-scaled share commitments instead of raw dealer commitments.
+func testComputeNewKeyShareScaledCommitmentForNewOperator(t *testing.T) {
+	operators := createTestOperators(t, 3)
+	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
+	r := NewReshare(nodeID, operators)
+
+	dealerIDs := []int64{1, 2, 3}
+	shares := map[int64]*fr.Element{
+		1: new(fr.Element).SetUint64(3),
+		2: new(fr.Element).SetUint64(5),
+		3: new(fr.Element).SetUint64(7),
+	}
+
+	// Simulate zero-constant-term reshare dealer commitments where commitments[0] is identity.
+	identity := types.ZeroG2Point()
+	allCommitments := [][]types.G2Point{
+		{*identity},
+		{*identity},
+		{*identity},
+	}
+
+	keyVersion, err := r.ComputeNewKeyShare(dealerIDs, shares, allCommitments)
+	if err != nil {
+		t.Fatalf("ComputeNewKeyShare failed: %v", err)
+	}
+	if keyVersion == nil || keyVersion.PrivateShare == nil {
+		t.Fatal("Expected computed key version with non-nil private share")
+	}
+	if len(keyVersion.Commitments) == 0 {
+		t.Fatal("Expected non-empty commitments")
+	}
+
+	// Regression check: new operator contribution must not be identity.
+	isZero, err := keyVersion.Commitments[0].IsZero()
+	if err != nil {
+		t.Fatalf("Failed to check if commitment is zero: %v", err)
+	}
+	if isZero {
+		t.Fatal("Expected non-zero commitment for new operator /pubkey contribution")
+	}
+
+	// Commitment must follow the same publication semantics as existing operators.
+	expectedShareCommitment, err := crypto.ScalarMulG2(crypto.G2Generator, keyVersion.PrivateShare)
+	if err != nil {
+		t.Fatalf("Failed to compute expected share commitment: %v", err)
+	}
+	lambda := crypto.ComputeLagrangeCoefficient(nodeID, dealerIDs)
+	expectedScaled, err := crypto.ScalarMulG2(*expectedShareCommitment, lambda)
+	if err != nil {
+		t.Fatalf("Failed to compute expected scaled commitment: %v", err)
+	}
+	if !expectedScaled.IsEqual(&keyVersion.Commitments[0]) {
+		t.Fatal("Expected first commitment to equal lambda-scaled share commitment")
 	}
 }
 
