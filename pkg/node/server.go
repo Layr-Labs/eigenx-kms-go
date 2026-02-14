@@ -56,10 +56,23 @@ Client Request Flow:
     - Client collects ⌈2n/3⌉ signatures to recover app private key
 
   POST /secrets:
-    - Request: { appID, attestation, rsaPubKey, attestTime }
+    - Request: { appID, attestationMethod, attestation, rsaPubKey, attestTime, challenge?, publicKey? }
+    - attestationMethod: "gcp" (default), "intel", or "ecdsa"
+    - For GCP/Intel: attestation contains JWT token
+    - For ECDSA: attestation contains signature, challenge and publicKey required
     - Validates attestation and image digest
     - Returns encrypted environment + RSA-encrypted partial signature
     - Used by TEE applications for secret retrieval
+
+    Examples:
+      GCP attestation:
+        { "app_id": "my-app", "attestation_method": "gcp",
+          "attestation": "<jwt-token>", "rsa_pubkey_tmp": "<pubkey>" }
+
+      ECDSA attestation:
+        { "app_id": "my-app", "attestation_method": "ecdsa",
+          "attestation": "<signature>", "challenge": "<timestamp>-<nonce>",
+          "public_key": "<ecdsa-pubkey>", "rsa_pubkey_tmp": "<rsa-pubkey>" }
 
 Session Management:
   - All protocol messages include SessionTimestamp (rounded to interval boundary)

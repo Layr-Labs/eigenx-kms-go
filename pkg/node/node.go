@@ -30,7 +30,6 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/merkle"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/persistence"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/registry"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/reshare"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transport"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
@@ -54,16 +53,15 @@ type Node struct {
 	OperatorSetId   uint32         // Operator set ID
 
 	// Dependencies
-	keyStore            *keystore.KeyStore
-	transport           *transport.Client
-	server              *Server
-	attestationVerifier attestation.Verifier
-	releaseRegistry     registry.Client
-	rsaEncryption       *encryption.RSAEncryption
-	peeringDataFetcher  peering.IPeeringDataFetcher
-	logger              *zap.Logger
-	transportSigner     transportSigner.ITransportSigner
-	persistence         persistence.INodePersistence
+	keyStore           *keystore.KeyStore
+	transport          *transport.Client
+	server             *Server
+	attestationManager *attestation.AttestationManager // Multi-method attestation manager
+	rsaEncryption      *encryption.RSAEncryption
+	peeringDataFetcher peering.IPeeringDataFetcher
+	logger             *zap.Logger
+	transportSigner    transportSigner.ITransportSigner
+	persistence        persistence.INodePersistence
 
 	// Dynamic components (created when needed)
 	dkg      *dkg.DKG
@@ -97,9 +95,9 @@ type ProtocolSession struct {
 	Operators        []*peering.OperatorSetPeer
 
 	// Session-specific state (moved from global Node state)
-	shares      map[int]*fr.Element
-	commitments map[int][]types.G2Point
-	acks        map[int]map[int]*types.Acknowledgement
+	shares      map[int64]*fr.Element
+	commitments map[int64][]types.G2Point
+	acks        map[int64]map[int64]*types.Acknowledgement
 
 	// Completion channels (buffered, size 1) - signaled when all expected messages received
 	sharesCompleteChan      chan bool
@@ -112,14 +110,18 @@ type ProtocolSession struct {
 	contractSubmitted bool
 
 	// Phase 4: Verification state
-	verifiedOperators map[int]bool
+	verifiedOperators map[int64]bool
 
 	mu sync.RWMutex
 }
 
+// addressToNodeID is a small seam for testability so we can force nodeID collisions in unit tests.
+// In production it always points to util.AddressToNodeID.
+var addressToNodeID = util.AddressToNodeID
+
 // HandleReceivedShare stores a share and signals completion if all shares received
 // Returns error if duplicate share detected
-func (s *ProtocolSession) HandleReceivedShare(senderNodeID int, share *fr.Element) error {
+func (s *ProtocolSession) HandleReceivedShare(senderNodeID int64, share *fr.Element) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -143,7 +145,7 @@ func (s *ProtocolSession) HandleReceivedShare(senderNodeID int, share *fr.Elemen
 
 // HandleReceivedCommitment stores commitments and signals completion if all received
 // Returns error if duplicate commitment detected
-func (s *ProtocolSession) HandleReceivedCommitment(senderNodeID int, commitments []types.G2Point) error {
+func (s *ProtocolSession) HandleReceivedCommitment(senderNodeID int64, commitments []types.G2Point) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -167,7 +169,7 @@ func (s *ProtocolSession) HandleReceivedCommitment(senderNodeID int, commitments
 
 // HandleReceivedAck stores an acknowledgement and signals completion if all acks received for this dealer
 // Returns error if duplicate ack detected
-func (s *ProtocolSession) HandleReceivedAck(dealerNodeID, playerNodeID int, ack *types.Acknowledgement) error {
+func (s *ProtocolSession) HandleReceivedAck(dealerNodeID, playerNodeID int64, ack *types.Acknowledgement) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -179,7 +181,7 @@ func (s *ProtocolSession) HandleReceivedAck(dealerNodeID, playerNodeID int, ack 
 	}
 
 	if s.acks[dealerNodeID] == nil {
-		s.acks[dealerNodeID] = make(map[int]*types.Acknowledgement)
+		s.acks[dealerNodeID] = make(map[int64]*types.Acknowledgement)
 	}
 	s.acks[dealerNodeID][playerNodeID] = ack
 
@@ -207,18 +209,18 @@ func (ps *ProtocolSession) toPersistenceState() *persistence.ProtocolSessionStat
 	}
 
 	// Convert shares (fr.Element -> string)
-	shares := make(map[int]string)
+	shares := make(map[int64]string)
 	for nodeID, share := range ps.shares {
 		shares[nodeID] = types.SerializeFr(share).Data
 	}
 
 	// Commitments and acknowledgements are already serializable
-	commitments := make(map[int][]types.G2Point)
+	commitments := make(map[int64][]types.G2Point)
 	for k, v := range ps.commitments {
 		commitments[k] = v
 	}
 
-	acks := make(map[int]map[int]*types.Acknowledgement)
+	acks := make(map[int64]map[int64]*types.Acknowledgement)
 	for k, v := range ps.acks {
 		acks[k] = v
 	}
@@ -263,22 +265,21 @@ type Config struct {
 }
 
 // NewNode creates a new node instance with dependency injection
-// attestationVerifier is required and must not be nil
 func NewNode(
 	cfg Config,
 	pdf peering.IPeeringDataFetcher,
 	bh blockHandler.IBlockHandler,
 	cp chainPoller.IChainPoller,
 	tps transportSigner.ITransportSigner,
-	attestationVerifier attestation.Verifier,
+	attestationManager *attestation.AttestationManager,
 	baseContractCaller contractCaller.IContractCaller,
 	commitmentRegistryAddress common.Address,
 	p persistence.INodePersistence,
 	l *zap.Logger,
 ) (*Node, error) {
 	// Validate required dependencies
-	if attestationVerifier == nil {
-		return nil, fmt.Errorf("attestationVerifier is required and cannot be nil")
+	if attestationManager == nil {
+		return nil, fmt.Errorf("attestationManager is required and cannot be nil")
 	}
 	if baseContractCaller == nil {
 		return nil, fmt.Errorf("baseContractCaller is required")
@@ -291,7 +292,7 @@ func NewNode(
 	operatorAddress := common.HexToAddress(cfg.OperatorAddress)
 
 	// Use operator address hash as transport client ID (for consistency)
-	transportClientID := util.AddressToNodeID(operatorAddress)
+	transportClientID := addressToNodeID(operatorAddress)
 
 	n := &Node{
 		OperatorAddress:           operatorAddress,
@@ -301,8 +302,7 @@ func NewNode(
 		OperatorSetId:             cfg.OperatorSetId,
 		keyStore:                  keystore.NewKeyStore(),
 		server:                    NewServer(nil, cfg.Port), // Will set node reference later
-		attestationVerifier:       attestationVerifier,
-		releaseRegistry:           registry.NewStubClient(),
+		attestationManager:        attestationManager,
 		rsaEncryption:             encryption.NewRSAEncryption(),
 		peeringDataFetcher:        pdf,
 		logger:                    l,
@@ -612,6 +612,10 @@ func (n *Node) fetchCurrentOperators(ctx context.Context, avsAddress string, ope
 		return sortedPeers[i].OperatorAddress.Hex() < sortedPeers[j].OperatorAddress.Hex()
 	})
 
+	if err := validateOperatorSetNoNodeIDCollisions(sortedPeers); err != nil {
+		return nil, err
+	}
+
 	n.logger.Sugar().Infow("Fetched operators from chain",
 		"operator_address", n.OperatorAddress.Hex(),
 		"count", len(sortedPeers),
@@ -620,6 +624,39 @@ func (n *Node) fetchCurrentOperators(ctx context.Context, avsAddress string, ope
 		}), ", "),
 	)
 	return sortedPeers, nil
+}
+
+// validateOperatorSetNoNodeIDCollisions fails fast if:
+// - the operator list contains duplicate addresses, or
+// - util.AddressToNodeID(address) collides for two different addresses.
+//
+// This is critical because node IDs are used as map keys in protocol sessions; collisions would
+// cause silent overwrites and split-brain / misrouting.
+func validateOperatorSetNoNodeIDCollisions(operators []*peering.OperatorSetPeer) error {
+	seenAddrs := make(map[common.Address]struct{}, len(operators))
+	seenNodeIDs := make(map[int64]common.Address, len(operators))
+
+	for _, op := range operators {
+		if op == nil {
+			return fmt.Errorf("operator is nil")
+		}
+
+		addr := op.OperatorAddress
+		if _, ok := seenAddrs[addr]; ok {
+			return fmt.Errorf("duplicate operator address in operator set: %s", addr.Hex())
+		}
+		seenAddrs[addr] = struct{}{}
+
+		id := addressToNodeID(addr)
+		// Check for nodeID collision between different addresses.
+		// (If prev == addr, the duplicate-address check above would have already triggered.)
+		if prev, ok := seenNodeIDs[id]; ok && prev != addr {
+			return fmt.Errorf("derived nodeID collision: node_id=%d addr1=%s addr2=%s", id, prev.Hex(), addr.Hex())
+		}
+		seenNodeIDs[id] = addr
+	}
+
+	return nil
 }
 
 // hasExistingShares returns true if this node has active key shares
@@ -655,26 +692,30 @@ func (n *Node) detectClusterState(operators []*peering.OperatorSetPeer) string {
 }
 
 // createSession creates a new protocol session with the provided timestamp
-func (n *Node) createSession(sessionType string, operators []*peering.OperatorSetPeer, sessionTimestamp int64) *ProtocolSession {
+func (n *Node) createSession(sessionType string, operators []*peering.OperatorSetPeer, sessionTimestamp int64) (*ProtocolSession, error) {
+	if err := validateOperatorSetNoNodeIDCollisions(operators); err != nil {
+		return nil, err
+	}
+
 	session := &ProtocolSession{
 		SessionTimestamp:        sessionTimestamp,
 		Type:                    sessionType,
 		Phase:                   1,
 		StartTime:               time.Now(),
 		Operators:               operators,
-		shares:                  make(map[int]*fr.Element),
-		commitments:             make(map[int][]types.G2Point),
-		acks:                    make(map[int]map[int]*types.Acknowledgement),
+		shares:                  make(map[int64]*fr.Element),
+		commitments:             make(map[int64][]types.G2Point),
+		acks:                    make(map[int64]map[int64]*types.Acknowledgement),
 		sharesCompleteChan:      make(chan bool, 1),
 		commitmentsCompleteChan: make(chan bool, 1),
 		acksCompleteChan:        make(chan bool, 1),
-		verifiedOperators:       make(map[int]bool),
+		verifiedOperators:       make(map[int64]bool),
 	}
 
 	// Initialize acks map for each operator (as dealer)
 	for _, op := range operators {
-		nodeID := util.AddressToNodeID(op.OperatorAddress)
-		session.acks[nodeID] = make(map[int]*types.Acknowledgement)
+		nodeID := addressToNodeID(op.OperatorAddress)
+		session.acks[nodeID] = make(map[int64]*types.Acknowledgement)
 	}
 
 	n.sessionMutex.Lock()
@@ -694,7 +735,7 @@ func (n *Node) createSession(sessionType string, operators []*peering.OperatorSe
 		"session_timestamp", sessionTimestamp,
 		"type", sessionType)
 
-	return session
+	return session, nil
 }
 
 // getSession retrieves a session by timestamp
@@ -791,7 +832,10 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	}
 
 	// Create session for this DKG run with provided timestamp
-	session := n.createSession("dkg", operators, sessionTimestamp)
+	session, err := n.createSession("dkg", operators, sessionTimestamp)
+	if err != nil {
+		return fmt.Errorf("failed to create DKG session: %w", err)
+	}
 	defer n.cleanupSession(session.SessionTimestamp)
 
 	// Persist initial session state
@@ -802,7 +846,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	}
 
 	// Use keccak256 hash of operator address as node ID
-	thisNodeID := util.AddressToNodeID(n.OperatorAddress)
+	thisNodeID := addressToNodeID(n.OperatorAddress)
 
 	// Verify this operator is in the fetched operator set
 	operatorFound := false
@@ -836,7 +880,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 
 	// Send shares to each participant
 	for _, op := range operators {
-		opNodeID := util.AddressToNodeID(op.OperatorAddress)
+		opNodeID := addressToNodeID(op.OperatorAddress)
 		n.logger.Sugar().Debugw("Sending share to operator",
 			"operator_address", n.OperatorAddress.Hex(),
 			"target", op.OperatorAddress.Hex())
@@ -883,7 +927,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	receivedCommitments := session.commitments
 	session.mu.RUnlock()
 
-	validShares := make(map[int]*fr.Element)
+	validShares := make(map[int64]*fr.Element)
 	for dealerID, share := range receivedShares {
 		commitments := receivedCommitments[dealerID]
 		if n.dkg.VerifyShare(dealerID, share, commitments) {
@@ -895,7 +939,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 			// Find dealer's peer info for transport
 			var dealerPeer *peering.OperatorSetPeer
 			for _, op := range operators {
-				if util.AddressToNodeID(op.OperatorAddress) == dealerID {
+				if addressToNodeID(op.OperatorAddress) == dealerID {
 					dealerPeer = op
 					break
 				}
@@ -926,7 +970,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	// No need to store validShares globally - just use them for finalization later
 
 	// Wait for acknowledgements (as a dealer) - need ALL operators for DKG
-	myNodeID := util.AddressToNodeID(n.OperatorAddress)
+	myNodeID := addressToNodeID(n.OperatorAddress)
 	if err := waitForAcks(session, myNodeID, protocolTimeout); err != nil {
 		return fmt.Errorf("insufficient acknowledgements: %v", err)
 	}
@@ -1029,10 +1073,10 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 		"node_id", thisNodeID)
 
 	allCommitments := make([][]types.G2Point, 0, len(receivedCommitments))
-	participantIDs := make([]int, 0, len(receivedCommitments))
+	participantIDs := make([]int64, 0, len(receivedCommitments))
 
 	for _, op := range operators {
-		opNodeID := util.AddressToNodeID(op.OperatorAddress)
+		opNodeID := addressToNodeID(op.OperatorAddress)
 		if comm, ok := receivedCommitments[opNodeID]; ok {
 			allCommitments = append(allCommitments, comm)
 			participantIDs = append(participantIDs, opNodeID)
@@ -1087,7 +1131,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	}
 
 	// Use keccak256 hash of operator address as node ID (same as DKG)
-	thisNodeID := util.AddressToNodeID(n.OperatorAddress)
+	thisNodeID := addressToNodeID(n.OperatorAddress)
 
 	// Verify this operator is in the fetched operator set
 	operatorFound := false
@@ -1115,13 +1159,19 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	}
 
 	// Phase 1: Generate new shares
-	shares, commitments, err := n.resharer.GenerateNewShares(currentShare, newThreshold)
+	// Automatic reshare is a *share refresh*: keep the master secret fixed while re-randomizing shares.
+	// We do this by having every dealer contribute a random polynomial g_i with g_i(0)=0, and each
+	// participant updates their share: x'_j = x_j + Σ_i g_i(j).
+	zero := new(fr.Element).SetZero()
+	shares, commitments, err := n.resharer.GenerateNewShares(zero, newThreshold)
 	if err != nil {
 		return err
 	}
 
-	// Create session for this reshare run with provided timestamp
-	session := n.createSession("reshare", operators, sessionTimestamp)
+	session, err := n.createSession("reshare", operators, sessionTimestamp)
+	if err != nil {
+		return fmt.Errorf("failed to create reshare session: %w", err)
+	}
 	defer n.cleanupSession(session.SessionTimestamp)
 
 	// Persist initial session state
@@ -1139,7 +1189,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 
 	// Send shares to all operators
 	for _, op := range operators {
-		opNodeID := util.AddressToNodeID(op.OperatorAddress)
+		opNodeID := addressToNodeID(op.OperatorAddress)
 		if opNodeID == thisNodeID {
 			// Store own share and commitment in session
 			_ = session.HandleReceivedShare(thisNodeID, shares[opNodeID])
@@ -1185,7 +1235,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	receivedCommitments := session.commitments
 	session.mu.RUnlock()
 
-	validShares := make(map[int]*fr.Element)
+	validShares := make(map[int64]*fr.Element)
 	for dealerID, share := range receivedShares {
 		commitments := receivedCommitments[dealerID]
 		if n.resharer.VerifyNewShare(dealerID, share, commitments) {
@@ -1197,7 +1247,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 			// Find dealer's peer info for transport
 			var dealerPeer *peering.OperatorSetPeer
 			for _, op := range operators {
-				if util.AddressToNodeID(op.OperatorAddress) == dealerID {
+				if addressToNodeID(op.OperatorAddress) == dealerID {
 					dealerPeer = op
 					break
 				}
@@ -1232,7 +1282,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	}
 
 	// Wait for acknowledgements (as a dealer)
-	myNodeID := util.AddressToNodeID(n.OperatorAddress)
+	myNodeID := addressToNodeID(n.OperatorAddress)
 	if err := waitForAcks(session, myNodeID, protocolTimeout); err != nil {
 		return fmt.Errorf("insufficient reshare acknowledgements: %v", err)
 	}
@@ -1333,13 +1383,11 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 
 	// Collect all commitments and participant IDs for finalization from session
 	session.mu.RLock()
-	allCommitmentsForFinalize := make([][]types.G2Point, 0, len(session.commitments))
-	participantIDsForFinalize := make([]int, 0, len(session.commitments))
+	participantIDsForFinalize := make([]int64, 0, len(session.commitments))
 
 	for _, op := range operators {
-		opNodeID := util.AddressToNodeID(op.OperatorAddress)
-		if comm, ok := session.commitments[opNodeID]; ok {
-			allCommitmentsForFinalize = append(allCommitmentsForFinalize, comm)
+		opNodeID := addressToNodeID(op.OperatorAddress)
+		if _, ok := session.commitments[opNodeID]; ok {
 			participantIDsForFinalize = append(participantIDsForFinalize, opNodeID)
 		}
 	}
@@ -1347,29 +1395,37 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	receivedSharesForFinalize := session.shares
 	session.mu.RUnlock()
 
-	// Compute new key share using Lagrange interpolation
-	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDsForFinalize, receivedSharesForFinalize, allCommitmentsForFinalize)
-	newKeyVersion.Version = sessionTimestamp // Use session timestamp as version
-	newKeyVersion.IsActive = true            // Activate immediately (all operators must participate)
+	// Compute refreshed share: x'_j = x_j + Σ_i g_i(j)
+	delta := new(fr.Element).SetZero()
+	for _, share := range receivedSharesForFinalize {
+		if share == nil {
+			continue
+		}
+		delta.Add(delta, share)
+	}
+	newShare := new(fr.Element).Add(new(fr.Element).Set(currentShare), delta)
+
+	newKeyVersion := &types.KeyShareVersion{
+		Version:        sessionTimestamp,
+		PrivateShare:   newShare,
+		IsActive:       true,
+		ParticipantIDs: participantIDsForFinalize,
+	}
 
 	// Scale this node's first commitment by its Lagrange coefficient
 	// This ensures that when the client sums all operators' commitments[0], it gets g^s (master public key)
-	// In reshare: C[0] = g^{x_i} where x_i is old share
-	// Master public key = g^s = g^{Σ λ_i * x_i} = Σ λ_i * C[0]
-	// So we store λ_i * C[0] as our contribution to the master public key sum
+	// We publish λ_j * (g^{x'_j}) so clients can reconstruct g^s by summing contributions.
 	lambda := eigenxcrypto.ComputeLagrangeCoefficient(thisNodeID, participantIDsForFinalize)
-	scaledFirstCommitment, err := eigenxcrypto.ScalarMulG2(myCommitments[0], lambda)
+	shareCommitment, err := eigenxcrypto.ScalarMulG2(eigenxcrypto.G2Generator, newShare)
+	if err != nil {
+		return fmt.Errorf("failed to compute share commitment: %w", err)
+	}
+	scaledFirstCommitment, err := eigenxcrypto.ScalarMulG2(*shareCommitment, lambda)
 	if err != nil {
 		return fmt.Errorf("failed to scale commitment: %w", err)
 	}
 
-	// Create scaled commitments (only first one is scaled for master public key computation)
-	scaledCommitments := make([]types.G2Point, len(myCommitments))
-	scaledCommitments[0] = *scaledFirstCommitment
-	for i := 1; i < len(myCommitments); i++ {
-		scaledCommitments[i] = myCommitments[i]
-	}
-	newKeyVersion.Commitments = scaledCommitments
+	newKeyVersion.Commitments = []types.G2Point{*scaledFirstCommitment}
 
 	// Persist new key version BEFORE adding to keystore
 	// This ensures we fail if persistence fails, preventing state inconsistency
@@ -1409,13 +1465,16 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		return fmt.Errorf("failed to fetch operators: %w", err)
 	}
 
-	thisNodeID := util.AddressToNodeID(n.OperatorAddress)
+	thisNodeID := addressToNodeID(n.OperatorAddress)
 
 	// Create reshare instance
 	n.resharer = reshare.NewReshare(thisNodeID, operators)
 
 	// Create session for this reshare (as recipient only)
-	session := n.createSession("reshare", operators, sessionTimestamp)
+	session, err := n.createSession("reshare", operators, sessionTimestamp)
+	if err != nil {
+		return fmt.Errorf("failed to create reshare session: %w", err)
+	}
 	defer n.cleanupSession(session.SessionTimestamp)
 
 	// Persist initial session state
@@ -1442,10 +1501,10 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	// Collect all commitments and participant IDs from session
 	session.mu.RLock()
 	allCommitments := make([][]types.G2Point, 0, len(session.commitments))
-	participantIDs := make([]int, 0, len(session.commitments))
+	participantIDs := make([]int64, 0, len(session.commitments))
 
 	for _, op := range operators {
-		opNodeID := util.AddressToNodeID(op.OperatorAddress)
+		opNodeID := addressToNodeID(op.OperatorAddress)
 		if comm, ok := session.commitments[opNodeID]; ok {
 			allCommitments = append(allCommitments, comm)
 			participantIDs = append(participantIDs, opNodeID)
@@ -1552,7 +1611,7 @@ func waitForCommitments(session *ProtocolSession, timeout time.Duration) error {
 // waitForAcks waits for all acknowledgements to be received for a specific dealer using polling
 // Note: We poll instead of using acksCompleteChan because the channel signals when ANY dealer
 // completes, not when THIS specific dealer completes. Each dealer needs to wait for their own acks.
-func waitForAcks(session *ProtocolSession, dealerNodeID int, timeout time.Duration) error {
+func waitForAcks(session *ProtocolSession, dealerNodeID int64, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -1596,18 +1655,13 @@ func (n *Node) GetOperatorAddress() common.Address {
 	return n.OperatorAddress
 }
 
-// GetReleaseRegistry returns the release registry client (for testing)
-func (n *Node) GetReleaseRegistry() registry.Client {
-	return n.releaseRegistry
-}
-
 // GetKeyStore returns the keystore (for testing)
 func (n *Node) GetKeyStore() *keystore.KeyStore {
 	return n.keyStore
 }
 
 // RunDKGPhase1 runs only phase 1 of DKG (for testing)
-func (n *Node) RunDKGPhase1() (map[int]*fr.Element, []types.G2Point, error) {
+func (n *Node) RunDKGPhase1() (map[int64]*fr.Element, []types.G2Point, error) {
 	return n.dkg.GenerateShares()
 }
 
@@ -1743,7 +1797,7 @@ func (n *Node) submitCommitmentWithRetry(
 }
 
 // signAcknowledgement signs an acknowledgement using ECDSA transport signer
-func (n *Node) signAcknowledgement(dealerID int, commitmentHash [32]byte) []byte {
+func (n *Node) signAcknowledgement(dealerID int64, commitmentHash [32]byte) []byte {
 	// Create message: dealerID || commitmentHash
 	dealerBytes := make([]byte, 4)
 	binary.BigEndian.PutUint32(dealerBytes, uint32(dealerID))
@@ -1781,7 +1835,7 @@ func (n *Node) VerifyOperatorBroadcast(
 		return fmt.Errorf("session not found")
 	}
 
-	myNodeID := util.AddressToNodeID(n.OperatorAddress)
+	myNodeID := addressToNodeID(n.OperatorAddress)
 
 	var myAck *types.Acknowledgement
 	for _, ack := range broadcast.Acknowledgements {

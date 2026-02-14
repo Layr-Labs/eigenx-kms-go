@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
@@ -96,32 +97,50 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.node.logger.Sugar().Infow("Processing secrets request", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID)
+	s.node.logger.Sugar().Infow("Processing secrets request", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "attestation_method", req.AttestationMethod)
 
-	// Step 1: Verify attestation
-	claims, err := s.node.attestationVerifier.VerifyAttestation(req.Attestation)
-	if err != nil {
-		s.node.logger.Sugar().Warnw("Attestation verification failed", "node_id", s.node.OperatorAddress.Hex(), "error", err)
-		http.Error(w, "Invalid attestation", http.StatusUnauthorized)
+	// Step 1: Validate attestation method is provided
+	if req.AttestationMethod == "" {
+		s.node.logger.Sugar().Warnw("Attestation method is required", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID)
+		http.Error(w, "Attestation method is required", http.StatusBadRequest)
 		return
 	}
 
-	// Step 2: Query latest release from on-chain registry
-	release, err := s.node.releaseRegistry.GetLatestRelease(req.AppID)
+	// Step 2: Verify attestation using AttestationManager
+	attestReq := &attestation.AttestationRequest{
+		Method:      req.AttestationMethod,
+		AppID:       req.AppID,
+		Attestation: req.Attestation,
+		Challenge:   req.Challenge,
+		PublicKey:   req.PublicKey,
+	}
+
+	claims, err := s.node.attestationManager.VerifyWithMethod(req.AttestationMethod, attestReq)
+	if err != nil {
+		s.node.logger.Sugar().Warnw("Attestation verification failed",
+			"node_id", s.node.OperatorAddress.Hex(),
+			"method", req.AttestationMethod,
+			"error", err)
+		http.Error(w, fmt.Sprintf("Invalid attestation: %v", err), http.StatusUnauthorized)
+		return
+	}
+
+	// Step 3: Query latest release from on-chain AppController
+	release, err := s.node.baseContractCaller.GetLatestReleaseAsRelease(r.Context(), req.AppID)
 	if err != nil {
 		s.node.logger.Sugar().Warnw("Failed to get release", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
 		http.Error(w, "Release not found", http.StatusNotFound)
 		return
 	}
 
-	// Step 3: Verify image digest matches
+	// Step 4: Verify image digest matches
 	if claims.ImageDigest != release.ImageDigest {
 		s.node.logger.Sugar().Warnw("Image digest mismatch", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "expected", release.ImageDigest, "got", claims.ImageDigest)
 		http.Error(w, "Image digest mismatch - unauthorized image", http.StatusForbidden)
 		return
 	}
 
-	// Step 4: Get appropriate key share based on attestation time
+	// Step 5: Get appropriate key share based on attestation time
 	var keyVersion *types.KeyShareVersion
 	if req.AttestTime > 0 {
 		// Use key version from the specified time

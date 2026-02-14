@@ -184,6 +184,35 @@ This server implements:
 				Usage:   "Custom prefix for Redis keys (for multi-tenant setups)",
 				EnvVars: []string{config.EnvKMSRedisKeyPrefix},
 			},
+			// Attestation configuration
+			&cli.StringFlag{
+				Name:    "gcp-project-id",
+				Usage:   "GCP project ID for Google Confidential Space attestation verification",
+				EnvVars: []string{config.EnvKMSGCPProjectID},
+			},
+			&cli.StringFlag{
+				Name:    "attestation-provider",
+				Usage:   "Default attestation provider: 'google' or 'intel' (for GCP method)",
+				Value:   "google",
+				EnvVars: []string{config.EnvKMSAttestationProvider},
+			},
+			&cli.BoolFlag{
+				Name:    "attestation-debug-mode",
+				Usage:   "Enable debug mode for attestation (skips some security checks)",
+				EnvVars: []string{config.EnvKMSAttestationDebugMode},
+			},
+			&cli.BoolFlag{
+				Name:    "enable-gcp-attestation",
+				Usage:   "Enable Google Confidential Space / Intel Trust Authority attestation",
+				Value:   true,
+				EnvVars: []string{config.EnvKMSEnableGCPAttestation},
+			},
+			&cli.BoolFlag{
+				Name:    "enable-ecdsa-attestation",
+				Usage:   "Enable ECDSA signature-based attestation (for development/testing)",
+				Value:   false,
+				EnvVars: []string{config.EnvKMSEnableECDSAAttestation},
+			},
 		},
 		Action: runKMSServer,
 	}
@@ -326,23 +355,16 @@ func runKMSServer(c *cli.Context) error {
 			"operator_address", kmsConfig.OperatorAddress)
 	}
 
-	// Create attestation verifier
-	gcpProjectID := c.String("gcp-project-id")
-	providerStr := c.String("attestation-provider")
-	debugMode := c.Bool("attestation-debug-mode")
+	// Create attestation manager with enabled methods
+	enableGCP := c.Bool("enable-gcp-attestation")
+	enableECDSA := c.Bool("enable-ecdsa-attestation")
 
-	// Parse attestation provider
-	var provider attestation.AttestationProvider
-	switch providerStr {
-	case "google":
-		provider = attestation.GoogleConfidentialSpace
-	case "intel":
-		provider = attestation.IntelTrustAuthority
-	default:
-		return fmt.Errorf("invalid attestation provider: %s (must be 'google' or 'intel')", providerStr)
+	// Validate at least one method is enabled
+	if !enableGCP && !enableECDSA {
+		return fmt.Errorf("at least one attestation method must be enabled (--enable-gcp-attestation or --enable-ecdsa-attestation)")
 	}
 
-	// Create slog logger for attestation verifier
+	// Create slog logger for attestation
 	slogger := slog.New(slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
@@ -352,26 +374,70 @@ func runKMSServer(c *cli.Context) error {
 		}))
 	}
 
-	// Initialize production attestation verifier
+	// Create attestation manager
+	attestationManager := attestation.NewAttestationManager(slogger)
+
 	ctx := context.Background()
-	attestationVerifierCore, err := attestation.NewAttestationVerifier(
-		ctx,
-		slogger,
-		gcpProjectID,
-		time.Hour, // JWK cache refresh interval
-		debugMode,
-	)
-	if err != nil {
-		return fmt.Errorf("failed to create attestation verifier: %w", err)
+
+	// Register GCP attestation if enabled
+	if enableGCP {
+		gcpProjectID := c.String("gcp-project-id")
+		providerStr := c.String("attestation-provider")
+		debugMode := c.Bool("attestation-debug-mode")
+
+		// Parse attestation provider
+		var provider attestation.AttestationProvider
+		switch providerStr {
+		case "google":
+			provider = attestation.GoogleConfidentialSpace
+		case "intel":
+			provider = attestation.IntelTrustAuthority
+		default:
+			return fmt.Errorf("invalid attestation provider: %s (must be 'google' or 'intel')", providerStr)
+		}
+
+		// Initialize production attestation verifier
+		attestationVerifierCore, err := attestation.NewAttestationVerifier(
+			ctx,
+			slogger,
+			gcpProjectID,
+			time.Hour, // JWK cache refresh interval
+			debugMode,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to create attestation verifier: %w", err)
+		}
+
+		// Create GCP method and register
+		gcpMethod := attestation.NewGCPAttestationMethod(attestationVerifierCore, provider)
+		if err := attestationManager.RegisterMethod(gcpMethod); err != nil {
+			return fmt.Errorf("failed to register GCP attestation method: %w", err)
+		}
+
+		l.Sugar().Infow("GCP attestation method enabled",
+			"method_name", gcpMethod.Name(),
+			"gcp_project_id", gcpProjectID,
+			"provider", providerStr,
+			"debug_mode", debugMode)
 	}
 
-	// Wrap with production verifier adapter
-	attestationVerifierInstance := attestation.NewProductionVerifier(attestationVerifierCore, provider)
+	// Register ECDSA attestation if enabled
+	if enableECDSA {
+		ecdsaMethod := attestation.NewECDSAAttestationMethodDefault()
+		if err := attestationManager.RegisterMethod(ecdsaMethod); err != nil {
+			return fmt.Errorf("failed to register ECDSA attestation method: %w", err)
+		}
 
-	l.Sugar().Infow("Production attestation verification enabled",
-		"gcp_project_id", gcpProjectID,
-		"provider", providerStr,
-		"debug_mode", debugMode)
+		l.Sugar().Infow("ECDSA attestation method enabled",
+			"method_name", ecdsaMethod.Name(),
+			"challenge_window", attestation.DefaultChallengeTimeWindow)
+	}
+
+	// Log summary of enabled methods
+	enabledMethods := attestationManager.ListMethods()
+	l.Sugar().Infow("Attestation manager initialized",
+		"enabled_methods", enabledMethods,
+		"method_count", len(enabledMethods))
 
 	baseContractCaller, err := caller.NewContractCaller(l2Client, transactionSignerInstance, l)
 	if err != nil {
@@ -441,14 +507,14 @@ func runKMSServer(c *cli.Context) error {
 		l.Sugar().Fatalw("Persistence health check failed", "error", err)
 	}
 
-	// Create and configure the node
+	// Create and configure the node with attestation manager
 	n, err := node.NewNode(
 		nodeConfig,
 		pdf,
 		bh,
 		poller,
 		transportSignerInstance,
-		attestationVerifierInstance,
+		attestationManager,
 		baseContractCaller,
 		commitmentRegistryAddr,
 		nodePersistence,

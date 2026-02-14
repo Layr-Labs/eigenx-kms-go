@@ -29,7 +29,7 @@ func TestBadgerPersistence_SaveAndLoadKeyShare(t *testing.T) {
 			{CompressedBytes: []byte{1, 2, 3, 4}},
 		},
 		IsActive:       true,
-		ParticipantIDs: []int{1, 2, 3},
+		ParticipantIDs: []int64{1, 2, 3},
 	}
 
 	// Save
@@ -89,7 +89,7 @@ func TestBadgerPersistence_DeleteKeyShare(t *testing.T) {
 		PrivateShare:   &privateShare,
 		Commitments:    []types.G2Point{},
 		IsActive:       true,
-		ParticipantIDs: []int{1},
+		ParticipantIDs: []int64{1},
 	}
 	err = bp.SaveKeyShareVersion(version)
 	require.NoError(t, err)
@@ -138,7 +138,7 @@ func TestBadgerPersistence_ListKeyShareVersions(t *testing.T) {
 			PrivateShare:   &privateShare,
 			Commitments:    []types.G2Point{},
 			IsActive:       i == 4,
-			ParticipantIDs: []int{i},
+			ParticipantIDs: []int64{int64(i)},
 		}
 		err := bp.SaveKeyShareVersion(version)
 		require.NoError(t, err)
@@ -259,14 +259,14 @@ func TestBadgerPersistence_ProtocolSessions(t *testing.T) {
 		Phase:             2,
 		StartTime:         1234567800,
 		OperatorAddresses: []string{"0x1234", "0x5678"},
-		Shares: map[int]string{
+		Shares: map[int64]string{
 			1: "share1",
 			2: "share2",
 		},
-		Commitments: map[int][]types.G2Point{
+		Commitments: map[int64][]types.G2Point{
 			1: {{CompressedBytes: []byte{1, 2, 3}}},
 		},
-		Acknowledgements: map[int]map[int]*types.Acknowledgement{
+		Acknowledgements: map[int64]map[int64]*types.Acknowledgement{
 			1: {
 				2: {PlayerID: 2, DealerID: 1, Epoch: 1234567890},
 			},
@@ -331,9 +331,9 @@ func TestBadgerPersistence_DeleteProtocolSession(t *testing.T) {
 		Phase:             1,
 		StartTime:         100,
 		OperatorAddresses: []string{"0x1"},
-		Shares:            map[int]string{},
-		Commitments:       map[int][]types.G2Point{},
-		Acknowledgements:  map[int]map[int]*types.Acknowledgement{},
+		Shares:            map[int64]string{},
+		Commitments:       map[int64][]types.G2Point{},
+		Acknowledgements:  map[int64]map[int64]*types.Acknowledgement{},
 	}
 	err = bp.SaveProtocolSession(session)
 	require.NoError(t, err)
@@ -364,9 +364,9 @@ func TestBadgerPersistence_ListProtocolSessions(t *testing.T) {
 			Phase:             1,
 			StartTime:         int64(i * 100),
 			OperatorAddresses: []string{},
-			Shares:            map[int]string{},
-			Commitments:       map[int][]types.G2Point{},
-			Acknowledgements:  map[int]map[int]*types.Acknowledgement{},
+			Shares:            map[int64]string{},
+			Commitments:       map[int64][]types.G2Point{},
+			Acknowledgements:  map[int64]map[int64]*types.Acknowledgement{},
 		}
 		err := bp.SaveProtocolSession(session)
 		require.NoError(t, err)
@@ -471,7 +471,7 @@ func TestBadgerPersistence_ThreadSafety(t *testing.T) {
 					PrivateShare:   &privateShare,
 					Commitments:    []types.G2Point{},
 					IsActive:       false,
-					ParticipantIDs: []int{id},
+					ParticipantIDs: []int64{int64(id)},
 				}
 				err := bp.SaveKeyShareVersion(version)
 				assert.NoError(t, err)
@@ -520,7 +520,7 @@ func TestBadgerPersistence_Persistence_AcrossRestarts(t *testing.T) {
 		PrivateShare:   &privateShare,
 		Commitments:    []types.G2Point{{CompressedBytes: []byte{9, 9, 9}}},
 		IsActive:       true,
-		ParticipantIDs: []int{1, 2, 3},
+		ParticipantIDs: []int64{1, 2, 3},
 	}
 	err = bp1.SaveKeyShareVersion(version)
 	require.NoError(t, err)

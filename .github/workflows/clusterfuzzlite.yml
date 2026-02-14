@@ -1,0 +1,200 @@
+name: ClusterFuzzLite
+
+concurrency:
+  group: clusterfuzzlite-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+on:
+  # Run on pushes to main for batch fuzzing corpus building
+  push:
+    branches:
+      - main
+      - master
+  # Run on PRs for code change fuzzing
+  pull_request:
+    branches:
+      - main
+      - master
+  # Scheduled batch fuzzing (runs longer)
+  schedule:
+    - cron: "0 4 * * *" # Daily at 04:00 UTC
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Fuzzing mode"
+        required: true
+        default: "code-change"
+        type: choice
+        options:
+          - code-change
+          - batch
+          - prune
+
+permissions:
+  contents: read
+
+env:
+  FUZZING_LANGUAGE: go
+
+jobs:
+  # PR fuzzing - quick check for regressions
+  pr-fuzzing:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: write # upload crash artifacts
+      security-events: write # upload SARIF
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Build fuzzers
+        id: build
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1 # v1
+        with:
+          language: go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          sanitizer: address
+
+      - name: Run fuzzers
+        id: run
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 600 # 10 minutes for PR checks
+          mode: code-change
+          sanitizer: address
+          output-sarif: true
+
+      - name: Upload crash artifacts
+        if: failure() || steps.run.conclusion == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: clusterfuzzlite-crashers-pr
+          path: out/artifacts/**
+          if-no-files-found: ignore
+
+      - name: Upload SARIF
+        if: always() && steps.run.outputs.sarif-file != ''
+        uses: github/codeql-action/upload-sarif@cf1bb45a277cb3c205638b2cd5c984db1c46a412
+        with:
+          sarif_file: ${{ steps.run.outputs.sarif-file }}
+
+  # Batch fuzzing - longer runs for corpus building
+  batch-fuzzing:
+    if: github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'batch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # 6 hours max
+    permissions:
+      contents: write # push corpus updates to clusterfuzz-corpus
+      actions: write  # upload crash artifacts
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Build fuzzers
+        id: build
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1
+        with:
+          language: go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          sanitizer: address
+
+      - name: Run fuzzers
+        id: run
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 14400 # 4 hours
+          mode: batch
+          sanitizer: address
+          storage-repo: ${{ github.repository }}
+          storage-repo-branch: clusterfuzz-corpus
+
+      - name: Upload crash artifacts
+        if: failure() || steps.run.conclusion == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: clusterfuzzlite-crashers-batch
+          path: out/artifacts/**
+          if-no-files-found: ignore
+
+  # Push to main - brief fuzzing + corpus update
+  push-fuzzing:
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write # push corpus updates to clusterfuzz-corpus
+      actions: write  # upload crash artifacts
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Build fuzzers
+        id: build
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1
+        with:
+          language: go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          sanitizer: address
+
+      - name: Run fuzzers
+        id: run
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 1800 # 30 minutes
+          mode: batch
+          sanitizer: address
+          storage-repo: ${{ github.repository }}
+          storage-repo-branch: clusterfuzz-corpus
+
+      - name: Upload crash artifacts
+        if: failure() || steps.run.conclusion == 'failure'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: clusterfuzzlite-crashers-push
+          path: out/artifacts/**
+          if-no-files-found: ignore
+
+  # Corpus pruning
+  prune:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'prune'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: write # update clusterfuzz-corpus branch
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Build fuzzers
+        id: build
+        uses: google/clusterfuzzlite/actions/build_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1
+        with:
+          language: go
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          sanitizer: address
+
+      - name: Prune corpus
+        id: prune
+        uses: google/clusterfuzzlite/actions/run_fuzzers@884713a6c30a92e5e8544c39945cd7cb630abcd1
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          fuzz-seconds: 600
+          mode: prune
+          storage-repo: ${{ github.repository }}
+          storage-repo-branch: clusterfuzz-corpus
+

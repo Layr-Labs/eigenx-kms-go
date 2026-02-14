@@ -49,16 +49,16 @@ type ProtocolSessionState struct {
 
 	// Shares maps dealer node ID to serialized share (SerializeFr string format).
 	// This captures shares received during the protocol.
-	Shares map[int]string `json:"shares"`
+	Shares map[int64]string `json:"shares"`
 
 	// Commitments maps dealer node ID to their broadcast commitments.
 	// G2Points are JSON-serializable via CompressedBytes.
-	Commitments map[int][]types.G2Point `json:"commitments"`
+	Commitments map[int64][]types.G2Point `json:"commitments"`
 
 	// Acknowledgements maps dealer ID -> receiver ID -> acknowledgement.
 	// This tracks which operators have acknowledged which shares.
 	// Nested map structure: dealerID -> map[receiverID]Acknowledgement
-	Acknowledgements map[int]map[int]*types.Acknowledgement `json:"acknowledgements"`
+	Acknowledgements map[int64]map[int64]*types.Acknowledgement `json:"acknowledgements"`
 }
 
 // IsExpired checks if a protocol session has exceeded its timeout duration.

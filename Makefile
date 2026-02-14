@@ -5,6 +5,7 @@ BIN = ./bin
 
 GO_FLAGS=-ldflags "-X 'github.com/Layr-Labs/eigenx-kms-go/internal/version.Version=$(shell cat VERSION)' -X 'github.com/Layr-Labs/eigenx-kms-go/internal/version.Commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo 'unknown')'"
 
+GO_FLAGS_STATIC=$(GO_FLAGS) -ldflags="-s -w -extldflags '-static'"
 
 all: deps/go build/cmd
 
@@ -33,9 +34,16 @@ build/cmd/kmsServer:
 build/cmd/registerOperator:
 	go build $(GO_FLAGS) -o ${BIN}/register-operator ./cmd/registerOperator
 
-.PHONY: cmd/kmsClient
+.PHONY: build/cmd/kmsClient
 build/cmd/kmsClient:
 	go build $(GO_FLAGS) -o ${BIN}/kms-client ./cmd/kmsClient
+
+.PHONY: build/cmd/kmsClient/static
+build/cmd/kmsClient/static:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+		$(GO_FLAGS_STATIC) \
+		-trimpath -buildvcs=false \
+		-o ${BIN}/kms-client ./cmd/kmsClient
 
 .PHONY: build/cmd
 build/cmd: build/cmd/kmsServer build/cmd/registerOperator build/cmd/kmsClient

@@ -112,6 +112,41 @@ Every node runs a 500ms scheduler that:
 2. Recovers `app_private_key = sum(lambda_i * partial_sig_i)` (Lagrange interpolation)
 3. Decrypts: `plaintext = Decrypt(app_private_key, ciphertext)`
 
+### Application Attestation
+
+The KMS server supports multiple attestation methods for verifying application identity:
+
+#### Google Confidential Space / Intel Trust Authority (Production)
+- **Method**: `"gcp"` or `"intel"`
+- **Security**: Hardware TEE attestation with cryptographic proof
+- **Use**: Production environments with sensitive secrets
+- **Setup**: Requires GCP project ID or Intel Trust Authority configuration
+
+```bash
+./bin/kms-server --gcp-project-id my-project \
+  --attestation-provider google \
+  --enable-gcp-attestation=true ...
+```
+
+#### ECDSA Signature-Based (Development)
+- **Method**: `"ecdsa"`
+- **Security**: Proves ECDSA key ownership (no TEE proof)
+- **Use**: Development, testing, non-TEE environments
+- **Setup**: No additional configuration required
+
+```bash
+./bin/kms-server --enable-gcp-attestation=false \
+  --enable-ecdsa-attestation=true ...
+```
+
+#### Example: ECDSA Attestation Flow
+```bash
+# Run the ECDSA attestation example
+go run examples/ecdsa_attestation.go
+```
+
+See `examples/ecdsa_attestation.go` for complete implementation.
+
 ## Architecture
 
 ### Components
@@ -183,3 +218,6 @@ make lint
 ## License
 
 See LICENSE file for details.
+
+## ⚠️ Warning: This is Alpha, non-audited code ⚠️
+eigenx-kms-go is in active development and is not yet audited. Use at your own risk.

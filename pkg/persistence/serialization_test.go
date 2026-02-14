@@ -21,7 +21,7 @@ func TestMarshalUnmarshalKeyShareVersion_RoundTrip(t *testing.T) {
 			{CompressedBytes: []byte{10, 20, 30}},
 		},
 		IsActive:       false,
-		ParticipantIDs: []int{10, 20, 30},
+		ParticipantIDs: []int64{10, 20, 30},
 	}
 
 	// Marshal to JSON
@@ -99,15 +99,15 @@ func TestMarshalUnmarshalProtocolSessionState_RoundTrip(t *testing.T) {
 		Phase:             2,
 		StartTime:         1234567800,
 		OperatorAddresses: []string{"0x1234", "0x5678"},
-		Shares: map[int]string{
+		Shares: map[int64]string{
 			1: "share1",
 			2: "share2",
 		},
-		Commitments: map[int][]types.G2Point{
+		Commitments: map[int64][]types.G2Point{
 			1: {{CompressedBytes: []byte{1, 2, 3}}},
 			2: {{CompressedBytes: []byte{4, 5, 6}}},
 		},
-		Acknowledgements: map[int]map[int]*types.Acknowledgement{
+		Acknowledgements: map[int64]map[int64]*types.Acknowledgement{
 			1: {
 				2: {PlayerID: 2, DealerID: 1, Epoch: 1234567890},
 			},
