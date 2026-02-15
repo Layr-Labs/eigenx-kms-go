@@ -125,6 +125,16 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Step 2b: Ensure attested application identity matches requested app.
+	if claims.AppID != req.AppID {
+		s.node.logger.Sugar().Warnw("App ID mismatch in attestation claims",
+			"node_id", s.node.OperatorAddress.Hex(),
+			"requested_app_id", req.AppID,
+			"attested_app_id", claims.AppID)
+		http.Error(w, "App ID mismatch - unauthorized app", http.StatusForbidden)
+		return
+	}
+
 	// Step 3: Query latest release from on-chain AppController
 	release, err := s.node.baseContractCaller.GetLatestReleaseAsRelease(r.Context(), req.AppID)
 	if err != nil {
