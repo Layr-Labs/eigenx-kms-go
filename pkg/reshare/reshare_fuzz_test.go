@@ -248,3 +248,68 @@ func FuzzComputeNewKeyShareThresholdSubset(f *testing.F) {
 			"threshold subset should produce same key as full set")
 	})
 }
+
+// FuzzZeroConstantDealerPolynomialsDoNotPreserveOriginalSecret captures the old
+// protocol-mismatch class: if dealers all use zero-constant polynomials and
+// recipients combine via Lagrange, the reconstructed secret is not the original
+// non-zero cluster secret.
+func FuzzZeroConstantDealerPolynomialsDoNotPreserveOriginalSecret(f *testing.F) {
+	f.Add(5, []byte("seed-zero-constant"))
+
+	f.Fuzz(func(t *testing.T, n int, seed []byte) {
+		if n < 4 {
+			n = 4
+		}
+		if n > 8 {
+			n = 8
+		}
+
+		operators := testOperators(n)
+		newThreshold := threshold(len(operators))
+		zero := new(fr.Element).SetZero()
+		oldSecret := deriveScalar(seed)
+
+		// Build dealer IDs from first n-1 operators.
+		dealerIDs := make([]int64, 0, len(operators)-1)
+		for i := 0; i < len(operators)-1; i++ {
+			dealerIDs = append(dealerIDs, util.AddressToNodeID(operators[i].OperatorAddress))
+		}
+
+		// Each dealer generates zero-constant shares (the problematic mode).
+		sharesByDealer := make(map[int64]map[int64]*fr.Element, len(dealerIDs))
+		for _, dealerID := range dealerIDs {
+			dealerResharer := NewReshare(dealerID, operators)
+			perRecipientShares, _, err := dealerResharer.GenerateNewShares(zero, newThreshold)
+			require.NoError(t, err)
+			sharesByDealer[dealerID] = perRecipientShares
+		}
+
+		// Reconstruct final recipient shares via Lagrange combine.
+		finalShares := make(map[int64]*fr.Element, len(operators))
+		for _, recipient := range operators {
+			recipientID := util.AddressToNodeID(recipient.OperatorAddress)
+			received := make(map[int64]*fr.Element, len(dealerIDs))
+			for _, dealerID := range dealerIDs {
+				received[dealerID] = sharesByDealer[dealerID][recipientID]
+			}
+
+			recipientResharer := NewReshare(recipientID, operators)
+			keyVersion := recipientResharer.ComputeNewKeyShare(dealerIDs, received, nil)
+			require.NotNil(t, keyVersion)
+			require.NotNil(t, keyVersion.PrivateShare)
+			finalShares[recipientID] = keyVersion.PrivateShare
+		}
+
+		// Recover a secret from any threshold recipients. It must not equal oldSecret.
+		recoveryShares := make(map[int64]*fr.Element, newThreshold)
+		for i := 0; i < newThreshold; i++ {
+			id := util.AddressToNodeID(operators[i].OperatorAddress)
+			recoveryShares[id] = finalShares[id]
+		}
+		recovered, err := crypto.RecoverSecret(recoveryShares)
+		if err == nil {
+			require.False(t, recovered.Equal(oldSecret),
+				"zero-constant dealer polynomials should not preserve original non-zero secret")
+		}
+	})
+}
