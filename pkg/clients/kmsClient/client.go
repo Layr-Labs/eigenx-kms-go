@@ -850,7 +850,7 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 
 	// Collect results
 	partialSigs := make(map[int64]types.G1Point)
-	// TODO(security): only count cryptographically verified partial signatures.
+	// TODO(security): DOS vector. only count cryptographically verified partial signatures.
 	// Current code counts non-zero shares and relies on later interpolation failure.
 	for res := range resultChan {
 		partialSigs[res.nodeID] = res.signature
