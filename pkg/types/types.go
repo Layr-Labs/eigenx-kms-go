@@ -78,7 +78,7 @@ type Acknowledgement struct {
 	Epoch          int64    // Which reshare round (Phase 3)
 	ShareHash      [32]byte // keccak256(share) - commits to received share (Phase 3)
 	CommitmentHash [32]byte
-	Signature      []byte // Sign(p2p_privkey, dealer_id || epoch || shareHash || commitment_hash)
+	Signature      []byte // Sign(p2p_privkey, dealer_id || player_id || epoch || shareHash || commitment_hash)
 }
 
 // CompletionSignature signals reshare completion

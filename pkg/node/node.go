@@ -1849,12 +1849,26 @@ func (n *Node) submitCommitmentWithRetry(
 	return fmt.Errorf("failed to submit commitment after %d attempts: %w", maxRetries, lastErr)
 }
 
-// signAcknowledgement signs an acknowledgement using ECDSA transport signer
-func (n *Node) signAcknowledgement(dealerID int64, commitmentHash [32]byte) []byte {
-	// Create message: dealerID || commitmentHash
-	dealerBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(dealerBytes, uint32(dealerID))
-	message := append(dealerBytes, commitmentHash[:]...)
+func buildAcknowledgementSigningMessage(dealerID, playerID, epoch int64, shareHash, commitmentHash [32]byte) []byte {
+	// message = dealerID || playerID || epoch || shareHash || commitmentHash
+	msg := make([]byte, 0, 8+8+8+32+32)
+	dealerBytes := make([]byte, 8)
+	playerBytes := make([]byte, 8)
+	epochBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(dealerBytes, uint64(dealerID))
+	binary.BigEndian.PutUint64(playerBytes, uint64(playerID))
+	binary.BigEndian.PutUint64(epochBytes, uint64(epoch))
+	msg = append(msg, dealerBytes...)
+	msg = append(msg, playerBytes...)
+	msg = append(msg, epochBytes...)
+	msg = append(msg, shareHash[:]...)
+	msg = append(msg, commitmentHash[:]...)
+	return msg
+}
+
+// signAcknowledgement signs acknowledgement fields using the transport signer.
+func (n *Node) signAcknowledgement(dealerID, playerID, epoch int64, shareHash, commitmentHash [32]byte) []byte {
+	message := buildAcknowledgementSigningMessage(dealerID, playerID, epoch, shareHash, commitmentHash)
 
 	// Sign using transport signer (ECDSA)
 	signature, err := n.transportSigner.SignMessage(message)
@@ -1863,6 +1877,79 @@ func (n *Node) signAcknowledgement(dealerID int64, commitmentHash [32]byte) []by
 		return nil
 	}
 	return signature
+}
+
+func (n *Node) verifyAcknowledgement(
+	session *ProtocolSession,
+	senderPeer *peering.OperatorSetPeer,
+	senderNodeID, expectedDealerID int64,
+	sessionTimestamp int64,
+	ack *types.Acknowledgement,
+) error {
+	if ack == nil {
+		return fmt.Errorf("ack is nil")
+	}
+	if ack.PlayerID != senderNodeID {
+		return fmt.Errorf("ack player mismatch: got %d expected %d", ack.PlayerID, senderNodeID)
+	}
+	if ack.DealerID != expectedDealerID {
+		return fmt.Errorf("ack dealer mismatch: got %d expected %d", ack.DealerID, expectedDealerID)
+	}
+	if ack.Epoch != sessionTimestamp {
+		return fmt.Errorf("ack epoch mismatch: got %d expected %d", ack.Epoch, sessionTimestamp)
+	}
+	if len(ack.Signature) == 0 {
+		return fmt.Errorf("ack signature is empty")
+	}
+
+	session.mu.RLock()
+	dealerCommitments, ok := session.commitments[expectedDealerID]
+	session.mu.RUnlock()
+	if !ok || len(dealerCommitments) == 0 {
+		return fmt.Errorf("dealer commitments unavailable for dealer %d", expectedDealerID)
+	}
+	expectedCommitmentHash := eigenxcrypto.HashCommitment(dealerCommitments)
+	if ack.CommitmentHash != expectedCommitmentHash {
+		return fmt.Errorf("ack commitment hash mismatch")
+	}
+
+	msg := buildAcknowledgementSigningMessage(ack.DealerID, ack.PlayerID, ack.Epoch, ack.ShareHash, ack.CommitmentHash)
+	msgHash := crypto.Keccak256Hash(msg)
+
+	switch senderPeer.CurveType {
+	case config.CurveTypeBN254:
+		sig, err := bn254.NewSignatureFromBytes(ack.Signature)
+		if err != nil {
+			return fmt.Errorf("invalid BN254 ack signature format: %w", err)
+		}
+		bn254PubKey, ok := senderPeer.WrappedPublicKey.PublicKey.(*bn254.PublicKey)
+		if !ok {
+			return fmt.Errorf("sender public key is not BN254 type")
+		}
+		valid, err := sig.VerifySolidityCompatible(bn254PubKey, msgHash)
+		if err != nil {
+			return fmt.Errorf("BN254 ack signature verification error: %w", err)
+		}
+		if !valid {
+			return fmt.Errorf("BN254 ack signature verification failed")
+		}
+	case config.CurveTypeECDSA:
+		sig, err := ecdsa.NewSignatureFromBytes(ack.Signature)
+		if err != nil {
+			return fmt.Errorf("invalid ECDSA ack signature format: %w", err)
+		}
+		valid, err := sig.VerifyWithAddress(msgHash[:], senderPeer.WrappedPublicKey.ECDSAAddress)
+		if err != nil {
+			return fmt.Errorf("ECDSA ack signature verification error: %w", err)
+		}
+		if !valid {
+			return fmt.Errorf("ECDSA ack signature verification failed")
+		}
+	default:
+		return fmt.Errorf("unsupported curve type for ack verification: %s", senderPeer.CurveType)
+	}
+
+	return nil
 }
 
 // VerifyOperatorBroadcast verifies a commitment broadcast against on-chain data (Phase 6)
