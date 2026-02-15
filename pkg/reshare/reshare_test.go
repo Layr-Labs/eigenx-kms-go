@@ -202,7 +202,10 @@ func testComputeNewKeyShare(t *testing.T) {
 		{{CompressedBytes: point1.Marshal()}},
 	}
 
-	keyVersion := r.ComputeNewKeyShare(dealerIDs, shares, allCommitments)
+	keyVersion, err := r.ComputeNewKeyShare(dealerIDs, shares, allCommitments)
+	if err != nil {
+		t.Fatalf("ComputeNewKeyShare failed: %v", err)
+	}
 	if keyVersion == nil {
 		t.Fatal("Expected non-nil key version")
 	}
@@ -226,7 +229,10 @@ func testComputeNewKeyShareScaledCommitmentForNewOperator(t *testing.T) {
 	identity := types.ZeroG2Point()
 	allCommitments := [][]types.G2Point{{*identity}, {*identity}, {*identity}}
 
-	keyVersion := r.ComputeNewKeyShare(dealerIDs, shares, allCommitments)
+	keyVersion, err := r.ComputeNewKeyShare(dealerIDs, shares, allCommitments)
+	if err != nil {
+		t.Fatalf("ComputeNewKeyShare failed: %v", err)
+	}
 	if keyVersion == nil || keyVersion.PrivateShare == nil {
 		t.Fatal("Expected computed key version with non-nil private share")
 	}
@@ -296,7 +302,10 @@ func testDealerAnchoredResharePreservesSecretForNewRecipient(t *testing.T) {
 		}
 
 		recipientResharer := NewReshare(recipientID, operators)
-		keyVersion := recipientResharer.ComputeNewKeyShare(dealerIDs, received, nil)
+		keyVersion, err := recipientResharer.ComputeNewKeyShare(dealerIDs, received, nil)
+		if err != nil {
+			t.Fatalf("ComputeNewKeyShare failed for recipient %d: %v", recipientID, err)
+		}
 		if keyVersion == nil || keyVersion.PrivateShare == nil {
 			t.Fatalf("Recipient %d failed to compute key share", recipientID)
 		}
@@ -328,7 +337,10 @@ func testComputeNewKeyShareWithNilCommitmentsStillPublishesContribution(t *testi
 		3: new(fr.Element).SetUint64(17),
 	}
 
-	keyVersion := r.ComputeNewKeyShare(dealerIDs, shares, nil)
+	keyVersion, err := r.ComputeNewKeyShare(dealerIDs, shares, nil)
+	if err != nil {
+		t.Fatalf("ComputeNewKeyShare failed: %v", err)
+	}
 	if keyVersion == nil || keyVersion.PrivateShare == nil {
 		t.Fatal("Expected computed key version with non-nil private share")
 	}
@@ -370,7 +382,10 @@ func testZeroConstantDealerPolynomialsDoNotBootstrapSecret(t *testing.T) {
 			received[dealerID] = sharesByDealer[dealerID][recipientID]
 		}
 		recipientResharer := NewReshare(recipientID, operators)
-		keyVersion := recipientResharer.ComputeNewKeyShare(dealerIDs, received, nil)
+		keyVersion, err := recipientResharer.ComputeNewKeyShare(dealerIDs, received, nil)
+		if err != nil {
+			t.Fatalf("ComputeNewKeyShare failed for recipient %d: %v", recipientID, err)
+		}
 		if keyVersion == nil || keyVersion.PrivateShare == nil {
 			t.Fatalf("Expected computed key version for recipient %d", recipientID)
 		}

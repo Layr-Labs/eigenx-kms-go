@@ -101,7 +101,8 @@ func FuzzGenerateVerifyAndComputeNewKeyShare(f *testing.F) {
 			dealerIDs[i], dealerIDs[j] = dealerIDs[j], dealerIDs[i]
 		}
 
-		keyVersion := r.ComputeNewKeyShare(dealerIDs, shares, [][]types.G2Point{commitments})
+		keyVersion, err := r.ComputeNewKeyShare(dealerIDs, shares, [][]types.G2Point{commitments})
+		require.NoError(t, err)
 		require.NotNil(t, keyVersion)
 		require.NotNil(t, keyVersion.PrivateShare)
 
@@ -237,11 +238,13 @@ func FuzzComputeNewKeyShareThresholdSubset(f *testing.F) {
 			subsetShares[id] = shares[id]
 		}
 
-		keyVersion := r.ComputeNewKeyShare(subsetDealerIDs, subsetShares, [][]types.G2Point{commitments})
+		keyVersion, err := r.ComputeNewKeyShare(subsetDealerIDs, subsetShares, [][]types.G2Point{commitments})
+		require.NoError(t, err)
 		require.NotNil(t, keyVersion)
 
 		// Use all shares for comparison.
-		keyVersionAll := r.ComputeNewKeyShare(dealerIDs, shares, [][]types.G2Point{commitments})
+		keyVersionAll, err := r.ComputeNewKeyShare(dealerIDs, shares, [][]types.G2Point{commitments})
+		require.NoError(t, err)
 
 		// Both should produce the same result since Lagrange interpolation is correct.
 		require.True(t, keyVersion.PrivateShare.Equal(keyVersionAll.PrivateShare),
@@ -294,7 +297,8 @@ func FuzzZeroConstantDealerPolynomialsDoNotPreserveOriginalSecret(f *testing.F) 
 			}
 
 			recipientResharer := NewReshare(recipientID, operators)
-			keyVersion := recipientResharer.ComputeNewKeyShare(dealerIDs, received, nil)
+			keyVersion, err := recipientResharer.ComputeNewKeyShare(dealerIDs, received, nil)
+			require.NoError(t, err)
 			require.NotNil(t, keyVersion)
 			require.NotNil(t, keyVersion.PrivateShare)
 			finalShares[recipientID] = keyVersion.PrivateShare
