@@ -119,6 +119,34 @@ type ProtocolSession struct {
 // In production it always points to util.AddressToNodeID.
 var addressToNodeID = util.AddressToNodeID
 
+// collectVerifiedSharesForFinalize filters dealer shares to only those that
+// have both a share and commitments and pass verification, preserving operator order.
+func collectVerifiedSharesForFinalize(
+	operators []*peering.OperatorSetPeer,
+	shares map[int64]*fr.Element,
+	commitments map[int64][]types.G2Point,
+	verifyFn func(int64, *fr.Element, []types.G2Point) bool,
+) (map[int64]*fr.Element, []int64) {
+	validShares := make(map[int64]*fr.Element)
+	participantIDs := make([]int64, 0, len(operators))
+
+	for _, op := range operators {
+		dealerID := addressToNodeID(op.OperatorAddress)
+		share, hasShare := shares[dealerID]
+		comm, hasCommitments := commitments[dealerID]
+		if !hasShare || share == nil || !hasCommitments || len(comm) == 0 {
+			continue
+		}
+
+		if verifyFn(dealerID, share, comm) {
+			validShares[dealerID] = share
+			participantIDs = append(participantIDs, dealerID)
+		}
+	}
+
+	return validShares, participantIDs
+}
+
 // HandleReceivedShare stores a share and signals completion if all shares received
 // Returns error if duplicate share detected
 func (s *ProtocolSession) HandleReceivedShare(senderNodeID int64, share *fr.Element) error {
@@ -1379,22 +1407,20 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		"operator_address", n.OperatorAddress.Hex(),
 		"node_id", thisNodeID)
 
-	// Collect all commitments and participant IDs for finalization from session
-	session.mu.RLock()
-	participantIDsForFinalize := make([]int64, 0, len(session.commitments))
-
+	// Finalize using only shares that were verified in Phase 1b.
+	participantIDsForFinalize := make([]int64, 0, len(validShares))
 	for _, op := range operators {
 		opNodeID := addressToNodeID(op.OperatorAddress)
-		if _, ok := session.commitments[opNodeID]; ok {
+		if _, ok := validShares[opNodeID]; ok {
 			participantIDsForFinalize = append(participantIDsForFinalize, opNodeID)
 		}
 	}
-
-	receivedSharesForFinalize := session.shares
-	session.mu.RUnlock()
+	if len(participantIDsForFinalize) < newThreshold {
+		return fmt.Errorf("insufficient verified shares for reshare finalize: got %d, need %d", len(participantIDsForFinalize), newThreshold)
+	}
 
 	// Compute refreshed share using the same Lagrange reconstruction as the new-operator path.
-	newKeyVersion, err := n.resharer.ComputeNewKeyShare(participantIDsForFinalize, receivedSharesForFinalize, nil)
+	newKeyVersion, err := n.resharer.ComputeNewKeyShare(participantIDsForFinalize, validShares, nil)
 	if err != nil {
 		return fmt.Errorf("failed to compute refreshed key share: %w", err)
 	}
@@ -1473,24 +1499,37 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		return fmt.Errorf("failed to receive commitments: %w", err)
 	}
 
-	// Collect all commitments and participant IDs from session
+	// Collect shares and commitments from session
 	session.mu.RLock()
-	allCommitments := make([][]types.G2Point, 0, len(session.commitments))
-	participantIDs := make([]int64, 0, len(session.commitments))
-
-	for _, op := range operators {
-		opNodeID := addressToNodeID(op.OperatorAddress)
-		if comm, ok := session.commitments[opNodeID]; ok {
-			allCommitments = append(allCommitments, comm)
-			participantIDs = append(participantIDs, opNodeID)
-		}
-	}
-
 	receivedShares := session.shares
+	receivedCommitments := session.commitments
 	session.mu.RUnlock()
 
-	// Compute new key share using Lagrange interpolation
-	newKeyVersion, err := n.resharer.ComputeNewKeyShare(participantIDs, receivedShares, allCommitments)
+	// Verify all dealer shares before finalization to prevent poisoned-share key divergence.
+	validShares, participantIDs := collectVerifiedSharesForFinalize(
+		operators,
+		receivedShares,
+		receivedCommitments,
+		n.resharer.VerifyNewShare,
+	)
+	for _, op := range operators {
+		dealerID := addressToNodeID(op.OperatorAddress)
+		share, hasShare := receivedShares[dealerID]
+		commitments, hasCommitments := receivedCommitments[dealerID]
+		if !hasShare || share == nil || !hasCommitments || len(commitments) == 0 {
+			continue
+		}
+		if _, ok := validShares[dealerID]; !ok {
+			n.logInvalidShareComplaint("reshare-new-operator", sessionTimestamp, thisNodeID, dealerID, share, commitments)
+		}
+	}
+	requiredShares := dkg.CalculateThreshold(len(operators))
+	if len(participantIDs) < requiredShares {
+		return fmt.Errorf("insufficient verified shares for new-operator finalize: got %d, need %d", len(participantIDs), requiredShares)
+	}
+
+	// Compute new key share using verified dealer shares only.
+	newKeyVersion, err := n.resharer.ComputeNewKeyShare(participantIDs, validShares, nil)
 	if err != nil {
 		return fmt.Errorf("failed to compute new operator key share: %w", err)
 	}
