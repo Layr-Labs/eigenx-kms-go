@@ -1424,6 +1424,9 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	if err != nil {
 		return fmt.Errorf("failed to compute refreshed key share: %w", err)
 	}
+	if newKeyVersion == nil {
+		return fmt.Errorf("failed to compute refreshed key share: resharer returned nil key version")
+	}
 	newKeyVersion.Version = sessionTimestamp
 	newKeyVersion.IsActive = true
 	newKeyVersion.ParticipantIDs = participantIDsForFinalize
@@ -1532,6 +1535,9 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	newKeyVersion, err := n.resharer.ComputeNewKeyShare(participantIDs, validShares, nil)
 	if err != nil {
 		return fmt.Errorf("failed to compute new operator key share: %w", err)
+	}
+	if newKeyVersion == nil {
+		return fmt.Errorf("failed to compute new operator key share: resharer returned nil key version")
 	}
 	newKeyVersion.Version = sessionTimestamp // Use session timestamp as version
 	newKeyVersion.IsActive = true            // First key version becomes active immediately
