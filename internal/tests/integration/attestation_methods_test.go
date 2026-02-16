@@ -367,7 +367,7 @@ func TestSecretsEndpoint_BothMethodsEnabled(t *testing.T) {
 	gcpStub := &stubAttestationMethod{
 		name: "gcp",
 		claims: &kmsTypes.AttestationClaims{
-			AppID:       "test-app",
+			AppID:       "test-app-gcp",
 			ImageDigest: "sha256:gcp-image",
 		},
 	}
