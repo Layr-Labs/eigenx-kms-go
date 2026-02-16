@@ -39,6 +39,7 @@ func Test_SecretsEndpoint(t *testing.T) {
 	t.Run("Flow", func(t *testing.T) { testSecretsEndpointFlow(t) })
 	t.Run("Validation", func(t *testing.T) { testSecretsEndpointValidation(t) })
 	t.Run("ImageDigestMismatch", func(t *testing.T) { testSecretsEndpointImageDigestMismatch(t) })
+	t.Run("AppIDMismatch", func(t *testing.T) { testSecretsEndpointAppIDMismatch(t) })
 }
 
 // createTestPeeringDataFetcher creates a test peering data fetcher using ChainConfig data
@@ -365,5 +366,82 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 	// Should fail with forbidden due to digest mismatch
 	if w.Code != http.StatusForbidden {
 		t.Errorf("Expected status 403 for image digest mismatch, got %d", w.Code)
+	}
+}
+
+// testSecretsEndpointAppIDMismatch tests app identity binding between request and attestation claims.
+func testSecretsEndpointAppIDMismatch(t *testing.T) {
+	peeringDataFetcher := createTestPeeringDataFetcher(t)
+
+	projectRoot := tests.GetProjectRootPath()
+	chainConfig, err := tests.ReadChainConfig(projectRoot)
+	if err != nil {
+		t.Fatalf("Failed to read chain config: %v", err)
+	}
+
+	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
+	cfg := Config{
+		OperatorAddress: chainConfig.OperatorAccountAddress1,
+		Port:            0,
+		ChainID:         config.ChainId_EthereumAnvil,
+		AVSAddress:      "0x1234567890123456789012345678901234567890",
+		OperatorSetId:   1,
+	}
+	bh := blockHandler.NewBlockHandler(testLogger)
+	mockPoller := &mockChainPoller{}
+
+	pkBytes, err := hexutil.Decode(chainConfig.OperatorAccountPrivateKey1)
+	if err != nil {
+		t.Fatalf("Failed to decode BN254 private key: %v", err)
+	}
+	imts, err := inMemoryTransportSigner.NewBn254InMemoryTransportSigner(pkBytes, testLogger)
+	if err != nil {
+		t.Fatalf("Failed to create in-memory transport signer: %v", err)
+	}
+
+	mockManager := attestation.NewStubManager()
+	mockBaseContractCaller := contractCaller.NewTestableContractCallerStub()
+	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
+
+	// Release exists for requested app; request should still fail because claims AppID mismatches.
+	mockBaseContractCaller.AddTestRelease("requested-app", &kmsTypes.Release{
+		ImageDigest:  "sha256:test-digest",
+		EncryptedEnv: "env-data",
+		PublicEnv:    "PUBLIC=value",
+		Timestamp:    time.Now().Unix(),
+	})
+
+	persistence := memory.NewMemoryPersistence()
+	defer func() { _ = persistence.Close() }()
+
+	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockManager, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
+	if err != nil {
+		t.Fatalf("Failed to create node: %v", err)
+	}
+
+	// claims.AppID intentionally differs from req.AppID.
+	testClaims := kmsTypes.AttestationClaims{
+		AppID:       "different-attested-app",
+		ImageDigest: "sha256:test-digest",
+		IssuedAt:    time.Now().Unix(),
+		PublicKey:   []byte("dummy-key"),
+	}
+	attestationBytes, _ := json.Marshal(testClaims)
+
+	req := kmsTypes.SecretsRequestV1{
+		AppID:             "requested-app",
+		AttestationMethod: "gcp",
+		Attestation:       attestationBytes,
+		RSAPubKeyTmp:      []byte("test-key"),
+	}
+	reqBody, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
+	w := httptest.NewRecorder()
+
+	server := NewServer(node, 0)
+	server.handleSecretsRequest(w, httpReq)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("Expected status 403 for app ID mismatch, got %d", w.Code)
 	}
 }

@@ -119,6 +119,34 @@ type ProtocolSession struct {
 // In production it always points to util.AddressToNodeID.
 var addressToNodeID = util.AddressToNodeID
 
+// collectVerifiedSharesForFinalize filters dealer shares to only those that
+// have both a share and commitments and pass verification, preserving operator order.
+func collectVerifiedSharesForFinalize(
+	operators []*peering.OperatorSetPeer,
+	shares map[int64]*fr.Element,
+	commitments map[int64][]types.G2Point,
+	verifyFn func(int64, *fr.Element, []types.G2Point) bool,
+) (map[int64]*fr.Element, []int64) {
+	validShares := make(map[int64]*fr.Element)
+	participantIDs := make([]int64, 0, len(operators))
+
+	for _, op := range operators {
+		dealerID := addressToNodeID(op.OperatorAddress)
+		share, hasShare := shares[dealerID]
+		comm, hasCommitments := commitments[dealerID]
+		if !hasShare || share == nil || !hasCommitments || len(comm) == 0 {
+			continue
+		}
+
+		if verifyFn(dealerID, share, comm) {
+			validShares[dealerID] = share
+			participantIDs = append(participantIDs, dealerID)
+		}
+	}
+
+	return validShares, participantIDs
+}
+
 // HandleReceivedShare stores a share and signals completion if all shares received
 // Returns error if duplicate share detected
 func (s *ProtocolSession) HandleReceivedShare(senderNodeID int64, share *fr.Element) error {
@@ -1159,12 +1187,11 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		return err
 	}
 
-	// Phase 1: Generate new shares
-	// Automatic reshare is a *share refresh*: keep the master secret fixed while re-randomizing shares.
-	// We do this by having every dealer contribute a random polynomial g_i with g_i(0)=0, and each
-	// participant updates their share: x'_j = x_j + Σ_i g_i(j).
-	zero := new(fr.Element).SetZero()
-	shares, commitments, err := n.resharer.GenerateNewShares(zero, newThreshold)
+	// Phase 1: Generate dealer polynomials anchored at each dealer's current share.
+	// Each dealer i samples f_i with f_i(0)=x_i and broadcasts commitments + per-recipient shares.
+	// Recipients then combine received shares via Lagrange to derive a refreshed share of the same
+	// master secret. This works for both existing and newly joining operators.
+	shares, commitments, err := n.resharer.GenerateNewShares(currentShare, newThreshold)
 	if err != nil {
 		return err
 	}
@@ -1380,51 +1407,29 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		"operator_address", n.OperatorAddress.Hex(),
 		"node_id", thisNodeID)
 
-	// Collect all commitments and participant IDs for finalization from session
-	session.mu.RLock()
-	participantIDsForFinalize := make([]int64, 0, len(session.commitments))
-
+	// Finalize using only shares that were verified in Phase 1b.
+	participantIDsForFinalize := make([]int64, 0, len(validShares))
 	for _, op := range operators {
 		opNodeID := addressToNodeID(op.OperatorAddress)
-		if _, ok := session.commitments[opNodeID]; ok {
+		if _, ok := validShares[opNodeID]; ok {
 			participantIDsForFinalize = append(participantIDsForFinalize, opNodeID)
 		}
 	}
-
-	receivedSharesForFinalize := session.shares
-	session.mu.RUnlock()
-
-	// Compute refreshed share: x'_j = x_j + Σ_i g_i(j)
-	delta := new(fr.Element).SetZero()
-	for _, share := range receivedSharesForFinalize {
-		if share == nil {
-			continue
-		}
-		delta.Add(delta, share)
-	}
-	newShare := new(fr.Element).Add(new(fr.Element).Set(currentShare), delta)
-
-	newKeyVersion := &types.KeyShareVersion{
-		Version:        sessionTimestamp,
-		PrivateShare:   newShare,
-		IsActive:       true,
-		ParticipantIDs: participantIDsForFinalize,
+	if len(participantIDsForFinalize) < newThreshold {
+		return fmt.Errorf("insufficient verified shares for reshare finalize: got %d, need %d", len(participantIDsForFinalize), newThreshold)
 	}
 
-	// Scale this node's first commitment by its Lagrange coefficient
-	// This ensures that when the client sums all operators' commitments[0], it gets g^s (master public key)
-	// We publish λ_j * (g^{x'_j}) so clients can reconstruct g^s by summing contributions.
-	lambda := eigenxcrypto.ComputeLagrangeCoefficient(thisNodeID, participantIDsForFinalize)
-	shareCommitment, err := eigenxcrypto.ScalarMulG2(eigenxcrypto.G2Generator, newShare)
+	// Compute refreshed share using the same Lagrange reconstruction as the new-operator path.
+	newKeyVersion, err := n.resharer.ComputeNewKeyShare(participantIDsForFinalize, validShares, nil)
 	if err != nil {
-		return fmt.Errorf("failed to compute share commitment: %w", err)
+		return fmt.Errorf("failed to compute refreshed key share: %w", err)
 	}
-	scaledFirstCommitment, err := eigenxcrypto.ScalarMulG2(*shareCommitment, lambda)
-	if err != nil {
-		return fmt.Errorf("failed to scale commitment: %w", err)
+	if newKeyVersion == nil {
+		return fmt.Errorf("failed to compute refreshed key share: resharer returned nil key version")
 	}
-
-	newKeyVersion.Commitments = []types.G2Point{*scaledFirstCommitment}
+	newKeyVersion.Version = sessionTimestamp
+	newKeyVersion.IsActive = true
+	newKeyVersion.ParticipantIDs = participantIDsForFinalize
 
 	// Persist new key version BEFORE adding to keystore
 	// This ensures we fail if persistence fails, preventing state inconsistency
@@ -1497,24 +1502,43 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		return fmt.Errorf("failed to receive commitments: %w", err)
 	}
 
-	// Collect all commitments and participant IDs from session
+	// Collect shares and commitments from session
 	session.mu.RLock()
-	allCommitments := make([][]types.G2Point, 0, len(session.commitments))
-	participantIDs := make([]int64, 0, len(session.commitments))
-
-	for _, op := range operators {
-		opNodeID := addressToNodeID(op.OperatorAddress)
-		if comm, ok := session.commitments[opNodeID]; ok {
-			allCommitments = append(allCommitments, comm)
-			participantIDs = append(participantIDs, opNodeID)
-		}
-	}
-
 	receivedShares := session.shares
+	receivedCommitments := session.commitments
 	session.mu.RUnlock()
 
-	// Compute new key share using Lagrange interpolation
-	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDs, receivedShares, allCommitments)
+	// Verify all dealer shares before finalization to prevent poisoned-share key divergence.
+	validShares, participantIDs := collectVerifiedSharesForFinalize(
+		operators,
+		receivedShares,
+		receivedCommitments,
+		n.resharer.VerifyNewShare,
+	)
+	for _, op := range operators {
+		dealerID := addressToNodeID(op.OperatorAddress)
+		share, hasShare := receivedShares[dealerID]
+		commitments, hasCommitments := receivedCommitments[dealerID]
+		if !hasShare || share == nil || !hasCommitments || len(commitments) == 0 {
+			continue
+		}
+		if _, ok := validShares[dealerID]; !ok {
+			n.logInvalidShareComplaint("reshare-new-operator", sessionTimestamp, thisNodeID, dealerID, share, commitments)
+		}
+	}
+	requiredShares := dkg.CalculateThreshold(len(operators))
+	if len(participantIDs) < requiredShares {
+		return fmt.Errorf("insufficient verified shares for new-operator finalize: got %d, need %d", len(participantIDs), requiredShares)
+	}
+
+	// Compute new key share using verified dealer shares only.
+	newKeyVersion, err := n.resharer.ComputeNewKeyShare(participantIDs, validShares, nil)
+	if err != nil {
+		return fmt.Errorf("failed to compute new operator key share: %w", err)
+	}
+	if newKeyVersion == nil {
+		return fmt.Errorf("failed to compute new operator key share: resharer returned nil key version")
+	}
 	newKeyVersion.Version = sessionTimestamp // Use session timestamp as version
 	newKeyVersion.IsActive = true            // First key version becomes active immediately
 
@@ -1831,12 +1855,26 @@ func (n *Node) submitCommitmentWithRetry(
 	return fmt.Errorf("failed to submit commitment after %d attempts: %w", maxRetries, lastErr)
 }
 
-// signAcknowledgement signs an acknowledgement using ECDSA transport signer
-func (n *Node) signAcknowledgement(dealerID int64, commitmentHash [32]byte) []byte {
-	// Create message: dealerID || commitmentHash
-	dealerBytes := make([]byte, 4)
-	binary.BigEndian.PutUint32(dealerBytes, uint32(dealerID))
-	message := append(dealerBytes, commitmentHash[:]...)
+func buildAcknowledgementSigningMessage(dealerID, playerID, epoch int64, shareHash, commitmentHash [32]byte) []byte {
+	// message = dealerID || playerID || epoch || shareHash || commitmentHash
+	msg := make([]byte, 0, 8+8+8+32+32)
+	dealerBytes := make([]byte, 8)
+	playerBytes := make([]byte, 8)
+	epochBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(dealerBytes, uint64(dealerID))
+	binary.BigEndian.PutUint64(playerBytes, uint64(playerID))
+	binary.BigEndian.PutUint64(epochBytes, uint64(epoch))
+	msg = append(msg, dealerBytes...)
+	msg = append(msg, playerBytes...)
+	msg = append(msg, epochBytes...)
+	msg = append(msg, shareHash[:]...)
+	msg = append(msg, commitmentHash[:]...)
+	return msg
+}
+
+// signAcknowledgement signs acknowledgement fields using the transport signer.
+func (n *Node) signAcknowledgement(dealerID, playerID, epoch int64, shareHash, commitmentHash [32]byte) []byte {
+	message := buildAcknowledgementSigningMessage(dealerID, playerID, epoch, shareHash, commitmentHash)
 
 	// Sign using transport signer (ECDSA)
 	signature, err := n.transportSigner.SignMessage(message)
@@ -1845,6 +1883,79 @@ func (n *Node) signAcknowledgement(dealerID int64, commitmentHash [32]byte) []by
 		return nil
 	}
 	return signature
+}
+
+func (n *Node) verifyAcknowledgement(
+	session *ProtocolSession,
+	senderPeer *peering.OperatorSetPeer,
+	senderNodeID, expectedDealerID int64,
+	sessionTimestamp int64,
+	ack *types.Acknowledgement,
+) error {
+	if ack == nil {
+		return fmt.Errorf("ack is nil")
+	}
+	if ack.PlayerID != senderNodeID {
+		return fmt.Errorf("ack player mismatch: got %d expected %d", ack.PlayerID, senderNodeID)
+	}
+	if ack.DealerID != expectedDealerID {
+		return fmt.Errorf("ack dealer mismatch: got %d expected %d", ack.DealerID, expectedDealerID)
+	}
+	if ack.Epoch != sessionTimestamp {
+		return fmt.Errorf("ack epoch mismatch: got %d expected %d", ack.Epoch, sessionTimestamp)
+	}
+	if len(ack.Signature) == 0 {
+		return fmt.Errorf("ack signature is empty")
+	}
+
+	session.mu.RLock()
+	dealerCommitments, ok := session.commitments[expectedDealerID]
+	session.mu.RUnlock()
+	if !ok || len(dealerCommitments) == 0 {
+		return fmt.Errorf("dealer commitments unavailable for dealer %d", expectedDealerID)
+	}
+	expectedCommitmentHash := eigenxcrypto.HashCommitment(dealerCommitments)
+	if ack.CommitmentHash != expectedCommitmentHash {
+		return fmt.Errorf("ack commitment hash mismatch")
+	}
+
+	msg := buildAcknowledgementSigningMessage(ack.DealerID, ack.PlayerID, ack.Epoch, ack.ShareHash, ack.CommitmentHash)
+	msgHash := crypto.Keccak256Hash(msg)
+
+	switch senderPeer.CurveType {
+	case config.CurveTypeBN254:
+		sig, err := bn254.NewSignatureFromBytes(ack.Signature)
+		if err != nil {
+			return fmt.Errorf("invalid BN254 ack signature format: %w", err)
+		}
+		bn254PubKey, ok := senderPeer.WrappedPublicKey.PublicKey.(*bn254.PublicKey)
+		if !ok {
+			return fmt.Errorf("sender public key is not BN254 type")
+		}
+		valid, err := sig.VerifySolidityCompatible(bn254PubKey, msgHash)
+		if err != nil {
+			return fmt.Errorf("BN254 ack signature verification error: %w", err)
+		}
+		if !valid {
+			return fmt.Errorf("BN254 ack signature verification failed")
+		}
+	case config.CurveTypeECDSA:
+		sig, err := ecdsa.NewSignatureFromBytes(ack.Signature)
+		if err != nil {
+			return fmt.Errorf("invalid ECDSA ack signature format: %w", err)
+		}
+		valid, err := sig.VerifyWithAddress(msgHash[:], senderPeer.WrappedPublicKey.ECDSAAddress)
+		if err != nil {
+			return fmt.Errorf("ECDSA ack signature verification error: %w", err)
+		}
+		if !valid {
+			return fmt.Errorf("ECDSA ack signature verification failed")
+		}
+	default:
+		return fmt.Errorf("unsupported curve type for ack verification: %s", senderPeer.CurveType)
+	}
+
+	return nil
 }
 
 // VerifyOperatorBroadcast verifies a commitment broadcast against on-chain data (Phase 6)
