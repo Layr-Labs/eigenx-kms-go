@@ -38,6 +38,10 @@ build/cmd/registerOperator:
 build/cmd/kmsClient:
 	go build $(GO_FLAGS) -o ${BIN}/kms-client ./cmd/kmsClient
 
+.PHONY: build/cmd/kmsClient-amd64
+build/cmd/kmsClient-amd64:
+	GOARCH=amd64 GOOS=linux go build $(GO_FLAGS) -o ${BIN}/eigenx-kms-client-linux-amd64 ./cmd/kmsClient
+
 .PHONY: build/cmd/kmsClient/static
 build/cmd/kmsClient/static:
 	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
