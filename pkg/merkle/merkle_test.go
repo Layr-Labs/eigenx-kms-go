@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/ethereum/go-ethereum/common"
 )
@@ -209,8 +210,8 @@ func TestHashAcknowledgement(t *testing.T) {
 		CommitmentHash:   [32]byte{6, 7, 8, 9, 10},
 	}
 
-	hash1 := HashAcknowledgement(ack)
-	hash2 := HashAcknowledgement(ack)
+	hash1 := crypto.HashAcknowledgementForMerkle(ack)
+	hash2 := crypto.HashAcknowledgementForMerkle(ack)
 
 	// Hashing should be deterministic
 	require.Equal(t, hash1, hash2)
@@ -237,8 +238,8 @@ func TestHashAcknowledgementDifferentInputs(t *testing.T) {
 		CommitmentHash:   [32]byte{4, 5, 6},
 	}
 
-	hash1 := HashAcknowledgement(ack1)
-	hash2 := HashAcknowledgement(ack2)
+	hash1 := crypto.HashAcknowledgementForMerkle(ack1)
+	hash2 := crypto.HashAcknowledgementForMerkle(ack2)
 
 	require.NotEqual(t, hash1, hash2)
 }

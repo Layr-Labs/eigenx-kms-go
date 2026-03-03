@@ -55,7 +55,7 @@ func BuildMerkleTree(acks []*types.Acknowledgement) (*MerkleTree, error) {
 	leaves := make([][]byte, len(sortedAcks))
 	leafHashes := make([][32]byte, len(sortedAcks))
 	for i, ack := range sortedAcks {
-		hash := HashAcknowledgement(ack)
+		hash := crypto.HashAcknowledgementForMerkle(ack)
 		leaves[i] = hash[:]
 		leafHashes[i] = hash
 	}
@@ -130,12 +130,6 @@ func VerifyProof(proof *MerkleProof, root [32]byte) bool {
 	}
 
 	return verified
-}
-
-// HashAcknowledgement creates a keccak256 hash of an acknowledgement for use as a merkle leaf.
-// Delegates to crypto.HashAcknowledgementForMerkle as the canonical implementation.
-func HashAcknowledgement(ack *types.Acknowledgement) [32]byte {
-	return crypto.HashAcknowledgementForMerkle(ack)
 }
 
 // SortAcknowledgements sorts acknowledgements by player address in ascending order.
