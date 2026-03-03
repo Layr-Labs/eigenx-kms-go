@@ -48,7 +48,7 @@ func BuildMerkleTree(acks []*types.Acknowledgement) (*MerkleTree, error) {
 		return nil, fmt.Errorf("cannot build merkle tree from empty acknowledgement list")
 	}
 
-	// Sort acknowledgements by player ID for deterministic ordering
+	// Sort acknowledgements by player address for deterministic ordering
 	sortedAcks := SortAcknowledgements(acks)
 
 	// Hash all leaves
