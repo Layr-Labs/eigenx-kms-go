@@ -2,13 +2,12 @@ package merkle
 
 import (
 	"fmt"
-	"math/big"
 	"sort"
 
-	"github.com/ethereum/go-ethereum/crypto"
 	merkletree "github.com/wealdtech/go-merkletree/v2"
 	"github.com/wealdtech/go-merkletree/v2/keccak256"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 )
 
@@ -134,27 +133,9 @@ func VerifyProof(proof *MerkleProof, root [32]byte) bool {
 }
 
 // HashAcknowledgement creates a keccak256 hash of an acknowledgement for use as a merkle leaf.
-// The hash format matches the Solidity implementation:
-// keccak256(abi.encodePacked(playerAddress, dealerAddress, epoch, shareHash, commitmentHash))
+// Delegates to crypto.HashAcknowledgementForMerkle as the canonical implementation.
 func HashAcknowledgement(ack *types.Acknowledgement) [32]byte {
-	// Pack all fields matching Solidity's abi.encodePacked layout:
-	// player (20 bytes) || dealer (20 bytes) || sessionTimestamp (32 bytes, uint256) || shareHash (32 bytes) || commitmentHash (32 bytes)
-	data := make([]byte, 0, 20+20+32+32+32)
-
-	data = append(data, ack.PlayerAddress.Bytes()...)
-	data = append(data, ack.DealerAddress.Bytes()...)
-
-	// Encode session timestamp (32 bytes, big endian)
-	epochBytes := make([]byte, 32)
-	epochBig := big.NewInt(ack.SessionTimestamp)
-	epochBig.FillBytes(epochBytes)
-	data = append(data, epochBytes...)
-
-	data = append(data, ack.ShareHash[:]...)
-	data = append(data, ack.CommitmentHash[:]...)
-
-	hash := crypto.Keccak256Hash(data)
-	return [32]byte(hash)
+	return crypto.HashAcknowledgementForMerkle(ack)
 }
 
 // SortAcknowledgements sorts acknowledgements by player address in ascending order.
