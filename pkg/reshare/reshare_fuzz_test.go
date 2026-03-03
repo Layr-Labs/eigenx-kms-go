@@ -42,7 +42,6 @@ func deriveScalar(b []byte) *fr.Element {
 	return s
 }
 
-
 func FuzzGenerateVerifyAndComputeNewKeyShare(f *testing.F) {
 	f.Add(3, []byte("seed"))
 	f.Add(5, []byte("another-seed"))
