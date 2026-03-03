@@ -359,16 +359,20 @@ func (c *Client) BroadcastCommitmentsWithProofs(
 		return fmt.Errorf("merkle tree is nil")
 	}
 
+	// Sort acks to match the order used when building the merkle tree
+	sortedAcks := merkle.SortAcknowledgements(acks)
+
 	// Send to each operator with their specific proof
 	for i, op := range operators {
 		if op.OperatorAddress == c.operatorAddr {
 			continue // Skip self
 		}
 
-		// Find the ack for this operator
+		// Find the ack for this operator using the sorted slice so leafIndex
+		// aligns with the tree's leaf ordering.
 		var recipientAck *types.Acknowledgement
 		var leafIndex int
-		for idx, ack := range acks {
+		for idx, ack := range sortedAcks {
 			if ack.PlayerAddress == op.OperatorAddress {
 				recipientAck = ack
 				leafIndex = idx
