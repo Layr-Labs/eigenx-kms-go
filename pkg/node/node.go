@@ -471,7 +471,7 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 			"block_interval", blockInterval)
 
 		go func() {
-			if err := n.RunReshareAsExistingOperator(blockTimestamp); err != nil {
+			if err := n.RunReshareAsExistingOperator(blockTimestamp, 0); err != nil {
 				n.logger.Sugar().Errorw("Automatic reshare failed",
 					"operator_address", n.OperatorAddress.Hex(),
 					"error", err)
@@ -1168,8 +1168,11 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	return nil
 }
 
-// RunReshareAsExistingOperator executes the reshare protocol as an existing operator with shares
-func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
+// RunReshareAsExistingOperator executes the reshare protocol as an existing operator with shares.
+// numNewOperators is the count of operators that are joining for the first time and will not
+// contribute shares (they run RunReshareAsNewOperator). Pass 0 for a pure share refresh where
+// all operators are existing.
+func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, numNewOperators int) error {
 	ctx := context.Background()
 	n.logger.Sugar().Infow("Starting reshare as existing operator",
 		"operator_address", n.OperatorAddress.Hex(),
@@ -1255,12 +1258,14 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		}
 	}
 
-	// Wait for shares and commitments using channel-based signaling
+	// Wait for shares and commitments. New operators (running RunReshareAsNewOperator) do not
+	// contribute shares, so we only expect len(operators)-numNewOperators contributions.
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
-	if err := waitForShares(session, protocolTimeout); err != nil {
+	requiredContributions := len(operators) - numNewOperators
+	if err := waitForNShares(session, requiredContributions, protocolTimeout); err != nil {
 		return err
 	}
-	if err := waitForCommitments(session, protocolTimeout); err != nil {
+	if err := waitForNCommitments(session, requiredContributions, protocolTimeout); err != nil {
 		return err
 	}
 
@@ -1512,17 +1517,17 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 			"error", err)
 	}
 
-	// New operators DON'T generate shares - only receive from existing operators
+	// New operators DON'T generate shares - only receive from existing operators.
+	// Expect N-1 shares and commitments: all operators except this new operator itself.
 	n.logger.Sugar().Infow("Waiting for shares from existing operators",
 		"operator_address", n.OperatorAddress.Hex(),
-		"expected_operators", len(operators))
+		"expected_shares", len(operators)-1)
 
-	// Wait for shares and commitments from existing operators using channel-based signaling
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
-	if err := waitForShares(session, protocolTimeout); err != nil {
+	if err := waitForNShares(session, len(operators)-1, protocolTimeout); err != nil {
 		return fmt.Errorf("failed to receive shares: %w", err)
 	}
-	if err := waitForCommitments(session, protocolTimeout); err != nil {
+	if err := waitForNCommitments(session, len(operators)-1, protocolTimeout); err != nil {
 		return fmt.Errorf("failed to receive commitments: %w", err)
 	}
 
@@ -1662,6 +1667,90 @@ func waitForCommitments(session *ProtocolSession, timeout time.Duration) error {
 		expected := len(session.Operators)
 		session.mu.RUnlock()
 		return fmt.Errorf("timeout waiting for commitments: got %d/%d", received, expected)
+	}
+}
+
+// waitForNShares waits for at least required shares using polling.
+// Use this instead of waitForShares when fewer than all operators are expected to contribute
+// (e.g., new operators joining don't send shares, so existing operators wait for N-numNew shares).
+func waitForNShares(session *ProtocolSession, required int, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	maxPossible := len(session.Operators)
+	if required < 0 {
+		required = 0
+	}
+	if required > maxPossible {
+		required = maxPossible
+	}
+
+	if required == 0 {
+		return nil
+	}
+
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			session.mu.RLock()
+			received := len(session.shares)
+			session.mu.RUnlock()
+			return fmt.Errorf("timeout waiting for shares: got %d/%d", received, required)
+
+		case <-ticker.C:
+			session.mu.RLock()
+			received := len(session.shares)
+			session.mu.RUnlock()
+
+			if received >= required {
+				return nil
+			}
+		}
+	}
+}
+
+// waitForNCommitments waits for at least required commitments using polling.
+// Use this instead of waitForCommitments when fewer than all operators are expected to contribute
+// (e.g., new operators joining don't broadcast commitments).
+func waitForNCommitments(session *ProtocolSession, required int, timeout time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
+	maxPossible := len(session.Operators)
+	if required < 0 {
+		required = 0
+	}
+	if required > maxPossible {
+		required = maxPossible
+	}
+
+	if required == 0 {
+		return nil
+	}
+
+	ticker := time.NewTicker(50 * time.Millisecond)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			session.mu.RLock()
+			received := len(session.commitments)
+			session.mu.RUnlock()
+			return fmt.Errorf("timeout waiting for commitments: got %d/%d", received, required)
+
+		case <-ticker.C:
+			session.mu.RLock()
+			received := len(session.commitments)
+			session.mu.RUnlock()
+
+			if received >= required {
+				return nil
+			}
+		}
 	}
 }
 
