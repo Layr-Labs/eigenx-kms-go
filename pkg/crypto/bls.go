@@ -18,6 +18,7 @@ import (
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
+	"github.com/ethereum/go-ethereum/common"
 	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	"golang.org/x/crypto/hkdf"
 )
@@ -631,6 +632,22 @@ func HashAcknowledgementForMerkle(ack *types.Acknowledgement) [32]byte {
 	data = append(data, ack.CommitmentHash[:]...)
 
 	return keccak256Hash(data)
+}
+
+// CreateAcknowledgement creates an acknowledgement for a received share during DKG or reshare.
+func CreateAcknowledgement(playerAddress, dealerAddress common.Address, epoch int64, share *fr.Element, commitments []types.G2Point, signer func(common.Address, common.Address, int64, [32]byte, [32]byte) []byte) *types.Acknowledgement {
+	commitmentHash := HashCommitment(commitments)
+	shareHash := HashShareForAck(share)
+	signature := signer(dealerAddress, playerAddress, epoch, shareHash, commitmentHash)
+
+	return &types.Acknowledgement{
+		DealerAddress:    dealerAddress,
+		PlayerAddress:    playerAddress,
+		SessionTimestamp: epoch,
+		ShareHash:        shareHash,
+		CommitmentHash:   commitmentHash,
+		Signature:        signature,
+	}
 }
 
 // HashShareForAck creates a keccak256 hash of a share for use in acknowledgements (Phase 3)

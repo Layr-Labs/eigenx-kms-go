@@ -995,7 +995,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 			}
 
 			// Create acknowledgement for verified share using operator addresses
-			ack := dkg.CreateAcknowledgement(n.OperatorAddress, dealerPeer.OperatorAddress, sessionTimestamp, share, commitments, n.signAcknowledgement)
+			ack := eigenxcrypto.CreateAcknowledgement(n.OperatorAddress, dealerPeer.OperatorAddress, sessionTimestamp, share, commitments, n.signAcknowledgement)
 
 			// Send acknowledgement to dealer
 			err := n.transport.SendDKGAcknowledgement(ack, dealerPeer, session.SessionTimestamp)
@@ -1305,7 +1305,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 			}
 
 			// Create acknowledgement for verified share using operator addresses
-			ack := reshare.CreateAcknowledgement(n.OperatorAddress, dealerPeer.OperatorAddress, sessionTimestamp, share, commitments, n.signAcknowledgement)
+			ack := eigenxcrypto.CreateAcknowledgement(n.OperatorAddress, dealerPeer.OperatorAddress, sessionTimestamp, share, commitments, n.signAcknowledgement)
 
 			// Send acknowledgement to dealer
 			err := n.transport.SendReshareAcknowledgement(ack, dealerPeer, session.SessionTimestamp)

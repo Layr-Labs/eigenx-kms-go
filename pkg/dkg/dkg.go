@@ -8,7 +8,6 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
-	"github.com/ethereum/go-ethereum/common"
 )
 
 // Protocol represents the DKG protocol interface
@@ -135,28 +134,6 @@ func (d *DKG) FinalizeKeyShare(shares map[int64]*fr.Element, allCommitments [][]
 // GetReshareEpoch calculates the current reshare epoch
 func GetReshareEpoch() int64 {
 	return 0 // Placeholder - should use time.Now().Unix() / RESHARE_FREQUENCY
-}
-
-// CreateAcknowledgement creates an acknowledgement for received shares
-func CreateAcknowledgement(
-	playerAddress, dealerAddress common.Address,
-	epoch int64,
-	share *fr.Element,
-	commitments []types.G2Point,
-	signer func(common.Address, common.Address, int64, [32]byte, [32]byte) []byte,
-) *types.Acknowledgement {
-	commitmentHash := crypto.HashCommitment(commitments)
-	shareHash := crypto.HashShareForAck(share)
-	signature := signer(dealerAddress, playerAddress, epoch, shareHash, commitmentHash)
-
-	return &types.Acknowledgement{
-		DealerAddress:    dealerAddress,
-		PlayerAddress:    playerAddress,
-		SessionTimestamp: epoch,
-		ShareHash:        shareHash,
-		CommitmentHash:   commitmentHash,
-		Signature:        signature,
-	}
 }
 
 // BuildAcknowledgementMerkleTree creates a merkle tree from collected acknowledgements (Phase 4)

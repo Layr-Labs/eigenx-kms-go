@@ -11,7 +11,6 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
-	"github.com/ethereum/go-ethereum/common"
 )
 
 // Protocol represents the reshare protocol interface
@@ -155,12 +154,6 @@ func CreateCompletionSignature(nodeID int, epoch int64, commitmentHash [32]byte,
 		CommitmentHash:   commitmentHash,
 		Signature:        signature,
 	}
-}
-
-// CreateAcknowledgement creates an acknowledgement for received reshare.
-// Delegates to dkg.CreateAcknowledgement as the canonical implementation.
-func CreateAcknowledgement(playerAddress, dealerAddress common.Address, epoch int64, share *fr.Element, commitments []types.G2Point, signer func(common.Address, common.Address, int64, [32]byte, [32]byte) []byte) *types.Acknowledgement {
-	return dkg.CreateAcknowledgement(playerAddress, dealerAddress, epoch, share, commitments, signer)
 }
 
 // BuildAcknowledgementMerkleTree creates a merkle tree from collected acknowledgements.

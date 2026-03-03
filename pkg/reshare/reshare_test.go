@@ -478,7 +478,7 @@ func Test_CreateAcknowledgement(t *testing.T) {
 		return []byte("mock-signature")
 	}
 
-	ack := CreateAcknowledgement(playerAddr, dealerAddr, epoch, &share, commitments, signer)
+	ack := crypto.CreateAcknowledgement(playerAddr, dealerAddr, epoch, &share, commitments, signer)
 
 	if ack == nil {
 		t.Fatal("Expected non-nil acknowledgement")

@@ -169,7 +169,7 @@ func testAcknowledgementWithNewFields(t *testing.T) {
 	}
 
 	// Create acknowledgement using DKG function
-	ack := dkg.CreateAcknowledgement(playerAddr, dealerAddr, epoch, share, commitments, signer)
+	ack := crypto.CreateAcknowledgement(playerAddr, dealerAddr, epoch, share, commitments, signer)
 	require.NotNil(t, ack)
 
 	// Verify all fields are set correctly
@@ -189,7 +189,7 @@ func testAcknowledgementWithNewFields(t *testing.T) {
 	require.Equal(t, expectedCommitmentHash, ack.CommitmentHash)
 
 	// Create acknowledgement using Reshare function
-	reshareAck := reshare.CreateAcknowledgement(playerAddr, dealerAddr, epoch, share, commitments, signer)
+	reshareAck := crypto.CreateAcknowledgement(playerAddr, dealerAddr, epoch, share, commitments, signer)
 	require.NotNil(t, reshareAck)
 
 	// Both should produce same result
