@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"math/big"
 	"testing"
 
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
@@ -46,14 +47,16 @@ func CreateTestOperators(t *testing.T, numOperators int) []*peering.OperatorSetP
 	return operators
 }
 
-// CreateTestAcknowledgements creates n test acknowledgements with specified epoch and dealer
+// CreateTestAcknowledgements creates n test acknowledgements with specified epoch and dealer address
 func CreateTestAcknowledgements(t *testing.T, n int, epoch int64, dealerID int64) []*types.Acknowledgement {
+	operators := CreateTestOperators(t, n)
+	dealerAddr := common.BigToAddress(new(big.Int).SetInt64(dealerID))
 	acks := make([]*types.Acknowledgement, n)
 	for i := 0; i < n; i++ {
 		share := CreateTestShare(uint64(100 + i))
 		acks[i] = &types.Acknowledgement{
-			PlayerID:         int64(i + 1),
-			DealerID:         dealerID,
+			PlayerAddress:    operators[i].OperatorAddress,
+			DealerAddress:    dealerAddr,
 			SessionTimestamp: epoch,
 			ShareHash:        crypto.HashShareForAck(share),
 			CommitmentHash:   [32]byte{byte(i), byte(i + 1), byte(i + 2)},

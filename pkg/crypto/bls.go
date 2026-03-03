@@ -611,40 +611,26 @@ func deriveKeyMaterial(gIDBytes []byte, version byte, appID string) ([]byte, err
 }
 
 // HashAcknowledgementForMerkle creates a keccak256 hash of an acknowledgement for merkle leaf (Phase 3)
-// The hash format matches the Solidity implementation for cross-validation
-// keccak256(abi.encodePacked(playerID, dealerID, epoch, shareHash, commitmentHash))
+// The hash format matches the Solidity implementation:
+// keccak256(abi.encodePacked(playerAddress, dealerAddress, epoch, shareHash, commitmentHash))
 func HashAcknowledgementForMerkle(ack *types.Acknowledgement) [32]byte {
-	// Pack all fields in the same order as Solidity
-	// Note: We use playerID and dealerID as integers for now
-	// In production, these should be Ethereum addresses
+	// Pack all fields matching Solidity's abi.encodePacked layout:
+	// player (20 bytes) || dealer (20 bytes) || sessionTimestamp (32 bytes, uint256) || shareHash (32 bytes) || commitmentHash (32 bytes)
+	data := make([]byte, 0, 20+20+32+32+32)
 
-	data := make([]byte, 0, 8+8+32+32+32) // playerID + dealerID + epoch + shareHash + commitmentHash
+	data = append(data, ack.PlayerAddress.Bytes()...)
+	data = append(data, ack.DealerAddress.Bytes()...)
 
-	// Encode playerID (8 bytes, big endian)
-	playerBytes := make([]byte, 8)
-	playerBig := big.NewInt(int64(ack.PlayerID))
-	playerBig.FillBytes(playerBytes)
-	data = append(data, playerBytes...)
-
-	// Encode dealerID (8 bytes, big endian)
-	dealerBytes := make([]byte, 8)
-	dealerBig := big.NewInt(int64(ack.DealerID))
-	dealerBig.FillBytes(dealerBytes)
-	data = append(data, dealerBytes...)
-
-	// Encode epoch (32 bytes, big endian)
+	// Encode session timestamp (32 bytes, big endian)
 	epochBytes := make([]byte, 32)
 	epochBig := big.NewInt(ack.SessionTimestamp)
 	epochBig.FillBytes(epochBytes)
 	data = append(data, epochBytes...)
 
-	// Append shareHash and commitmentHash
 	data = append(data, ack.ShareHash[:]...)
 	data = append(data, ack.CommitmentHash[:]...)
 
-	// Compute keccak256 hash
-	hash := keccak256Hash(data)
-	return hash
+	return keccak256Hash(data)
 }
 
 // HashShareForAck creates a keccak256 hash of a share for use in acknowledgements (Phase 3)

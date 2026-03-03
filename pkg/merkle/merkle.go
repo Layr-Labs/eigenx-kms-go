@@ -135,51 +135,45 @@ func VerifyProof(proof *MerkleProof, root [32]byte) bool {
 
 // HashAcknowledgement creates a keccak256 hash of an acknowledgement for use as a merkle leaf.
 // The hash format matches the Solidity implementation:
-// keccak256(abi.encodePacked(playerID, dealerID, epoch, shareHash, commitmentHash))
-//
-// Note: This uses integer IDs. For production Solidity compatibility, use Ethereum addresses.
+// keccak256(abi.encodePacked(playerAddress, dealerAddress, epoch, shareHash, commitmentHash))
 func HashAcknowledgement(ack *types.Acknowledgement) [32]byte {
-	// Pack all fields for hashing
-	// Format: playerID (8 bytes) || dealerID (8 bytes) || epoch (32 bytes) || shareHash (32 bytes) || commitmentHash (32 bytes)
-	data := make([]byte, 0, 8+8+32+32+32)
+	// Pack all fields matching Solidity's abi.encodePacked layout:
+	// player (20 bytes) || dealer (20 bytes) || sessionTimestamp (32 bytes, uint256) || shareHash (32 bytes) || commitmentHash (32 bytes)
+	data := make([]byte, 0, 20+20+32+32+32)
 
-	// Encode playerID (8 bytes, big endian)
-	playerBytes := make([]byte, 8)
-	playerBig := big.NewInt(int64(ack.PlayerID))
-	playerBig.FillBytes(playerBytes)
-	data = append(data, playerBytes...)
+	data = append(data, ack.PlayerAddress.Bytes()...)
+	data = append(data, ack.DealerAddress.Bytes()...)
 
-	// Encode dealerID (8 bytes, big endian)
-	dealerBytes := make([]byte, 8)
-	dealerBig := big.NewInt(int64(ack.DealerID))
-	dealerBig.FillBytes(dealerBytes)
-	data = append(data, dealerBytes...)
-
-	// Encode epoch (32 bytes, big endian)
+	// Encode session timestamp (32 bytes, big endian)
 	epochBytes := make([]byte, 32)
 	epochBig := big.NewInt(ack.SessionTimestamp)
 	epochBig.FillBytes(epochBytes)
 	data = append(data, epochBytes...)
 
-	// Append shareHash and commitmentHash
 	data = append(data, ack.ShareHash[:]...)
 	data = append(data, ack.CommitmentHash[:]...)
 
-	// Compute keccak256 hash
 	hash := crypto.Keccak256Hash(data)
 	return [32]byte(hash)
 }
 
-// SortAcknowledgements sorts acknowledgements by player ID in ascending order.
+// SortAcknowledgements sorts acknowledgements by player address in ascending order.
 // This ensures deterministic merkle tree construction across all operators.
 func SortAcknowledgements(acks []*types.Acknowledgement) []*types.Acknowledgement {
 	// Create a copy to avoid modifying the original slice
 	sorted := make([]*types.Acknowledgement, len(acks))
 	copy(sorted, acks)
 
-	// Sort by player ID (ascending)
+	// Sort by player address bytes (ascending, lexicographic)
 	sort.Slice(sorted, func(i, j int) bool {
-		return sorted[i].PlayerID < sorted[j].PlayerID
+		addrI := sorted[i].PlayerAddress.Bytes()
+		addrJ := sorted[j].PlayerAddress.Bytes()
+		for k := range addrI {
+			if addrI[k] != addrJ[k] {
+				return addrI[k] < addrJ[k]
+			}
+		}
+		return false
 	})
 
 	return sorted

@@ -352,8 +352,8 @@ func deepCopyProtocolSessionState(s *persistence.ProtocolSessionState) *persiste
 		ackMapCopy := make(map[int64]*types.Acknowledgement)
 		for receiverID, ack := range ackMap {
 			ackCopy := &types.Acknowledgement{
-				PlayerID:         ack.PlayerID,
-				DealerID:         ack.DealerID,
+				PlayerAddress:    ack.PlayerAddress,
+				DealerAddress:    ack.DealerAddress,
 				SessionTimestamp: ack.SessionTimestamp,
 				ShareHash:        ack.ShareHash,      // [32]byte is copied by value
 				CommitmentHash:   ack.CommitmentHash, // [32]byte is copied by value

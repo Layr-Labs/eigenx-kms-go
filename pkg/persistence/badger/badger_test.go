@@ -1,6 +1,7 @@
 package badger
 
 import (
+	"math/big"
 	"sync"
 	"testing"
 
@@ -8,6 +9,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/persistence"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -268,7 +270,7 @@ func TestBadgerPersistence_ProtocolSessions(t *testing.T) {
 		},
 		Acknowledgements: map[int64]map[int64]*types.Acknowledgement{
 			1: {
-				2: {PlayerID: 2, DealerID: 1, SessionTimestamp: 1234567890},
+				2: {PlayerAddress: common.BigToAddress(big.NewInt(2)), DealerAddress: common.BigToAddress(big.NewInt(1)), SessionTimestamp: 1234567890},
 			},
 		},
 	}

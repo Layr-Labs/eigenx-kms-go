@@ -16,7 +16,7 @@ interface IEigenKMSCommitmentRegistry {
     /// @notice Acknowledgement data for equivocation proof
     struct AckData {
         address player;
-        uint64 dealerID;
+        address dealer;
         bytes32 shareHash;
         bytes32 commitmentHash;
         bytes32[] proof;

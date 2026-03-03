@@ -8,6 +8,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
+	"github.com/ethereum/go-ethereum/common"
 )
 
 // Protocol represents the DKG protocol interface
@@ -137,21 +138,20 @@ func GetReshareEpoch() int64 {
 }
 
 // CreateAcknowledgement creates an acknowledgement for received shares
-// Phase 4: Updated to include shareHash and epoch
 func CreateAcknowledgement(
-	nodeID, dealerID int64,
+	playerAddress, dealerAddress common.Address,
 	epoch int64,
 	share *fr.Element,
 	commitments []types.G2Point,
-	signer func(int64, int64, int64, [32]byte, [32]byte) []byte,
+	signer func(common.Address, common.Address, int64, [32]byte, [32]byte) []byte,
 ) *types.Acknowledgement {
 	commitmentHash := crypto.HashCommitment(commitments)
 	shareHash := crypto.HashShareForAck(share)
-	signature := signer(dealerID, nodeID, epoch, shareHash, commitmentHash)
+	signature := signer(dealerAddress, playerAddress, epoch, shareHash, commitmentHash)
 
 	return &types.Acknowledgement{
-		DealerID:         dealerID,
-		PlayerID:         nodeID,
+		DealerAddress:    dealerAddress,
+		PlayerAddress:    playerAddress,
 		SessionTimestamp: epoch,
 		ShareHash:        shareHash,
 		CommitmentHash:   commitmentHash,

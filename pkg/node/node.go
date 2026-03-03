@@ -981,9 +981,6 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 		if n.dkg.VerifyShare(dealerID, share, commitments) {
 			validShares[dealerID] = share
 
-			// Create acknowledgement for verified share (Phase 4: added epoch and share)
-			ack := dkg.CreateAcknowledgement(thisNodeID, dealerID, sessionTimestamp, share, commitments, n.signAcknowledgement)
-
 			// Find dealer's peer info for transport
 			var dealerPeer *peering.OperatorSetPeer
 			for _, op := range operators {
@@ -993,20 +990,25 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 				}
 			}
 
-			if dealerPeer != nil {
-				// Send acknowledgement to dealer
-				err := n.transport.SendDKGAcknowledgement(ack, dealerPeer, session.SessionTimestamp)
-				if err != nil {
-					n.logger.Sugar().Warnw("Failed to send acknowledgement",
-						"operator_address", n.OperatorAddress.Hex(),
-						"dealer_address", dealerPeer.OperatorAddress.Hex(),
-						"error", err)
-				} else {
-					n.logger.Sugar().Debugw("Sent acknowledgement",
-						"operator_address", n.OperatorAddress.Hex(),
-						"dealer_address", dealerPeer.OperatorAddress.Hex(),
-						"dealer_id", dealerID)
-				}
+			if dealerPeer == nil {
+				continue
+			}
+
+			// Create acknowledgement for verified share using operator addresses
+			ack := dkg.CreateAcknowledgement(n.OperatorAddress, dealerPeer.OperatorAddress, sessionTimestamp, share, commitments, n.signAcknowledgement)
+
+			// Send acknowledgement to dealer
+			err := n.transport.SendDKGAcknowledgement(ack, dealerPeer, session.SessionTimestamp)
+			if err != nil {
+				n.logger.Sugar().Warnw("Failed to send acknowledgement",
+					"operator_address", n.OperatorAddress.Hex(),
+					"dealer_address", dealerPeer.OperatorAddress.Hex(),
+					"error", err)
+			} else {
+				n.logger.Sugar().Debugw("Sent acknowledgement",
+					"operator_address", n.OperatorAddress.Hex(),
+					"dealer_address", dealerPeer.OperatorAddress.Hex(),
+					"dealer_id", dealerID)
 			}
 
 			n.logger.Sugar().Infow("Verified and acked share", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "dealer_id", dealerID)
@@ -1289,9 +1291,6 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		if n.resharer.VerifyNewShare(dealerID, share, commitments) {
 			validShares[dealerID] = share
 
-			// Create acknowledgement for verified share
-			ack := reshare.CreateAcknowledgement(thisNodeID, dealerID, sessionTimestamp, share, commitments, n.signAcknowledgement)
-
 			// Find dealer's peer info for transport
 			var dealerPeer *peering.OperatorSetPeer
 			for _, op := range operators {
@@ -1301,20 +1300,25 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 				}
 			}
 
-			if dealerPeer != nil {
-				// Send acknowledgement to dealer
-				err := n.transport.SendReshareAcknowledgement(ack, dealerPeer, session.SessionTimestamp)
-				if err != nil {
-					n.logger.Sugar().Warnw("Failed to send reshare acknowledgement",
-						"operator_address", n.OperatorAddress.Hex(),
-						"dealer_address", dealerPeer.OperatorAddress.Hex(),
-						"error", err)
-				} else {
-					n.logger.Sugar().Debugw("Sent reshare acknowledgement",
-						"operator_address", n.OperatorAddress.Hex(),
-						"dealer_address", dealerPeer.OperatorAddress.Hex(),
-						"dealer_id", dealerID)
-				}
+			if dealerPeer == nil {
+				continue
+			}
+
+			// Create acknowledgement for verified share using operator addresses
+			ack := reshare.CreateAcknowledgement(n.OperatorAddress, dealerPeer.OperatorAddress, sessionTimestamp, share, commitments, n.signAcknowledgement)
+
+			// Send acknowledgement to dealer
+			err := n.transport.SendReshareAcknowledgement(ack, dealerPeer, session.SessionTimestamp)
+			if err != nil {
+				n.logger.Sugar().Warnw("Failed to send reshare acknowledgement",
+					"operator_address", n.OperatorAddress.Hex(),
+					"dealer_address", dealerPeer.OperatorAddress.Hex(),
+					"error", err)
+			} else {
+				n.logger.Sugar().Debugw("Sent reshare acknowledgement",
+					"operator_address", n.OperatorAddress.Hex(),
+					"dealer_address", dealerPeer.OperatorAddress.Hex(),
+					"dealer_id", dealerID)
 			}
 
 			n.logger.Sugar().Infow("Verified and acked reshare share",
@@ -1885,17 +1889,13 @@ func (n *Node) submitCommitmentWithRetry(
 	return fmt.Errorf("failed to submit commitment after %d attempts: %w", maxRetries, lastErr)
 }
 
-func buildAcknowledgementSigningMessage(dealerID, playerID, epoch int64, shareHash, commitmentHash [32]byte) []byte {
-	// message = dealerID || playerID || epoch || shareHash || commitmentHash
-	msg := make([]byte, 0, 8+8+8+32+32)
-	dealerBytes := make([]byte, 8)
-	playerBytes := make([]byte, 8)
+func buildAcknowledgementSigningMessage(dealerAddress, playerAddress common.Address, epoch int64, shareHash, commitmentHash [32]byte) []byte {
+	// message = dealerAddress || playerAddress || epoch || shareHash || commitmentHash
+	msg := make([]byte, 0, 20+20+8+32+32)
 	epochBytes := make([]byte, 8)
-	binary.BigEndian.PutUint64(dealerBytes, uint64(dealerID))
-	binary.BigEndian.PutUint64(playerBytes, uint64(playerID))
 	binary.BigEndian.PutUint64(epochBytes, uint64(epoch))
-	msg = append(msg, dealerBytes...)
-	msg = append(msg, playerBytes...)
+	msg = append(msg, dealerAddress.Bytes()...)
+	msg = append(msg, playerAddress.Bytes()...)
 	msg = append(msg, epochBytes...)
 	msg = append(msg, shareHash[:]...)
 	msg = append(msg, commitmentHash[:]...)
@@ -1903,8 +1903,8 @@ func buildAcknowledgementSigningMessage(dealerID, playerID, epoch int64, shareHa
 }
 
 // signAcknowledgement signs acknowledgement fields using the transport signer.
-func (n *Node) signAcknowledgement(dealerID, playerID, epoch int64, shareHash, commitmentHash [32]byte) []byte {
-	message := buildAcknowledgementSigningMessage(dealerID, playerID, epoch, shareHash, commitmentHash)
+func (n *Node) signAcknowledgement(dealerAddress, playerAddress common.Address, epoch int64, shareHash, commitmentHash [32]byte) []byte {
+	message := buildAcknowledgementSigningMessage(dealerAddress, playerAddress, epoch, shareHash, commitmentHash)
 
 	// Sign using transport signer (ECDSA)
 	signature, err := n.transportSigner.SignMessage(message)
@@ -1925,11 +1925,13 @@ func (n *Node) verifyAcknowledgement(
 	if ack == nil {
 		return fmt.Errorf("ack is nil")
 	}
-	if ack.PlayerID != senderNodeID {
-		return fmt.Errorf("ack player mismatch: got %d expected %d", ack.PlayerID, senderNodeID)
+	expectedPlayerAddr := senderPeer.OperatorAddress
+	if ack.PlayerAddress != expectedPlayerAddr {
+		return fmt.Errorf("ack player mismatch: got %s expected %s", ack.PlayerAddress.Hex(), expectedPlayerAddr.Hex())
 	}
-	if ack.DealerID != expectedDealerID {
-		return fmt.Errorf("ack dealer mismatch: got %d expected %d", ack.DealerID, expectedDealerID)
+	expectedDealerAddr := n.OperatorAddress
+	if ack.DealerAddress != expectedDealerAddr {
+		return fmt.Errorf("ack dealer mismatch: got %s expected %s", ack.DealerAddress.Hex(), expectedDealerAddr.Hex())
 	}
 	if ack.SessionTimestamp != sessionTimestamp {
 		return fmt.Errorf("ack session timestamp mismatch: got %d expected %d", ack.SessionTimestamp, sessionTimestamp)
@@ -1949,7 +1951,7 @@ func (n *Node) verifyAcknowledgement(
 		return fmt.Errorf("ack commitment hash mismatch")
 	}
 
-	msg := buildAcknowledgementSigningMessage(ack.DealerID, ack.PlayerID, ack.SessionTimestamp, ack.ShareHash, ack.CommitmentHash)
+	msg := buildAcknowledgementSigningMessage(ack.DealerAddress, ack.PlayerAddress, ack.SessionTimestamp, ack.ShareHash, ack.CommitmentHash)
 	msgHash := crypto.Keccak256Hash(msg)
 
 	switch senderPeer.CurveType {
@@ -2011,11 +2013,9 @@ func (n *Node) VerifyOperatorBroadcast(
 		return fmt.Errorf("session not found")
 	}
 
-	myNodeID := addressToNodeID(n.OperatorAddress)
-
 	var myAck *types.Acknowledgement
 	for _, ack := range broadcast.Acknowledgements {
-		if ack.PlayerID == myNodeID {
+		if ack.PlayerAddress == n.OperatorAddress {
 			myAck = ack
 			break
 		}

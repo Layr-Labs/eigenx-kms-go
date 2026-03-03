@@ -139,9 +139,9 @@ contract EigenKMSCommitmentRegistry is
         if (ack1.shareHash == ack2.shareHash) revert ShareHashesMustDiffer();
 
         bytes32 hash1 =
-            keccak256(abi.encodePacked(ack1.player, ack1.dealerID, epoch, ack1.shareHash, ack1.commitmentHash));
+            keccak256(abi.encodePacked(ack1.player, ack1.dealer, epoch, ack1.shareHash, ack1.commitmentHash));
         bytes32 hash2 =
-            keccak256(abi.encodePacked(ack2.player, ack2.dealerID, epoch, ack2.shareHash, ack2.commitmentHash));
+            keccak256(abi.encodePacked(ack2.player, ack2.dealer, epoch, ack2.shareHash, ack2.commitmentHash));
 
         if (!MerkleProof.verify(ack1.proof, root, hash1)) revert Ack1Invalid();
         if (!MerkleProof.verify(ack2.proof, root, hash2)) revert Ack2Invalid();

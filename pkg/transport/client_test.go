@@ -1,13 +1,13 @@
 package transport
 
 import (
+	"math/big"
 	"testing"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/merkle"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
-	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
 )
@@ -45,13 +45,14 @@ func TestBroadcastCommitmentsWithProofs_NilTree(t *testing.T) {
 
 // TestBroadcastCommitmentsWithProofs_MerkleProofGeneration tests proof generation logic
 func TestBroadcastCommitmentsWithProofs_MerkleProofGeneration(t *testing.T) {
+	dealerAddr := common.HexToAddress("0x9900000000000000000000000000000000000099")
 	// Create test acknowledgements for 3 operators
 	acks := make([]*types.Acknowledgement, 3)
 	for i := 0; i < 3; i++ {
-		_ = fr.NewElement(uint64(100 + i)) // Used for test setup
+		playerAddr := common.BigToAddress(new(big.Int).SetInt64(int64(i + 1)))
 		acks[i] = &types.Acknowledgement{
-			PlayerID:         int64(i + 1),
-			DealerID:         99,
+			PlayerAddress:    playerAddr,
+			DealerAddress:    dealerAddr,
 			SessionTimestamp: 5,
 			ShareHash:        [32]byte{byte(i)},
 			CommitmentHash:   [32]byte{byte(i + 10)},
@@ -113,11 +114,10 @@ func TestBroadcastCommitmentsWithProofs_SkipsSelf(t *testing.T) {
 	}
 
 	// Create single ack for the other operator
-	otherNodeID := util.AddressToNodeID(operators[1].OperatorAddress)
 	acks := []*types.Acknowledgement{
 		{
-			PlayerID:         otherNodeID,
-			DealerID:         client.nodeID,
+			PlayerAddress:    operators[1].OperatorAddress,
+			DealerAddress:    myAddr,
 			SessionTimestamp: 5,
 			ShareHash:        [32]byte{1},
 			CommitmentHash:   [32]byte{2},
@@ -164,8 +164,8 @@ func TestBroadcastCommitmentsWithProofs_NoAckForOperator(t *testing.T) {
 	// Create ack for only ONE operator (missing ack for the other)
 	acks := []*types.Acknowledgement{
 		{
-			PlayerID:         util.AddressToNodeID(operators[0].OperatorAddress),
-			DealerID:         client.nodeID,
+			PlayerAddress:    operators[0].OperatorAddress,
+			DealerAddress:    myAddr,
 			SessionTimestamp: 5,
 			ShareHash:        [32]byte{1},
 			CommitmentHash:   [32]byte{2},

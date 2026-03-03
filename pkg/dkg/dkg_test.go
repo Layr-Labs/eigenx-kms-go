@@ -2,6 +2,7 @@ package dkg
 
 import (
 	"fmt"
+	"math/big"
 	"testing"
 
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
@@ -199,8 +200,8 @@ func testFinalizeKeyShare(t *testing.T) {
 // testCreateAcknowledgement tests acknowledgement creation
 func testCreateAcknowledgement(t *testing.T) {
 	operators := createTestOperators(t, 3)
-	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
-	dealerID := util.AddressToNodeID(operators[1].OperatorAddress)
+	playerAddr := operators[0].OperatorAddress
+	dealerAddr := operators[1].OperatorAddress
 	epoch := int64(12345)
 
 	// Create test commitments with random g2 points
@@ -218,21 +219,21 @@ func testCreateAcknowledgement(t *testing.T) {
 	share := fr.NewElement(789)
 
 	// Mock signer function
-	signer := func(dealer, player, ackEpoch int64, shareHash, hash [32]byte) []byte {
+	signer := func(dealer, player common.Address, ackEpoch int64, shareHash, hash [32]byte) []byte {
 		_ = player
 		_ = ackEpoch
 		_ = shareHash
 		return []byte("mock-signature")
 	}
 
-	ack := CreateAcknowledgement(nodeID, dealerID, epoch, &share, commitments, signer)
+	ack := CreateAcknowledgement(playerAddr, dealerAddr, epoch, &share, commitments, signer)
 
 	require.NotNil(t, ack, "Expected non-nil acknowledgement")
-	if ack.PlayerID != nodeID {
-		t.Errorf("Expected PlayerID %d, got %d", nodeID, ack.PlayerID)
+	if ack.PlayerAddress != playerAddr {
+		t.Errorf("Expected PlayerAddress %s, got %s", playerAddr.Hex(), ack.PlayerAddress.Hex())
 	}
-	if ack.DealerID != dealerID {
-		t.Errorf("Expected DealerID %d, got %d", dealerID, ack.DealerID)
+	if ack.DealerAddress != dealerAddr {
+		t.Errorf("Expected DealerAddress %s, got %s", dealerAddr.Hex(), ack.DealerAddress.Hex())
 	}
 	// Phase 4: Verify new fields
 	if ack.SessionTimestamp != epoch {
@@ -251,7 +252,7 @@ func testCreateAcknowledgement(t *testing.T) {
 		t.Error("Commitment hash mismatch")
 	}
 
-	// Phase 4: Verify shareHash is properly computed
+	// Verify shareHash is properly computed
 	expectedShareHash := crypto.HashShareForAck(&share)
 	if ack.ShareHash != expectedShareHash {
 		t.Error("ShareHash mismatch")
@@ -261,12 +262,13 @@ func testCreateAcknowledgement(t *testing.T) {
 // Test_BuildAcknowledgementMerkleTree tests merkle tree building (Phase 4)
 func Test_BuildAcknowledgementMerkleTree(t *testing.T) {
 	// Create test acknowledgements
+	dealerAddr := common.BigToAddress(new(big.Int).SetInt64(99))
 	acks := make([]*types.Acknowledgement, 4)
 	for i := 0; i < 4; i++ {
 		share := fr.NewElement(uint64(100 + i))
 		acks[i] = &types.Acknowledgement{
-			PlayerID:         int64(i + 1),
-			DealerID:         99,
+			PlayerAddress:    common.BigToAddress(new(big.Int).SetInt64(int64(i + 1))),
+			DealerAddress:    dealerAddr,
 			SessionTimestamp: 5,
 			ShareHash:        crypto.HashShareForAck(&share),
 			CommitmentHash:   [32]byte{byte(i), byte(i + 1), byte(i + 2)},

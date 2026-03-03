@@ -9,7 +9,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/merkle"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/reshare"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/testutil"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -149,9 +149,9 @@ func testAcknowledgementWithNewFields(t *testing.T) {
 	operators := testutil.CreateTestOperators(t, 3)
 	require.Len(t, operators, 3)
 
-	// Get node IDs
-	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
-	dealerID := util.AddressToNodeID(operators[1].OperatorAddress)
+	// Get operator addresses
+	playerAddr := operators[0].OperatorAddress
+	dealerAddr := operators[1].OperatorAddress
 	epoch := int64(12345)
 
 	// Create a test share
@@ -161,7 +161,7 @@ func testAcknowledgementWithNewFields(t *testing.T) {
 	commitments := testutil.CreateTestCommitments(t, 3)
 
 	// Mock signer
-	signer := func(dealer, player, ackEpoch int64, shareHash, hash [32]byte) []byte {
+	signer := func(dealer, player common.Address, ackEpoch int64, shareHash, hash [32]byte) []byte {
 		_ = player
 		_ = ackEpoch
 		_ = shareHash
@@ -169,12 +169,12 @@ func testAcknowledgementWithNewFields(t *testing.T) {
 	}
 
 	// Create acknowledgement using DKG function
-	ack := dkg.CreateAcknowledgement(nodeID, dealerID, epoch, share, commitments, signer)
+	ack := dkg.CreateAcknowledgement(playerAddr, dealerAddr, epoch, share, commitments, signer)
 	require.NotNil(t, ack)
 
 	// Verify all fields are set correctly
-	require.Equal(t, nodeID, ack.PlayerID)
-	require.Equal(t, dealerID, ack.DealerID)
+	require.Equal(t, playerAddr, ack.PlayerAddress)
+	require.Equal(t, dealerAddr, ack.DealerAddress)
 	require.Equal(t, epoch, ack.SessionTimestamp, "Epoch should be set (Phase 3)")
 	require.NotEqual(t, [32]byte{}, ack.ShareHash, "ShareHash should be set (Phase 3)")
 	require.NotEqual(t, [32]byte{}, ack.CommitmentHash)
@@ -189,7 +189,7 @@ func testAcknowledgementWithNewFields(t *testing.T) {
 	require.Equal(t, expectedCommitmentHash, ack.CommitmentHash)
 
 	// Create acknowledgement using Reshare function
-	reshareAck := reshare.CreateAcknowledgement(nodeID, dealerID, epoch, share, commitments, signer)
+	reshareAck := reshare.CreateAcknowledgement(playerAddr, dealerAddr, epoch, share, commitments, signer)
 	require.NotNil(t, reshareAck)
 
 	// Both should produce same result

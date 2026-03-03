@@ -369,8 +369,7 @@ func (c *Client) BroadcastCommitmentsWithProofs(
 		var recipientAck *types.Acknowledgement
 		var leafIndex int
 		for idx, ack := range acks {
-			opNodeID := util.AddressToNodeID(op.OperatorAddress)
-			if ack.PlayerID == opNodeID {
+			if ack.PlayerAddress == op.OperatorAddress {
 				recipientAck = ack
 				leafIndex = idx
 				break
