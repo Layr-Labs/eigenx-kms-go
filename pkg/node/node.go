@@ -448,18 +448,14 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 				}
 			}()
 		} else {
-			// Existing cluster - join via reshare. Count how many operators are
-			// joining simultaneously so each waits for the correct number of
-			// contributions (existing operators only contribute; new ones don't).
-			numNew := n.countNewOperatorsInSet(operators)
+			// Existing cluster - join via reshare.
 			n.logger.Sugar().Infow("Joining existing cluster via reshare",
 				"operator_address", n.OperatorAddress.Hex(),
 				"block_number", blockNumber,
-				"block_timestamp", blockTimestamp,
-				"num_new_operators", numNew)
+				"block_timestamp", blockTimestamp)
 
 			go func() {
-				if err := n.RunReshareAsNewOperator(blockTimestamp, numNew); err != nil {
+				if err := n.RunReshareAsNewOperator(blockTimestamp); err != nil {
 					n.logger.Sugar().Errorw("Failed to join cluster via reshare",
 						"operator_address", n.OperatorAddress.Hex(),
 						"error", err)
@@ -467,19 +463,15 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 			}()
 		}
 	} else {
-		// I'm an existing operator - run normal reshare. Pass the number of new
-		// operators so the wait threshold is reduced by operators that won't
-		// contribute (new operators don't send shares/commitments).
-		numNew := n.countNewOperatorsInSet(operators)
+		// I'm an existing operator - run normal reshare.
 		n.logger.Sugar().Infow("Triggering automatic reshare",
 			"operator_address", n.OperatorAddress.Hex(),
 			"block_number", blockNumber,
 			"block_timestamp", blockTimestamp,
-			"block_interval", blockInterval,
-			"num_new_operators", numNew)
+			"block_interval", blockInterval)
 
 		go func() {
-			if err := n.RunReshareAsExistingOperator(blockTimestamp, numNew); err != nil {
+			if err := n.RunReshareAsExistingOperator(blockTimestamp); err != nil {
 				n.logger.Sugar().Errorw("Automatic reshare failed",
 					"operator_address", n.OperatorAddress.Hex(),
 					"error", err)
@@ -728,8 +720,9 @@ func (n *Node) hasExistingShares() bool {
 //
 // For new operators (no active key version), this is computed by querying each
 // peer's /pubkey endpoint: an empty response indicates no existing key share,
-// and therefore a new operator. Query failures are treated conservatively as
-// "no key" to avoid underestimating the new-operator count.
+// and therefore a new operator. Query failures are logged as warnings and
+// counted conservatively as "new" to avoid underestimating the new-operator
+// count. A nil transport is treated the same way (all operators counted as new).
 func (n *Node) countNewOperatorsInSet(operators []*peering.OperatorSetPeer) int {
 	activeVersion := n.keyStore.GetActiveVersion()
 	if activeVersion != nil {
@@ -748,10 +741,22 @@ func (n *Node) countNewOperatorsInSet(operators []*peering.OperatorSetPeer) int 
 
 	// No active version: this node is itself new. Query peers to count operators
 	// without an existing master key (empty commitments = new operator).
+	if n.transport == nil {
+		n.logger.Sugar().Warnw("No transport available; treating all operators as new",
+			"operator_address", n.OperatorAddress.Hex(),
+			"count", len(operators))
+		return len(operators)
+	}
 	newCount := 0
 	for _, op := range operators {
 		commitments, err := n.transport.QueryOperatorPubkey(op)
-		if err != nil || len(commitments) == 0 {
+		if err != nil {
+			n.logger.Sugar().Warnw("Could not query operator pubkey; treating as new operator",
+				"operator_address", n.OperatorAddress.Hex(),
+				"peer", op.OperatorAddress.Hex(),
+				"error", err)
+			newCount++
+		} else if len(commitments) == 0 {
 			newCount++
 		}
 	}
@@ -1215,10 +1220,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 }
 
 // RunReshareAsExistingOperator executes the reshare protocol as an existing operator with shares.
-// numNewOperators is the count of operators that are joining for the first time and will not
-// contribute shares (they run RunReshareAsNewOperator). Pass 0 for a pure share refresh where
-// all operators are existing.
-func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, numNewOperators int) error {
+func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	ctx := context.Background()
 	n.logger.Sugar().Infow("Starting reshare as existing operator",
 		"operator_address", n.OperatorAddress.Hex(),
@@ -1230,6 +1232,8 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, numNewOperat
 		return fmt.Errorf("failed to fetch operators for reshare: %w", err)
 	}
 
+	// Compute numNewOperators from the same operators snapshot to avoid TOCTOU.
+	numNewOperators := n.countNewOperatorsInSet(operators)
 	if numNewOperators < 0 || numNewOperators >= len(operators) {
 		return fmt.Errorf("numNewOperators %d out of range [0, %d)", numNewOperators, len(operators))
 	}
@@ -1312,10 +1316,10 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, numNewOperat
 	// contribute shares, so we only expect len(operators)-numNewOperators contributions.
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
 	requiredContributions := len(operators) - numNewOperators
-	if err := waitForNShares(session, requiredContributions, protocolTimeout); err != nil {
+	if err := waitForNShares(session, requiredContributions, protocolTimeout, n.logger); err != nil {
 		return err
 	}
-	if err := waitForNCommitments(session, requiredContributions, protocolTimeout); err != nil {
+	if err := waitForNCommitments(session, requiredContributions, protocolTimeout, n.logger); err != nil {
 		return err
 	}
 
@@ -1536,10 +1540,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, numNewOperat
 }
 
 // RunReshareAsNewOperator executes reshare protocol as a new operator (no existing shares).
-// numNewOperators is the total count of operators joining simultaneously (including this one).
-// Only existing operators contribute shares, so the wait threshold is len(operators)-numNewOperators.
-// Pass 1 when a single new operator is joining; pass the actual count for simultaneous joins.
-func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64, numNewOperators int) error {
+func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	ctx := context.Background()
 	n.logger.Sugar().Infow("Starting reshare as new operator (joining existing cluster)",
 		"operator_address", n.OperatorAddress.Hex(),
@@ -1551,8 +1552,13 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64, numNewOperators i
 		return fmt.Errorf("failed to fetch operators: %w", err)
 	}
 
-	if numNewOperators < 0 || numNewOperators >= len(operators) {
-		return fmt.Errorf("numNewOperators %d out of range [0, %d)", numNewOperators, len(operators))
+	// Compute numNewOperators from the same operators snapshot to avoid TOCTOU.
+	// The caller (self) is always one of the new operators, so the minimum valid
+	// value is 1; 0 would require all N operators to contribute which deadlocks
+	// since this node never sends shares.
+	numNewOperators := n.countNewOperatorsInSet(operators)
+	if numNewOperators < 1 || numNewOperators >= len(operators) {
+		return fmt.Errorf("numNewOperators %d out of range [1, %d)", numNewOperators, len(operators))
 	}
 
 	thisNodeID := addressToNodeID(n.OperatorAddress)
@@ -1582,10 +1588,10 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64, numNewOperators i
 		"expected_shares", requiredContributions)
 
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
-	if err := waitForNShares(session, requiredContributions, protocolTimeout); err != nil {
+	if err := waitForNShares(session, requiredContributions, protocolTimeout, n.logger); err != nil {
 		return fmt.Errorf("failed to receive shares: %w", err)
 	}
-	if err := waitForNCommitments(session, requiredContributions, protocolTimeout); err != nil {
+	if err := waitForNCommitments(session, requiredContributions, protocolTimeout, n.logger); err != nil {
 		return fmt.Errorf("failed to receive commitments: %w", err)
 	}
 
@@ -1730,15 +1736,23 @@ func waitForCommitments(session *ProtocolSession, timeout time.Duration) error {
 
 // waitForN polls until getCount() returns at least required, or the timeout elapses.
 // getCount is called while session.mu.RLock is held.
-func waitForN(session *ProtocolSession, required int, timeout time.Duration, getCount func() int, label string) error {
+func waitForN(session *ProtocolSession, required int, timeout time.Duration, getCount func() int, label string, logger *zap.Logger) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	maxPossible := len(session.Operators)
 	if required < 0 {
+		if logger != nil {
+			logger.Sugar().Warnw("waitForN: required is negative, clamping to 0",
+				"required", required, "label", label)
+		}
 		required = 0
 	}
 	if required > maxPossible {
+		if logger != nil {
+			logger.Sugar().Warnw("waitForN: required exceeds operator count, clamping",
+				"required", required, "max_possible", maxPossible, "label", label)
+		}
 		required = maxPossible
 	}
 
@@ -1772,15 +1786,15 @@ func waitForN(session *ProtocolSession, required int, timeout time.Duration, get
 // waitForNShares waits for at least required shares using polling.
 // Use this instead of waitForShares when fewer than all operators are expected to contribute
 // (e.g., new operators joining don't send shares, so existing operators wait for N-numNew shares).
-func waitForNShares(session *ProtocolSession, required int, timeout time.Duration) error {
-	return waitForN(session, required, timeout, func() int { return len(session.shares) }, "shares")
+func waitForNShares(session *ProtocolSession, required int, timeout time.Duration, logger *zap.Logger) error {
+	return waitForN(session, required, timeout, func() int { return len(session.shares) }, "shares", logger)
 }
 
 // waitForNCommitments waits for at least required commitments using polling.
 // Use this instead of waitForCommitments when fewer than all operators are expected to contribute
 // (e.g., new operators joining don't broadcast commitments).
-func waitForNCommitments(session *ProtocolSession, required int, timeout time.Duration) error {
-	return waitForN(session, required, timeout, func() int { return len(session.commitments) }, "commitments")
+func waitForNCommitments(session *ProtocolSession, required int, timeout time.Duration, logger *zap.Logger) error {
+	return waitForN(session, required, timeout, func() int { return len(session.commitments) }, "commitments", logger)
 }
 
 // waitForAcks waits for at least required acknowledgements to be received for a specific dealer using polling.
