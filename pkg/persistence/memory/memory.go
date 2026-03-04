@@ -94,19 +94,19 @@ func (m *MemoryPersistence) ListKeyShareVersions() ([]*types.KeyShareVersion, er
 		return nil, fmt.Errorf("persistence layer is closed")
 	}
 
-	// Collect epochs and sort
-	epochs := make([]int64, 0, len(m.keyShares))
-	for epoch := range m.keyShares {
-		epochs = append(epochs, epoch)
+	// Collect timestamps and sort
+	timestamps := make([]int64, 0, len(m.keyShares))
+	for ts := range m.keyShares {
+		timestamps = append(timestamps, ts)
 	}
-	sort.Slice(epochs, func(i, j int) bool {
-		return epochs[i] < epochs[j]
+	sort.Slice(timestamps, func(i, j int) bool {
+		return timestamps[i] < timestamps[j]
 	})
 
 	// Build sorted list with deep copies
-	result := make([]*types.KeyShareVersion, 0, len(epochs))
-	for _, epoch := range epochs {
-		result = append(result, deepCopyKeyShareVersion(m.keyShares[epoch]))
+	result := make([]*types.KeyShareVersion, 0, len(timestamps))
+	for _, ts := range timestamps {
+		result = append(result, deepCopyKeyShareVersion(m.keyShares[ts]))
 	}
 
 	return result, nil
