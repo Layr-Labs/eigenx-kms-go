@@ -155,6 +155,11 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	if req.AttestationTime > 0 {
 		// Use key version from the specified time
 		keyVersion = s.node.keyStore.GetKeyVersionAtTime(req.AttestationTime)
+		if keyVersion == nil {
+			s.node.logger.Sugar().Warnw("No key version found for attestation time, falling back to active version",
+				"node_id", s.node.OperatorAddress.Hex(),
+				"attestation_time", req.AttestationTime)
+		}
 	}
 	if keyVersion == nil {
 		// Fallback to active version

@@ -1608,8 +1608,12 @@ func (n *Node) signAppIDWithVersion(appID string, keyVersion *types.KeyShareVers
 }
 
 // SignAppID signs an application ID using the key version active at attestationTime.
+// attestationTime == 0 means "use the currently active version".
 func (n *Node) SignAppID(appID string, attestationTime int64) (types.G1Point, error) {
-	keyVersion := n.keyStore.GetKeyVersionAtTime(attestationTime)
+	var keyVersion *types.KeyShareVersion
+	if attestationTime > 0 {
+		keyVersion = n.keyStore.GetKeyVersionAtTime(attestationTime)
+	}
 	if keyVersion == nil {
 		keyVersion = n.keyStore.GetActiveVersion()
 	}
