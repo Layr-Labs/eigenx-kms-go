@@ -268,6 +268,35 @@ contract EigenKMSCommitmentRegistryTest is Test, IEigenKMSCommitmentRegistryErro
         registry.proveEquivocation(epoch, operator1, ack1, ack2);
     }
 
+    /// @notice Test proveEquivocation rejects when the two acks carry different dealer addresses
+    function test_ProveEquivocation_RejectDealerMismatch() public {
+        uint64 epoch = 5;
+
+        vm.prank(operator1);
+        registry.submitCommitment(epoch, keccak256("commitment"), keccak256("root"));
+
+        bytes32[] memory emptyProof = new bytes32[](0);
+
+        IEigenKMSCommitmentRegistry.AckData memory ack1 = IEigenKMSCommitmentRegistry.AckData({
+            player: operator2,
+            dealer: operator1,
+            shareHash: keccak256("share A"),
+            commitmentHash: keccak256("commitment poly A"),
+            proof: emptyProof
+        });
+
+        IEigenKMSCommitmentRegistry.AckData memory ack2 = IEigenKMSCommitmentRegistry.AckData({
+            player: operator3,
+            dealer: operator2, // Different dealer — mismatched acks
+            shareHash: keccak256("share B"),
+            commitmentHash: keccak256("commitment poly B"),
+            proof: emptyProof
+        });
+
+        vm.expectRevert(DealerMismatch.selector);
+        registry.proveEquivocation(epoch, operator1, ack1, ack2);
+    }
+
     /// @notice Test proveEquivocation rejects when both acks reference the same player
     function test_ProveEquivocation_RejectSamePlayer() public {
         uint64 epoch = 5;

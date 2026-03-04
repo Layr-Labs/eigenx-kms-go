@@ -46,6 +46,9 @@ interface IEigenKMSCommitmentRegistryErrors {
     /// @dev Selector: 0xcb76bd63
     error AcksMustBeFromDifferentPlayers();
 
+    /// @notice Thrown when the two acks carry different dealer addresses
+    error DealerMismatch();
+
     /// @notice Thrown when first ack is not in merkle tree
     /// @dev Selector: 0x7990605b
     error Ack1Invalid();

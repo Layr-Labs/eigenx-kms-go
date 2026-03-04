@@ -144,6 +144,7 @@ contract EigenKMSCommitmentRegistry is
         bytes32 root = commitments[epoch][dealer].ackMerkleRoot;
         if (root == bytes32(0)) revert NoCommitment();
         if (ack1.player == ack2.player) revert AcksMustBeFromDifferentPlayers();
+        if (ack1.dealer != ack2.dealer) revert DealerMismatch();
         if (ack1.shareHash == ack2.shareHash && ack1.commitmentHash == ack2.commitmentHash) revert NoEquivocationDetected();
 
         bytes32 hash1 =
