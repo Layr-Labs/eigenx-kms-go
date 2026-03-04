@@ -663,7 +663,7 @@ func (s *Server) handleCommitmentBroadcast(w http.ResponseWriter, r *http.Reques
 
 	s.node.logger.Sugar().Debugw("Received commitment broadcast",
 		"from", msg.FromOperatorID,
-		"epoch", msg.Broadcast.SessionTimestamp,
+		"session_timestamp", msg.Broadcast.SessionTimestamp,
 		"num_acks", len(msg.Broadcast.Acknowledgements),
 		"num_commitments", len(msg.Broadcast.Commitments),
 		"proof_length", len(msg.Broadcast.MerkleProof),
