@@ -448,14 +448,18 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 				}
 			}()
 		} else {
-			// Existing cluster - join via reshare
+			// Existing cluster - join via reshare. Count how many operators are
+			// joining simultaneously so each waits for the correct number of
+			// contributions (existing operators only contribute; new ones don't).
+			numNew := n.countNewOperatorsInSet(operators)
 			n.logger.Sugar().Infow("Joining existing cluster via reshare",
 				"operator_address", n.OperatorAddress.Hex(),
 				"block_number", blockNumber,
-				"block_timestamp", blockTimestamp)
+				"block_timestamp", blockTimestamp,
+				"num_new_operators", numNew)
 
 			go func() {
-				if err := n.RunReshareAsNewOperator(blockTimestamp, 1); err != nil {
+				if err := n.RunReshareAsNewOperator(blockTimestamp, numNew); err != nil {
 					n.logger.Sugar().Errorw("Failed to join cluster via reshare",
 						"operator_address", n.OperatorAddress.Hex(),
 						"error", err)
@@ -463,15 +467,19 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 			}()
 		}
 	} else {
-		// I'm an existing operator - run normal reshare
+		// I'm an existing operator - run normal reshare. Pass the number of new
+		// operators so the wait threshold is reduced by operators that won't
+		// contribute (new operators don't send shares/commitments).
+		numNew := n.countNewOperatorsInSet(operators)
 		n.logger.Sugar().Infow("Triggering automatic reshare",
 			"operator_address", n.OperatorAddress.Hex(),
 			"block_number", blockNumber,
 			"block_timestamp", blockTimestamp,
-			"block_interval", blockInterval)
+			"block_interval", blockInterval,
+			"num_new_operators", numNew)
 
 		go func() {
-			if err := n.RunReshareAsExistingOperator(blockTimestamp, 0); err != nil {
+			if err := n.RunReshareAsExistingOperator(blockTimestamp, numNew); err != nil {
 				n.logger.Sugar().Errorw("Automatic reshare failed",
 					"operator_address", n.OperatorAddress.Hex(),
 					"error", err)
@@ -710,6 +718,44 @@ func validateOperatorSetNoNodeIDCollisions(operators []*peering.OperatorSetPeer)
 // hasExistingShares returns true if this node has active key shares
 func (n *Node) hasExistingShares() bool {
 	return n.keyStore.GetActiveVersion() != nil
+}
+
+// countNewOperatorsInSet returns the number of operators in the current set that
+// were not participants in the previous key version (i.e., are joining fresh).
+//
+// For existing operators (who have an active key version), this is computed by
+// comparing the current set's node IDs against the stored ParticipantIDs.
+//
+// For new operators (no active key version), this is computed by querying each
+// peer's /pubkey endpoint: an empty response indicates no existing key share,
+// and therefore a new operator. Query failures are treated conservatively as
+// "no key" to avoid underestimating the new-operator count.
+func (n *Node) countNewOperatorsInSet(operators []*peering.OperatorSetPeer) int {
+	activeVersion := n.keyStore.GetActiveVersion()
+	if activeVersion != nil {
+		prevIDs := make(map[int64]struct{}, len(activeVersion.ParticipantIDs))
+		for _, id := range activeVersion.ParticipantIDs {
+			prevIDs[id] = struct{}{}
+		}
+		newCount := 0
+		for _, op := range operators {
+			if _, found := prevIDs[addressToNodeID(op.OperatorAddress)]; !found {
+				newCount++
+			}
+		}
+		return newCount
+	}
+
+	// No active version: this node is itself new. Query peers to count operators
+	// without an existing master key (empty commitments = new operator).
+	newCount := 0
+	for _, op := range operators {
+		commitments, err := n.transport.QueryOperatorPubkey(op)
+		if err != nil || len(commitments) == 0 {
+			newCount++
+		}
+	}
+	return newCount
 }
 
 // detectClusterState queries operators to determine if genesis DKG or existing cluster
