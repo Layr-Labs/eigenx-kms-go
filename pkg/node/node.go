@@ -1590,25 +1590,25 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 }
 
 // signAppIDWithVersion computes a partial BLS signature for appID using a pre-resolved key version.
-func (n *Node) signAppIDWithVersion(appID string, keyVersion *types.KeyShareVersion) types.G1Point {
+func (n *Node) signAppIDWithVersion(appID string, keyVersion *types.KeyShareVersion) (types.G1Point, error) {
 	if keyVersion == nil || keyVersion.PrivateShare == nil {
-		return types.G1Point{}
+		return types.G1Point{}, fmt.Errorf("no private share available")
 	}
 
 	privateShare := new(fr.Element).Set(keyVersion.PrivateShare)
 	qID, err := eigenxcrypto.HashToG1(appID)
 	if err != nil {
-		return types.G1Point{}
+		return types.G1Point{}, fmt.Errorf("HashToG1 failed: %w", err)
 	}
 	partialSig, err := eigenxcrypto.ScalarMulG1(*qID, privateShare)
 	if err != nil {
-		return types.G1Point{}
+		return types.G1Point{}, fmt.Errorf("ScalarMulG1 failed: %w", err)
 	}
-	return *partialSig
+	return *partialSig, nil
 }
 
 // SignAppID signs an application ID using the key version active at attestationTime.
-func (n *Node) SignAppID(appID string, attestationTime int64) types.G1Point {
+func (n *Node) SignAppID(appID string, attestationTime int64) (types.G1Point, error) {
 	keyVersion := n.keyStore.GetKeyVersionAtTime(attestationTime)
 	if keyVersion == nil {
 		keyVersion = n.keyStore.GetActiveVersion()

@@ -169,7 +169,12 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Step 6: Generate partial signature for this app using the already-resolved key version
 	// partial_sig = H(app_id)^{key_share}
-	partialSig := s.node.signAppIDWithVersion(req.AppID, keyVersion)
+	partialSig, err := s.node.signAppIDWithVersion(req.AppID, keyVersion)
+	if err != nil {
+		s.node.logger.Sugar().Errorw("Failed to compute partial signature", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
 
 	s.node.logger.Sugar().Infow("Generated partial signature", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID)
 
@@ -553,19 +558,45 @@ func (s *Server) handleReshareComplete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// handleAppSign handles partial signature requests from KMS clients.
+// NOTE: This endpoint is intentionally client-facing (not node-to-node) and does not
+// use validateAuthenticatedMessage. It is called by the kmsClient CLI to collect partial
+// BLS signatures for IBE decryption. Callers do not hold BN254 operator keys.
 func (s *Server) handleAppSign(w http.ResponseWriter, r *http.Request) {
 	// SECURITY/TRUST NOTE:
 	// Deployment is expected to
 	// enforce caller identity/authorization at the edge (e.g. WAF/ingress with HTTPS +
 	// mTLS and app-level policy). If that external control is not present, this endpoint
 	// should be treated as unsafe for public exposure.
-	var req types.AppSignRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	partialSig := s.node.SignAppID(req.AppID, req.AttestationTime)
+	var req types.AppSignRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Failed to parse request", http.StatusBadRequest)
+		return
+	}
+
+	if req.AppID == "" {
+		http.Error(w, "app_id is required", http.StatusBadRequest)
+		return
+	}
+
+	partialSig, err := s.node.SignAppID(req.AppID, req.AttestationTime)
+	if err != nil {
+		s.node.logger.Sugar().Errorw("Failed to compute partial signature for app",
+			"node_id", s.node.OperatorAddress.Hex(),
+			"app_id", req.AppID,
+			"error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	s.node.logger.Sugar().Infow("Served partial signature",
+		"node_id", s.node.OperatorAddress.Hex(),
+		"app_id", req.AppID)
 
 	resp := types.AppSignResponse{
 		OperatorAddress:  s.node.OperatorAddress.Hex(),
@@ -573,7 +604,9 @@ func (s *Server) handleAppSign(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		s.node.logger.Sugar().Errorw("Failed to encode app sign response", "error", err)
+	}
 }
 
 // handleGetCommitments handles requests for public key commitments
