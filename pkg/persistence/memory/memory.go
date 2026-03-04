@@ -19,7 +19,7 @@ import (
 type MemoryPersistence struct {
 	mu sync.RWMutex
 
-	// Key share storage: epoch -> KeyShareVersion
+	// Key share storage: timestamp -> KeyShareVersion
 	keyShares map[int64]*types.KeyShareVersion
 
 	// Active version tracking
