@@ -37,7 +37,6 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
 
-
 // Node represents a KMS node
 type Node struct {
 	// Identity
@@ -281,7 +280,7 @@ func (n *Node) saveSession(session *ProtocolSession) error {
 // Config holds node configuration
 type Config struct {
 	OperatorAddress string         // Ethereum address of the operator (hex string)
-	Port            int            //HTTP server port
+	Port            int            // HTTP server port
 	ChainID         config.ChainId // Ethereum chain ID
 	AVSAddress      string         // AVS contract address (hex string)
 	OperatorSetId   uint32         // Operator set ID
@@ -424,7 +423,8 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 			// No master key exists - run genesis DKG
 			n.logger.Sugar().Infow("Triggering genesis DKG at block boundary",
 				"operator_address", n.OperatorAddress.Hex(),
-				"block_number", blockNumber)
+				"block_number", blockNumber,
+				"block_timestamp", blockTimestamp)
 
 			go func() {
 				if err := n.RunDKG(blockTimestamp); err != nil {
@@ -437,7 +437,8 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 			// Existing cluster - join via reshare
 			n.logger.Sugar().Infow("Joining existing cluster via reshare",
 				"operator_address", n.OperatorAddress.Hex(),
-				"block_number", blockNumber)
+				"block_number", blockNumber,
+				"block_timestamp", blockTimestamp)
 
 			go func() {
 				if err := n.RunReshareAsNewOperator(blockTimestamp); err != nil {
@@ -452,6 +453,7 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 		n.logger.Sugar().Infow("Triggering automatic reshare",
 			"operator_address", n.OperatorAddress.Hex(),
 			"block_number", blockNumber,
+			"block_timestamp", blockTimestamp,
 			"block_interval", blockInterval)
 
 		go func() {
