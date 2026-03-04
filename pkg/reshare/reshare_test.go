@@ -433,8 +433,8 @@ func testCreateCompletionSignature(t *testing.T) {
 	if sig.NodeID != nodeID {
 		t.Errorf("Expected NodeID %d, got %d", nodeID, sig.NodeID)
 	}
-	if sig.Epoch != epoch {
-		t.Errorf("Expected Epoch %d, got %d", epoch, sig.Epoch)
+	if sig.SessionTimestamp != epoch {
+		t.Errorf("Expected Epoch %d, got %d", epoch, sig.SessionTimestamp)
 	}
 	if sig.CommitmentHash != commitmentHash {
 		t.Error("Expected matching commitment hash")
@@ -489,8 +489,8 @@ func Test_CreateAcknowledgement(t *testing.T) {
 	if ack.DealerID != dealerID {
 		t.Errorf("Expected DealerID %d, got %d", dealerID, ack.DealerID)
 	}
-	if ack.Epoch != epoch {
-		t.Errorf("Expected Epoch %d, got %d", epoch, ack.Epoch)
+	if ack.SessionTimestamp != epoch {
+		t.Errorf("Expected Epoch %d, got %d", epoch, ack.SessionTimestamp)
 	}
 	if ack.ShareHash == [32]byte{} {
 		t.Error("ShareHash should not be empty")
@@ -518,12 +518,12 @@ func Test_BuildAcknowledgementMerkleTree_Reshare(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		share := fr.NewElement(uint64(200 + i))
 		acks[i] = &types.Acknowledgement{
-			PlayerID:       int64(i + 1),
-			DealerID:       50,
-			Epoch:          10,
-			ShareHash:      crypto.HashShareForAck(&share),
-			CommitmentHash: [32]byte{byte(i * 2), byte(i*2 + 1)},
-			Signature:      []byte("sig"),
+			PlayerID:         int64(i + 1),
+			DealerID:         50,
+			SessionTimestamp: 10,
+			ShareHash:        crypto.HashShareForAck(&share),
+			CommitmentHash:   [32]byte{byte(i * 2), byte(i*2 + 1)},
+			Signature:        []byte("sig"),
 		}
 	}
 

@@ -157,7 +157,7 @@ func HashAcknowledgement(ack *types.Acknowledgement) [32]byte {
 
 	// Encode epoch (32 bytes, big endian)
 	epochBytes := make([]byte, 32)
-	epochBig := big.NewInt(ack.Epoch)
+	epochBig := big.NewInt(ack.SessionTimestamp)
 	epochBig.FillBytes(epochBytes)
 	data = append(data, epochBytes...)
 

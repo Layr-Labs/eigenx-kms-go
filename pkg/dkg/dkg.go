@@ -150,12 +150,12 @@ func CreateAcknowledgement(
 	signature := signer(dealerID, nodeID, epoch, shareHash, commitmentHash)
 
 	return &types.Acknowledgement{
-		DealerID:       dealerID,
-		PlayerID:       nodeID,
-		Epoch:          epoch,
-		ShareHash:      shareHash,
-		CommitmentHash: commitmentHash,
-		Signature:      signature,
+		DealerID:         dealerID,
+		PlayerID:         nodeID,
+		SessionTimestamp: epoch,
+		ShareHash:        shareHash,
+		CommitmentHash:   commitmentHash,
+		Signature:        signature,
 	}
 }
 

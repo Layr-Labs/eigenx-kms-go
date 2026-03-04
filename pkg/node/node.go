@@ -1835,7 +1835,7 @@ func (n *Node) submitCommitmentWithRetry(
 		n.logger.Sugar().Infow("Submitting commitment to Base contract",
 			"attempt", attempt+1,
 			"max_attempts", maxRetries,
-			"epoch", epoch,
+			"session_timestamp", epoch,
 			"commitment_hash", fmt.Sprintf("0x%x", commitmentHash),
 			"merkle_root", fmt.Sprintf("0x%x", merkleRoot))
 
@@ -1851,7 +1851,7 @@ func (n *Node) submitCommitmentWithRetry(
 		if err == nil {
 			n.logger.Sugar().Infow("Commitment submitted successfully to Base chain",
 				"attempt", attempt+1,
-				"epoch", epoch)
+				"session_timestamp", epoch)
 			return nil
 		}
 
@@ -2054,7 +2054,7 @@ func (n *Node) VerifyOperatorBroadcast(
 
 	n.logger.Sugar().Debugw("Verified operator broadcast",
 		"from_operator", broadcast.FromOperatorID,
-		"epoch", broadcast.Epoch,
+		"session_timestamp", broadcast.SessionTimestamp,
 		"commitment_hash", fmt.Sprintf("%x", broadcastCommitmentHash[:8]),
 	)
 

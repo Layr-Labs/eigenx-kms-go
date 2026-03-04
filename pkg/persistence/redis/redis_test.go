@@ -265,7 +265,7 @@ func TestRedisPersistence_ProtocolSessions(t *testing.T) {
 		},
 		Acknowledgements: map[int64]map[int64]*types.Acknowledgement{
 			1: {
-				2: {PlayerID: 2, DealerID: 1, Epoch: sessionTS},
+				2: {PlayerID: 2, DealerID: 1, SessionTimestamp: sessionTS},
 			},
 		},
 	}

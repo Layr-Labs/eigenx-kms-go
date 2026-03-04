@@ -52,12 +52,12 @@ func CreateTestAcknowledgements(t *testing.T, n int, epoch int64, dealerID int64
 	for i := 0; i < n; i++ {
 		share := CreateTestShare(uint64(100 + i))
 		acks[i] = &types.Acknowledgement{
-			PlayerID:       int64(i + 1),
-			DealerID:       dealerID,
-			Epoch:          epoch,
-			ShareHash:      crypto.HashShareForAck(share),
-			CommitmentHash: [32]byte{byte(i), byte(i + 1), byte(i + 2)},
-			Signature:      []byte("test-signature"),
+			PlayerID:         int64(i + 1),
+			DealerID:         dealerID,
+			SessionTimestamp: epoch,
+			ShareHash:        crypto.HashShareForAck(share),
+			CommitmentHash:   [32]byte{byte(i), byte(i + 1), byte(i + 2)},
+			Signature:        []byte("test-signature"),
 		}
 	}
 	return acks

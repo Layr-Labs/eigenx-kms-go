@@ -227,7 +227,7 @@ func TestMemoryPersistence_ProtocolSessions(t *testing.T) {
 		},
 		Acknowledgements: map[int64]map[int64]*types.Acknowledgement{
 			1: {
-				2: {PlayerID: 2, DealerID: 1, Epoch: 1234567890},
+				2: {PlayerID: 2, DealerID: 1, SessionTimestamp: 1234567890},
 			},
 		},
 	}

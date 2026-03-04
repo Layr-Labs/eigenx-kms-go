@@ -148,10 +148,10 @@ func CreateCompletionSignature(nodeID int, epoch int64, commitmentHash [32]byte,
 	signature := signer(epoch, commitmentHash)
 
 	return &types.CompletionSignature{
-		NodeID:         nodeID,
-		Epoch:          epoch,
-		CommitmentHash: commitmentHash,
-		Signature:      signature,
+		NodeID:           nodeID,
+		SessionTimestamp: epoch,
+		CommitmentHash:   commitmentHash,
+		Signature:        signature,
 	}
 }
 
@@ -168,12 +168,12 @@ func CreateAcknowledgement(
 	signature := signer(dealerID, nodeID, epoch, shareHash, commitmentHash)
 
 	return &types.Acknowledgement{
-		DealerID:       dealerID,
-		PlayerID:       nodeID,
-		Epoch:          epoch,
-		ShareHash:      shareHash,
-		CommitmentHash: commitmentHash,
-		Signature:      signature,
+		DealerID:         dealerID,
+		PlayerID:         nodeID,
+		SessionTimestamp: epoch,
+		ShareHash:        shareHash,
+		CommitmentHash:   commitmentHash,
+		Signature:        signature,
 	}
 }
 

@@ -50,11 +50,11 @@ func TestBroadcastCommitmentsWithProofs_MerkleProofGeneration(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		_ = fr.NewElement(uint64(100 + i)) // Used for test setup
 		acks[i] = &types.Acknowledgement{
-			PlayerID:       int64(i + 1),
-			DealerID:       99,
-			Epoch:          5,
-			ShareHash:      [32]byte{byte(i)},
-			CommitmentHash: [32]byte{byte(i + 10)},
+			PlayerID:         int64(i + 1),
+			DealerID:         99,
+			SessionTimestamp: 5,
+			ShareHash:        [32]byte{byte(i)},
+			CommitmentHash:   [32]byte{byte(i + 10)},
 		}
 	}
 
@@ -116,11 +116,11 @@ func TestBroadcastCommitmentsWithProofs_SkipsSelf(t *testing.T) {
 	otherNodeID := util.AddressToNodeID(operators[1].OperatorAddress)
 	acks := []*types.Acknowledgement{
 		{
-			PlayerID:       otherNodeID,
-			DealerID:       client.nodeID,
-			Epoch:          5,
-			ShareHash:      [32]byte{1},
-			CommitmentHash: [32]byte{2},
+			PlayerID:         otherNodeID,
+			DealerID:         client.nodeID,
+			SessionTimestamp: 5,
+			ShareHash:        [32]byte{1},
+			CommitmentHash:   [32]byte{2},
 		},
 	}
 
@@ -164,11 +164,11 @@ func TestBroadcastCommitmentsWithProofs_NoAckForOperator(t *testing.T) {
 	// Create ack for only ONE operator (missing ack for the other)
 	acks := []*types.Acknowledgement{
 		{
-			PlayerID:       util.AddressToNodeID(operators[0].OperatorAddress),
-			DealerID:       client.nodeID,
-			Epoch:          5,
-			ShareHash:      [32]byte{1},
-			CommitmentHash: [32]byte{2},
+			PlayerID:         util.AddressToNodeID(operators[0].OperatorAddress),
+			DealerID:         client.nodeID,
+			SessionTimestamp: 5,
+			ShareHash:        [32]byte{1},
+			CommitmentHash:   [32]byte{2},
 		},
 		// Missing ack for operators[1]
 	}

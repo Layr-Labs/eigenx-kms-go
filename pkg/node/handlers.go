@@ -655,7 +655,7 @@ func (s *Server) handleCommitmentBroadcast(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Get session (should already exist from DKG/Reshare flow)
-	session := s.node.getSession(msg.SessionID)
+	session := s.node.getSession(msg.SessionTimestamp)
 	if session == nil {
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
@@ -663,7 +663,7 @@ func (s *Server) handleCommitmentBroadcast(w http.ResponseWriter, r *http.Reques
 
 	s.node.logger.Sugar().Debugw("Received commitment broadcast",
 		"from", msg.FromOperatorID,
-		"epoch", msg.Broadcast.Epoch,
+		"epoch", msg.Broadcast.SessionTimestamp,
 		"num_acks", len(msg.Broadcast.Acknowledgements),
 		"num_commitments", len(msg.Broadcast.Commitments),
 		"proof_length", len(msg.Broadcast.MerkleProof),
@@ -671,10 +671,10 @@ func (s *Server) handleCommitmentBroadcast(w http.ResponseWriter, r *http.Reques
 
 	// Phase 6: Verify the broadcast against on-chain commitment
 	contractRegistryAddr := s.node.commitmentRegistryAddress
-	if err := s.node.VerifyOperatorBroadcast(msg.SessionID, msg.Broadcast, contractRegistryAddr); err != nil {
+	if err := s.node.VerifyOperatorBroadcast(msg.SessionTimestamp, msg.Broadcast, contractRegistryAddr); err != nil {
 		s.node.logger.Sugar().Errorw("Failed to verify operator broadcast",
 			"from_operator", msg.FromOperatorID,
-			"session", msg.SessionID,
+			"session", msg.SessionTimestamp,
 			"error", err,
 		)
 		http.Error(w, fmt.Sprintf("verification failed: %v", err), http.StatusBadRequest)

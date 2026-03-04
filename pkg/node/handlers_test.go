@@ -47,12 +47,12 @@ func TestHandleCommitmentBroadcast(t *testing.T) {
 // TestCommitmentBroadcastMessage_Serialization tests message serialization (Phase 5)
 func TestCommitmentBroadcastMessage_Serialization(t *testing.T) {
 	msg := types.CommitmentBroadcastMessage{
-		FromOperatorID: 1,
-		ToOperatorID:   2,
-		SessionID:      12345,
+		FromOperatorID:   1,
+		ToOperatorID:     2,
+		SessionTimestamp: 12345,
 		Broadcast: &types.CommitmentBroadcast{
 			FromOperatorID:   1,
-			Epoch:            5,
+			SessionTimestamp: 5,
 			Commitments:      []types.G2Point{},
 			Acknowledgements: []*types.Acknowledgement{},
 			MerkleProof:      [][32]byte{{1, 2, 3}},
@@ -72,7 +72,7 @@ func TestCommitmentBroadcastMessage_Serialization(t *testing.T) {
 	// Verify fields
 	require.Equal(t, msg.FromOperatorID, decoded.FromOperatorID)
 	require.Equal(t, msg.ToOperatorID, decoded.ToOperatorID)
-	require.Equal(t, msg.SessionID, decoded.SessionID)
+	require.Equal(t, msg.SessionTimestamp, decoded.SessionTimestamp)
 	require.NotNil(t, decoded.Broadcast)
-	require.Equal(t, msg.Broadcast.Epoch, decoded.Broadcast.Epoch)
+	require.Equal(t, msg.Broadcast.SessionTimestamp, decoded.Broadcast.SessionTimestamp)
 }
