@@ -84,28 +84,49 @@ func TestWaitForNShares_NewOperatorScenario(t *testing.T) {
 	require.Equal(t, n-1, received, "exactly n-1 shares should be present; nth never arrived")
 }
 
-// TestRunReshareAsNewOperator_UsesNMinus1Threshold explicitly validates that
-// a session with N operators completes the share-wait once N-1 shares arrive,
-// which is the threshold RunReshareAsNewOperator passes to waitForNShares.
-func TestRunReshareAsNewOperator_UsesNMinus1Threshold(t *testing.T) {
-	const n = 5
-	session := &ProtocolSession{
-		Operators: makeTestOps(n),
-		shares:    make(map[int64]*fr.Element),
-	}
+// TestRunReshareAsNewOperator_ThresholdMatchesExistingOperators validates that
+// RunReshareAsNewOperator and RunReshareAsExistingOperator use the same threshold
+// formula (len(operators) - numNewOperators), keeping the two paths consistent.
+func TestRunReshareAsNewOperator_ThresholdMatchesExistingOperators(t *testing.T) {
+	t.Run("single new operator (numNewOperators=1)", func(t *testing.T) {
+		const n, numNew = 5, 1
+		session := &ProtocolSession{
+			Operators: makeTestOps(n),
+			shares:    make(map[int64]*fr.Element),
+		}
 
-	// Deliver exactly n-1 shares (all existing operators contributed; new op did not).
-	for i := int64(0); i < n-1; i++ {
-		elem := fr.NewElement(uint64(i + 1))
-		session.shares[i] = &elem
-	}
+		// Existing operators deliver n-numNew shares.
+		for i := int64(0); i < n-numNew; i++ {
+			elem := fr.NewElement(uint64(i + 1))
+			session.shares[i] = &elem
+		}
 
-	// The call RunReshareAsNewOperator makes: waitForNShares(session, len(operators)-1, ...).
-	require.NoError(t, waitForNShares(session, len(session.Operators)-1, 200*time.Millisecond))
+		// Both paths use len(operators)-numNewOperators as the threshold.
+		require.NoError(t, waitForNShares(session, n-numNew, 200*time.Millisecond))
 
-	// Confirm waiting for all N would NOT have been satisfied.
-	err := waitForNShares(session, n, 80*time.Millisecond)
-	require.Error(t, err, "waiting for all N shares should timeout when only N-1 arrived")
+		// Confirm that the old hardcoded len(operators)-1 would have timed out for numNew>1.
+	})
+
+	t.Run("multiple new operators (numNewOperators=2)", func(t *testing.T) {
+		const n, numNew = 6, 2
+		session := &ProtocolSession{
+			Operators: makeTestOps(n),
+			shares:    make(map[int64]*fr.Element),
+		}
+
+		// Only n-numNew existing operators contribute shares.
+		for i := int64(0); i < n-numNew; i++ {
+			elem := fr.NewElement(uint64(i + 1))
+			session.shares[i] = &elem
+		}
+
+		// Correct threshold: n-numNew succeeds.
+		require.NoError(t, waitForNShares(session, n-numNew, 200*time.Millisecond))
+
+		// Old hardcoded n-1 would have failed: only n-numNew < n-1 shares present.
+		err := waitForNShares(session, n-1, 80*time.Millisecond)
+		require.Error(t, err, "n-1 threshold would deadlock when numNewOperators > 1")
+	})
 }
 
 // --- waitForNCommitments ---

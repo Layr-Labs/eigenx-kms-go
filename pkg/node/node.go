@@ -455,7 +455,7 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 				"block_timestamp", blockTimestamp)
 
 			go func() {
-				if err := n.RunReshareAsNewOperator(blockTimestamp); err != nil {
+				if err := n.RunReshareAsNewOperator(blockTimestamp, 1); err != nil {
 					n.logger.Sugar().Errorw("Failed to join cluster via reshare",
 						"operator_address", n.OperatorAddress.Hex(),
 						"error", err)
@@ -1485,8 +1485,11 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, numNewOperat
 	return nil
 }
 
-// RunReshareAsNewOperator executes reshare protocol as a new operator (no existing shares)
-func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
+// RunReshareAsNewOperator executes reshare protocol as a new operator (no existing shares).
+// numNewOperators is the total count of operators joining simultaneously (including this one).
+// Only existing operators contribute shares, so the wait threshold is len(operators)-numNewOperators.
+// Pass 1 when a single new operator is joining; pass the actual count for simultaneous joins.
+func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64, numNewOperators int) error {
 	ctx := context.Background()
 	n.logger.Sugar().Infow("Starting reshare as new operator (joining existing cluster)",
 		"operator_address", n.OperatorAddress.Hex(),
@@ -1518,16 +1521,17 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	}
 
 	// New operators DON'T generate shares - only receive from existing operators.
-	// Expect N-1 shares and commitments: all operators except this new operator itself.
+	// Expect len(operators)-numNewOperators shares/commitments: only existing operators contribute.
+	requiredContributions := len(operators) - numNewOperators
 	n.logger.Sugar().Infow("Waiting for shares from existing operators",
 		"operator_address", n.OperatorAddress.Hex(),
-		"expected_shares", len(operators)-1)
+		"expected_shares", requiredContributions)
 
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
-	if err := waitForNShares(session, len(operators)-1, protocolTimeout); err != nil {
+	if err := waitForNShares(session, requiredContributions, protocolTimeout); err != nil {
 		return fmt.Errorf("failed to receive shares: %w", err)
 	}
-	if err := waitForNCommitments(session, len(operators)-1, protocolTimeout); err != nil {
+	if err := waitForNCommitments(session, requiredContributions, protocolTimeout); err != nil {
 		return fmt.Errorf("failed to receive commitments: %w", err)
 	}
 
