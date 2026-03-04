@@ -40,6 +40,8 @@ contract EigenKMSCommitmentRegistryTest is Test, IEigenKMSCommitmentRegistryErro
         uint64 indexed epoch, address indexed operator, bytes32 commitmentHash, bytes32 ackMerkleRoot
     );
 
+    event EquivocationProven(uint64 indexed epoch, address indexed dealer, address player1, address player2);
+
     function setUp() public {
         // Deploy mock certificate verifiers
         mockECDSAVerifier = new MockCertificateVerifier();
@@ -326,40 +328,56 @@ contract EigenKMSCommitmentRegistryTest is Test, IEigenKMSCommitmentRegistryErro
         registry.proveEquivocation(epoch, operator1, ack1, ack2);
     }
 
-    /// @notice Test proveEquivocation accepts differing commitmentHash as equivocation evidence
-    /// @dev A dealer who sends different polynomial commitments to different players equivocates
-    ///      even if the share values happen to be identical at some evaluation point.
-    function test_ProveEquivocation_DifferentCommitmentHashIsEquivocation() public {
+    /// @notice End-to-end test: dealer sends different polynomial commitments to two players
+    ///         (same share value, different commitmentHash). Verifies EquivocationProven is emitted.
+    /// @dev Two-leaf Merkle tree is constructed inline:
+    ///      leaf  = keccak256(abi.encodePacked(player, dealerID, epoch, shareHash, commitmentHash))
+    ///      root  = keccak256(sorted(leaf1, leaf2))   [OZ MerkleProof commutative pair]
+    ///      proof = [otherLeaf]
+    function test_ProveEquivocation_DifferentCommitmentHash_EmitsEquivocationProven() public {
         uint64 epoch = 5;
-        bytes32 commitmentHash = keccak256("commitment");
-        bytes32 merkleRoot = keccak256("root");
+        bytes32 sameShareHash = keccak256("same share"); // two polynomials that agree at this point
+        bytes32 commitmentHashA = keccak256("commitment poly A");
+        bytes32 commitmentHashB = keccak256("commitment poly B");
+
+        // Compute leaf hashes using the same encoding as proveEquivocation
+        bytes32 leaf1 =
+            keccak256(abi.encodePacked(operator2, operator1, epoch, sameShareHash, commitmentHashA));
+        bytes32 leaf2 =
+            keccak256(abi.encodePacked(operator3, operator1, epoch, sameShareHash, commitmentHashB));
+
+        // Build two-leaf root using OZ's commutative (sorted) pair hash
+        bytes32 merkleRoot = leaf1 < leaf2
+            ? keccak256(abi.encodePacked(leaf1, leaf2))
+            : keccak256(abi.encodePacked(leaf2, leaf1));
 
         vm.prank(operator1);
-        registry.submitCommitment(epoch, commitmentHash, merkleRoot);
+        registry.submitCommitment(epoch, keccak256("dealer commitment"), merkleRoot);
 
-        bytes32 sameShareHash = keccak256("same share");
-        bytes32[] memory emptyProof = new bytes32[](0);
+        bytes32[] memory proof1 = new bytes32[](1);
+        proof1[0] = leaf2;
+
+        bytes32[] memory proof2 = new bytes32[](1);
+        proof2[0] = leaf1;
 
         IEigenKMSCommitmentRegistry.AckData memory ack1 = IEigenKMSCommitmentRegistry.AckData({
             player: operator2,
             dealer: operator1,
             shareHash: sameShareHash,
-            commitmentHash: keccak256("commitment poly A"), // Different commitment polynomial
-            proof: emptyProof
+            commitmentHash: commitmentHashA,
+            proof: proof1
         });
 
         IEigenKMSCommitmentRegistry.AckData memory ack2 = IEigenKMSCommitmentRegistry.AckData({
             player: operator3,
             dealer: operator1,
-            shareHash: sameShareHash, // Same share (possible if two polynomials agree at this point)
-            commitmentHash: keccak256("commitment poly B"), // Different commitment polynomial
-            proof: emptyProof
+            shareHash: sameShareHash, // identical share — old guard would have blocked this
+            commitmentHash: commitmentHashB, // different polynomial commitment — equivocation
+            proof: proof2
         });
 
-        // commitmentHashes differ, so this is equivocation — should not revert on the check.
-        // It will revert on Ack1Invalid because we used empty proofs, confirming the
-        // NoEquivocationDetected guard was passed successfully.
-        vm.expectRevert(Ack1Invalid.selector);
+        vm.expectEmit(true, true, false, true);
+        emit EquivocationProven(epoch, operator1, operator2, operator3);
         registry.proveEquivocation(epoch, operator1, ack1, ack2);
     }
 
