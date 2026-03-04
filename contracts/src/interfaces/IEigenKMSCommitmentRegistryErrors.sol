@@ -38,9 +38,8 @@ interface IEigenKMSCommitmentRegistryErrors {
     /// @dev Selector: 0x5b07c989
     error NoCommitment();
 
-    /// @notice Thrown when shareHashes are the same (not equivocation)
-    /// @dev Selector: 0xdc3fa63c
-    error ShareHashesMustDiffer();
+    /// @notice Thrown when neither shareHash nor commitmentHash differs between the two acks (not equivocation)
+    error NoEquivocationDetected();
 
     /// @notice Thrown when first ack is not in merkle tree
     /// @dev Selector: 0x7990605b

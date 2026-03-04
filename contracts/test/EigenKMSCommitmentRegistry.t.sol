@@ -266,33 +266,71 @@ contract EigenKMSCommitmentRegistryTest is Test, IEigenKMSCommitmentRegistryErro
         registry.proveEquivocation(epoch, operator1, ack1, ack2);
     }
 
-    /// @notice Test proveEquivocation rejects same shareHashes
-    function test_ProveEquivocation_RejectSameShareHash() public {
+    /// @notice Test proveEquivocation rejects when both shareHash and commitmentHash are identical (no equivocation)
+    function test_ProveEquivocation_RejectNoEquivocation() public {
         uint64 epoch = 5;
 
         vm.prank(operator1);
         registry.submitCommitment(epoch, keccak256("commitment"), keccak256("root"));
 
-        bytes32 sameHash = keccak256("same");
+        bytes32 sameShareHash = keccak256("same share");
+        bytes32 sameCommitmentHash = keccak256("commitment");
         bytes32[] memory emptyProof = new bytes32[](0);
 
         IEigenKMSCommitmentRegistry.AckData memory ack1 = IEigenKMSCommitmentRegistry.AckData({
             player: operator2,
             dealer: operator1,
-            shareHash: sameHash,
-            commitmentHash: keccak256("commitment"),
+            shareHash: sameShareHash,
+            commitmentHash: sameCommitmentHash,
             proof: emptyProof
         });
 
         IEigenKMSCommitmentRegistry.AckData memory ack2 = IEigenKMSCommitmentRegistry.AckData({
             player: operator3,
             dealer: operator1,
-            shareHash: sameHash, // Same hash
-            commitmentHash: keccak256("commitment"),
+            shareHash: sameShareHash, // Same shareHash
+            commitmentHash: sameCommitmentHash, // Same commitmentHash — no equivocation
             proof: emptyProof
         });
 
-        vm.expectRevert(ShareHashesMustDiffer.selector);
+        vm.expectRevert(NoEquivocationDetected.selector);
+        registry.proveEquivocation(epoch, operator1, ack1, ack2);
+    }
+
+    /// @notice Test proveEquivocation accepts differing commitmentHash as equivocation evidence
+    /// @dev A dealer who sends different polynomial commitments to different players equivocates
+    ///      even if the share values happen to be identical at some evaluation point.
+    function test_ProveEquivocation_DifferentCommitmentHashIsEquivocation() public {
+        uint64 epoch = 5;
+        bytes32 commitmentHash = keccak256("commitment");
+        bytes32 merkleRoot = keccak256("root");
+
+        vm.prank(operator1);
+        registry.submitCommitment(epoch, commitmentHash, merkleRoot);
+
+        bytes32 sameShareHash = keccak256("same share");
+        bytes32[] memory emptyProof = new bytes32[](0);
+
+        IEigenKMSCommitmentRegistry.AckData memory ack1 = IEigenKMSCommitmentRegistry.AckData({
+            player: operator2,
+            dealer: operator1,
+            shareHash: sameShareHash,
+            commitmentHash: keccak256("commitment poly A"), // Different commitment polynomial
+            proof: emptyProof
+        });
+
+        IEigenKMSCommitmentRegistry.AckData memory ack2 = IEigenKMSCommitmentRegistry.AckData({
+            player: operator3,
+            dealer: operator1,
+            shareHash: sameShareHash, // Same share (possible if two polynomials agree at this point)
+            commitmentHash: keccak256("commitment poly B"), // Different commitment polynomial
+            proof: emptyProof
+        });
+
+        // commitmentHashes differ, so this is equivocation — should not revert on the check.
+        // It will revert on Ack1Invalid because we used empty proofs, confirming the
+        // NoEquivocationDetected guard was passed successfully.
+        vm.expectRevert(Ack1Invalid.selector);
         registry.proveEquivocation(epoch, operator1, ack1, ack2);
     }
 
