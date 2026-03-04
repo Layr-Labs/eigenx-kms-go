@@ -107,7 +107,7 @@ type SecretsRequestV1 struct {
 	AttestationMethod string `json:"attestation_method"` // Attestation method: "gcp", "intel", "ecdsa" (default: "gcp")
 	Attestation       []byte `json:"attestation"`        // Attestation data (JWT for GCP/Intel, signature for ECDSA)
 	RSAPubKeyTmp      []byte `json:"rsa_pubkey_tmp"`     // Ephemeral RSA public key
-	AttestTime        int64  `json:"attest_time"`        // For key versioning
+	AttestationTime   int64  `json:"attestation_time"`   // For key versioning
 	// ECDSA-specific fields (only used when attestation_method is "ecdsa")
 	Challenge []byte `json:"challenge,omitempty"`  // Challenge for ECDSA attestation
 	PublicKey []byte `json:"public_key,omitempty"` // Public key for ECDSA attestation

@@ -152,9 +152,9 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Step 5: Get appropriate key share based on attestation time
 	var keyVersion *types.KeyShareVersion
-	if req.AttestTime > 0 {
+	if req.AttestationTime > 0 {
 		// Use key version from the specified time
-		keyVersion = s.node.keyStore.GetKeyVersionAtTime(req.AttestTime)
+		keyVersion = s.node.keyStore.GetKeyVersionAtTime(req.AttestationTime)
 	}
 	if keyVersion == nil {
 		// Fallback to active version

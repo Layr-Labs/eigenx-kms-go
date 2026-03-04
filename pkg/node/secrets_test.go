@@ -161,7 +161,7 @@ func testSecretsEndpointFlow(t *testing.T) {
 		AttestationMethod: "gcp",
 		Attestation:       attestationBytes,
 		RSAPubKeyTmp:      pubKeyPEM,
-		AttestTime:        time.Now().Unix(),
+		AttestationTime:        time.Now().Unix(),
 	}
 
 	// Create HTTP request

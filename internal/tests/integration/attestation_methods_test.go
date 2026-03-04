@@ -164,7 +164,7 @@ func TestSecretsEndpoint_ECDSAAttestation(t *testing.T) {
 		Challenge:         []byte(challenge),
 		PublicKey:         appPublicKey,
 		RSAPubKeyTmp:      pubKeyPEM,
-		AttestTime:        0,
+		AttestationTime:        0,
 	}
 
 	// Make HTTP request
@@ -289,7 +289,7 @@ func TestSecretsEndpoint_DefaultsToGCP(t *testing.T) {
 		// AttestationMethod not specified - should return 400 error
 		Attestation:  []byte("dummy-attestation"),
 		RSAPubKeyTmp: pubKeyPEM,
-		AttestTime:   0,
+		AttestationTime:   0,
 	}
 
 	reqBody, err := json.Marshal(req)
