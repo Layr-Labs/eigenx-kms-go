@@ -39,9 +39,11 @@ interface IEigenKMSCommitmentRegistryErrors {
     error NoCommitment();
 
     /// @notice Thrown when neither shareHash nor commitmentHash differs between the two acks (not equivocation)
+    /// @dev Selector: 0xe6096175
     error NoEquivocationDetected();
 
     /// @notice Thrown when both acks reference the same player (cannot prove equivocation against oneself)
+    /// @dev Selector: 0xcb76bd63
     error AcksMustBeFromDifferentPlayers();
 
     /// @notice Thrown when first ack is not in merkle tree
