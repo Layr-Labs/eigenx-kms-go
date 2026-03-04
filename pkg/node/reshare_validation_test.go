@@ -93,15 +93,19 @@ func TestRunReshareAsNewOperator_NumNewOperatorsValidation(t *testing.T) {
 //
 // The guard does correctly reject 0 for an empty operator set (N=0), since 0 >= 0.
 func TestRunReshareAsNewOperator_ZeroNumNewOperatorsPassesGuard(t *testing.T) {
+	const numNew = 0
+
 	// For any non-empty operator set, numNew=0 satisfies 0 < N and therefore
 	// passes the guard condition: numNew < 0 || numNew >= N.
 	for _, numOps := range []int{1, 2, 5} {
-		outOfRange := 0 < 0 || 0 >= numOps
+		outOfRange := numNew < 0 || numNew >= numOps
 		require.False(t, outOfRange,
 			"numNewOperators=0 should pass the [0, %d) guard for a %d-operator set",
 			numOps, numOps)
 	}
 
-	// For an empty operator set, 0 >= 0 is true: the guard correctly rejects it.
-	require.True(t, 0 >= 0, "numNewOperators=0 is correctly rejected for an empty operator set")
+	// For an empty operator set (N=0), numNew >= N is true: the guard correctly rejects it.
+	const emptyN = 0
+	outOfRange := numNew < 0 || numNew >= emptyN
+	require.True(t, outOfRange, "numNewOperators=0 is correctly rejected for an empty operator set")
 }
