@@ -73,4 +73,15 @@ func TestGetKeyVersionAtTime(t *testing.T) {
 			t.Fatalf("expected version 1_700_001_000, got %v", got)
 		}
 	})
+
+	t.Run("out-of-order insertion returns correct version", func(t *testing.T) {
+		ks := NewKeyStore()
+		// Insert newer version first, then older
+		ks.AddVersion(makeVersion(1_700_000_300))
+		ks.AddVersion(makeVersion(1_700_000_100))
+		got := ks.GetKeyVersionAtTime(1_700_000_200)
+		if got == nil || got.Version != 1_700_000_100 {
+			t.Fatalf("expected version 1_700_000_100, got %v", got)
+		}
+	})
 }
