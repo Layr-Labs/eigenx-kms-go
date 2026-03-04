@@ -545,23 +545,31 @@ func (n *Node) RestoreState() error {
 		"count", len(versions))
 
 	for _, version := range versions {
+		// Warn if a persisted version looks like a block number rather than a Unix timestamp.
+		// Unix timestamps are >= 1_000_000_000 (Sep 2001); block numbers are well below that.
+		// This can happen when upgrading from a pre-fix deployment that stored block numbers.
+		if version.Version < 1_000_000_000 {
+			n.logger.Sugar().Warnw("Persisted key version looks like a block number, not a Unix timestamp — key lookup by attestation time may fail",
+				"operator_address", n.OperatorAddress.Hex(),
+				"version", version.Version)
+		}
 		n.keyStore.AddVersion(version)
 	}
 
 	// 3. Restore active version pointer
-	activeEpoch, err := n.persistence.GetActiveVersionEpoch()
+	activeTimestamp, err := n.persistence.GetActiveVersionTimestamp()
 	if err != nil {
-		return fmt.Errorf("failed to load active version epoch: %w", err)
+		return fmt.Errorf("failed to load active version timestamp: %w", err)
 	}
 
-	if activeEpoch > 0 {
+	if activeTimestamp > 0 {
 		// Find and set the active version in keystore
 		for _, version := range versions {
-			if version.Version == activeEpoch {
+			if version.Version == activeTimestamp {
 				n.keyStore.SetActiveVersion(version)
 				n.logger.Sugar().Infow("Restored active key version",
 					"operator_address", n.OperatorAddress.Hex(),
-					"epoch", activeEpoch)
+					"version", activeTimestamp)
 				break
 			}
 		}
@@ -1127,7 +1135,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	}
 
 	// Persist active version pointer
-	if err := n.persistence.SetActiveVersionEpoch(keyVersion.Version); err != nil {
+	if err := n.persistence.SetActiveVersionTimestamp(keyVersion.Version); err != nil {
 		n.logger.Sugar().Errorw("Failed to persist active version pointer - DKG cannot complete",
 			"operator_address", n.OperatorAddress.Hex(),
 			"error", err)
@@ -1439,7 +1447,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	}
 
 	// Update active version pointer
-	if err := n.persistence.SetActiveVersionEpoch(newKeyVersion.Version); err != nil {
+	if err := n.persistence.SetActiveVersionTimestamp(newKeyVersion.Version); err != nil {
 		n.logger.Sugar().Errorw("Failed to persist active version pointer - reshare cannot complete",
 			"operator_address", n.OperatorAddress.Hex(),
 			"error", err)
@@ -1550,7 +1558,7 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	}
 
 	// Set as active version
-	if err := n.persistence.SetActiveVersionEpoch(newKeyVersion.Version); err != nil {
+	if err := n.persistence.SetActiveVersionTimestamp(newKeyVersion.Version); err != nil {
 		n.logger.Sugar().Errorw("Failed to persist active version pointer - cannot join cluster",
 			"operator_address", n.OperatorAddress.Hex(),
 			"error", err)
@@ -1568,13 +1576,8 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	return nil
 }
 
-// SignAppID signs an application ID
-func (n *Node) SignAppID(appID string, attestationTime int64) types.G1Point {
-	keyVersion := n.keyStore.GetKeyVersionAtTime(attestationTime)
-	if keyVersion == nil {
-		keyVersion = n.keyStore.GetActiveVersion()
-	}
-
+// signAppIDWithVersion computes a partial BLS signature for appID using a pre-resolved key version.
+func (n *Node) signAppIDWithVersion(appID string, keyVersion *types.KeyShareVersion) types.G1Point {
 	if keyVersion == nil || keyVersion.PrivateShare == nil {
 		return types.G1Point{}
 	}
@@ -1589,6 +1592,15 @@ func (n *Node) SignAppID(appID string, attestationTime int64) types.G1Point {
 		return types.G1Point{}
 	}
 	return *partialSig
+}
+
+// SignAppID signs an application ID using the key version active at attestationTime.
+func (n *Node) SignAppID(appID string, attestationTime int64) types.G1Point {
+	keyVersion := n.keyStore.GetKeyVersionAtTime(attestationTime)
+	if keyVersion == nil {
+		keyVersion = n.keyStore.GetActiveVersion()
+	}
+	return n.signAppIDWithVersion(appID, keyVersion)
 }
 
 // Wait functions using channel-based completion signaling

@@ -285,8 +285,8 @@ func (r *RedisPersistence) DeleteKeyShareVersion(epoch int64) error {
 	return err
 }
 
-// SetActiveVersionEpoch stores the active version epoch
-func (r *RedisPersistence) SetActiveVersionEpoch(epoch int64) error {
+// SetActiveVersionTimestamp stores the active version block timestamp
+func (r *RedisPersistence) SetActiveVersionTimestamp(timestamp int64) error {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -299,13 +299,13 @@ func (r *RedisPersistence) SetActiveVersionEpoch(epoch int64) error {
 
 	// Convert int64 to bytes
 	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, uint64(epoch))
+	binary.BigEndian.PutUint64(buf, uint64(timestamp))
 
 	return r.client.Set(ctx, key, buf, 0).Err()
 }
 
-// GetActiveVersionEpoch retrieves the active version epoch
-func (r *RedisPersistence) GetActiveVersionEpoch() (int64, error) {
+// GetActiveVersionTimestamp retrieves the active version block timestamp
+func (r *RedisPersistence) GetActiveVersionTimestamp() (int64, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -321,15 +321,15 @@ func (r *RedisPersistence) GetActiveVersionEpoch() (int64, error) {
 		return 0, nil // No active version set yet
 	}
 	if err != nil {
-		return 0, fmt.Errorf("failed to get active version epoch: %w", err)
+		return 0, fmt.Errorf("failed to get active version timestamp: %w", err)
 	}
 
 	if len(data) != 8 {
 		return 0, fmt.Errorf("invalid active version data length: %d", len(data))
 	}
 
-	epoch := int64(binary.BigEndian.Uint64(data))
-	return epoch, nil
+	timestamp := int64(binary.BigEndian.Uint64(data))
+	return timestamp, nil
 }
 
 // SaveNodeState persists node operational state

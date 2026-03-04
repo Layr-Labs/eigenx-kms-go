@@ -148,24 +148,24 @@ func TestMemoryPersistence_ActiveVersionTracking(t *testing.T) {
 	defer func() { _ = mp.Close() }()
 
 	// Initially no active version
-	epoch, err := mp.GetActiveVersionEpoch()
+	epoch, err := mp.GetActiveVersionTimestamp()
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), epoch)
 
 	// Set active version
-	err = mp.SetActiveVersionEpoch(1234567890)
+	err = mp.SetActiveVersionTimestamp(1234567890)
 	require.NoError(t, err)
 
 	// Get active version
-	epoch, err = mp.GetActiveVersionEpoch()
+	epoch, err = mp.GetActiveVersionTimestamp()
 	require.NoError(t, err)
 	assert.Equal(t, int64(1234567890), epoch)
 
 	// Update active version
-	err = mp.SetActiveVersionEpoch(9876543210)
+	err = mp.SetActiveVersionTimestamp(9876543210)
 	require.NoError(t, err)
 
-	epoch, err = mp.GetActiveVersionEpoch()
+	epoch, err = mp.GetActiveVersionTimestamp()
 	require.NoError(t, err)
 	assert.Equal(t, int64(9876543210), epoch)
 }

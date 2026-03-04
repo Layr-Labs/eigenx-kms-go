@@ -34,15 +34,15 @@ type INodePersistence interface {
 
 	// Active Version Tracking
 
-	// SetActiveVersionEpoch stores which key version is currently active.
-	// This is a pointer to the epoch of the active KeyShareVersion.
-	// Setting epoch=0 indicates no active version.
-	SetActiveVersionEpoch(epoch int64) error
+	// SetActiveVersionTimestamp stores which key version is currently active.
+	// This is a pointer to the block timestamp of the active KeyShareVersion.
+	// Setting timestamp=0 indicates no active version.
+	SetActiveVersionTimestamp(timestamp int64) error
 
-	// GetActiveVersionEpoch returns the epoch of the active version.
+	// GetActiveVersionTimestamp returns the block timestamp of the active version.
 	// Returns 0 if no active version is set (first run).
 	// Returns error only on storage failure.
-	GetActiveVersionEpoch() (int64, error)
+	GetActiveVersionTimestamp() (int64, error)
 
 	// Node Operational State
 

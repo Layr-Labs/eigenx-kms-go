@@ -177,24 +177,24 @@ func TestBadgerPersistence_ActiveVersionTracking(t *testing.T) {
 	defer func() { _ = bp.Close() }()
 
 	// Initially no active version
-	epoch, err := bp.GetActiveVersionEpoch()
+	epoch, err := bp.GetActiveVersionTimestamp()
 	require.NoError(t, err)
 	assert.Equal(t, int64(0), epoch)
 
 	// Set active version
-	err = bp.SetActiveVersionEpoch(1234567890)
+	err = bp.SetActiveVersionTimestamp(1234567890)
 	require.NoError(t, err)
 
 	// Get active version
-	epoch, err = bp.GetActiveVersionEpoch()
+	epoch, err = bp.GetActiveVersionTimestamp()
 	require.NoError(t, err)
 	assert.Equal(t, int64(1234567890), epoch)
 
 	// Update active version
-	err = bp.SetActiveVersionEpoch(9876543210)
+	err = bp.SetActiveVersionTimestamp(9876543210)
 	require.NoError(t, err)
 
-	epoch, err = bp.GetActiveVersionEpoch()
+	epoch, err = bp.GetActiveVersionTimestamp()
 	require.NoError(t, err)
 	assert.Equal(t, int64(9876543210), epoch)
 }
@@ -525,7 +525,7 @@ func TestBadgerPersistence_Persistence_AcrossRestarts(t *testing.T) {
 	err = bp1.SaveKeyShareVersion(version)
 	require.NoError(t, err)
 
-	err = bp1.SetActiveVersionEpoch(99999)
+	err = bp1.SetActiveVersionTimestamp(99999)
 	require.NoError(t, err)
 
 	nodeState := &persistence.NodeState{
@@ -553,9 +553,9 @@ func TestBadgerPersistence_Persistence_AcrossRestarts(t *testing.T) {
 	assert.True(t, version.PrivateShare.Equal(loadedVersion.PrivateShare))
 
 	// Verify active version
-	activeEpoch, err := bp2.GetActiveVersionEpoch()
+	activeTimestamp, err := bp2.GetActiveVersionTimestamp()
 	require.NoError(t, err)
-	assert.Equal(t, int64(99999), activeEpoch)
+	assert.Equal(t, int64(99999), activeTimestamp)
 
 	// Verify node state
 	loadedState, err := bp2.LoadNodeState()

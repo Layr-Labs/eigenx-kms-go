@@ -23,7 +23,7 @@ type MemoryPersistence struct {
 	keyShares map[int64]*types.KeyShareVersion
 
 	// Active version tracking
-	activeVersionEpoch int64
+	activeVersionTimestamp int64
 
 	// Node state
 	nodeState *persistence.NodeState
@@ -125,8 +125,8 @@ func (m *MemoryPersistence) DeleteKeyShareVersion(epoch int64) error {
 	return nil
 }
 
-// SetActiveVersionEpoch stores the active version epoch.
-func (m *MemoryPersistence) SetActiveVersionEpoch(epoch int64) error {
+// SetActiveVersionTimestamp stores the active version block timestamp.
+func (m *MemoryPersistence) SetActiveVersionTimestamp(timestamp int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -134,12 +134,12 @@ func (m *MemoryPersistence) SetActiveVersionEpoch(epoch int64) error {
 		return fmt.Errorf("persistence layer is closed")
 	}
 
-	m.activeVersionEpoch = epoch
+	m.activeVersionTimestamp = timestamp
 	return nil
 }
 
-// GetActiveVersionEpoch retrieves the active version epoch.
-func (m *MemoryPersistence) GetActiveVersionEpoch() (int64, error) {
+// GetActiveVersionTimestamp retrieves the active version block timestamp.
+func (m *MemoryPersistence) GetActiveVersionTimestamp() (int64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -147,7 +147,7 @@ func (m *MemoryPersistence) GetActiveVersionEpoch() (int64, error) {
 		return 0, fmt.Errorf("persistence layer is closed")
 	}
 
-	return m.activeVersionEpoch, nil
+	return m.activeVersionTimestamp, nil
 }
 
 // SaveNodeState persists node operational state.

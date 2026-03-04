@@ -194,19 +194,19 @@ func TestRedisPersistence_ActiveVersionTracking(t *testing.T) {
 	defer func() { _ = rp.Close() }()
 
 	// Set active version
-	err := rp.SetActiveVersionEpoch(1234567890)
+	err := rp.SetActiveVersionTimestamp(1234567890)
 	require.NoError(t, err)
 
 	// Get active version
-	epoch, err := rp.GetActiveVersionEpoch()
+	epoch, err := rp.GetActiveVersionTimestamp()
 	require.NoError(t, err)
 	assert.Equal(t, int64(1234567890), epoch)
 
 	// Update active version
-	err = rp.SetActiveVersionEpoch(9876543210)
+	err = rp.SetActiveVersionTimestamp(9876543210)
 	require.NoError(t, err)
 
-	epoch, err = rp.GetActiveVersionEpoch()
+	epoch, err = rp.GetActiveVersionTimestamp()
 	require.NoError(t, err)
 	assert.Equal(t, int64(9876543210), epoch)
 }

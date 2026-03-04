@@ -167,13 +167,13 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 5: Generate partial signature for this app
+	// Step 6: Generate partial signature for this app using the already-resolved key version
 	// partial_sig = H(app_id)^{key_share}
-	partialSig := s.node.SignAppID(req.AppID, req.AttestTime)
+	partialSig := s.node.signAppIDWithVersion(req.AppID, keyVersion)
 
 	s.node.logger.Sugar().Infow("Generated partial signature", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID)
 
-	// Step 6: Serialize partial signature for encryption
+	// Step 7: Serialize partial signature for encryption
 	partialSigBytes, err := json.Marshal(partialSig)
 	if err != nil {
 		s.node.logger.Sugar().Errorw("Failed to serialize partial signature", "node_id", s.node.OperatorAddress.Hex(), "error", err)
@@ -181,7 +181,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 7: Encrypt partial signature with ephemeral RSA public key
+	// Step 8: Encrypt partial signature with ephemeral RSA public key
 	encryptedPartialSig, err := s.node.rsaEncryption.Encrypt(partialSigBytes, req.RSAPubKeyTmp)
 	if err != nil {
 		s.node.logger.Sugar().Errorw("Failed to encrypt partial signature", "node_id", s.node.OperatorAddress.Hex(), "error", err)
@@ -189,7 +189,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 8: Create response
+	// Step 9: Create response
 	response := types.SecretsResponseV1{
 		EncryptedEnv:        release.EncryptedEnv,
 		PublicEnv:           release.PublicEnv,
