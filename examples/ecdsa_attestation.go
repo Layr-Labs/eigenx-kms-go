@@ -114,7 +114,7 @@ func main() {
 		Challenge:         []byte(challenge),
 		PublicKey:         appPublicKey,
 		RSAPubKeyTmp:      rsaPubKeyPEM,
-		AttestationTime:        0, // Use current key version
+		AttestationTime:   0, // Use current key version
 	}
 
 	var responses []types.SecretsResponseV1

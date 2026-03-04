@@ -164,7 +164,7 @@ func TestSecretsEndpoint_ECDSAAttestation(t *testing.T) {
 		Challenge:         []byte(challenge),
 		PublicKey:         appPublicKey,
 		RSAPubKeyTmp:      pubKeyPEM,
-		AttestationTime:        0,
+		AttestationTime:   0,
 	}
 
 	// Make HTTP request
@@ -287,9 +287,9 @@ func TestSecretsEndpoint_DefaultsToGCP(t *testing.T) {
 	req := kmsTypes.SecretsRequestV1{
 		AppID: "test-app",
 		// AttestationMethod not specified - should return 400 error
-		Attestation:  []byte("dummy-attestation"),
-		RSAPubKeyTmp: pubKeyPEM,
-		AttestationTime:   0,
+		Attestation:     []byte("dummy-attestation"),
+		RSAPubKeyTmp:    pubKeyPEM,
+		AttestationTime: 0,
 	}
 
 	reqBody, err := json.Marshal(req)
