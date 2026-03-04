@@ -414,7 +414,20 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 		return
 	}
 
-	// Step 7: Determine if I'm a new or existing operator
+	// Step 7: Skip if a protocol session is already in progress
+	n.sessionMutex.RLock()
+	activeCount := len(n.activeSessions)
+	n.sessionMutex.RUnlock()
+	if activeCount > 0 {
+		n.logger.Sugar().Infow("Skipping boundary: protocol session already in progress",
+			"operator_address", n.OperatorAddress.Hex(),
+			"block_number", blockNumber,
+			"block_timestamp", blockTimestamp,
+			"active_sessions", activeCount)
+		return
+	}
+
+	// Step 8: Determine if I'm a new or existing operator
 	if !n.hasExistingShares() {
 		// I'm a new operator - need to determine cluster state
 		clusterState := n.detectClusterState(operators)
