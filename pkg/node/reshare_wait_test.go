@@ -8,7 +8,6 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/zap"
 )
 
 // makeTestOps returns n blank OperatorSetPeer entries for session construction.
@@ -19,10 +18,6 @@ func makeTestOps(n int) []*peering.OperatorSetPeer {
 	}
 	return ops
 }
-
-// nopLogger is a no-op logger used in wait-function tests where log output
-// is not under test.
-var nopLogger = zap.NewNop()
 
 // --- waitForNShares ---
 
@@ -38,7 +33,7 @@ func TestWaitForNShares_SucceedsWithRequiredCount(t *testing.T) {
 		session.shares[i] = &elem
 	}
 
-	require.NoError(t, waitForNShares(session, n-1, 200*time.Millisecond, nopLogger))
+	require.NoError(t, waitForNShares(session, n-1, 200*time.Millisecond))
 }
 
 func TestWaitForNShares_TimesOutIfInsufficient(t *testing.T) {
@@ -54,7 +49,7 @@ func TestWaitForNShares_TimesOutIfInsufficient(t *testing.T) {
 		session.shares[i] = &elem
 	}
 
-	err := waitForNShares(session, n-1, 80*time.Millisecond, nopLogger)
+	err := waitForNShares(session, n-1, 80*time.Millisecond)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "timeout waiting for shares")
 }
@@ -81,7 +76,7 @@ func TestWaitForNShares_NewOperatorScenario(t *testing.T) {
 	}()
 
 	// Should complete with n-1 even though the nth share never arrives.
-	require.NoError(t, waitForNShares(session, n-1, 500*time.Millisecond, nopLogger))
+	require.NoError(t, waitForNShares(session, n-1, 500*time.Millisecond))
 
 	session.mu.RLock()
 	received := len(session.shares)
@@ -107,7 +102,7 @@ func TestRunReshareAsNewOperator_ThresholdMatchesExistingOperators(t *testing.T)
 		}
 
 		// Both paths use len(operators)-numNewOperators as the threshold.
-		require.NoError(t, waitForNShares(session, n-numNew, 200*time.Millisecond, nopLogger))
+		require.NoError(t, waitForNShares(session, n-numNew, 200*time.Millisecond))
 
 		// Confirm that the old hardcoded len(operators)-1 would have timed out for numNew>1.
 	})
@@ -126,10 +121,10 @@ func TestRunReshareAsNewOperator_ThresholdMatchesExistingOperators(t *testing.T)
 		}
 
 		// Correct threshold: n-numNew succeeds.
-		require.NoError(t, waitForNShares(session, n-numNew, 200*time.Millisecond, nopLogger))
+		require.NoError(t, waitForNShares(session, n-numNew, 200*time.Millisecond))
 
 		// Old hardcoded n-1 would have failed: only n-numNew < n-1 shares present.
-		err := waitForNShares(session, n-1, 80*time.Millisecond, nopLogger)
+		err := waitForNShares(session, n-1, 80*time.Millisecond)
 		require.Error(t, err, "n-1 threshold would deadlock when numNewOperators > 1")
 	})
 }
@@ -147,7 +142,7 @@ func TestWaitForNCommitments_SucceedsWithRequiredCount(t *testing.T) {
 		session.commitments[i] = []types.G2Point{}
 	}
 
-	require.NoError(t, waitForNCommitments(session, n-1, 200*time.Millisecond, nopLogger))
+	require.NoError(t, waitForNCommitments(session, n-1, 200*time.Millisecond))
 }
 
 func TestWaitForNCommitments_TimesOutIfInsufficient(t *testing.T) {
@@ -162,7 +157,7 @@ func TestWaitForNCommitments_TimesOutIfInsufficient(t *testing.T) {
 		session.commitments[i] = []types.G2Point{}
 	}
 
-	err := waitForNCommitments(session, n-1, 80*time.Millisecond, nopLogger)
+	err := waitForNCommitments(session, n-1, 80*time.Millisecond)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "timeout waiting for commitments")
 }
@@ -185,7 +180,7 @@ func TestWaitForNCommitments_NewOperatorScenario(t *testing.T) {
 		session.mu.Unlock()
 	}()
 
-	require.NoError(t, waitForNCommitments(session, n-1, 500*time.Millisecond, nopLogger))
+	require.NoError(t, waitForNCommitments(session, n-1, 500*time.Millisecond))
 
 	session.mu.RLock()
 	received := len(session.commitments)
@@ -201,7 +196,7 @@ func TestWaitForN_ErrorMessageContainsLabel(t *testing.T) {
 		shares:    make(map[int64]*fr.Element),
 	}
 
-	err := waitForN(session, 2, 80*time.Millisecond, func() int { return 0 }, "widgets", nopLogger)
+	err := waitForN(session, 2, 80*time.Millisecond, func() int { return 0 }, "widgets")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "widgets")
 	require.Contains(t, err.Error(), "0/2")
@@ -218,7 +213,7 @@ func TestWaitForNShares_NegativeRequiredClampsToZero(t *testing.T) {
 		shares:    make(map[int64]*fr.Element),
 	}
 	// required=-1 should clamp to 0 and succeed instantly.
-	require.NoError(t, waitForNShares(session, -1, 200*time.Millisecond, nopLogger))
+	require.NoError(t, waitForNShares(session, -1, 200*time.Millisecond))
 }
 
 // TestWaitForNShares_RequiredExceedsOperatorsClampsToMax verifies that a required
@@ -239,7 +234,7 @@ func TestWaitForNShares_RequiredExceedsOperatorsClampsToMax(t *testing.T) {
 	}
 
 	// required=n+5 clamps to n; with only n-1 shares this should timeout.
-	err := waitForNShares(session, n+5, 80*time.Millisecond, nopLogger)
+	err := waitForNShares(session, n+5, 80*time.Millisecond)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "timeout waiting for shares")
 }

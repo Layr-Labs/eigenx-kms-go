@@ -1316,10 +1316,10 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	// contribute shares, so we only expect len(operators)-numNewOperators contributions.
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
 	requiredContributions := len(operators) - numNewOperators
-	if err := waitForNShares(session, requiredContributions, protocolTimeout, n.logger); err != nil {
+	if err := waitForNShares(session, requiredContributions, protocolTimeout); err != nil {
 		return err
 	}
-	if err := waitForNCommitments(session, requiredContributions, protocolTimeout, n.logger); err != nil {
+	if err := waitForNCommitments(session, requiredContributions, protocolTimeout); err != nil {
 		return err
 	}
 
@@ -1588,10 +1588,10 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		"expected_shares", requiredContributions)
 
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
-	if err := waitForNShares(session, requiredContributions, protocolTimeout, n.logger); err != nil {
+	if err := waitForNShares(session, requiredContributions, protocolTimeout); err != nil {
 		return fmt.Errorf("failed to receive shares: %w", err)
 	}
-	if err := waitForNCommitments(session, requiredContributions, protocolTimeout, n.logger); err != nil {
+	if err := waitForNCommitments(session, requiredContributions, protocolTimeout); err != nil {
 		return fmt.Errorf("failed to receive commitments: %w", err)
 	}
 
@@ -1736,23 +1736,15 @@ func waitForCommitments(session *ProtocolSession, timeout time.Duration) error {
 
 // waitForN polls until getCount() returns at least required, or the timeout elapses.
 // getCount is called while session.mu.RLock is held.
-func waitForN(session *ProtocolSession, required int, timeout time.Duration, getCount func() int, label string, logger *zap.Logger) error {
+func waitForN(session *ProtocolSession, required int, timeout time.Duration, getCount func() int, label string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	maxPossible := len(session.Operators)
 	if required < 0 {
-		if logger != nil {
-			logger.Sugar().Warnw("waitForN: required is negative, clamping to 0",
-				"required", required, "label", label)
-		}
 		required = 0
 	}
 	if required > maxPossible {
-		if logger != nil {
-			logger.Sugar().Warnw("waitForN: required exceeds operator count, clamping",
-				"required", required, "max_possible", maxPossible, "label", label)
-		}
 		required = maxPossible
 	}
 
@@ -1786,15 +1778,15 @@ func waitForN(session *ProtocolSession, required int, timeout time.Duration, get
 // waitForNShares waits for at least required shares using polling.
 // Use this instead of waitForShares when fewer than all operators are expected to contribute
 // (e.g., new operators joining don't send shares, so existing operators wait for N-numNew shares).
-func waitForNShares(session *ProtocolSession, required int, timeout time.Duration, logger *zap.Logger) error {
-	return waitForN(session, required, timeout, func() int { return len(session.shares) }, "shares", logger)
+func waitForNShares(session *ProtocolSession, required int, timeout time.Duration) error {
+	return waitForN(session, required, timeout, func() int { return len(session.shares) }, "shares")
 }
 
 // waitForNCommitments waits for at least required commitments using polling.
 // Use this instead of waitForCommitments when fewer than all operators are expected to contribute
 // (e.g., new operators joining don't broadcast commitments).
-func waitForNCommitments(session *ProtocolSession, required int, timeout time.Duration, logger *zap.Logger) error {
-	return waitForN(session, required, timeout, func() int { return len(session.commitments) }, "commitments", logger)
+func waitForNCommitments(session *ProtocolSession, required int, timeout time.Duration) error {
+	return waitForN(session, required, timeout, func() int { return len(session.commitments) }, "commitments")
 }
 
 // waitForAcks waits for at least required acknowledgements to be received for a specific dealer using polling.
