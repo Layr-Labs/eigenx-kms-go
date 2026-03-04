@@ -266,6 +266,35 @@ contract EigenKMSCommitmentRegistryTest is Test, IEigenKMSCommitmentRegistryErro
         registry.proveEquivocation(epoch, operator1, ack1, ack2);
     }
 
+    /// @notice Test proveEquivocation rejects when both acks reference the same player
+    function test_ProveEquivocation_RejectSamePlayer() public {
+        uint64 epoch = 5;
+
+        vm.prank(operator1);
+        registry.submitCommitment(epoch, keccak256("commitment"), keccak256("root"));
+
+        bytes32[] memory emptyProof = new bytes32[](0);
+
+        IEigenKMSCommitmentRegistry.AckData memory ack1 = IEigenKMSCommitmentRegistry.AckData({
+            player: operator2,
+            dealer: operator1,
+            shareHash: keccak256("share A"),
+            commitmentHash: keccak256("commitment poly A"),
+            proof: emptyProof
+        });
+
+        IEigenKMSCommitmentRegistry.AckData memory ack2 = IEigenKMSCommitmentRegistry.AckData({
+            player: operator2, // Same player — invalid equivocation proof
+            dealer: operator1,
+            shareHash: keccak256("share A"),
+            commitmentHash: keccak256("commitment poly B"),
+            proof: emptyProof
+        });
+
+        vm.expectRevert(AcksMustBeFromDifferentPlayers.selector);
+        registry.proveEquivocation(epoch, operator1, ack1, ack2);
+    }
+
     /// @notice Test proveEquivocation rejects when both shareHash and commitmentHash are identical (no equivocation)
     function test_ProveEquivocation_RejectNoEquivocation() public {
         uint64 epoch = 5;

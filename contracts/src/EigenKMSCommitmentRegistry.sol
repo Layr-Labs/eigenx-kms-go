@@ -132,8 +132,8 @@ contract EigenKMSCommitmentRegistry is
      *      to the dealer's own submission via keccak256(player || dealerID || epoch || shareHash || commitmentHash).
      * @param epoch The epoch in which equivocation occurred
      * @param dealer The operator who equivocated
-     * @param ack1 First acknowledgement data with merkle proof
-     * @param ack2 Second acknowledgement data with merkle proof
+     * @param ack1 First acknowledgement data with merkle proof (must be from a different player than ack2)
+     * @param ack2 Second acknowledgement data with merkle proof (must be from a different player than ack1)
      */
     function proveEquivocation(
         uint64 epoch,
@@ -143,6 +143,7 @@ contract EigenKMSCommitmentRegistry is
     ) external override {
         bytes32 root = commitments[epoch][dealer].ackMerkleRoot;
         if (root == bytes32(0)) revert NoCommitment();
+        if (ack1.player == ack2.player) revert AcksMustBeFromDifferentPlayers();
         if (ack1.shareHash == ack2.shareHash && ack1.commitmentHash == ack2.commitmentHash) revert NoEquivocationDetected();
 
         bytes32 hash1 =
