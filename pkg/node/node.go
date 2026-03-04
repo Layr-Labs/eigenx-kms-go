@@ -37,11 +37,6 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
 
-const (
-	// ReshareFrequency is the frequency of resharing in seconds (deprecated)
-	// Deprecated: Use block-based intervals via config.GetReshareBlockIntervalForChain
-	ReshareFrequency = 10 * 60 // 10 minutes
-)
 
 // Node represents a KMS node
 type Node struct {
@@ -364,6 +359,7 @@ func (n *Node) startScheduler(ctx context.Context) {
 // checkScheduledOperations checks for block interval boundaries and executes appropriate protocol
 func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 	blockNumber := int64(block.Number.Value())
+	blockTimestamp := int64(block.Timestamp.Value())
 
 	// Step 1: Get block interval for this chain
 	blockInterval := config.GetReshareBlockIntervalForChain(n.ChainID)
@@ -431,7 +427,7 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 				"block_number", blockNumber)
 
 			go func() {
-				if err := n.RunDKG(blockNumber); err != nil {
+				if err := n.RunDKG(blockTimestamp); err != nil {
 					n.logger.Sugar().Errorw("Genesis DKG failed",
 						"operator_address", n.OperatorAddress.Hex(),
 						"error", err)
@@ -444,7 +440,7 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 				"block_number", blockNumber)
 
 			go func() {
-				if err := n.RunReshareAsNewOperator(blockNumber); err != nil {
+				if err := n.RunReshareAsNewOperator(blockTimestamp); err != nil {
 					n.logger.Sugar().Errorw("Failed to join cluster via reshare",
 						"operator_address", n.OperatorAddress.Hex(),
 						"error", err)
@@ -459,7 +455,7 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 			"block_interval", blockInterval)
 
 		go func() {
-			if err := n.RunReshareAsExistingOperator(blockNumber); err != nil {
+			if err := n.RunReshareAsExistingOperator(blockTimestamp); err != nil {
 				n.logger.Sugar().Errorw("Automatic reshare failed",
 					"operator_address", n.OperatorAddress.Hex(),
 					"error", err)
@@ -1572,7 +1568,7 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 
 // SignAppID signs an application ID
 func (n *Node) SignAppID(appID string, attestationTime int64) types.G1Point {
-	keyVersion := n.keyStore.GetKeyVersionAtTime(attestationTime, ReshareFrequency)
+	keyVersion := n.keyStore.GetKeyVersionAtTime(attestationTime)
 	if keyVersion == nil {
 		keyVersion = n.keyStore.GetActiveVersion()
 	}

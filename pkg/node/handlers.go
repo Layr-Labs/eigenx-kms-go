@@ -154,7 +154,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	var keyVersion *types.KeyShareVersion
 	if req.AttestTime > 0 {
 		// Use key version from the specified time
-		keyVersion = s.node.keyStore.GetKeyVersionAtTime(req.AttestTime, ReshareFrequency)
+		keyVersion = s.node.keyStore.GetKeyVersionAtTime(req.AttestTime)
 	}
 	if keyVersion == nil {
 		// Fallback to active version
