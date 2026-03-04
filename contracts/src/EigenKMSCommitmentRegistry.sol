@@ -157,6 +157,8 @@ contract EigenKMSCommitmentRegistry is
 
         emit EquivocationProven(epoch, dealer, ack1.player, ack2.player);
 
+        // TODO: guard against replayed equivocation proofs before adding slashing
+        // e.g. mapping(uint64 => mapping(address => bool)) equivocationProven
         // Note: Actual slashing would integrate with EigenLayer here
         // Future: Add slashing logic via AVS service manager
     }
