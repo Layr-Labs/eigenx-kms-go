@@ -167,8 +167,8 @@ func (r *RedisPersistence) SaveKeyShareVersion(version *types.KeyShareVersion) e
 	return nil
 }
 
-// LoadKeyShareVersion retrieves a key share version
-func (r *RedisPersistence) LoadKeyShareVersion(epoch int64) (*types.KeyShareVersion, error) {
+// LoadKeyShareVersion retrieves a key share version by block timestamp
+func (r *RedisPersistence) LoadKeyShareVersion(timestamp int64) (*types.KeyShareVersion, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -177,7 +177,7 @@ func (r *RedisPersistence) LoadKeyShareVersion(epoch int64) (*types.KeyShareVers
 	}
 
 	ctx := context.Background()
-	key := r.prefixKey(fmt.Sprintf("%s%d", keyPrefixKeyShare, epoch))
+	key := r.prefixKey(fmt.Sprintf("%s%d", keyPrefixKeyShare, timestamp))
 
 	data, err := r.client.Get(ctx, key).Bytes()
 	if err == redis.Nil {
@@ -196,7 +196,7 @@ func (r *RedisPersistence) LoadKeyShareVersion(epoch int64) (*types.KeyShareVers
 	return version, nil
 }
 
-// ListKeyShareVersions returns all key share versions sorted by epoch
+// ListKeyShareVersions returns all key share versions sorted by block timestamp
 func (r *RedisPersistence) ListKeyShareVersions() ([]*types.KeyShareVersion, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
@@ -263,8 +263,8 @@ func (r *RedisPersistence) ListKeyShareVersions() ([]*types.KeyShareVersion, err
 	return versions, nil
 }
 
-// DeleteKeyShareVersion removes a key share version
-func (r *RedisPersistence) DeleteKeyShareVersion(epoch int64) error {
+// DeleteKeyShareVersion removes a key share version by block timestamp
+func (r *RedisPersistence) DeleteKeyShareVersion(timestamp int64) error {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -273,13 +273,13 @@ func (r *RedisPersistence) DeleteKeyShareVersion(epoch int64) error {
 	}
 
 	ctx := context.Background()
-	key := r.prefixKey(fmt.Sprintf("%s%d", keyPrefixKeyShare, epoch))
+	key := r.prefixKey(fmt.Sprintf("%s%d", keyPrefixKeyShare, timestamp))
 	indexKey := r.prefixKey(keySetKeyShares)
 
 	// Delete using pipeline
 	pipe := r.client.Pipeline()
 	pipe.Del(ctx, key)
-	pipe.SRem(ctx, indexKey, epoch) // Remove from index set
+	pipe.SRem(ctx, indexKey, timestamp) // Remove from index set
 
 	_, err := pipe.Exec(ctx)
 	return err

@@ -67,8 +67,8 @@ func (m *MemoryPersistence) SaveKeyShareVersion(version *types.KeyShareVersion) 
 	return nil
 }
 
-// LoadKeyShareVersion retrieves a key share version by epoch.
-func (m *MemoryPersistence) LoadKeyShareVersion(epoch int64) (*types.KeyShareVersion, error) {
+// LoadKeyShareVersion retrieves a key share version by block timestamp.
+func (m *MemoryPersistence) LoadKeyShareVersion(timestamp int64) (*types.KeyShareVersion, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -76,7 +76,7 @@ func (m *MemoryPersistence) LoadKeyShareVersion(epoch int64) (*types.KeyShareVer
 		return nil, fmt.Errorf("persistence layer is closed")
 	}
 
-	version, exists := m.keyShares[epoch]
+	version, exists := m.keyShares[timestamp]
 	if !exists {
 		return nil, nil // Not found is not an error
 	}
@@ -85,7 +85,7 @@ func (m *MemoryPersistence) LoadKeyShareVersion(epoch int64) (*types.KeyShareVer
 	return deepCopyKeyShareVersion(version), nil
 }
 
-// ListKeyShareVersions returns all key share versions sorted by epoch.
+// ListKeyShareVersions returns all key share versions sorted by block timestamp.
 func (m *MemoryPersistence) ListKeyShareVersions() ([]*types.KeyShareVersion, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -112,8 +112,8 @@ func (m *MemoryPersistence) ListKeyShareVersions() ([]*types.KeyShareVersion, er
 	return result, nil
 }
 
-// DeleteKeyShareVersion removes a key share version.
-func (m *MemoryPersistence) DeleteKeyShareVersion(epoch int64) error {
+// DeleteKeyShareVersion removes a key share version by block timestamp.
+func (m *MemoryPersistence) DeleteKeyShareVersion(timestamp int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -121,7 +121,7 @@ func (m *MemoryPersistence) DeleteKeyShareVersion(epoch int64) error {
 		return fmt.Errorf("persistence layer is closed")
 	}
 
-	delete(m.keyShares, epoch)
+	delete(m.keyShares, timestamp)
 	return nil
 }
 

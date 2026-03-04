@@ -26,7 +26,7 @@ type NodeState struct {
 // This enables crash recovery - if a node restarts mid-protocol, it can
 // detect incomplete sessions and clean them up appropriately.
 type ProtocolSessionState struct {
-	// SessionTimestamp is the block number or epoch timestamp for this session.
+	// SessionTimestamp is the block timestamp for this session.
 	// This serves as the primary key for session storage.
 	SessionTimestamp int64 `json:"sessionTimestamp"`
 
