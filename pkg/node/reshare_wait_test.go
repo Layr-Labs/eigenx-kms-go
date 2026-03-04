@@ -217,8 +217,9 @@ func TestWaitForNShares_NegativeRequiredClampsToZero(t *testing.T) {
 }
 
 // TestWaitForNShares_RequiredExceedsOperatorsClampsToMax verifies that a required
-// value larger than len(operators) is clamped, preventing a silent immediate return
-// caused by a too-large numNewOperators value.
+// value larger than len(operators) is clamped to len(operators), preventing the
+// count from exceeding the operator set size, which would cause it to wait for
+// more shares than possible and always time out.
 func TestWaitForNShares_RequiredExceedsOperatorsClampsToMax(t *testing.T) {
 	const n = 3
 	session := &ProtocolSession{
