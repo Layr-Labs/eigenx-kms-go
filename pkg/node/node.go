@@ -1184,6 +1184,10 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, numNewOperat
 		return fmt.Errorf("failed to fetch operators for reshare: %w", err)
 	}
 
+	if numNewOperators < 0 || numNewOperators >= len(operators) {
+		return fmt.Errorf("numNewOperators %d out of range [0, %d)", numNewOperators, len(operators))
+	}
+
 	// Use keccak256 hash of operator address as node ID (same as DKG)
 	thisNodeID := addressToNodeID(n.OperatorAddress)
 
@@ -1501,6 +1505,10 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64, numNewOperators i
 		return fmt.Errorf("failed to fetch operators: %w", err)
 	}
 
+	if numNewOperators < 0 || numNewOperators >= len(operators) {
+		return fmt.Errorf("numNewOperators %d out of range [0, %d)", numNewOperators, len(operators))
+	}
+
 	thisNodeID := addressToNodeID(n.OperatorAddress)
 
 	// Create reshare instance
@@ -1674,10 +1682,9 @@ func waitForCommitments(session *ProtocolSession, timeout time.Duration) error {
 	}
 }
 
-// waitForNShares waits for at least required shares using polling.
-// Use this instead of waitForShares when fewer than all operators are expected to contribute
-// (e.g., new operators joining don't send shares, so existing operators wait for N-numNew shares).
-func waitForNShares(session *ProtocolSession, required int, timeout time.Duration) error {
+// waitForN polls until getCount() returns at least required, or the timeout elapses.
+// getCount is called while session.mu.RLock is held.
+func waitForN(session *ProtocolSession, required int, timeout time.Duration, getCount func() int, label string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -1700,13 +1707,13 @@ func waitForNShares(session *ProtocolSession, required int, timeout time.Duratio
 		select {
 		case <-ctx.Done():
 			session.mu.RLock()
-			received := len(session.shares)
+			received := getCount()
 			session.mu.RUnlock()
-			return fmt.Errorf("timeout waiting for shares: got %d/%d", received, required)
+			return fmt.Errorf("timeout waiting for %s: got %d/%d", label, received, required)
 
 		case <-ticker.C:
 			session.mu.RLock()
-			received := len(session.shares)
+			received := getCount()
 			session.mu.RUnlock()
 
 			if received >= required {
@@ -1716,46 +1723,18 @@ func waitForNShares(session *ProtocolSession, required int, timeout time.Duratio
 	}
 }
 
+// waitForNShares waits for at least required shares using polling.
+// Use this instead of waitForShares when fewer than all operators are expected to contribute
+// (e.g., new operators joining don't send shares, so existing operators wait for N-numNew shares).
+func waitForNShares(session *ProtocolSession, required int, timeout time.Duration) error {
+	return waitForN(session, required, timeout, func() int { return len(session.shares) }, "shares")
+}
+
 // waitForNCommitments waits for at least required commitments using polling.
 // Use this instead of waitForCommitments when fewer than all operators are expected to contribute
 // (e.g., new operators joining don't broadcast commitments).
 func waitForNCommitments(session *ProtocolSession, required int, timeout time.Duration) error {
-	ctx, cancel := context.WithTimeout(context.Background(), timeout)
-	defer cancel()
-
-	maxPossible := len(session.Operators)
-	if required < 0 {
-		required = 0
-	}
-	if required > maxPossible {
-		required = maxPossible
-	}
-
-	if required == 0 {
-		return nil
-	}
-
-	ticker := time.NewTicker(50 * time.Millisecond)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			session.mu.RLock()
-			received := len(session.commitments)
-			session.mu.RUnlock()
-			return fmt.Errorf("timeout waiting for commitments: got %d/%d", received, required)
-
-		case <-ticker.C:
-			session.mu.RLock()
-			received := len(session.commitments)
-			session.mu.RUnlock()
-
-			if received >= required {
-				return nil
-			}
-		}
-	}
+	return waitForN(session, required, timeout, func() int { return len(session.commitments) }, "commitments")
 }
 
 // waitForAcks waits for at least required acknowledgements to be received for a specific dealer using polling.

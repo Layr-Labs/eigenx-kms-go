@@ -187,3 +187,53 @@ func TestWaitForNCommitments_NewOperatorScenario(t *testing.T) {
 	session.mu.RUnlock()
 	require.Equal(t, n-1, received, "exactly n-1 commitments should be present; nth never arrived")
 }
+
+// --- waitForN (shared helper) ---
+
+func TestWaitForN_ErrorMessageContainsLabel(t *testing.T) {
+	session := &ProtocolSession{
+		Operators: makeTestOps(3),
+		shares:    make(map[int64]*fr.Element),
+	}
+
+	err := waitForN(session, 2, 80*time.Millisecond, func() int { return 0 }, "widgets")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "widgets")
+	require.Contains(t, err.Error(), "0/2")
+}
+
+// --- numNewOperators validation via waitForN ---
+
+// TestWaitForNShares_NegativeRequiredClampsToZero verifies that a negative required
+// value (which would arise from a negative numNewOperators slipping through) is
+// clamped to 0 and returns immediately rather than blocking or panicking.
+func TestWaitForNShares_NegativeRequiredClampsToZero(t *testing.T) {
+	session := &ProtocolSession{
+		Operators: makeTestOps(3),
+		shares:    make(map[int64]*fr.Element),
+	}
+	// required=-1 should clamp to 0 and succeed instantly.
+	require.NoError(t, waitForNShares(session, -1, 200*time.Millisecond))
+}
+
+// TestWaitForNShares_RequiredExceedsOperatorsClampsToMax verifies that a required
+// value larger than len(operators) is clamped, preventing a silent immediate return
+// caused by a too-large numNewOperators value.
+func TestWaitForNShares_RequiredExceedsOperatorsClampsToMax(t *testing.T) {
+	const n = 3
+	session := &ProtocolSession{
+		Operators: makeTestOps(n),
+		shares:    make(map[int64]*fr.Element),
+	}
+
+	// Only n-1 shares present, but required is clamped to n (all operators).
+	for i := int64(0); i < n-1; i++ {
+		elem := fr.NewElement(uint64(i + 1))
+		session.shares[i] = &elem
+	}
+
+	// required=n+5 clamps to n; with only n-1 shares this should timeout.
+	err := waitForNShares(session, n+5, 80*time.Millisecond)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "timeout waiting for shares")
+}
