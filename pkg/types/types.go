@@ -137,6 +137,7 @@ type ContainerPolicy struct {
 type AttestationClaims struct {
 	AppID       string
 	ImageDigest string
+	Nonce       string
 	IssuedAt    int64
 	PublicKey   []byte
 	// Container execution fields extracted from JWT submods.container

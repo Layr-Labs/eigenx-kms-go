@@ -34,18 +34,7 @@ const (
 )
 
 type AttestationVerifierInterface interface {
-	VerifyAttestation(ctx context.Context, tokenString string, provider AttestationProvider) (*AttestationClaims, error)
-}
-
-type AttestationClaims struct {
-	AppID         string            `json:"app_id"`
-	ImageDigest   string            `json:"image_digest"`
-	Nonce         string            `json:"nonce"`
-	Args          []string          `json:"args"`
-	CmdOverride   []string          `json:"cmd_override"`
-	Env           map[string]string `json:"env"`
-	EnvOverride   map[string]string `json:"env_override"`
-	RestartPolicy string            `json:"restart_policy"`
+	VerifyAttestation(ctx context.Context, tokenString string, provider AttestationProvider) (*types.AttestationClaims, error)
 }
 
 // Structured types for attestation token parsing
@@ -129,7 +118,7 @@ func NewAttestationVerifier(ctx context.Context, logger *slog.Logger, projectID 
 	}, nil
 }
 
-func (av *AttestationVerifier) VerifyAttestation(ctx context.Context, tokenString string, provider AttestationProvider) (*AttestationClaims, error) {
+func (av *AttestationVerifier) VerifyAttestation(ctx context.Context, tokenString string, provider AttestationProvider) (*types.AttestationClaims, error) {
 	av.logger.Debug("Starting attestation verification", "token_length", len(tokenString), "provider", provider)
 
 	// Get provider-specific configuration
@@ -216,7 +205,7 @@ func (av *AttestationVerifier) VerifyAttestation(ctx context.Context, tokenStrin
 		return nil, fmt.Errorf("failed to extract nonce: %w", err)
 	}
 
-	result := &AttestationClaims{
+	result := &types.AttestationClaims{
 		AppID:         appID,
 		ImageDigest:   csToken.SubMods.Container.ImageDigest,
 		Nonce:         nonce,
