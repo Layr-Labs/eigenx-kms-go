@@ -99,6 +99,10 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "rsa_pubkey_tmp is required", http.StatusBadRequest)
 		return
 	}
+	if len(req.RSAPubKeyTmp) > 8192 {
+		http.Error(w, "rsa_pubkey_tmp too large", http.StatusBadRequest)
+		return
+	}
 
 	s.node.logger.Sugar().Infow("Processing secrets request", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "attestation_method", req.AttestationMethod)
 
@@ -143,7 +147,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	if req.AttestationMethod == "gcp" || req.AttestationMethod == "intel" {
 		h := sha256.Sum256(req.RSAPubKeyTmp)
 		expectedNonce := hex.EncodeToString(h[:])
-		if claims.Nonce != expectedNonce {
+		if strings.ToLower(claims.Nonce) != expectedNonce {
 			s.node.logger.Sugar().Warnw("Attestation nonce mismatch: rsa_pubkey_tmp not bound to attestation token",
 				"node_id", s.node.OperatorAddress.Hex(),
 				"app_id", req.AppID)

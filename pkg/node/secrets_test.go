@@ -42,6 +42,7 @@ func Test_SecretsEndpoint(t *testing.T) {
 	t.Run("ImageDigestMismatch", func(t *testing.T) { testSecretsEndpointImageDigestMismatch(t) })
 	t.Run("AppIDMismatch", func(t *testing.T) { testSecretsEndpointAppIDMismatch(t) })
 	t.Run("NonceMismatch", func(t *testing.T) { testSecretsEndpointNonceMismatch(t) })
+	t.Run("IntelNonceMismatch", func(t *testing.T) { testSecretsEndpointIntelNonceMismatch(t) })
 	t.Run("ContainerPolicyMismatch", func(t *testing.T) { testSecretsEndpointContainerPolicyMismatch(t) })
 	t.Run("ContainerPolicyCmdOverrideMismatch", func(t *testing.T) { testSecretsEndpointCmdOverrideMismatch(t) })
 	t.Run("ContainerPolicyEnvOverrideMismatch", func(t *testing.T) { testSecretsEndpointEnvOverrideMismatch(t) })
@@ -353,6 +354,47 @@ func testSecretsEndpointNonceMismatch(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("Expected status 401 for nonce mismatch, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// testSecretsEndpointIntelNonceMismatch tests the same KMS-004 attack scenario
+// via the "intel" attestation method.
+func testSecretsEndpointIntelNonceMismatch(t *testing.T) {
+	server, mockCaller := newTestServer(t)
+
+	mockCaller.AddTestRelease("test-app", &kmsTypes.Release{
+		ImageDigest:  "sha256:test123",
+		EncryptedEnv: "env-data",
+		PublicEnv:    "PUBLIC=value",
+		Timestamp:    time.Now().Unix(),
+	})
+
+	legitimateRSAKey := []byte("legitimate-rsa-key")
+	attackerRSAKey := []byte("attacker-rsa-key")
+
+	h := sha256.Sum256(legitimateRSAKey)
+	testClaims := kmsTypes.AttestationClaims{
+		AppID:       "test-app",
+		ImageDigest: "sha256:test123",
+		IssuedAt:    time.Now().Unix(),
+		Nonce:       hex.EncodeToString(h[:]),
+	}
+	attestationBytes, _ := json.Marshal(testClaims)
+
+	req := kmsTypes.SecretsRequestV1{
+		AppID:             "test-app",
+		AttestationMethod: "intel",
+		Attestation:       attestationBytes,
+		RSAPubKeyTmp:      attackerRSAKey,
+	}
+	reqBody, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
+	w := httptest.NewRecorder()
+
+	server.handleSecretsRequest(w, httpReq)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401 for intel nonce mismatch, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
