@@ -161,9 +161,8 @@ func addrsAndMapping(n int) ([]common.Address, map[common.Address]int64) {
 }
 
 func TestValidateReshareOperatorOverlap_EmptyOldParticipants(t *testing.T) {
-	_, mapping := addrsAndMapping(9)
+	addrs, mapping := addrsAndMapping(9)
 	patchAddressToNodeID(t, mapping)
-	addrs, _ := addrsAndMapping(9)
 
 	require.NoError(t, validateReshareOperatorOverlap(nil, makeOperators(addrs...)))
 	require.NoError(t, validateReshareOperatorOverlap([]int64{}, makeOperators(addrs...)))
