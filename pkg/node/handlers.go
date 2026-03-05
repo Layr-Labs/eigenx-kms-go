@@ -2,6 +2,8 @@ package node
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -136,6 +138,20 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Step 2c: For GCP/Intel attestation, verify the nonce binds rsa_pubkey_tmp to the attestation
+	// token, preventing a MITM from substituting a different ephemeral RSA key (KMS-004).
+	if req.AttestationMethod == "gcp" || req.AttestationMethod == "intel" {
+		h := sha256.Sum256(req.RSAPubKeyTmp)
+		expectedNonce := hex.EncodeToString(h[:])
+		if claims.Nonce != expectedNonce {
+			s.node.logger.Sugar().Warnw("Attestation nonce mismatch: rsa_pubkey_tmp not bound to attestation token",
+				"node_id", s.node.OperatorAddress.Hex(),
+				"app_id", req.AppID)
+			http.Error(w, "attestation nonce mismatch", http.StatusUnauthorized)
+			return
+		}
+	}
+
 	// Step 3: Query latest release from on-chain AppController
 	release, err := s.node.baseContractCaller.GetLatestReleaseAsRelease(r.Context(), req.AppID)
 	if err != nil {
@@ -144,7 +160,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 4: Verify image digest matches
+	// Step 5: Verify image digest matches
 	if claims.ImageDigest != release.ImageDigest {
 		s.node.logger.Sugar().Warnw("Image digest mismatch", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "expected", release.ImageDigest, "got", claims.ImageDigest)
 		http.Error(w, "Image digest mismatch - unauthorized image", http.StatusForbidden)

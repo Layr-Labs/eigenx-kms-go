@@ -3,6 +3,8 @@ package node
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -39,6 +41,7 @@ func Test_SecretsEndpoint(t *testing.T) {
 	t.Run("Validation", func(t *testing.T) { testSecretsEndpointValidation(t) })
 	t.Run("ImageDigestMismatch", func(t *testing.T) { testSecretsEndpointImageDigestMismatch(t) })
 	t.Run("AppIDMismatch", func(t *testing.T) { testSecretsEndpointAppIDMismatch(t) })
+	t.Run("NonceMismatch", func(t *testing.T) { testSecretsEndpointNonceMismatch(t) })
 	t.Run("ContainerPolicyMismatch", func(t *testing.T) { testSecretsEndpointContainerPolicyMismatch(t) })
 	t.Run("ContainerPolicyCmdOverrideMismatch", func(t *testing.T) { testSecretsEndpointCmdOverrideMismatch(t) })
 	t.Run("ContainerPolicyEnvOverrideMismatch", func(t *testing.T) { testSecretsEndpointEnvOverrideMismatch(t) })
@@ -150,11 +153,14 @@ func testSecretsEndpointFlow(t *testing.T) {
 		t.Fatalf("Failed to generate RSA key pair: %v", err)
 	}
 
+	// Create test attestation with matching claims; nonce must be hex(sha256(rsa_pubkey_tmp))
+	h := sha256.Sum256(pubKeyPEM)
 	testClaims := kmsTypes.AttestationClaims{
 		AppID:       "test-app",
 		ImageDigest: "sha256:test123",
 		IssuedAt:    time.Now().Unix(),
 		PublicKey:   pubKeyPEM,
+		Nonce:       hex.EncodeToString(h[:]),
 	}
 	attestationBytes, _ := json.Marshal(testClaims)
 
@@ -241,11 +247,15 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 		Timestamp:    time.Now().Unix(),
 	})
 
+	// Create attestation with DIFFERENT digest; nonce must match rsa_pubkey_tmp
+	rsaKey := []byte("test-key")
+	hd := sha256.Sum256(rsaKey)
 	testClaims := kmsTypes.AttestationClaims{
 		AppID:       "test-app",
 		ImageDigest: "sha256:wrong-digest", // Different from release
 		IssuedAt:    time.Now().Unix(),
 		PublicKey:   []byte("dummy-key"),
+		Nonce:       hex.EncodeToString(hd[:]),
 	}
 	attestationBytes, _ := json.Marshal(testClaims)
 
@@ -253,7 +263,7 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 		AppID:             "test-app",
 		AttestationMethod: "gcp",
 		Attestation:       attestationBytes,
-		RSAPubKeyTmp:      []byte("test-key"),
+		RSAPubKeyTmp:      rsaKey,
 	}
 	reqBody, _ := json.Marshal(req)
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
@@ -268,53 +278,15 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 
 // testSecretsEndpointAppIDMismatch tests app identity binding between request and attestation claims.
 func testSecretsEndpointAppIDMismatch(t *testing.T) {
-	peeringDataFetcher := createTestPeeringDataFetcher(t)
-
-	projectRoot := tests.GetProjectRootPath()
-	chainConfig, err := tests.ReadChainConfig(projectRoot)
-	if err != nil {
-		t.Fatalf("Failed to read chain config: %v", err)
-	}
-
-	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
-	cfg := Config{
-		OperatorAddress: chainConfig.OperatorAccountAddress1,
-		Port:            0,
-		ChainID:         config.ChainId_EthereumAnvil,
-		AVSAddress:      "0x1234567890123456789012345678901234567890",
-		OperatorSetId:   1,
-	}
-	bh := blockHandler.NewBlockHandler(testLogger)
-	mockPoller := &mockChainPoller{}
-
-	pkBytes, err := hexutil.Decode(chainConfig.OperatorAccountPrivateKey1)
-	if err != nil {
-		t.Fatalf("Failed to decode BN254 private key: %v", err)
-	}
-	imts, err := inMemoryTransportSigner.NewBn254InMemoryTransportSigner(pkBytes, testLogger)
-	if err != nil {
-		t.Fatalf("Failed to create in-memory transport signer: %v", err)
-	}
-
-	mockManager := attestation.NewStubManager()
-	mockBaseContractCaller := contractCaller.NewTestableContractCallerStub()
-	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	server, mockCaller := newTestServer(t)
 
 	// Release exists for requested app; request should still fail because claims AppID mismatches.
-	mockBaseContractCaller.AddTestRelease("requested-app", &kmsTypes.Release{
+	mockCaller.AddTestRelease("requested-app", &kmsTypes.Release{
 		ImageDigest:  "sha256:test-digest",
 		EncryptedEnv: "env-data",
 		PublicEnv:    "PUBLIC=value",
 		Timestamp:    time.Now().Unix(),
 	})
-
-	persistence := memory.NewMemoryPersistence()
-	defer func() { _ = persistence.Close() }()
-
-	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockManager, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
-	if err != nil {
-		t.Fatalf("Failed to create node: %v", err)
-	}
 
 	// claims.AppID intentionally differs from req.AppID.
 	testClaims := kmsTypes.AttestationClaims{
@@ -335,11 +307,52 @@ func testSecretsEndpointAppIDMismatch(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
 	w := httptest.NewRecorder()
 
-	server := NewServer(node, 0)
 	server.handleSecretsRequest(w, httpReq)
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("Expected status 403 for app ID mismatch, got %d", w.Code)
+	}
+}
+
+// testSecretsEndpointNonceMismatch tests that GCP/Intel attestation fails when
+// the rsa_pubkey_tmp is not bound to the attestation token nonce (KMS-004).
+func testSecretsEndpointNonceMismatch(t *testing.T) {
+	server, mockCaller := newTestServer(t)
+
+	mockCaller.AddTestRelease("test-app", &kmsTypes.Release{
+		ImageDigest:  "sha256:test123",
+		EncryptedEnv: "env-data",
+		PublicEnv:    "PUBLIC=value",
+		Timestamp:    time.Now().Unix(),
+	})
+
+	legitimateRSAKey := []byte("legitimate-rsa-key")
+	attackerRSAKey := []byte("attacker-rsa-key")
+
+	// Attestation nonce is bound to the legitimate key, but request sends attacker's key
+	h := sha256.Sum256(legitimateRSAKey)
+	testClaims := kmsTypes.AttestationClaims{
+		AppID:       "test-app",
+		ImageDigest: "sha256:test123",
+		IssuedAt:    time.Now().Unix(),
+		Nonce:       hex.EncodeToString(h[:]),
+	}
+	attestationBytes, _ := json.Marshal(testClaims)
+
+	req := kmsTypes.SecretsRequestV1{
+		AppID:             "test-app",
+		AttestationMethod: "gcp",
+		Attestation:       attestationBytes,
+		RSAPubKeyTmp:      attackerRSAKey, // substituted key
+	}
+	reqBody, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
+	w := httptest.NewRecorder()
+
+	server.handleSecretsRequest(w, httpReq)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401 for nonce mismatch, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
@@ -359,9 +372,12 @@ func testSecretsEndpointContainerPolicyMismatch(t *testing.T) {
 		},
 	})
 
+	rsaKey := []byte("test-key")
+	hn := sha256.Sum256(rsaKey)
 	testClaims := kmsTypes.AttestationClaims{
 		AppID:       "test-app",
 		ImageDigest: "sha256:correct-digest",
+		Nonce:       hex.EncodeToString(hn[:]),
 		ContainerPolicy: kmsTypes.ContainerPolicy{
 			Args:          []string{"/malicious.sh", "exploit"}, // wrong args
 			RestartPolicy: "Never",
@@ -373,7 +389,7 @@ func testSecretsEndpointContainerPolicyMismatch(t *testing.T) {
 		AppID:             "test-app",
 		AttestationMethod: "gcp",
 		Attestation:       attestationBytes,
-		RSAPubKeyTmp:      []byte("test-key"),
+		RSAPubKeyTmp:      rsaKey,
 	}
 	reqBody, _ := json.Marshal(req)
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
@@ -400,9 +416,12 @@ func testSecretsEndpointCmdOverrideMismatch(t *testing.T) {
 		},
 	})
 
+	rsaKey := []byte("test-key")
+	hn := sha256.Sum256(rsaKey)
 	testClaims := kmsTypes.AttestationClaims{
 		AppID:       "test-app",
 		ImageDigest: "sha256:correct-digest",
+		Nonce:       hex.EncodeToString(hn[:]),
 		ContainerPolicy: kmsTypes.ContainerPolicy{
 			CmdOverride: []string{"/bin/server", "--port=9999"}, // wrong port
 		},
@@ -413,7 +432,7 @@ func testSecretsEndpointCmdOverrideMismatch(t *testing.T) {
 		AppID:             "test-app",
 		AttestationMethod: "gcp",
 		Attestation:       attestationBytes,
-		RSAPubKeyTmp:      []byte("test-key"),
+		RSAPubKeyTmp:      rsaKey,
 	}
 	reqBody, _ := json.Marshal(req)
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
@@ -440,9 +459,12 @@ func testSecretsEndpointEnvOverrideMismatch(t *testing.T) {
 		},
 	})
 
+	rsaKey := []byte("test-key")
+	hn := sha256.Sum256(rsaKey)
 	testClaims := kmsTypes.AttestationClaims{
 		AppID:       "test-app",
 		ImageDigest: "sha256:correct-digest",
+		Nonce:       hex.EncodeToString(hn[:]),
 		ContainerPolicy: kmsTypes.ContainerPolicy{
 			EnvOverride: map[string]string{"LOG_LEVEL": "debug"}, // wrong value
 		},
@@ -453,7 +475,7 @@ func testSecretsEndpointEnvOverrideMismatch(t *testing.T) {
 		AppID:             "test-app",
 		AttestationMethod: "gcp",
 		Attestation:       attestationBytes,
-		RSAPubKeyTmp:      []byte("test-key"),
+		RSAPubKeyTmp:      rsaKey,
 	}
 	reqBody, _ := json.Marshal(req)
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
@@ -493,9 +515,11 @@ func testSecretsEndpointEnvOverrideSuccess(t *testing.T) {
 		t.Fatalf("Failed to generate RSA key pair: %v", err)
 	}
 
+	h := sha256.Sum256(pubKeyPEM)
 	testClaims := kmsTypes.AttestationClaims{
 		AppID:       "test-app",
 		ImageDigest: "sha256:correct-digest",
+		Nonce:       hex.EncodeToString(h[:]),
 		ContainerPolicy: kmsTypes.ContainerPolicy{
 			EnvOverride: map[string]string{
 				"LOG_LEVEL": "info",
@@ -554,10 +578,12 @@ func testSecretsEndpointContainerPolicySuccess(t *testing.T) {
 		t.Fatalf("Failed to generate RSA key pair: %v", err)
 	}
 
+	h := sha256.Sum256(pubKeyPEM)
 	// Attestation claims match the on-chain policy exactly; extra env vars are allowed
 	testClaims := kmsTypes.AttestationClaims{
 		AppID:       "my-app",
 		ImageDigest: "sha256:app-digest",
+		Nonce:       hex.EncodeToString(h[:]),
 		ContainerPolicy: kmsTypes.ContainerPolicy{
 			Args:          []string{"/entrypoint.sh", "start"},
 			RestartPolicy: "Never",
