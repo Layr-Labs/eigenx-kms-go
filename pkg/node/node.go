@@ -1392,8 +1392,11 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	// Wait for acknowledgements (as a dealer).
 	// We require a threshold (t) of *other* operators to ack, so that there exist t non-dealer holders
 	// of this dealer's contribution (robust even if the dealer goes offline later).
+	// New operators don't send acks (they only receive shares), so the reachable ack count is
+	// len(operators)-numNewOperators. Apply CalculateThreshold to that contributor set so the
+	// threshold is never higher than the number of operators that can actually respond.
 	myNodeID := addressToNodeID(n.OperatorAddress)
-	requiredAcks := newThreshold
+	requiredAcks := dkg.CalculateThreshold(len(operators) - numNewOperators)
 	if requiredAcks < 0 {
 		requiredAcks = 0
 	}
