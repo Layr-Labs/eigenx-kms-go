@@ -9,7 +9,7 @@ import (
 
 // GCPAttestationMethod implements AttestationMethod for Google Confidential Space attestations
 type GCPAttestationMethod struct {
-	verifier *AttestationVerifier
+	verifier AttestationVerifierInterface
 	provider AttestationProvider
 }
 
