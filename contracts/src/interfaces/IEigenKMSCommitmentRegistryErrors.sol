@@ -46,6 +46,9 @@ interface IEigenKMSCommitmentRegistryErrors {
     /// @dev Selector: 0xcb76bd63
     error AcksMustBeFromDifferentPlayers();
 
+    /// @notice Thrown when equivocation for this dealer and epoch has already been proven
+    error EquivocationAlreadyProven();
+
     /// @notice Thrown when the two acks carry different dealer addresses
     error DealerMismatch();
 

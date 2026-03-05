@@ -408,6 +408,10 @@ contract EigenKMSCommitmentRegistryTest is Test, IEigenKMSCommitmentRegistryErro
         vm.expectEmit(true, true, false, true);
         emit EquivocationProven(epoch, operator1, operator2, operator3);
         registry.proveEquivocation(epoch, operator1, ack1, ack2);
+
+        // Second call with the same (or any) acks must revert — equivocation already recorded
+        vm.expectRevert(EquivocationAlreadyProven.selector);
+        registry.proveEquivocation(epoch, operator1, ack1, ack2);
     }
 
     /// @notice Test proveEquivocation rejects when dealer has no commitment

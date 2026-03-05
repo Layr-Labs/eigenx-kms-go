@@ -27,10 +27,14 @@ abstract contract EigenKMSCommitmentRegistryStorage is IEigenKMSCommitmentRegist
     /// @notice Mapping: epoch => operator => commitment data
     mapping(uint64 => mapping(address => OperatorCommitment)) public commitments;
 
+    /// @notice Mapping: epoch => dealer => whether equivocation has already been proven
+    /// @dev Prevents replaying the same equivocation proof to slash an operator multiple times
+    mapping(uint64 => mapping(address => bool)) public equivocationProven;
+
     /**
      * @dev This empty reserved space is put in place to allow future versions to add new
      * variables without shifting down storage in the inheritance chain.
      * See https://docs.openzeppelin.com/contracts/4.x/upgradeable#storage_gaps
      */
-    uint256[44] private __gap;
+    uint256[43] private __gap;
 }
