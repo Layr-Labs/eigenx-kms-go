@@ -41,6 +41,9 @@ func Test_SecretsEndpoint(t *testing.T) {
 	t.Run("ImageDigestMismatch", func(t *testing.T) { testSecretsEndpointImageDigestMismatch(t) })
 	t.Run("AppIDMismatch", func(t *testing.T) { testSecretsEndpointAppIDMismatch(t) })
 	t.Run("ContainerPolicyMismatch", func(t *testing.T) { testSecretsEndpointContainerPolicyMismatch(t) })
+	t.Run("ContainerPolicyCmdOverrideMismatch", func(t *testing.T) { testSecretsEndpointCmdOverrideMismatch(t) })
+	t.Run("ContainerPolicyEnvOverrideMismatch", func(t *testing.T) { testSecretsEndpointEnvOverrideMismatch(t) })
+	t.Run("ContainerPolicyEnvOverrideSuccess", func(t *testing.T) { testSecretsEndpointEnvOverrideSuccess(t) })
 	t.Run("ContainerPolicySuccess", func(t *testing.T) { testSecretsEndpointContainerPolicySuccess(t) })
 }
 
@@ -635,5 +638,263 @@ func testSecretsEndpointContainerPolicySuccess(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status 200 when container policy matches, got %d. Body: %s", w.Code, w.Body.String())
+	}
+}
+
+// testSecretsEndpointCmdOverrideMismatch tests that a CmdOverride mismatch is rejected.
+func testSecretsEndpointCmdOverrideMismatch(t *testing.T) {
+	peeringDataFetcher := createTestPeeringDataFetcher(t)
+
+	projectRoot := tests.GetProjectRootPath()
+	chainConfig, err := tests.ReadChainConfig(projectRoot)
+	if err != nil {
+		t.Fatalf("Failed to read chain config: %v", err)
+	}
+
+	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
+	cfg := Config{
+		OperatorAddress: chainConfig.OperatorAccountAddress1,
+		Port:            0,
+		ChainID:         config.ChainId_EthereumAnvil,
+		AVSAddress:      "0x1234567890123456789012345678901234567890",
+		OperatorSetId:   1,
+	}
+	bh := blockHandler.NewBlockHandler(testLogger)
+	mockPoller := &mockChainPoller{}
+
+	pkBytes, err := hexutil.Decode(chainConfig.OperatorAccountPrivateKey1)
+	if err != nil {
+		t.Fatalf("Failed to decode BN254 private key: %v", err)
+	}
+	imts, err := inMemoryTransportSigner.NewBn254InMemoryTransportSigner(pkBytes, testLogger)
+	if err != nil {
+		t.Fatalf("Failed to create in-memory transport signer: %v", err)
+	}
+
+	mockManager := attestation.NewStubManager()
+	mockBaseContractCaller := contractCaller.NewTestableContractCallerStub()
+	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
+
+	testRelease := &kmsTypes.Release{
+		ImageDigest:  "sha256:correct-digest",
+		EncryptedEnv: "env-data",
+		PublicEnv:    "PUBLIC=value",
+		Timestamp:    time.Now().Unix(),
+		ContainerPolicy: kmsTypes.ContainerPolicy{
+			CmdOverride: []string{"/bin/server", "--port=8080"},
+		},
+	}
+	mockBaseContractCaller.AddTestRelease("test-app", testRelease)
+
+	persistence := memory.NewMemoryPersistence()
+	defer func() { _ = persistence.Close() }()
+
+	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockManager, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
+	if err != nil {
+		t.Fatalf("Failed to create node: %v", err)
+	}
+
+	testClaims := kmsTypes.AttestationClaims{
+		AppID:       "test-app",
+		ImageDigest: "sha256:correct-digest",
+		CmdOverride: []string{"/bin/server", "--port=9999"}, // wrong port
+	}
+	attestationBytes, _ := json.Marshal(testClaims)
+
+	req := kmsTypes.SecretsRequestV1{
+		AppID:             "test-app",
+		AttestationMethod: "gcp",
+		Attestation:       attestationBytes,
+		RSAPubKeyTmp:      []byte("test-key"),
+	}
+	reqBody, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
+	w := httptest.NewRecorder()
+
+	server := NewServer(node, 0)
+	server.handleSecretsRequest(w, httpReq)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("Expected status 403 for cmd_override mismatch, got %d. Body: %s", w.Code, w.Body.String())
+	}
+}
+
+// testSecretsEndpointEnvOverrideMismatch tests that an EnvOverride key mismatch is rejected.
+func testSecretsEndpointEnvOverrideMismatch(t *testing.T) {
+	peeringDataFetcher := createTestPeeringDataFetcher(t)
+
+	projectRoot := tests.GetProjectRootPath()
+	chainConfig, err := tests.ReadChainConfig(projectRoot)
+	if err != nil {
+		t.Fatalf("Failed to read chain config: %v", err)
+	}
+
+	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
+	cfg := Config{
+		OperatorAddress: chainConfig.OperatorAccountAddress1,
+		Port:            0,
+		ChainID:         config.ChainId_EthereumAnvil,
+		AVSAddress:      "0x1234567890123456789012345678901234567890",
+		OperatorSetId:   1,
+	}
+	bh := blockHandler.NewBlockHandler(testLogger)
+	mockPoller := &mockChainPoller{}
+
+	pkBytes, err := hexutil.Decode(chainConfig.OperatorAccountPrivateKey1)
+	if err != nil {
+		t.Fatalf("Failed to decode BN254 private key: %v", err)
+	}
+	imts, err := inMemoryTransportSigner.NewBn254InMemoryTransportSigner(pkBytes, testLogger)
+	if err != nil {
+		t.Fatalf("Failed to create in-memory transport signer: %v", err)
+	}
+
+	mockManager := attestation.NewStubManager()
+	mockBaseContractCaller := contractCaller.NewTestableContractCallerStub()
+	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
+
+	testRelease := &kmsTypes.Release{
+		ImageDigest:  "sha256:correct-digest",
+		EncryptedEnv: "env-data",
+		PublicEnv:    "PUBLIC=value",
+		Timestamp:    time.Now().Unix(),
+		ContainerPolicy: kmsTypes.ContainerPolicy{
+			EnvOverride: map[string]string{
+				"LOG_LEVEL": "info",
+			},
+		},
+	}
+	mockBaseContractCaller.AddTestRelease("test-app", testRelease)
+
+	persistence := memory.NewMemoryPersistence()
+	defer func() { _ = persistence.Close() }()
+
+	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockManager, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
+	if err != nil {
+		t.Fatalf("Failed to create node: %v", err)
+	}
+
+	testClaims := kmsTypes.AttestationClaims{
+		AppID:       "test-app",
+		ImageDigest: "sha256:correct-digest",
+		EnvOverride: map[string]string{
+			"LOG_LEVEL": "debug", // wrong value
+		},
+	}
+	attestationBytes, _ := json.Marshal(testClaims)
+
+	req := kmsTypes.SecretsRequestV1{
+		AppID:             "test-app",
+		AttestationMethod: "gcp",
+		Attestation:       attestationBytes,
+		RSAPubKeyTmp:      []byte("test-key"),
+	}
+	reqBody, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
+	w := httptest.NewRecorder()
+
+	server := NewServer(node, 0)
+	server.handleSecretsRequest(w, httpReq)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("Expected status 403 for env_override mismatch, got %d. Body: %s", w.Code, w.Body.String())
+	}
+}
+
+// testSecretsEndpointEnvOverrideSuccess tests that extra EnvOverride keys not in the policy are allowed.
+func testSecretsEndpointEnvOverrideSuccess(t *testing.T) {
+	peeringDataFetcher := createTestPeeringDataFetcher(t)
+
+	projectRoot := tests.GetProjectRootPath()
+	chainConfig, err := tests.ReadChainConfig(projectRoot)
+	if err != nil {
+		t.Fatalf("Failed to read chain config: %v", err)
+	}
+
+	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
+	cfg := Config{
+		OperatorAddress: chainConfig.OperatorAccountAddress1,
+		Port:            0,
+		ChainID:         config.ChainId_EthereumAnvil,
+		AVSAddress:      "0x1234567890123456789012345678901234567890",
+		OperatorSetId:   1,
+	}
+	bh := blockHandler.NewBlockHandler(testLogger)
+	mockPoller := &mockChainPoller{}
+
+	pkBytes, err := hexutil.Decode(chainConfig.OperatorAccountPrivateKey1)
+	if err != nil {
+		t.Fatalf("Failed to decode BN254 private key: %v", err)
+	}
+	imts, err := inMemoryTransportSigner.NewBn254InMemoryTransportSigner(pkBytes, testLogger)
+	if err != nil {
+		t.Fatalf("Failed to create in-memory transport signer: %v", err)
+	}
+
+	mockManager := attestation.NewStubManager()
+	mockBaseContractCaller := contractCaller.NewTestableContractCallerStub()
+	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
+
+	testRelease := &kmsTypes.Release{
+		ImageDigest:  "sha256:correct-digest",
+		EncryptedEnv: "env-data",
+		PublicEnv:    "PUBLIC=value",
+		Timestamp:    time.Now().Unix(),
+		ContainerPolicy: kmsTypes.ContainerPolicy{
+			EnvOverride: map[string]string{
+				"LOG_LEVEL": "info",
+			},
+		},
+	}
+	mockBaseContractCaller.AddTestRelease("test-app", testRelease)
+
+	persistence := memory.NewMemoryPersistence()
+	defer func() { _ = persistence.Close() }()
+
+	node, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, mockManager, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
+	if err != nil {
+		t.Fatalf("Failed to create node: %v", err)
+	}
+
+	// Add a key share so the node can produce a partial signature
+	node.keyStore.AddVersion(&kmsTypes.KeyShareVersion{
+		Version:        time.Now().Unix(),
+		PrivateShare:   new(fr.Element).SetInt64(42),
+		Commitments:    []kmsTypes.G2Point{},
+		IsActive:       true,
+		ParticipantIDs: []int64{1},
+	})
+
+	_, pubKeyPEM, err := encryption.GenerateKeyPair(2048)
+	if err != nil {
+		t.Fatalf("Failed to generate RSA key pair: %v", err)
+	}
+
+	testClaims := kmsTypes.AttestationClaims{
+		AppID:       "test-app",
+		ImageDigest: "sha256:correct-digest",
+		EnvOverride: map[string]string{
+			"LOG_LEVEL": "info",
+			"REGION":    "us-east-1", // extra key not in policy — must still pass
+		},
+	}
+	attestationBytes, _ := json.Marshal(testClaims)
+
+	req := kmsTypes.SecretsRequestV1{
+		AppID:             "test-app",
+		AttestationMethod: "gcp",
+		Attestation:       attestationBytes,
+		RSAPubKeyTmp:      pubKeyPEM,
+		AttestTime:        time.Now().Unix(),
+	}
+	reqBody, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
+	w := httptest.NewRecorder()
+
+	server := NewServer(node, 0)
+	server.handleSecretsRequest(w, httpReq)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Expected status 200 when env_override is a superset of policy, got %d. Body: %s", w.Code, w.Body.String())
 	}
 }
