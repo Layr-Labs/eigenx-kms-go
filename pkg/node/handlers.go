@@ -152,7 +152,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Step 4b: Verify container execution policy matches on-chain values
-	if err := validateContainerPolicy(claims, release.ContainerPolicy); err != nil {
+	if err := validateContainerPolicy(claims.ContainerPolicy, release.ContainerPolicy); err != nil {
 		s.node.logger.Sugar().Warnw("Container policy mismatch", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
 		http.Error(w, fmt.Sprintf("Container policy mismatch: %v", err), http.StatusForbidden)
 		return
@@ -575,7 +575,7 @@ func (s *Server) handleReshareComplete(w http.ResponseWriter, r *http.Request) {
 // match the on-chain policy registered by the app developer. Fields with zero/empty
 // values in the policy are not enforced, allowing developers to restrict only the
 // fields they care about.
-func validateContainerPolicy(claims *types.AttestationClaims, policy types.ContainerPolicy) error {
+func validateContainerPolicy(claims types.ContainerPolicy, policy types.ContainerPolicy) error {
 	if len(policy.Args) > 0 && !slices.Equal(claims.Args, policy.Args) {
 		return fmt.Errorf("args mismatch: expected %v, got %v", policy.Args, claims.Args)
 	}

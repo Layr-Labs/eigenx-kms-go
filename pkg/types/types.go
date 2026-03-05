@@ -135,17 +135,12 @@ type ContainerPolicy struct {
 
 // AttestationClaims represents parsed attestation data
 type AttestationClaims struct {
-	AppID       string
-	ImageDigest string
-	Nonce       string
-	IssuedAt    int64
-	PublicKey   []byte
-	// Container execution fields extracted from JWT submods.container
-	Args          []string
-	CmdOverride   []string
-	Env           map[string]string
-	EnvOverride   map[string]string
-	RestartPolicy string
+	AppID           string
+	ImageDigest     string
+	Nonce           string
+	IssuedAt        int64
+	PublicKey       []byte
+	ContainerPolicy ContainerPolicy
 }
 
 // Release represents application release data from on-chain registry

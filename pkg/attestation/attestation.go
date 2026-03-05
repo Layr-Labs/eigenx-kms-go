@@ -43,6 +43,7 @@ type ConfidentialSpaceToken struct {
 	Audience    any        `json:"aud"`
 	Exp         int64      `json:"exp"`
 	Nbf         int64      `json:"nbf"`
+	Iat         int64      `json:"iat"`
 	EatNonce    any        `json:"eat_nonce,omitempty"` // string for Google, []string for Intel
 	SwName      string     `json:"swname"`
 	AttesterTCB []string   `json:"attester_tcb,omitempty"` // Only in Google CS
@@ -206,14 +207,17 @@ func (av *AttestationVerifier) VerifyAttestation(ctx context.Context, tokenStrin
 	}
 
 	result := &types.AttestationClaims{
-		AppID:         appID,
-		ImageDigest:   csToken.SubMods.Container.ImageDigest,
-		Nonce:         nonce,
-		Args:          csToken.SubMods.Container.Args,
-		CmdOverride:   csToken.SubMods.Container.CmdOverride,
-		Env:           csToken.SubMods.Container.Env,
-		EnvOverride:   csToken.SubMods.Container.EnvOverride,
-		RestartPolicy: csToken.SubMods.Container.RestartPolicy,
+		AppID:       appID,
+		ImageDigest: csToken.SubMods.Container.ImageDigest,
+		Nonce:       nonce,
+		IssuedAt:    csToken.Iat,
+		ContainerPolicy: types.ContainerPolicy{
+			Args:          csToken.SubMods.Container.Args,
+			CmdOverride:   csToken.SubMods.Container.CmdOverride,
+			Env:           csToken.SubMods.Container.Env,
+			EnvOverride:   csToken.SubMods.Container.EnvOverride,
+			RestartPolicy: csToken.SubMods.Container.RestartPolicy,
+		},
 	}
 
 	av.logger.Debug("Attestation claims extracted", "app_id", appID, "image_digest", csToken.SubMods.Container.ImageDigest, "nonce", nonce)
