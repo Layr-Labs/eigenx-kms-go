@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -404,10 +406,17 @@ func TestSecretsEndpoint_BothMethodsEnabled(t *testing.T) {
 	require.NoError(t, err)
 
 	// Test 1: Use GCP method
+	hGCP := sha256.Sum256(pubKeyPEM)
+	gcpClaims := kmsTypes.AttestationClaims{
+		AppID:       "test-app-gcp",
+		ImageDigest: "sha256:gcp-image",
+		Nonce:       hex.EncodeToString(hGCP[:]),
+	}
+	gcpClaimsBytes, _ := json.Marshal(gcpClaims)
 	reqGCP := kmsTypes.SecretsRequestV1{
 		AppID:             "test-app-gcp",
 		AttestationMethod: "gcp",
-		Attestation:       []byte("dummy-gcp-token"),
+		Attestation:       gcpClaimsBytes,
 		RSAPubKeyTmp:      pubKeyPEM,
 	}
 
