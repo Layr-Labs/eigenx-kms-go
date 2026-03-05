@@ -1288,7 +1288,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	// Validate that enough old participants remain in the new operator set to reconstruct the secret.
 	// If too many operators were replaced since the last DKG/reshare, the master secret cannot be
 	// maintained and reshare must not proceed.
-	if activeVersion := n.keyStore.GetActiveVersion(); activeVersion != nil && len(activeVersion.ParticipantIDs) > 0 {
+	if activeVersion := n.keyStore.GetActiveVersion(); activeVersion != nil {
 		if err := validateReshareOperatorOverlap(activeVersion.ParticipantIDs, operators); err != nil {
 			return fmt.Errorf("reshare operator set validation failed: %w", err)
 		}
