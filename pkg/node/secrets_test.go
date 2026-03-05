@@ -43,6 +43,7 @@ func Test_SecretsEndpoint(t *testing.T) {
 	t.Run("AppIDMismatch", func(t *testing.T) { testSecretsEndpointAppIDMismatch(t) })
 	t.Run("NonceMismatch", func(t *testing.T) { testSecretsEndpointNonceMismatch(t) })
 	t.Run("IntelNonceMismatch", func(t *testing.T) { testSecretsEndpointIntelNonceMismatch(t) })
+	t.Run("EmptyNonce", func(t *testing.T) { testSecretsEndpointEmptyNonce(t) })
 	t.Run("ContainerPolicyMismatch", func(t *testing.T) { testSecretsEndpointContainerPolicyMismatch(t) })
 	t.Run("ContainerPolicyCmdOverrideMismatch", func(t *testing.T) { testSecretsEndpointCmdOverrideMismatch(t) })
 	t.Run("ContainerPolicyEnvOverrideMismatch", func(t *testing.T) { testSecretsEndpointEnvOverrideMismatch(t) })
@@ -395,6 +396,47 @@ func testSecretsEndpointIntelNonceMismatch(t *testing.T) {
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("Expected status 401 for intel nonce mismatch, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+// testSecretsEndpointEmptyNonce tests that GCP/Intel attestation fails when the
+// JWT was issued without an eat_nonce claim (claims.Nonce == ""), which is the
+// migration scenario from older TEE deployments that predate KMS-004 hardening.
+func testSecretsEndpointEmptyNonce(t *testing.T) {
+	server, mockCaller := newTestServer(t)
+
+	mockCaller.AddTestRelease("test-app", &kmsTypes.Release{
+		ImageDigest:  "sha256:test123",
+		EncryptedEnv: "env-data",
+		PublicEnv:    "PUBLIC=value",
+		Timestamp:    time.Now().Unix(),
+	})
+
+	rsaKey := []byte("test-rsa-key")
+
+	// Simulate a JWT issued without eat_nonce: Nonce is empty string
+	testClaims := kmsTypes.AttestationClaims{
+		AppID:       "test-app",
+		ImageDigest: "sha256:test123",
+		IssuedAt:    time.Now().Unix(),
+		Nonce:       "", // no eat_nonce in token
+	}
+	attestationBytes, _ := json.Marshal(testClaims)
+
+	req := kmsTypes.SecretsRequestV1{
+		AppID:             "test-app",
+		AttestationMethod: "gcp",
+		Attestation:       attestationBytes,
+		RSAPubKeyTmp:      rsaKey,
+	}
+	reqBody, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
+	w := httptest.NewRecorder()
+
+	server.handleSecretsRequest(w, httpReq)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401 for missing eat_nonce, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
