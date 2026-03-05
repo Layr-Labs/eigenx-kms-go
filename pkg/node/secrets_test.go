@@ -39,6 +39,7 @@ func Test_SecretsEndpoint(t *testing.T) {
 	t.Run("Flow", func(t *testing.T) { testSecretsEndpointFlow(t) })
 	t.Run("Validation", func(t *testing.T) { testSecretsEndpointValidation(t) })
 	t.Run("ImageDigestMismatch", func(t *testing.T) { testSecretsEndpointImageDigestMismatch(t) })
+	t.Run("TwoPhaseUpgrade", func(t *testing.T) { testSecretsEndpointTwoPhaseUpgrade(t) })
 }
 
 // createTestPeeringDataFetcher creates a test peering data fetcher using ChainConfig data
@@ -365,5 +366,145 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 	// Should fail with forbidden due to digest mismatch
 	if w.Code != http.StatusForbidden {
 		t.Errorf("Expected status 403 for image digest mismatch, got %d", w.Code)
+	}
+}
+
+// testSecretsEndpointTwoPhaseUpgrade verifies Fix 3 for KMS-009: in-flight requests that were
+// issued before an app upgrade completes are not rejected after the developer calls upgradeApp().
+//
+// Race scenario without the fix:
+//  1. App is running with image digest A (confirmed on-chain).
+//  2. App sends attestation with digest A and the request enters the KMS pipeline.
+//  3. Developer calls upgradeApp() → on-chain digest immediately becomes B.
+//  4. KMS processes the request, reads digest B, rejects the legitimate request.
+//
+// With two-phase upgrade:
+//  1. upgradeApp() writes digest B to pendingRelease (confirmed release stays A).
+//  2. In-flight request with digest A → validated against confirmed release (A) → succeeds.
+//  3. Coordinator calls confirmUpgrade() → confirmed release becomes B.
+//  4. Requests with digest A now fail; requests with digest B succeed.
+func testSecretsEndpointTwoPhaseUpgrade(t *testing.T) {
+	projectRoot := tests.GetProjectRootPath()
+	chainConfig, err := tests.ReadChainConfig(projectRoot)
+	if err != nil {
+		t.Fatalf("Failed to read chain config: %v", err)
+	}
+
+	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
+	cfg := Config{
+		OperatorAddress: chainConfig.OperatorAccountAddress1,
+		Port:            0,
+		ChainID:         config.ChainId_EthereumAnvil,
+		AVSAddress:      "0x1234567890123456789012345678901234567890",
+		OperatorSetId:   1,
+	}
+	bh := blockHandler.NewBlockHandler(testLogger)
+	peeringDataFetcher := createTestPeeringDataFetcher(t)
+	pkBytes, err := hexutil.Decode(chainConfig.OperatorAccountPrivateKey1)
+	if err != nil {
+		t.Fatalf("Failed to decode BN254 private key: %v", err)
+	}
+	imts, err := inMemoryTransportSigner.NewBn254InMemoryTransportSigner(pkBytes, testLogger)
+	if err != nil {
+		t.Fatalf("Failed to create in-memory transport signer: %v", err)
+	}
+
+	mockManager := attestation.NewStubManager()
+	mockBaseContractCaller := contractCaller.NewTestableContractCallerStub()
+	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
+
+	oldDigest := "sha256:old-image-digest"
+	newDigest := "sha256:new-image-digest"
+
+	// Start with old digest confirmed on-chain.
+	confirmedRelease := &kmsTypes.Release{
+		ImageDigest:  oldDigest,
+		EncryptedEnv: "encrypted-env-data",
+		PublicEnv:    "PUBLIC_VAR=value",
+		Timestamp:    time.Now().Unix(),
+	}
+	mockBaseContractCaller.AddTestRelease("test-app", confirmedRelease)
+
+	persistence := memory.NewMemoryPersistence()
+	defer func() { _ = persistence.Close() }()
+
+	node, err := NewNode(cfg, peeringDataFetcher, bh, nil, imts, mockManager, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
+	if err != nil {
+		t.Fatalf("Failed to create node: %v", err)
+	}
+
+	testShare := new(fr.Element).SetInt64(42)
+	node.keyStore.AddVersion(&kmsTypes.KeyShareVersion{
+		Version:        time.Now().Unix(),
+		PrivateShare:   testShare,
+		Commitments:    []kmsTypes.G2Point{},
+		IsActive:       true,
+		ParticipantIDs: []int64{1},
+	})
+
+	_, pubKeyPEM, err := encryption.GenerateKeyPair(2048)
+	if err != nil {
+		t.Fatalf("Failed to generate RSA key pair: %v", err)
+	}
+
+	server := NewServer(node, 0)
+
+	makeRequest := func(imageDigest string) int {
+		claims := kmsTypes.AttestationClaims{
+			AppID:       "test-app",
+			ImageDigest: imageDigest,
+			IssuedAt:    time.Now().Unix(),
+			PublicKey:   pubKeyPEM,
+		}
+		attestationBytes, _ := json.Marshal(claims)
+		req := kmsTypes.SecretsRequestV1{
+			AppID:             "test-app",
+			AttestationMethod: "gcp",
+			Attestation:       attestationBytes,
+			RSAPubKeyTmp:      pubKeyPEM,
+			AttestTime:        time.Now().Unix(),
+		}
+		body, _ := json.Marshal(req)
+		httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(body))
+		w := httptest.NewRecorder()
+		server.handleSecretsRequest(w, httpReq)
+		return w.Code
+	}
+
+	// Phase 1: before upgrade — old digest succeeds.
+	if code := makeRequest(oldDigest); code != http.StatusOK {
+		t.Fatalf("Phase 1: expected 200 for old digest before upgrade, got %d", code)
+	}
+
+	// Simulate upgradeApp(): new digest written to pending state, confirmed release unchanged.
+	pendingRelease := &kmsTypes.Release{
+		ImageDigest:  newDigest,
+		EncryptedEnv: "new-encrypted-env-data",
+		PublicEnv:    "PUBLIC_VAR=new-value",
+		Timestamp:    time.Now().Unix(),
+	}
+	mockBaseContractCaller.SetPendingRelease("test-app", pendingRelease)
+
+	// Phase 2: upgrade pending — in-flight request with old digest still succeeds (race condition fixed).
+	if code := makeRequest(oldDigest); code != http.StatusOK {
+		t.Fatalf("Phase 2: expected 200 for old digest while upgrade is pending, got %d (race condition not fixed)", code)
+	}
+
+	// Phase 2: new digest not yet confirmed — should be rejected.
+	if code := makeRequest(newDigest); code != http.StatusForbidden {
+		t.Fatalf("Phase 2: expected 403 for new digest before confirmation, got %d", code)
+	}
+
+	// Simulate confirmUpgrade(): Coordinator promotes pending release to confirmed.
+	if err := mockBaseContractCaller.ConfirmPendingRelease("test-app"); err != nil {
+		t.Fatalf("ConfirmPendingRelease failed: %v", err)
+	}
+
+	// Phase 3: after confirmation — new digest succeeds, old digest is rejected.
+	if code := makeRequest(newDigest); code != http.StatusOK {
+		t.Fatalf("Phase 3: expected 200 for new digest after confirmation, got %d", code)
+	}
+	if code := makeRequest(oldDigest); code != http.StatusForbidden {
+		t.Fatalf("Phase 3: expected 403 for old digest after confirmation, got %d", code)
 	}
 }

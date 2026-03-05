@@ -78,6 +78,10 @@ func (m *MockContractCallerStub) GetAppLatestReleaseBlockNumber(app common.Addre
 	return 0, nil
 }
 
+func (m *MockContractCallerStub) GetAppPendingReleaseBlockNumber(app common.Address, opts *bind.CallOpts) (uint32, error) {
+	return 0, nil
+}
+
 func (m *MockContractCallerStub) GetAppStatus(app common.Address, opts *bind.CallOpts) (uint8, error) {
 	return 0, nil
 }
@@ -100,29 +104,61 @@ func (m *MockContractCallerStub) GetLatestReleaseAsRelease(ctx context.Context, 
 	}, nil
 }
 
-// TestableContractCallerStub extends MockContractCallerStub with test data configuration
+func (m *MockContractCallerStub) GetPendingReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error) {
+	return nil, fmt.Errorf("no pending release for app_id: %s", appID)
+}
+
+// TestableContractCallerStub extends MockContractCallerStub with test data configuration.
+// It simulates the two-phase upgrade flow: upgradeApp() writes to pendingReleases,
+// confirmUpgrade() promotes the pending release to the confirmed releases map.
 type TestableContractCallerStub struct {
 	MockContractCallerStub
-	releases map[string]*types.Release
-	mu       sync.RWMutex
+	releases        map[string]*types.Release // confirmed (active) releases
+	pendingReleases map[string]*types.Release // pending releases awaiting confirmation
+	mu              sync.RWMutex
 }
 
 // NewTestableContractCallerStub creates a new testable stub with configurable releases
 func NewTestableContractCallerStub() *TestableContractCallerStub {
 	return &TestableContractCallerStub{
-		releases: make(map[string]*types.Release),
+		releases:        make(map[string]*types.Release),
+		pendingReleases: make(map[string]*types.Release),
 	}
 }
 
-// AddTestRelease adds a test release for a specific app ID
+// AddTestRelease adds a confirmed test release for a specific app ID.
+// This simulates a release that has already been confirmed via confirmUpgrade().
 func (m *TestableContractCallerStub) AddTestRelease(appID string, release *types.Release) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.releases[appID] = release
-	fmt.Printf("Added test release for app_id: %s, image: %s\n", appID, release.ImageDigest)
 }
 
-// GetLatestReleaseAsRelease returns the configured test release for an app
+// SetPendingRelease simulates upgradeApp(): places a new release in the pending state.
+// The confirmed (active) release is unchanged until ConfirmPendingRelease is called.
+func (m *TestableContractCallerStub) SetPendingRelease(appID string, release *types.Release) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pendingReleases[appID] = release
+}
+
+// ConfirmPendingRelease simulates confirmUpgrade(): promotes the pending release to confirmed.
+// Returns an error if no pending release exists for the app.
+func (m *TestableContractCallerStub) ConfirmPendingRelease(appID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	pending, exists := m.pendingReleases[appID]
+	if !exists {
+		return fmt.Errorf("no pending release for app_id: %s", appID)
+	}
+	m.releases[appID] = pending
+	delete(m.pendingReleases, appID)
+	return nil
+}
+
+// GetLatestReleaseAsRelease returns the confirmed (active) release for an app.
+// In the two-phase upgrade model, this is only updated after confirmUpgrade() is called,
+// so in-flight requests issued before an upgrade are still validated correctly.
 func (m *TestableContractCallerStub) GetLatestReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -131,7 +167,18 @@ func (m *TestableContractCallerStub) GetLatestReleaseAsRelease(ctx context.Conte
 	if !exists {
 		return nil, fmt.Errorf("no release found for app_id: %s", appID)
 	}
+	return release, nil
+}
 
-	fmt.Printf("Found release for app_id: %s, image: %s\n", appID, release.ImageDigest)
+// GetPendingReleaseAsRelease returns the pending (unconfirmed) release for an app.
+// Returns an error if no upgrade is awaiting confirmation.
+func (m *TestableContractCallerStub) GetPendingReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	release, exists := m.pendingReleases[appID]
+	if !exists {
+		return nil, fmt.Errorf("no pending release for app_id: %s", appID)
+	}
 	return release, nil
 }

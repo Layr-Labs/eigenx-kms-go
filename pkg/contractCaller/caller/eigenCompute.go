@@ -20,7 +20,13 @@ type Env map[string]string
 type AppControllerInterface interface {
 	GetAppCreator(opts *bind.CallOpts, app common.Address) (common.Address, error)
 	GetAppOperatorSetId(opts *bind.CallOpts, app common.Address) (uint32, error)
+	// GetAppLatestReleaseBlockNumber returns the block number of the latest CONFIRMED release.
+	// A release is confirmed only after confirmUpgrade() has been called by the Coordinator,
+	// which prevents race conditions during in-flight requests at upgrade time.
 	GetAppLatestReleaseBlockNumber(opts *bind.CallOpts, app common.Address) (uint32, error)
+	// GetAppPendingReleaseBlockNumber returns the block number of the pending (unconfirmed) release,
+	// or 0 if no upgrade is awaiting confirmation. Set by upgradeApp(), cleared by confirmUpgrade().
+	GetAppPendingReleaseBlockNumber(opts *bind.CallOpts, app common.Address) (uint32, error)
 	GetAppStatus(opts *bind.CallOpts, app common.Address) (uint8, error)
 	FilterAppUpgraded(opts *bind.FilterOpts, apps []common.Address) (AppUpgradedIterator, error)
 }
@@ -107,7 +113,8 @@ func (cc *ContractCaller) GetAppOperatorSetId(app common.Address, opts *bind.Cal
 	return setId, nil
 }
 
-// GetAppLatestReleaseBlockNumber returns the block number of the latest release for a given app
+// GetAppLatestReleaseBlockNumber returns the block number of the latest CONFIRMED release for a given app.
+// This is the release that has been acknowledged by the Coordinator via confirmUpgrade().
 func (cc *ContractCaller) GetAppLatestReleaseBlockNumber(app common.Address, opts *bind.CallOpts) (uint32, error) {
 	appCtrl, err := cc.getAppController()
 	if err != nil {
@@ -116,6 +123,20 @@ func (cc *ContractCaller) GetAppLatestReleaseBlockNumber(app common.Address, opt
 	blockNumber, err := appCtrl.GetAppLatestReleaseBlockNumber(opts, app)
 	if err != nil {
 		return 0, fmt.Errorf("failed to get app latest release block number: %w", err)
+	}
+	return blockNumber, nil
+}
+
+// GetAppPendingReleaseBlockNumber returns the block number of the pending (unconfirmed) release.
+// Returns 0 if no upgrade is awaiting confirmation.
+func (cc *ContractCaller) GetAppPendingReleaseBlockNumber(app common.Address, opts *bind.CallOpts) (uint32, error) {
+	appCtrl, err := cc.getAppController()
+	if err != nil {
+		return 0, err
+	}
+	blockNumber, err := appCtrl.GetAppPendingReleaseBlockNumber(opts, app)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get app pending release block number: %w", err)
 	}
 	return blockNumber, nil
 }
@@ -208,6 +229,85 @@ func (cc *ContractCaller) GetLatestRelease(ctx context.Context, appID string) ([
 	cc.logger.Sugar().Debug("Latest release data prepared", "app_id", appID, "public_env_vars_count", len(publicEnv))
 
 	return release.RmsRelease.Artifacts[0].Digest, publicEnv, release.EncryptedEnv, nil
+}
+
+// GetPendingRelease retrieves the pending (unconfirmed) release for an app.
+// Returns an error if no pending upgrade exists.
+// Returns: image digest, public env, encrypted env, error
+func (cc *ContractCaller) GetPendingRelease(ctx context.Context, appID string) ([32]byte, Env, []byte, error) {
+	appCtrl, err := cc.getAppController()
+	if err != nil {
+		return [32]byte{}, Env{}, nil, err
+	}
+
+	appAddress := common.HexToAddress(appID)
+	pendingBlockNumber, err := cc.GetAppPendingReleaseBlockNumber(appAddress, &bind.CallOpts{Context: ctx})
+	if err != nil {
+		return [32]byte{}, Env{}, nil, fmt.Errorf("failed to get app pending release block number: %w", err)
+	}
+	if pendingBlockNumber == 0 {
+		return [32]byte{}, Env{}, nil, fmt.Errorf("no pending release for app %s", appID)
+	}
+
+	pendingBlockNumberUint64 := uint64(pendingBlockNumber)
+	appUpgrades, err := appCtrl.FilterAppUpgraded(&bind.FilterOpts{Context: ctx, Start: pendingBlockNumberUint64, End: &pendingBlockNumberUint64}, []common.Address{appAddress})
+	if err != nil {
+		return [32]byte{}, Env{}, nil, fmt.Errorf("failed to filter app upgraded for pending release: %w", err)
+	}
+
+	var lastAppUpgrade *AppUpgradedEvent
+	for appUpgrades.Next() {
+		event := appUpgrades.Event()
+		if lastAppUpgrade == nil {
+			lastAppUpgrade = event
+		} else if event.Raw.Index > lastAppUpgrade.Raw.Index {
+			lastAppUpgrade = event
+		}
+	}
+	if appUpgrades.Error() != nil {
+		return [32]byte{}, Env{}, nil, fmt.Errorf("error iterating pending app upgrades: %w", appUpgrades.Error())
+	}
+	if lastAppUpgrade == nil {
+		return [32]byte{}, Env{}, nil, fmt.Errorf("no pending upgrade event found for app %s at block %d", appID, pendingBlockNumberUint64)
+	}
+
+	release := lastAppUpgrade.Release
+	if len(release.RmsRelease.Artifacts) != 1 {
+		return [32]byte{}, Env{}, nil, fmt.Errorf("expected 1 artifact in pending release, got %d", len(release.RmsRelease.Artifacts))
+	}
+
+	publicEnv := Env{}
+	if err := json.Unmarshal(release.PublicEnv, &publicEnv); err != nil {
+		return [32]byte{}, Env{}, nil, fmt.Errorf("failed to unmarshal pending release env: %w", err)
+	}
+
+	return release.RmsRelease.Artifacts[0].Digest, publicEnv, release.EncryptedEnv, nil
+}
+
+// GetPendingReleaseAsRelease returns the pending release in the types.Release format.
+func (cc *ContractCaller) GetPendingReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error) {
+	digest, publicEnv, encryptedEnv, err := cc.GetPendingRelease(ctx, appID)
+	if err != nil {
+		return nil, err
+	}
+
+	imageDigest := fmt.Sprintf("sha256:%x", digest)
+
+	var publicEnvStr string
+	if len(publicEnv) > 0 {
+		envBytes, err := json.Marshal(publicEnv)
+		if err != nil {
+			return nil, fmt.Errorf("failed to marshal pending release public env: %w", err)
+		}
+		publicEnvStr = string(envBytes)
+	}
+
+	return &types.Release{
+		ImageDigest:  imageDigest,
+		EncryptedEnv: string(encryptedEnv),
+		PublicEnv:    publicEnvStr,
+		Timestamp:    time.Now().Unix(),
+	}, nil
 }
 
 // GetLatestReleaseAsRelease is an adapter that returns release data in the types.Release format
