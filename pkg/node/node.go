@@ -707,6 +707,38 @@ func validateOperatorSetNoNodeIDCollisions(operators []*peering.OperatorSetPeer)
 	return nil
 }
 
+// validateReshareOperatorOverlap ensures that enough operators from the previous key version
+// remain in the new operator set to satisfy the old threshold. If fewer than ⌈2n/3⌉ of the
+// original n participants are still present, the reshare cannot reconstruct the master secret.
+func validateReshareOperatorOverlap(oldParticipantIDs []int64, newOperators []*peering.OperatorSetPeer) error {
+	if len(oldParticipantIDs) == 0 {
+		return nil
+	}
+
+	oldThreshold := dkg.CalculateThreshold(len(oldParticipantIDs))
+
+	newOperatorIDs := make(map[int64]struct{}, len(newOperators))
+	for _, op := range newOperators {
+		newOperatorIDs[addressToNodeID(op.OperatorAddress)] = struct{}{}
+	}
+
+	overlap := 0
+	for _, id := range oldParticipantIDs {
+		if _, ok := newOperatorIDs[id]; ok {
+			overlap++
+		}
+	}
+
+	if overlap < oldThreshold {
+		return fmt.Errorf(
+			"insufficient operator overlap for reshare: %d of %d previous participants remain in the new operator set, need at least %d",
+			overlap, len(oldParticipantIDs), oldThreshold,
+		)
+	}
+
+	return nil
+}
+
 // hasExistingShares returns true if this node has active key shares
 func (n *Node) hasExistingShares() bool {
 	return n.keyStore.GetActiveVersion() != nil
@@ -1251,6 +1283,15 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	}
 	if !operatorFound {
 		return fmt.Errorf("this operator %s (ID: %d) not found in reshare operator set", n.OperatorAddress.Hex(), thisNodeID)
+	}
+
+	// Validate that enough old participants remain in the new operator set to reconstruct the secret.
+	// If too many operators were replaced since the last DKG/reshare, the master secret cannot be
+	// maintained and reshare must not proceed.
+	if activeVersion := n.keyStore.GetActiveVersion(); activeVersion != nil && len(activeVersion.ParticipantIDs) > 0 {
+		if err := validateReshareOperatorOverlap(activeVersion.ParticipantIDs, operators); err != nil {
+			return fmt.Errorf("reshare operator set validation failed: %w", err)
+		}
 	}
 
 	// Calculate new threshold
