@@ -96,7 +96,7 @@ type IContractCaller interface {
 
 	FilterAppUpgraded(apps []common.Address, filterOpts *bind.FilterOpts) (caller.AppUpgradedIterator, error)
 
-	GetLatestRelease(ctx context.Context, appID string) ([32]byte, caller.Env, []byte, error)
+	GetLatestRelease(ctx context.Context, appID string) ([32]byte, caller.Env, []byte, types.ContainerPolicy, error)
 
 	GetLatestReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error)
 }

@@ -38,9 +38,14 @@ type AttestationVerifierInterface interface {
 }
 
 type AttestationClaims struct {
-	AppID       string `json:"app_id"`
-	ImageDigest string `json:"image_digest"`
-	Nonce       string `json:"nonce"`
+	AppID         string            `json:"app_id"`
+	ImageDigest   string            `json:"image_digest"`
+	Nonce         string            `json:"nonce"`
+	Args          []string          `json:"args"`
+	CmdOverride   []string          `json:"cmd_override"`
+	Env           map[string]string `json:"env"`
+	EnvOverride   map[string]string `json:"env_override"`
+	RestartPolicy string            `json:"restart_policy"`
 }
 
 // Structured types for attestation token parsing
@@ -75,7 +80,12 @@ type ConfidentialSpace struct {
 }
 
 type Container struct {
-	ImageDigest string `json:"image_digest"`
+	ImageDigest   string            `json:"image_digest"`
+	Args          []string          `json:"args"`
+	CmdOverride   []string          `json:"cmd_override"`
+	Env           map[string]string `json:"env"`
+	EnvOverride   map[string]string `json:"env_override"`
+	RestartPolicy string            `json:"restart_policy"`
 }
 
 type GCE struct {
@@ -207,9 +217,14 @@ func (av *AttestationVerifier) VerifyAttestation(ctx context.Context, tokenStrin
 	}
 
 	result := &AttestationClaims{
-		AppID:       appID,
-		ImageDigest: csToken.SubMods.Container.ImageDigest,
-		Nonce:       nonce,
+		AppID:         appID,
+		ImageDigest:   csToken.SubMods.Container.ImageDigest,
+		Nonce:         nonce,
+		Args:          csToken.SubMods.Container.Args,
+		CmdOverride:   csToken.SubMods.Container.CmdOverride,
+		Env:           csToken.SubMods.Container.Env,
+		EnvOverride:   csToken.SubMods.Container.EnvOverride,
+		RestartPolicy: csToken.SubMods.Container.RestartPolicy,
 	}
 
 	av.logger.Debug("Attestation claims extracted", "app_id", appID, "image_digest", csToken.SubMods.Container.ImageDigest, "nonce", nonce)

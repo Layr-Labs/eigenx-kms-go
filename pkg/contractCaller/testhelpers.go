@@ -86,8 +86,8 @@ func (m *MockContractCallerStub) FilterAppUpgraded(apps []common.Address, filter
 	return nil, nil
 }
 
-func (m *MockContractCallerStub) GetLatestRelease(ctx context.Context, appID string) ([32]byte, caller.Env, []byte, error) {
-	return [32]byte{}, nil, nil, nil
+func (m *MockContractCallerStub) GetLatestRelease(ctx context.Context, appID string) ([32]byte, caller.Env, []byte, types.ContainerPolicy, error) {
+	return [32]byte{}, nil, nil, types.ContainerPolicy{}, nil
 }
 
 func (m *MockContractCallerStub) GetLatestReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error) {
