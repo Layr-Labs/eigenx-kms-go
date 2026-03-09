@@ -855,6 +855,7 @@ func testSessionPersistence_DuringDKG(t *testing.T) {
 		Phase:             1,
 		StartTime:         time.Now(),
 		Operators:         opSet.Peers,
+		threshold:         len(opSet.Peers),
 		shares:            make(map[int64]*fr.Element),
 		commitments:       make(map[int64][]types.G2Point),
 		acks:              make(map[int64]map[int64]*types.Acknowledgement),
