@@ -94,17 +94,12 @@ type ProtocolSession struct {
 	StartTime        time.Time
 	Operators        []*peering.OperatorSetPeer
 
-	// Threshold is the minimum number of shares/commitments needed to proceed.
-	// For DKG this equals len(Operators) (all must participate).
-	// For reshare this equals ⌈2n/3⌉ (threshold participation suffices for liveness).
-	threshold int
-
 	// Session-specific state (moved from global Node state)
 	shares      map[int64]*fr.Element
 	commitments map[int64][]types.G2Point
 	acks        map[int64]map[int64]*types.Acknowledgement
 
-	// Completion channels (buffered, size 1) - signaled when threshold messages received
+	// Completion channels (buffered, size 1) - signaled when all expected messages received
 	sharesCompleteChan      chan bool
 	commitmentsCompleteChan chan bool
 	acksCompleteChan        chan bool
@@ -137,8 +132,8 @@ func (s *ProtocolSession) HandleReceivedShare(senderNodeID int64, share *fr.Elem
 
 	s.shares[senderNodeID] = share
 
-	// Signal completion when threshold shares received
-	if len(s.shares) >= s.threshold {
+	// Signal completion when all shares received
+	if len(s.shares) == len(s.Operators) {
 		select {
 		case s.sharesCompleteChan <- true:
 		default: // Already signaled
@@ -161,8 +156,8 @@ func (s *ProtocolSession) HandleReceivedCommitment(senderNodeID int64, commitmen
 
 	s.commitments[senderNodeID] = commitments
 
-	// Signal completion when threshold commitments received
-	if len(s.commitments) >= s.threshold {
+	// Signal completion when all commitments received
+	if len(s.commitments) == len(s.Operators) {
 		select {
 		case s.commitmentsCompleteChan <- true:
 		default: // Already signaled
@@ -702,19 +697,12 @@ func (n *Node) createSession(sessionType string, operators []*peering.OperatorSe
 		return nil, err
 	}
 
-	// DKG requires all operators; reshare only requires threshold participation for liveness.
-	threshold := len(operators)
-	if sessionType == "reshare" {
-		threshold = dkg.CalculateThreshold(len(operators))
-	}
-
 	session := &ProtocolSession{
 		SessionTimestamp:        sessionTimestamp,
 		Type:                    sessionType,
 		Phase:                   1,
 		StartTime:               time.Now(),
 		Operators:               operators,
-		threshold:               threshold,
 		shares:                  make(map[int64]*fr.Element),
 		commitments:             make(map[int64][]types.G2Point),
 		acks:                    make(map[int64]map[int64]*types.Acknowledgement),
@@ -1218,13 +1206,33 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		}
 	}
 
-	// Wait for shares and commitments using channel-based signaling
+	// Wait for shares and commitments using channel-based signaling.
+	// If the wait times out but we have at least threshold shares/commitments,
+	// proceed anyway to maintain liveness when some operators are unresponsive.
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
 	if err := waitForShares(session, protocolTimeout); err != nil {
-		return err
+		session.mu.RLock()
+		received := len(session.shares)
+		session.mu.RUnlock()
+		if received >= newThreshold {
+			n.logger.Sugar().Warnw("Not all shares received but threshold met, proceeding with reshare",
+				"operator_address", n.OperatorAddress.Hex(),
+				"received", received, "threshold", newThreshold, "total_operators", len(operators))
+		} else {
+			return err
+		}
 	}
 	if err := waitForCommitments(session, protocolTimeout); err != nil {
-		return err
+		session.mu.RLock()
+		received := len(session.commitments)
+		session.mu.RUnlock()
+		if received >= newThreshold {
+			n.logger.Sugar().Warnw("Not all commitments received but threshold met, proceeding with reshare",
+				"operator_address", n.OperatorAddress.Hex(),
+				"received", received, "threshold", newThreshold, "total_operators", len(operators))
+		} else {
+			return err
+		}
 	}
 
 	// Update session to Phase 2 and persist
@@ -1377,7 +1385,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 
 	// Phase 4: Wait for verifications
 	n.logger.Sugar().Infow("Reshare Phase 4: Waiting for operator verifications",
-		"expected_verifications", newThreshold-1)
+		"expected_verifications", len(operators)-1)
 
 	err = n.WaitForVerifications(session.SessionTimestamp, protocolTimeout)
 	if err != nil {
@@ -1496,17 +1504,39 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	}
 
 	// New operators DON'T generate shares - only receive from existing operators
+	newThreshold := dkg.CalculateThreshold(len(operators))
 	n.logger.Sugar().Infow("Waiting for shares from existing operators",
 		"operator_address", n.OperatorAddress.Hex(),
-		"expected_operators", len(operators))
+		"expected_operators", len(operators),
+		"threshold", newThreshold)
 
-	// Wait for shares and commitments from existing operators using channel-based signaling
+	// Wait for shares and commitments from existing operators using channel-based signaling.
+	// If the wait times out but we have at least threshold shares/commitments,
+	// proceed anyway to maintain liveness when some operators are unresponsive.
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
 	if err := waitForShares(session, protocolTimeout); err != nil {
-		return fmt.Errorf("failed to receive shares: %w", err)
+		session.mu.RLock()
+		received := len(session.shares)
+		session.mu.RUnlock()
+		if received >= newThreshold {
+			n.logger.Sugar().Warnw("Not all shares received but threshold met, proceeding with reshare (new operator)",
+				"operator_address", n.OperatorAddress.Hex(),
+				"received", received, "threshold", newThreshold, "total_operators", len(operators))
+		} else {
+			return fmt.Errorf("failed to receive shares: %w", err)
+		}
 	}
 	if err := waitForCommitments(session, protocolTimeout); err != nil {
-		return fmt.Errorf("failed to receive commitments: %w", err)
+		session.mu.RLock()
+		received := len(session.commitments)
+		session.mu.RUnlock()
+		if received >= newThreshold {
+			n.logger.Sugar().Warnw("Not all commitments received but threshold met, proceeding with reshare (new operator)",
+				"operator_address", n.OperatorAddress.Hex(),
+				"received", received, "threshold", newThreshold, "total_operators", len(operators))
+		} else {
+			return fmt.Errorf("failed to receive commitments: %w", err)
+		}
 	}
 
 	// Collect all commitments and participant IDs from session
@@ -1595,13 +1625,13 @@ func waitForShares(session *ProtocolSession, timeout time.Duration) error {
 	case <-ctx.Done():
 		session.mu.RLock()
 		received := len(session.shares)
-		expected := session.threshold
+		expected := len(session.Operators)
 		session.mu.RUnlock()
 		return fmt.Errorf("timeout waiting for shares: got %d/%d", received, expected)
 	}
 }
 
-// waitForCommitments waits for threshold commitments to be received using channel signaling
+// waitForCommitments waits for all commitments to be received using channel signaling
 func waitForCommitments(session *ProtocolSession, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
@@ -1613,7 +1643,7 @@ func waitForCommitments(session *ProtocolSession, timeout time.Duration) error {
 	case <-ctx.Done():
 		session.mu.RLock()
 		received := len(session.commitments)
-		expected := session.threshold
+		expected := len(session.Operators)
 		session.mu.RUnlock()
 		return fmt.Errorf("timeout waiting for commitments: got %d/%d", received, expected)
 	}
@@ -1946,7 +1976,7 @@ func (n *Node) WaitForVerifications(sessionTimestamp int64, timeout time.Duratio
 		return fmt.Errorf("session not found")
 	}
 
-	expectedVerifications := session.threshold - 1 // Threshold minus self
+	expectedVerifications := len(session.Operators) - 1 // All except self
 
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(500 * time.Millisecond)

@@ -245,7 +245,6 @@ func TestWaitForVerifications(t *testing.T) {
 			Operators: []*peering.OperatorSetPeer{
 				{}, {}, {}, // 3 operators total
 			},
-			threshold:         3, // DKG-style: all operators required
 			verifiedOperators: make(map[int64]bool),
 		}
 
@@ -270,7 +269,6 @@ func TestWaitForVerifications(t *testing.T) {
 			Operators: []*peering.OperatorSetPeer{
 				{}, {}, {}, // 3 operators total (need 2 verifications)
 			},
-			threshold:         3, // DKG-style: all operators required
 			verifiedOperators: make(map[int64]bool),
 		}
 
