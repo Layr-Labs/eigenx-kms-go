@@ -1207,16 +1207,16 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	}
 
 	// Wait for shares and commitments using channel-based signaling.
-	// Shares: if the wait times out but we have at least threshold shares,
-	// proceed anyway to maintain liveness when some operators are unresponsive.
-	// Commitments: always require all n — commitments are public and feed into
-	// participantIDsForFinalize / Lagrange coefficients, so all nodes must agree
-	// on the same participant set to preserve master public key correctness.
+	// Both use threshold fallback: if the wait times out but at least ⌈2n/3⌉
+	// shares/commitments were received, proceed to maintain liveness.
+	// Participant set agreement is ensured at finalization by deterministically
+	// selecting the first threshold operators (sorted by node ID) that sent
+	// both a share and a commitment.
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
 	if err := waitForSharesWithThreshold(session, protocolTimeout, newThreshold, n.logger.Sugar()); err != nil {
 		return err
 	}
-	if err := waitForCommitments(session, protocolTimeout); err != nil {
+	if err := waitForCommitmentsWithThreshold(session, protocolTimeout, newThreshold, n.logger.Sugar()); err != nil {
 		return err
 	}
 
@@ -1385,28 +1385,40 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		"operator_address", n.OperatorAddress.Hex(),
 		"node_id", thisNodeID)
 
-	// Collect all commitments and participant IDs for finalization from session
-	session.mu.RLock()
-	participantIDsForFinalize := make([]int64, 0, len(session.commitments))
-
-	for _, op := range operators {
-		opNodeID := addressToNodeID(op.OperatorAddress)
-		if _, ok := session.commitments[opNodeID]; ok {
-			participantIDsForFinalize = append(participantIDsForFinalize, opNodeID)
-		}
+	// Select a deterministic participant set: the first threshold operators (sorted
+	// by node ID) that sent both a share and a commitment. This ensures all honest
+	// nodes agree on the same set, preventing Lagrange coefficient divergence.
+	participantIDsForFinalize := selectDeterministicParticipants(session, operators, newThreshold)
+	if len(participantIDsForFinalize) < newThreshold {
+		return fmt.Errorf("insufficient participants for reshare finalization: got %d, need %d",
+			len(participantIDsForFinalize), newThreshold)
 	}
 
-	receivedSharesForFinalize := session.shares
-	session.mu.RUnlock()
+	n.logger.Sugar().Infow("Selected deterministic participant set for reshare finalization",
+		"operator_address", n.OperatorAddress.Hex(),
+		"participants", len(participantIDsForFinalize),
+		"threshold", newThreshold)
 
-	// Compute refreshed share: x'_j = x_j + Σ_i g_i(j)
+	// Build a set for fast lookup
+	participantSet := make(map[int64]struct{}, len(participantIDsForFinalize))
+	for _, id := range participantIDsForFinalize {
+		participantSet[id] = struct{}{}
+	}
+
+	// Compute refreshed share: x'_j = x_j + Σ_{i∈D} g_i(j)
+	// Only sum shares from the agreed-upon participant set D.
+	session.mu.RLock()
 	delta := new(fr.Element).SetZero()
-	for _, share := range receivedSharesForFinalize {
+	for dealerID, share := range session.shares {
+		if _, ok := participantSet[dealerID]; !ok {
+			continue
+		}
 		if share == nil {
 			continue
 		}
 		delta.Add(delta, share)
 	}
+	session.mu.RUnlock()
 	newShare := new(fr.Element).Add(new(fr.Element).Set(currentShare), delta)
 
 	newKeyVersion := &types.KeyShareVersion{
@@ -1496,37 +1508,57 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		"threshold", newThreshold)
 
 	// Wait for shares and commitments from existing operators using channel-based signaling.
-	// Shares: if the wait times out but we have at least threshold shares,
-	// proceed anyway to maintain liveness when some operators are unresponsive.
-	// Commitments: always require all n — commitments are public and feed into
-	// participantIDs / Lagrange coefficients, so all nodes must agree on the
-	// same participant set to preserve master public key correctness.
+	// Both use threshold fallback: if the wait times out but at least ⌈2n/3⌉
+	// shares/commitments were received, proceed to maintain liveness.
+	// Participant set agreement is ensured at finalization by deterministically
+	// selecting the first threshold operators (sorted by node ID) that sent
+	// both a share and a commitment.
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
 	if err := waitForSharesWithThreshold(session, protocolTimeout, newThreshold, n.logger.Sugar()); err != nil {
 		return fmt.Errorf("failed to receive shares: %w", err)
 	}
-	if err := waitForCommitments(session, protocolTimeout); err != nil {
+	if err := waitForCommitmentsWithThreshold(session, protocolTimeout, newThreshold, n.logger.Sugar()); err != nil {
 		return fmt.Errorf("failed to receive commitments: %w", err)
 	}
 
-	// Collect all commitments and participant IDs from session
-	session.mu.RLock()
-	allCommitments := make([][]types.G2Point, 0, len(session.commitments))
-	participantIDs := make([]int64, 0, len(session.commitments))
+	// Select a deterministic participant set: the first threshold operators (sorted
+	// by node ID) that sent both a share and a commitment.
+	participantIDs := selectDeterministicParticipants(session, operators, newThreshold)
+	if len(participantIDs) < newThreshold {
+		return fmt.Errorf("insufficient participants for reshare finalization: got %d, need %d",
+			len(participantIDs), newThreshold)
+	}
 
-	for _, op := range operators {
-		opNodeID := addressToNodeID(op.OperatorAddress)
-		if comm, ok := session.commitments[opNodeID]; ok {
+	n.logger.Sugar().Infow("Selected deterministic participant set for reshare finalization (new operator)",
+		"operator_address", n.OperatorAddress.Hex(),
+		"participants", len(participantIDs),
+		"threshold", newThreshold)
+
+	// Collect commitments and shares only from the agreed-upon participant set
+	participantSet := make(map[int64]struct{}, len(participantIDs))
+	for _, id := range participantIDs {
+		participantSet[id] = struct{}{}
+	}
+
+	session.mu.RLock()
+	allCommitments := make([][]types.G2Point, 0, len(participantIDs))
+	for _, id := range participantIDs {
+		if comm, ok := session.commitments[id]; ok {
 			allCommitments = append(allCommitments, comm)
-			participantIDs = append(participantIDs, opNodeID)
 		}
 	}
 
-	receivedShares := session.shares
+	// Build restricted shares map with only participants in the agreed set
+	restrictedShares := make(map[int64]*fr.Element, len(participantIDs))
+	for _, id := range participantIDs {
+		if share, ok := session.shares[id]; ok {
+			restrictedShares[id] = share
+		}
+	}
 	session.mu.RUnlock()
 
-	// Compute new key share using Lagrange interpolation
-	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDs, receivedShares, allCommitments)
+	// Compute new key share using Lagrange interpolation over the agreed participant set
+	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDs, restrictedShares, allCommitments)
 	newKeyVersion.Version = sessionTimestamp // Use session timestamp as version
 	newKeyVersion.IsActive = true            // First key version becomes active immediately
 
@@ -1634,6 +1666,56 @@ func waitForSharesWithThreshold(session *ProtocolSession, timeout time.Duration,
 		return err
 	}
 	return nil
+}
+
+// waitForCommitmentsWithThreshold waits for all commitments via channel signaling; on timeout,
+// proceeds if at least threshold commitments were received.
+func waitForCommitmentsWithThreshold(session *ProtocolSession, timeout time.Duration, threshold int, logger *zap.SugaredLogger) error {
+	if err := waitForCommitments(session, timeout); err != nil {
+		session.mu.RLock()
+		received := len(session.commitments)
+		session.mu.RUnlock()
+		if received >= threshold {
+			logger.Warnw("Not all commitments received but threshold met, proceeding with reshare",
+				"received", received, "threshold", threshold, "total_operators", len(session.Operators))
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// selectDeterministicParticipants returns a deterministic participant set of exactly
+// `threshold` operators, chosen from those that sent both a share and a commitment.
+// The set is sorted by node ID ascending, ensuring all honest nodes that received
+// the same data will agree on the same participant set. This is critical for Lagrange
+// coefficient consistency across nodes.
+func selectDeterministicParticipants(session *ProtocolSession, operators []*peering.OperatorSetPeer, threshold int) []int64 {
+	session.mu.RLock()
+	defer session.mu.RUnlock()
+
+	// Build intersection: operators that sent both a share AND a commitment
+	candidates := make([]int64, 0, len(operators))
+	for _, op := range operators {
+		opNodeID := addressToNodeID(op.OperatorAddress)
+		_, hasShare := session.shares[opNodeID]
+		_, hasCommitment := session.commitments[opNodeID]
+		if hasShare && hasCommitment {
+			candidates = append(candidates, opNodeID)
+		}
+	}
+
+	// Sort deterministically by node ID
+	sort.Slice(candidates, func(i, j int) bool {
+		return candidates[i] < candidates[j]
+	})
+
+	// Take first threshold entries
+	if len(candidates) > threshold {
+		candidates = candidates[:threshold]
+	}
+
+	return candidates
 }
 
 // waitForAcks waits for at least required acknowledgements to be received for a specific dealer using polling.
