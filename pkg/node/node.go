@@ -1241,10 +1241,17 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		"operator_address", n.OperatorAddress.Hex(),
 		"node_id", thisNodeID)
 
-	// Get shares and commitments from session
+	// Copy shares and commitments from session under lock to avoid data races.
+	// After threshold fallback, late-arriving shares may still be written concurrently.
 	session.mu.RLock()
-	receivedShares := session.shares
-	receivedCommitments := session.commitments
+	receivedShares := make(map[int64]*fr.Element, len(session.shares))
+	for id, s := range session.shares {
+		receivedShares[id] = s
+	}
+	receivedCommitments := make(map[int64][]types.G2Point, len(session.commitments))
+	for id, c := range session.commitments {
+		receivedCommitments[id] = c
+	}
 	session.mu.RUnlock()
 
 	invalidDealers := make([]int64, 0)
@@ -1560,9 +1567,16 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	// Verify received shares against commitments and remove invalid ones.
 	// Without this, a dealer sending an invalid share would still be included
 	// in participant selection and corrupt ComputeNewKeyShare.
+	// Copy maps under lock to avoid data races from late-arriving shares.
 	session.mu.RLock()
-	receivedShares := session.shares
-	receivedCommitments := session.commitments
+	receivedShares := make(map[int64]*fr.Element, len(session.shares))
+	for id, s := range session.shares {
+		receivedShares[id] = s
+	}
+	receivedCommitments := make(map[int64][]types.G2Point, len(session.commitments))
+	for id, c := range session.commitments {
+		receivedCommitments[id] = c
+	}
 	session.mu.RUnlock()
 
 	invalidDealers := make([]int64, 0)
