@@ -78,10 +78,6 @@ func (m *MockContractCallerStub) GetAppLatestReleaseBlockNumber(app common.Addre
 	return 0, nil
 }
 
-func (m *MockContractCallerStub) GetAppPendingReleaseBlockNumber(app common.Address, opts *bind.CallOpts) (uint32, error) {
-	return 0, nil
-}
-
 func (m *MockContractCallerStub) GetAppStatus(app common.Address, opts *bind.CallOpts) (uint8, error) {
 	return 0, nil
 }
@@ -102,10 +98,6 @@ func (m *MockContractCallerStub) GetLatestReleaseAsRelease(ctx context.Context, 
 		PublicEnv:    `{"PUBLIC_VAR":"test-value"}`,
 		Timestamp:    0,
 	}, nil
-}
-
-func (m *MockContractCallerStub) GetPendingReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error) {
-	return nil, fmt.Errorf("no pending release for app_id: %s", appID)
 }
 
 // TestableContractCallerStub extends MockContractCallerStub with test data configuration.
@@ -166,19 +158,6 @@ func (m *TestableContractCallerStub) GetLatestReleaseAsRelease(ctx context.Conte
 	release, exists := m.releases[appID]
 	if !exists {
 		return nil, fmt.Errorf("no release found for app_id: %s", appID)
-	}
-	return release, nil
-}
-
-// GetPendingReleaseAsRelease returns the pending (unconfirmed) release for an app.
-// Returns an error if no upgrade is awaiting confirmation.
-func (m *TestableContractCallerStub) GetPendingReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	release, exists := m.pendingReleases[appID]
-	if !exists {
-		return nil, fmt.Errorf("no pending release for app_id: %s", appID)
 	}
 	return release, nil
 }
