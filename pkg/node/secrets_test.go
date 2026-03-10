@@ -36,6 +36,75 @@ func (m *mockChainPoller) Start(ctx context.Context) error {
 	return nil
 }
 
+// testSecretsFixture holds the common objects needed by secrets endpoint tests.
+type testSecretsFixture struct {
+	server             *Server
+	node               *Node
+	contractCallerStub *contractCaller.TestableContractCallerStub
+}
+
+// newTestSecretsFixture creates a fully wired Server and TestableContractCallerStub
+// ready for secrets endpoint testing. The returned stub has no releases configured;
+// callers should use AddTestRelease / SetPendingRelease as needed.
+func newTestSecretsFixture(t *testing.T) *testSecretsFixture {
+	t.Helper()
+
+	projectRoot := tests.GetProjectRootPath()
+	chainConfig, err := tests.ReadChainConfig(projectRoot)
+	if err != nil {
+		t.Fatalf("Failed to read chain config: %v", err)
+	}
+
+	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
+	cfg := Config{
+		OperatorAddress: chainConfig.OperatorAccountAddress1,
+		Port:            0,
+		ChainID:         config.ChainId_EthereumAnvil,
+		AVSAddress:      "0x1234567890123456789012345678901234567890",
+		OperatorSetId:   1,
+	}
+
+	bh := blockHandler.NewBlockHandler(testLogger)
+	peeringDataFetcher := createTestPeeringDataFetcher(t)
+
+	pkBytes, err := hexutil.Decode(chainConfig.OperatorAccountPrivateKey1)
+	if err != nil {
+		t.Fatalf("Failed to decode BN254 private key: %v", err)
+	}
+	imts, err := inMemoryTransportSigner.NewBn254InMemoryTransportSigner(pkBytes, testLogger)
+	if err != nil {
+		t.Fatalf("Failed to create in-memory transport signer: %v", err)
+	}
+
+	mockManager := attestation.NewStubManager()
+	stub := contractCaller.NewTestableContractCallerStub()
+	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
+
+	persistence := memory.NewMemoryPersistence()
+	t.Cleanup(func() { _ = persistence.Close() })
+
+	n, err := NewNode(cfg, peeringDataFetcher, bh, nil, imts, mockManager, stub, mockRegistryAddress, persistence, testLogger)
+	if err != nil {
+		t.Fatalf("Failed to create node: %v", err)
+	}
+
+	// Add a test key share so partial signatures can be generated.
+	testShare := new(fr.Element).SetInt64(42)
+	n.keyStore.AddVersion(&kmsTypes.KeyShareVersion{
+		Version:        time.Now().Unix(),
+		PrivateShare:   testShare,
+		Commitments:    []kmsTypes.G2Point{},
+		IsActive:       true,
+		ParticipantIDs: []int64{1},
+	})
+
+	return &testSecretsFixture{
+		server:             NewServer(n, 0),
+		node:               n,
+		contractCallerStub: stub,
+	}
+}
+
 func Test_SecretsEndpoint(t *testing.T) {
 	t.Run("Flow", func(t *testing.T) { testSecretsEndpointFlow(t) })
 	t.Run("Validation", func(t *testing.T) { testSecretsEndpointValidation(t) })
@@ -56,6 +125,7 @@ func Test_SecretsEndpoint(t *testing.T) {
 // createTestPeeringDataFetcher creates a test peering data fetcher using ChainConfig data
 func createTestPeeringDataFetcher(t *testing.T) peering.IPeeringDataFetcher {
 	t.Helper()
+
 	projectRoot := tests.GetProjectRootPath()
 	chainConfig, err := tests.ReadChainConfig(projectRoot)
 	if err != nil {
@@ -86,54 +156,9 @@ func createTestPeeringDataFetcher(t *testing.T) peering.IPeeringDataFetcher {
 	return localPeeringDataFetcher.NewLocalPeeringDataFetcher([]*peering.OperatorSetPeers{operatorSet}, nil)
 }
 
-// newTestServer creates a test Server backed by a mock contract caller with no pre-configured
-// releases. Use mockCaller.AddTestRelease to set up releases and server.node.keyStore.AddVersion
-// to add key shares as needed by each test.
-func newTestServer(t *testing.T) (*Server, *contractCaller.TestableContractCallerStub) {
-	t.Helper()
-	projectRoot := tests.GetProjectRootPath()
-	chainConfig, err := tests.ReadChainConfig(projectRoot)
-	if err != nil {
-		t.Fatalf("Failed to read chain config: %v", err)
-	}
-
-	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
-	cfg := Config{
-		OperatorAddress: chainConfig.OperatorAccountAddress1,
-		Port:            0,
-		ChainID:         config.ChainId_EthereumAnvil,
-		AVSAddress:      "0x1234567890123456789012345678901234567890",
-		OperatorSetId:   1,
-	}
-
-	pkBytes, err := hexutil.Decode(chainConfig.OperatorAccountPrivateKey1)
-	if err != nil {
-		t.Fatalf("Failed to decode BN254 private key: %v", err)
-	}
-	imts, err := inMemoryTransportSigner.NewBn254InMemoryTransportSigner(pkBytes, testLogger)
-	if err != nil {
-		t.Fatalf("Failed to create in-memory transport signer: %v", err)
-	}
-
-	mockManager := attestation.NewStubManager()
-	mockBaseContractCaller := contractCaller.NewTestableContractCallerStub()
-	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
-
-	persistence := memory.NewMemoryPersistence()
-	t.Cleanup(func() { _ = persistence.Close() })
-
-	bh := blockHandler.NewBlockHandler(testLogger)
-	node, err := NewNode(cfg, createTestPeeringDataFetcher(t), bh, &mockChainPoller{}, imts, mockManager, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
-	if err != nil {
-		t.Fatalf("Failed to create node: %v", err)
-	}
-
-	return NewServer(node, 0), mockBaseContractCaller
-}
-
 // testSecretsEndpointFlow tests the complete application secrets retrieval flow
 func testSecretsEndpointFlow(t *testing.T) {
-	server, mockCaller := newTestServer(t)
+	f := newTestSecretsFixture(t)
 
 	testRelease := &kmsTypes.Release{
 		ImageDigest:  "sha256:test123",
@@ -141,15 +166,7 @@ func testSecretsEndpointFlow(t *testing.T) {
 		PublicEnv:    "PUBLIC_VAR=test-value",
 		Timestamp:    time.Now().Unix(),
 	}
-	mockCaller.AddTestRelease("test-app", testRelease)
-
-	server.node.keyStore.AddVersion(&kmsTypes.KeyShareVersion{
-		Version:        time.Now().Unix(),
-		PrivateShare:   new(fr.Element).SetInt64(42),
-		Commitments:    []kmsTypes.G2Point{},
-		IsActive:       true,
-		ParticipantIDs: []int64{1},
-	})
+	f.contractCallerStub.AddTestRelease("test-app", testRelease)
 
 	rsaEncrypt := encryption.NewRSAEncryption()
 	privKeyPEM, pubKeyPEM, err := encryption.GenerateKeyPair(2048)
@@ -168,7 +185,10 @@ func testSecretsEndpointFlow(t *testing.T) {
 		JTI:         "flow-test-jti",
 		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
 	}
-	attestationBytes, _ := json.Marshal(testClaims)
+	attestationBytes, err := json.Marshal(testClaims)
+	if err != nil {
+		t.Fatalf("Failed to marshal attestation claims: %v", err)
+	}
 
 	req := kmsTypes.SecretsRequestV1{
 		AppID:             "test-app",
@@ -177,12 +197,16 @@ func testSecretsEndpointFlow(t *testing.T) {
 		RSAPubKeyTmp:      pubKeyPEM,
 		AttestationTime:   time.Now().Unix(),
 	}
-	reqBody, _ := json.Marshal(req)
+
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("Failed to marshal request: %v", err)
+	}
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
 	httpReq.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
 
-	server.handleSecretsRequest(w, httpReq)
+	w := httptest.NewRecorder()
+	f.server.handleSecretsRequest(w, httpReq)
 
 	if w.Code != http.StatusOK {
 		t.Fatalf("Expected status 200, got %d. Body: %s", w.Code, w.Body.String())
@@ -220,22 +244,27 @@ func testSecretsEndpointFlow(t *testing.T) {
 	if isZero {
 		t.Error("Partial signature should not be zero")
 	}
+
+	t.Log("Successfully retrieved and decrypted secrets for test-app")
 }
 
 // testSecretsEndpointValidation tests various validation scenarios
 func testSecretsEndpointValidation(t *testing.T) {
-	server, _ := newTestServer(t)
+	f := newTestSecretsFixture(t)
 
 	req := kmsTypes.SecretsRequestV1{
 		AppID:        "", // Missing
 		Attestation:  []byte("test"),
 		RSAPubKeyTmp: []byte("test-key"),
 	}
-	reqBody, _ := json.Marshal(req)
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("Failed to marshal request: %v", err)
+	}
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
 	w := httptest.NewRecorder()
 
-	server.handleSecretsRequest(w, httpReq)
+	f.server.handleSecretsRequest(w, httpReq)
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("Expected status 400 for missing AppID, got %d", w.Code)
@@ -244,14 +273,15 @@ func testSecretsEndpointValidation(t *testing.T) {
 
 // testSecretsEndpointImageDigestMismatch tests image digest validation
 func testSecretsEndpointImageDigestMismatch(t *testing.T) {
-	server, mockCaller := newTestServer(t)
+	f := newTestSecretsFixture(t)
 
-	mockCaller.AddTestRelease("test-app", &kmsTypes.Release{
+	testRelease := &kmsTypes.Release{
 		ImageDigest:  "sha256:correct-digest",
 		EncryptedEnv: "env-data",
 		PublicEnv:    "PUBLIC=value",
 		Timestamp:    time.Now().Unix(),
-	})
+	}
+	f.contractCallerStub.AddTestRelease("test-app", testRelease)
 
 	// Create attestation with DIFFERENT digest; nonce must match rsa_pubkey_tmp
 	rsaKey := []byte("test-key")
@@ -277,7 +307,7 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
 	w := httptest.NewRecorder()
 
-	server.handleSecretsRequest(w, httpReq)
+	f.server.handleSecretsRequest(w, httpReq)
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("Expected status 403 for image digest mismatch, got %d", w.Code)
@@ -286,10 +316,10 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 
 // testSecretsEndpointAppIDMismatch tests app identity binding between request and attestation claims.
 func testSecretsEndpointAppIDMismatch(t *testing.T) {
-	server, mockCaller := newTestServer(t)
+	f := newTestSecretsFixture(t)
 
 	// Release exists for requested app; request should still fail because claims AppID mismatches.
-	mockCaller.AddTestRelease("requested-app", &kmsTypes.Release{
+	f.contractCallerStub.AddTestRelease("requested-app", &kmsTypes.Release{
 		ImageDigest:  "sha256:test-digest",
 		EncryptedEnv: "env-data",
 		PublicEnv:    "PUBLIC=value",
@@ -303,7 +333,10 @@ func testSecretsEndpointAppIDMismatch(t *testing.T) {
 		IssuedAt:    time.Now().Unix(),
 		PublicKey:   []byte("dummy-key"),
 	}
-	attestationBytes, _ := json.Marshal(testClaims)
+	attestationBytes, err := json.Marshal(testClaims)
+	if err != nil {
+		t.Fatalf("Failed to marshal attestation claims: %v", err)
+	}
 
 	req := kmsTypes.SecretsRequestV1{
 		AppID:             "requested-app",
@@ -311,11 +344,14 @@ func testSecretsEndpointAppIDMismatch(t *testing.T) {
 		Attestation:       attestationBytes,
 		RSAPubKeyTmp:      []byte("test-key"),
 	}
-	reqBody, _ := json.Marshal(req)
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("Failed to marshal request: %v", err)
+	}
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
 	w := httptest.NewRecorder()
 
-	server.handleSecretsRequest(w, httpReq)
+	f.server.handleSecretsRequest(w, httpReq)
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("Expected status 403 for app ID mismatch, got %d", w.Code)
@@ -325,9 +361,9 @@ func testSecretsEndpointAppIDMismatch(t *testing.T) {
 // testSecretsEndpointNonceMismatch tests that GCP/Intel attestation fails when
 // the rsa_pubkey_tmp is not bound to the attestation token nonce (KMS-004).
 func testSecretsEndpointNonceMismatch(t *testing.T) {
-	server, mockCaller := newTestServer(t)
+	f := newTestSecretsFixture(t)
 
-	mockCaller.AddTestRelease("test-app", &kmsTypes.Release{
+	f.contractCallerStub.AddTestRelease("test-app", &kmsTypes.Release{
 		ImageDigest:  "sha256:test123",
 		EncryptedEnv: "env-data",
 		PublicEnv:    "PUBLIC=value",
@@ -357,7 +393,7 @@ func testSecretsEndpointNonceMismatch(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
 	w := httptest.NewRecorder()
 
-	server.handleSecretsRequest(w, httpReq)
+	f.server.handleSecretsRequest(w, httpReq)
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("Expected status 401 for nonce mismatch, got %d: %s", w.Code, w.Body.String())
@@ -367,9 +403,9 @@ func testSecretsEndpointNonceMismatch(t *testing.T) {
 // testSecretsEndpointIntelNonceMismatch tests the same KMS-004 attack scenario
 // via the "intel" attestation method.
 func testSecretsEndpointIntelNonceMismatch(t *testing.T) {
-	server, mockCaller := newTestServer(t)
+	f := newTestSecretsFixture(t)
 
-	mockCaller.AddTestRelease("test-app", &kmsTypes.Release{
+	f.contractCallerStub.AddTestRelease("test-app", &kmsTypes.Release{
 		ImageDigest:  "sha256:test123",
 		EncryptedEnv: "env-data",
 		PublicEnv:    "PUBLIC=value",
@@ -398,7 +434,7 @@ func testSecretsEndpointIntelNonceMismatch(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
 	w := httptest.NewRecorder()
 
-	server.handleSecretsRequest(w, httpReq)
+	f.server.handleSecretsRequest(w, httpReq)
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("Expected status 401 for intel nonce mismatch, got %d: %s", w.Code, w.Body.String())
@@ -409,9 +445,9 @@ func testSecretsEndpointIntelNonceMismatch(t *testing.T) {
 // JWT was issued without an eat_nonce claim (claims.Nonce == ""), which is the
 // migration scenario from older TEE deployments that predate KMS-004 hardening.
 func testSecretsEndpointEmptyNonce(t *testing.T) {
-	server, mockCaller := newTestServer(t)
+	f := newTestSecretsFixture(t)
 
-	mockCaller.AddTestRelease("test-app", &kmsTypes.Release{
+	f.contractCallerStub.AddTestRelease("test-app", &kmsTypes.Release{
 		ImageDigest:  "sha256:test123",
 		EncryptedEnv: "env-data",
 		PublicEnv:    "PUBLIC=value",
@@ -439,7 +475,7 @@ func testSecretsEndpointEmptyNonce(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
 	w := httptest.NewRecorder()
 
-	server.handleSecretsRequest(w, httpReq)
+	f.server.handleSecretsRequest(w, httpReq)
 
 	if w.Code != http.StatusUnauthorized {
 		t.Errorf("Expected status 401 for missing eat_nonce, got %d: %s", w.Code, w.Body.String())
@@ -449,9 +485,9 @@ func testSecretsEndpointEmptyNonce(t *testing.T) {
 // testSecretsEndpointJTIReplay tests that a GCP attestation JWT cannot be
 // submitted twice (replay/DoS prevention via jti tracking).
 func testSecretsEndpointJTIReplay(t *testing.T) {
-	server, mockCaller := newTestServer(t)
+	f := newTestSecretsFixture(t)
 
-	mockCaller.AddTestRelease("test-app", &kmsTypes.Release{
+	f.contractCallerStub.AddTestRelease("test-app", &kmsTypes.Release{
 		ImageDigest:  "sha256:test123",
 		EncryptedEnv: "env-data",
 		PublicEnv:    "PUBLIC=value",
@@ -478,11 +514,11 @@ func testSecretsEndpointJTIReplay(t *testing.T) {
 	}
 	reqBody, _ := json.Marshal(req)
 
-	// First request: fails because no key share is configured — but the JTI gets stored
+	// First request: succeeds (JTI should be accepted the first time)
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
 	w := httptest.NewRecorder()
-	server.handleSecretsRequest(w, httpReq)
-	// Expect failure (no key share), but NOT 401 (JTI should be accepted the first time)
+	f.server.handleSecretsRequest(w, httpReq)
+	// Expect failure (no key share for this rsaKey), but NOT 401 (JTI should be accepted the first time)
 	if w.Code == http.StatusUnauthorized {
 		t.Fatalf("First request should not fail with 401 (JTI replay rejection), got %d: %s", w.Code, w.Body.String())
 	}
@@ -491,7 +527,7 @@ func testSecretsEndpointJTIReplay(t *testing.T) {
 	reqBody2, _ := json.Marshal(req)
 	httpReq2 := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody2))
 	w2 := httptest.NewRecorder()
-	server.handleSecretsRequest(w2, httpReq2)
+	f.server.handleSecretsRequest(w2, httpReq2)
 	if w2.Code != http.StatusUnauthorized {
 		t.Errorf("Expected status 401 for replayed JTI, got %d: %s", w2.Code, w2.Body.String())
 	}
@@ -500,9 +536,9 @@ func testSecretsEndpointJTIReplay(t *testing.T) {
 // testSecretsEndpointContainerPolicyMismatch tests that mismatched container execution
 // fields are rejected even when the image digest matches.
 func testSecretsEndpointContainerPolicyMismatch(t *testing.T) {
-	server, mockCaller := newTestServer(t)
+	f := newTestSecretsFixture(t)
 
-	mockCaller.AddTestRelease("test-app", &kmsTypes.Release{
+	f.contractCallerStub.AddTestRelease("test-app", &kmsTypes.Release{
 		ImageDigest:  "sha256:correct-digest",
 		EncryptedEnv: "env-data",
 		PublicEnv:    "PUBLIC=value",
@@ -538,7 +574,7 @@ func testSecretsEndpointContainerPolicyMismatch(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
 	w := httptest.NewRecorder()
 
-	server.handleSecretsRequest(w, httpReq)
+	f.server.handleSecretsRequest(w, httpReq)
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("Expected status 403 for container policy mismatch, got %d. Body: %s", w.Code, w.Body.String())
@@ -547,9 +583,9 @@ func testSecretsEndpointContainerPolicyMismatch(t *testing.T) {
 
 // testSecretsEndpointCmdOverrideMismatch tests that a CmdOverride mismatch is rejected.
 func testSecretsEndpointCmdOverrideMismatch(t *testing.T) {
-	server, mockCaller := newTestServer(t)
+	f := newTestSecretsFixture(t)
 
-	mockCaller.AddTestRelease("test-app", &kmsTypes.Release{
+	f.contractCallerStub.AddTestRelease("test-app", &kmsTypes.Release{
 		ImageDigest:  "sha256:correct-digest",
 		EncryptedEnv: "env-data",
 		PublicEnv:    "PUBLIC=value",
@@ -583,7 +619,7 @@ func testSecretsEndpointCmdOverrideMismatch(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
 	w := httptest.NewRecorder()
 
-	server.handleSecretsRequest(w, httpReq)
+	f.server.handleSecretsRequest(w, httpReq)
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("Expected status 403 for cmd_override mismatch, got %d. Body: %s", w.Code, w.Body.String())
@@ -592,9 +628,9 @@ func testSecretsEndpointCmdOverrideMismatch(t *testing.T) {
 
 // testSecretsEndpointEnvOverrideMismatch tests that an EnvOverride value mismatch is rejected.
 func testSecretsEndpointEnvOverrideMismatch(t *testing.T) {
-	server, mockCaller := newTestServer(t)
+	f := newTestSecretsFixture(t)
 
-	mockCaller.AddTestRelease("test-app", &kmsTypes.Release{
+	f.contractCallerStub.AddTestRelease("test-app", &kmsTypes.Release{
 		ImageDigest:  "sha256:correct-digest",
 		EncryptedEnv: "env-data",
 		PublicEnv:    "PUBLIC=value",
@@ -628,7 +664,7 @@ func testSecretsEndpointEnvOverrideMismatch(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
 	w := httptest.NewRecorder()
 
-	server.handleSecretsRequest(w, httpReq)
+	f.server.handleSecretsRequest(w, httpReq)
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("Expected status 403 for env_override mismatch, got %d. Body: %s", w.Code, w.Body.String())
@@ -637,9 +673,9 @@ func testSecretsEndpointEnvOverrideMismatch(t *testing.T) {
 
 // testSecretsEndpointEnvOverrideSuccess tests that extra EnvOverride keys beyond the policy are allowed.
 func testSecretsEndpointEnvOverrideSuccess(t *testing.T) {
-	server, mockCaller := newTestServer(t)
+	f := newTestSecretsFixture(t)
 
-	mockCaller.AddTestRelease("test-app", &kmsTypes.Release{
+	f.contractCallerStub.AddTestRelease("test-app", &kmsTypes.Release{
 		ImageDigest:  "sha256:correct-digest",
 		EncryptedEnv: "env-data",
 		PublicEnv:    "PUBLIC=value",
@@ -647,14 +683,6 @@ func testSecretsEndpointEnvOverrideSuccess(t *testing.T) {
 		ContainerPolicy: kmsTypes.ContainerPolicy{
 			EnvOverride: map[string]string{"LOG_LEVEL": "info"},
 		},
-	})
-
-	server.node.keyStore.AddVersion(&kmsTypes.KeyShareVersion{
-		Version:        time.Now().Unix(),
-		PrivateShare:   new(fr.Element).SetInt64(42),
-		Commitments:    []kmsTypes.G2Point{},
-		IsActive:       true,
-		ParticipantIDs: []int64{1},
 	})
 
 	_, pubKeyPEM, err := encryption.GenerateKeyPair(2048)
@@ -689,7 +717,7 @@ func testSecretsEndpointEnvOverrideSuccess(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
 	w := httptest.NewRecorder()
 
-	server.handleSecretsRequest(w, httpReq)
+	f.server.handleSecretsRequest(w, httpReq)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status 200 when env_override is a superset of policy, got %d. Body: %s", w.Code, w.Body.String())
@@ -700,9 +728,9 @@ func testSecretsEndpointEnvOverrideSuccess(t *testing.T) {
 // container execution fields match the on-chain policy, including extra env vars not in
 // the policy (which are allowed).
 func testSecretsEndpointContainerPolicySuccess(t *testing.T) {
-	server, mockCaller := newTestServer(t)
+	f := newTestSecretsFixture(t)
 
-	mockCaller.AddTestRelease("my-app", &kmsTypes.Release{
+	f.contractCallerStub.AddTestRelease("my-app", &kmsTypes.Release{
 		ImageDigest:  "sha256:app-digest",
 		EncryptedEnv: "encrypted-env-data",
 		PublicEnv:    "PUBLIC=value",
@@ -712,14 +740,6 @@ func testSecretsEndpointContainerPolicySuccess(t *testing.T) {
 			RestartPolicy: "Never",
 			Env:           map[string]string{"APP_MODE": "production"},
 		},
-	})
-
-	server.node.keyStore.AddVersion(&kmsTypes.KeyShareVersion{
-		Version:        time.Now().Unix(),
-		PrivateShare:   new(fr.Element).SetInt64(99),
-		Commitments:    []kmsTypes.G2Point{},
-		IsActive:       true,
-		ParticipantIDs: []int64{1},
 	})
 
 	_, pubKeyPEM, err := encryption.GenerateKeyPair(2048)
@@ -757,7 +777,7 @@ func testSecretsEndpointContainerPolicySuccess(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
 	w := httptest.NewRecorder()
 
-	server.handleSecretsRequest(w, httpReq)
+	f.server.handleSecretsRequest(w, httpReq)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Expected status 200 when container policy matches, got %d. Body: %s", w.Code, w.Body.String())
@@ -770,43 +790,16 @@ func testSecretsEndpointContainerPolicySuccess(t *testing.T) {
 // Race scenario without the fix:
 //  1. App is running with image digest A (confirmed on-chain).
 //  2. App sends attestation with digest A and the request enters the KMS pipeline.
-//  3. Developer calls upgradeApp() → on-chain digest immediately becomes B.
+//  3. Developer calls upgradeApp() -> on-chain digest immediately becomes B.
 //  4. KMS processes the request, reads digest B, rejects the legitimate request.
 //
 // With two-phase upgrade:
 //  1. upgradeApp() writes digest B to pendingRelease (confirmed release stays A).
-//  2. In-flight request with digest A → validated against confirmed release (A) → succeeds.
-//  3. Coordinator calls confirmUpgrade() → confirmed release becomes B.
+//  2. In-flight request with digest A -> validated against confirmed release (A) -> succeeds.
+//  3. Coordinator calls confirmUpgrade() -> confirmed release becomes B.
 //  4. Requests with digest A now fail; requests with digest B succeed.
 func testSecretsEndpointTwoPhaseUpgrade(t *testing.T) {
-	projectRoot := tests.GetProjectRootPath()
-	chainConfig, err := tests.ReadChainConfig(projectRoot)
-	if err != nil {
-		t.Fatalf("Failed to read chain config: %v", err)
-	}
-
-	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
-	cfg := Config{
-		OperatorAddress: chainConfig.OperatorAccountAddress1,
-		Port:            0,
-		ChainID:         config.ChainId_EthereumAnvil,
-		AVSAddress:      "0x1234567890123456789012345678901234567890",
-		OperatorSetId:   1,
-	}
-	bh := blockHandler.NewBlockHandler(testLogger)
-	peeringDataFetcher := createTestPeeringDataFetcher(t)
-	pkBytes, err := hexutil.Decode(chainConfig.OperatorAccountPrivateKey1)
-	if err != nil {
-		t.Fatalf("Failed to decode BN254 private key: %v", err)
-	}
-	imts, err := inMemoryTransportSigner.NewBn254InMemoryTransportSigner(pkBytes, testLogger)
-	if err != nil {
-		t.Fatalf("Failed to create in-memory transport signer: %v", err)
-	}
-
-	mockManager := attestation.NewStubManager()
-	mockBaseContractCaller := contractCaller.NewTestableContractCallerStub()
-	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	f := newTestSecretsFixture(t)
 
 	oldDigest := "sha256:old-image-digest"
 	newDigest := "sha256:new-image-digest"
@@ -818,31 +811,12 @@ func testSecretsEndpointTwoPhaseUpgrade(t *testing.T) {
 		PublicEnv:    "PUBLIC_VAR=value",
 		Timestamp:    time.Now().Unix(),
 	}
-	mockBaseContractCaller.AddTestRelease("test-app", confirmedRelease)
-
-	persistence := memory.NewMemoryPersistence()
-	defer func() { _ = persistence.Close() }()
-
-	node, err := NewNode(cfg, peeringDataFetcher, bh, nil, imts, mockManager, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
-	if err != nil {
-		t.Fatalf("Failed to create node: %v", err)
-	}
-
-	testShare := new(fr.Element).SetInt64(42)
-	node.keyStore.AddVersion(&kmsTypes.KeyShareVersion{
-		Version:        time.Now().Unix(),
-		PrivateShare:   testShare,
-		Commitments:    []kmsTypes.G2Point{},
-		IsActive:       true,
-		ParticipantIDs: []int64{1},
-	})
+	f.contractCallerStub.AddTestRelease("test-app", confirmedRelease)
 
 	_, pubKeyPEM, err := encryption.GenerateKeyPair(2048)
 	if err != nil {
 		t.Fatalf("Failed to generate RSA key pair: %v", err)
 	}
-
-	server := NewServer(node, 0)
 
 	// Compute nonce from RSA public key (required by KMS-004 nonce binding).
 	nonceHash := sha256.Sum256(pubKeyPEM)
@@ -850,6 +824,7 @@ func testSecretsEndpointTwoPhaseUpgrade(t *testing.T) {
 
 	jtiCounter := 0
 	makeRequest := func(imageDigest string) int {
+		t.Helper()
 		jtiCounter++
 		claims := kmsTypes.AttestationClaims{
 			AppID:       "test-app",
@@ -860,7 +835,10 @@ func testSecretsEndpointTwoPhaseUpgrade(t *testing.T) {
 			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
 			PublicKey:   pubKeyPEM,
 		}
-		attestationBytes, _ := json.Marshal(claims)
+		attestationBytes, err := json.Marshal(claims)
+		if err != nil {
+			t.Fatalf("Failed to marshal attestation claims: %v", err)
+		}
 		req := kmsTypes.SecretsRequestV1{
 			AppID:             "test-app",
 			AttestationMethod: "gcp",
@@ -868,10 +846,13 @@ func testSecretsEndpointTwoPhaseUpgrade(t *testing.T) {
 			RSAPubKeyTmp:      pubKeyPEM,
 			AttestationTime:   time.Now().Unix(),
 		}
-		body, _ := json.Marshal(req)
+		body, err := json.Marshal(req)
+		if err != nil {
+			t.Fatalf("Failed to marshal request: %v", err)
+		}
 		httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(body))
 		w := httptest.NewRecorder()
-		server.handleSecretsRequest(w, httpReq)
+		f.server.handleSecretsRequest(w, httpReq)
 		return w.Code
 	}
 
@@ -887,7 +868,7 @@ func testSecretsEndpointTwoPhaseUpgrade(t *testing.T) {
 		PublicEnv:    "PUBLIC_VAR=new-value",
 		Timestamp:    time.Now().Unix(),
 	}
-	mockBaseContractCaller.SetPendingRelease("test-app", pendingRelease)
+	f.contractCallerStub.SetPendingRelease("test-app", pendingRelease)
 
 	// Phase 2: upgrade pending — in-flight request with old digest still succeeds (race condition fixed).
 	if code := makeRequest(oldDigest); code != http.StatusOK {
@@ -900,8 +881,8 @@ func testSecretsEndpointTwoPhaseUpgrade(t *testing.T) {
 	}
 
 	// Simulate confirmUpgrade(): Coordinator promotes pending release to confirmed.
-	if err := mockBaseContractCaller.ConfirmPendingRelease("test-app"); err != nil {
-		t.Fatalf("ConfirmPendingRelease failed: %v", err)
+	if err := f.contractCallerStub.ConfirmUpgrade("test-app"); err != nil {
+		t.Fatalf("ConfirmUpgrade failed: %v", err)
 	}
 
 	// Phase 3: after confirmation — new digest succeeds, old digest is rejected.

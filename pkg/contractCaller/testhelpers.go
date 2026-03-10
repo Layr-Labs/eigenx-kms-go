@@ -91,7 +91,8 @@ func (m *MockContractCallerStub) GetLatestRelease(ctx context.Context, appID str
 }
 
 func (m *MockContractCallerStub) GetLatestReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error) {
-	// Return test release data
+	// Timestamp is intentionally 0 — this stub returns static data for simple tests.
+	// Use TestableContractCallerStub for tests that need realistic release data.
 	return &types.Release{
 		ImageDigest:  "sha256:test123",
 		EncryptedEnv: "encrypted-env-data-for-" + appID,
@@ -134,9 +135,9 @@ func (m *TestableContractCallerStub) SetPendingRelease(appID string, release *ty
 	m.pendingReleases[appID] = release
 }
 
-// ConfirmPendingRelease simulates confirmUpgrade(): promotes the pending release to confirmed.
+// ConfirmUpgrade simulates the on-chain confirmUpgrade(): promotes the pending release to confirmed.
 // Returns an error if no pending release exists for the app.
-func (m *TestableContractCallerStub) ConfirmPendingRelease(appID string) error {
+func (m *TestableContractCallerStub) ConfirmUpgrade(appID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	pending, exists := m.pendingReleases[appID]

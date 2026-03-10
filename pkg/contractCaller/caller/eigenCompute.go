@@ -94,11 +94,7 @@ func (cc *ContractCaller) getAppController() (AppControllerInterface, error) {
 	if cc.appController == nil {
 		return nil, fmt.Errorf("appController not initialized - call SetAppController first")
 	}
-	ctrl, ok := cc.appController.(AppControllerInterface)
-	if !ok {
-		return nil, fmt.Errorf("appController has unexpected type %T", cc.appController)
-	}
-	return ctrl, nil
+	return cc.appController, nil
 }
 
 // GetAppCreator returns the creator address for a given app
