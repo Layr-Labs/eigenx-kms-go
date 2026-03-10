@@ -2,7 +2,6 @@ package node
 
 import (
 	"bytes"
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -28,13 +27,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
 )
-
-// mockChainPoller is a no-op chain poller for testing
-type mockChainPoller struct{}
-
-func (m *mockChainPoller) Start(ctx context.Context) error {
-	return nil
-}
 
 // testSecretsFixture holds the common objects needed by secrets endpoint tests.
 type testSecretsFixture struct {
