@@ -110,4 +110,8 @@ type IContractCaller interface {
 	// GetPendingReleaseAsRelease returns the pending (unconfirmed) release, if any.
 	// Returns an error if no upgrade is awaiting confirmation.
 	GetPendingReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error)
+
+	// ConfirmUpgrade promotes the pending release for appID to the confirmed slot.
+	// The caller must hold UAM permission on the AppController (i.e., be the Coordinator).
+	ConfirmUpgrade(ctx context.Context, appID string) (*ethereumTypes.Receipt, error)
 }

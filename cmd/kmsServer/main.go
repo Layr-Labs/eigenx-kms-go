@@ -19,6 +19,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/web3signer"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/coordinator"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/node"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering/peeringDataFetcher"
@@ -183,6 +184,24 @@ This server implements:
 				Name:    "redis-key-prefix",
 				Usage:   "Custom prefix for Redis keys (for multi-tenant setups)",
 				EnvVars: []string{config.EnvKMSRedisKeyPrefix},
+			},
+			// Coordinator configuration
+			&cli.BoolFlag{
+				Name:    "enable-coordinator",
+				Usage:   "Enable the upgrade Coordinator that calls confirmUpgrade() on pending app releases",
+				Value:   false,
+				EnvVars: []string{"KMS_ENABLE_COORDINATOR"},
+			},
+			&cli.StringFlag{
+				Name:    "app-controller-address",
+				Usage:   "AppController contract address on L1 (required when --enable-coordinator is true)",
+				EnvVars: []string{"KMS_APP_CONTROLLER_ADDRESS"},
+			},
+			&cli.DurationFlag{
+				Name:    "coordinator-poll-interval",
+				Usage:   "How often the Coordinator polls for pending upgrades",
+				Value:   30 * time.Second,
+				EnvVars: []string{"KMS_COORDINATOR_POLL_INTERVAL"},
 			},
 			// Attestation configuration
 			&cli.StringFlag{
@@ -531,6 +550,48 @@ func runKMSServer(c *cli.Context) error {
 			"chain", kmsConfig.ChainName,
 			"reshare_block_interval", config.GetReshareBlockIntervalForChain(kmsConfig.ChainID),
 			"protocol_timeout", config.GetProtocolTimeoutForChain(kmsConfig.ChainID))
+	}
+
+	// Start the Coordinator if enabled. The Coordinator watches for AppUpgraded events and
+	// calls confirmUpgrade() on the AppController to promote pending releases to confirmed,
+	// completing the two-phase upgrade protocol that prevents the KMS-009 race condition.
+	if c.Bool("enable-coordinator") {
+		appControllerAddr := c.String("app-controller-address")
+		if appControllerAddr == "" {
+			return fmt.Errorf("--app-controller-address is required when --enable-coordinator is true")
+		}
+
+		// The Coordinator needs a write-capable L1 contract caller. Re-use the L1 client
+		// but create a separate caller instance that includes the transaction signer.
+		l1CoordinatorCaller, err := caller.NewContractCaller(l1Client, transactionSignerInstance, l)
+		if err != nil {
+			l.Sugar().Fatalw("Failed to create L1 coordinator contract caller", "error", err)
+		}
+
+		// Get current block number to avoid re-scanning the entire chain history.
+		currentBlock, err := l1Client.BlockNumber(ctx)
+		if err != nil {
+			l.Sugar().Warnw("Failed to get current block number; coordinator will scan from genesis",
+				"error", err)
+		}
+
+		coord := coordinator.New(
+			l1CoordinatorCaller,
+			c.Duration("coordinator-poll-interval"),
+			currentBlock,
+			l,
+		)
+
+		go func() {
+			if err := coord.Start(ctx); err != nil && err != context.Canceled {
+				l.Sugar().Errorw("Coordinator exited with error", "error", err)
+			}
+		}()
+
+		l.Sugar().Infow("Upgrade Coordinator started",
+			"app_controller", appControllerAddr,
+			"poll_interval", c.Duration("coordinator-poll-interval"),
+			"start_block", currentBlock)
 	}
 
 	// Start the node server

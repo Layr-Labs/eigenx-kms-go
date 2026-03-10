@@ -31,6 +31,9 @@ type AppControllerInterface interface {
 	GetAppPendingReleaseBlockNumber(opts *bind.CallOpts, app common.Address) (uint32, error)
 	GetAppStatus(opts *bind.CallOpts, app common.Address) (uint8, error)
 	FilterAppUpgraded(opts *bind.FilterOpts, apps []common.Address) (AppUpgradedIterator, error)
+	// ConfirmUpgrade promotes the pending release to confirmed. Callable only by the Coordinator
+	// (an address with UAM permission on the AppController).
+	ConfirmUpgrade(opts *bind.TransactOpts, app common.Address) (*ethTypes.Transaction, error)
 }
 
 // AppUpgradedIterator defines the interface for iterating over AppUpgraded events
@@ -170,6 +173,29 @@ func (cc *ContractCaller) GetAppStatus(app common.Address, opts *bind.CallOpts) 
 		return 0, fmt.Errorf("failed to get app status: %w", err)
 	}
 	return status, nil
+}
+
+// ConfirmUpgrade submits a confirmUpgrade() transaction to the AppController, promoting the
+// pending release for appID to the confirmed (latest) slot. The caller must hold UAM permission
+// on the AppController (i.e., must be the designated Coordinator).
+func (cc *ContractCaller) ConfirmUpgrade(ctx context.Context, appID string) (*ethTypes.Receipt, error) {
+	appCtrl, err := cc.getAppController()
+	if err != nil {
+		return nil, err
+	}
+
+	txOpts, err := cc.buildTransactionOpts(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("failed to build transaction opts for ConfirmUpgrade: %w", err)
+	}
+
+	app := common.HexToAddress(appID)
+	tx, err := appCtrl.ConfirmUpgrade(txOpts, app)
+	if err != nil {
+		return nil, fmt.Errorf("failed to submit confirmUpgrade for app %s: %w", appID, err)
+	}
+
+	return cc.signAndSendTransaction(ctx, tx, "ConfirmUpgrade")
 }
 
 // FilterAppUpgraded filters for AppUpgraded events

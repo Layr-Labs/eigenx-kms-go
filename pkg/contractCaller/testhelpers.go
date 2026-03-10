@@ -108,6 +108,10 @@ func (m *MockContractCallerStub) GetPendingReleaseAsRelease(ctx context.Context,
 	return nil, fmt.Errorf("no pending release for app_id: %s", appID)
 }
 
+func (m *MockContractCallerStub) ConfirmUpgrade(ctx context.Context, appID string) (*ethTypes.Receipt, error) {
+	return &ethTypes.Receipt{Status: 1}, nil
+}
+
 // TestableContractCallerStub extends MockContractCallerStub with test data configuration.
 // It simulates the two-phase upgrade flow: upgradeApp() writes to pendingReleases,
 // confirmUpgrade() promotes the pending release to the confirmed releases map.
@@ -182,4 +186,12 @@ func (m *TestableContractCallerStub) GetPendingReleaseAsRelease(ctx context.Cont
 		return nil, fmt.Errorf("no pending release for app_id: %s", appID)
 	}
 	return release, nil
+}
+
+// ConfirmUpgrade promotes the pending release to confirmed, mirroring the on-chain confirmUpgrade().
+func (m *TestableContractCallerStub) ConfirmUpgrade(ctx context.Context, appID string) (*ethTypes.Receipt, error) {
+	if err := m.ConfirmPendingRelease(appID); err != nil {
+		return nil, err
+	}
+	return &ethTypes.Receipt{Status: 1}, nil
 }
