@@ -156,6 +156,81 @@ func TestWaitForCommitmentsWithThreshold_BelowThresholdFails(t *testing.T) {
 	require.Contains(t, err.Error(), "timeout waiting for commitments")
 }
 
+// TestWaitForAcks_ThresholdFallback verifies that waitForAcks times out
+// but the caller can apply a threshold fallback when enough acks were received.
+func TestWaitForAcks_ThresholdFallback(t *testing.T) {
+	const n = 5
+	const threshold = 4 // ceil(2*5/3)
+
+	t.Run("succeeds when required acks received", func(t *testing.T) {
+		session := &ProtocolSession{
+			Operators:        makeTestOperators(n),
+			acks:             make(map[int64]map[int64]*types.Acknowledgement),
+			sharesCompleteChan: make(chan bool, 1),
+		}
+
+		dealerID := int64(1)
+		session.acks[dealerID] = make(map[int64]*types.Acknowledgement)
+		for i := int64(2); i <= int64(threshold+1); i++ {
+			session.acks[dealerID][i] = &types.Acknowledgement{PlayerID: i, DealerID: dealerID}
+		}
+
+		err := waitForAcks(session, dealerID, threshold, 200*time.Millisecond)
+		require.NoError(t, err)
+	})
+
+	t.Run("times out when below required acks", func(t *testing.T) {
+		session := &ProtocolSession{
+			Operators:        makeTestOperators(n),
+			acks:             make(map[int64]map[int64]*types.Acknowledgement),
+			sharesCompleteChan: make(chan bool, 1),
+		}
+
+		dealerID := int64(1)
+		session.acks[dealerID] = make(map[int64]*types.Acknowledgement)
+		// Only deliver threshold-2 acks (below threshold-1 fallback)
+		for i := int64(2); i < int64(threshold); i++ {
+			session.acks[dealerID][i] = &types.Acknowledgement{PlayerID: i, DealerID: dealerID}
+		}
+
+		err := waitForAcks(session, dealerID, threshold, 200*time.Millisecond)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "timeout waiting for acks")
+
+		// Verify that the caller can check received count for fallback logic
+		session.mu.RLock()
+		received := len(session.acks[dealerID])
+		session.mu.RUnlock()
+		require.Equal(t, threshold-2, received)
+	})
+
+	t.Run("fallback threshold-1 is sufficient", func(t *testing.T) {
+		session := &ProtocolSession{
+			Operators:        makeTestOperators(n),
+			acks:             make(map[int64]map[int64]*types.Acknowledgement),
+			sharesCompleteChan: make(chan bool, 1),
+		}
+
+		dealerID := int64(1)
+		session.acks[dealerID] = make(map[int64]*types.Acknowledgement)
+		// Deliver threshold-1 acks (enough for fallback, not enough for full requirement)
+		for i := int64(2); i <= int64(threshold); i++ {
+			session.acks[dealerID][i] = &types.Acknowledgement{PlayerID: i, DealerID: dealerID}
+		}
+
+		// waitForAcks requires threshold, so it times out
+		err := waitForAcks(session, dealerID, threshold, 200*time.Millisecond)
+		require.Error(t, err)
+
+		// But the fallback check passes with threshold-1
+		session.mu.RLock()
+		received := len(session.acks[dealerID])
+		session.mu.RUnlock()
+		fallbackRequired := threshold - 1
+		require.GreaterOrEqual(t, received, fallbackRequired, "fallback threshold should be met")
+	})
+}
+
 // TestSelectDeterministicParticipants verifies that the participant set is
 // chosen deterministically from operators that sent both shares and commitments.
 func TestSelectDeterministicParticipants(t *testing.T) {
@@ -181,8 +256,7 @@ func TestSelectDeterministicParticipants(t *testing.T) {
 			session.commitments[id] = []types.G2Point{}
 		}
 
-		threshold := 4
-		result := selectDeterministicParticipants(session, operators, threshold)
+		result := selectDeterministicParticipants(session, operators)
 		require.Len(t, result, 5, "should return all candidates, not truncate to threshold")
 
 		// Verify sorted ascending
@@ -207,9 +281,8 @@ func TestSelectDeterministicParticipants(t *testing.T) {
 			}
 		}
 
-		threshold := 4
-		result := selectDeterministicParticipants(session, operators, threshold)
-		require.Len(t, result, threshold)
+		result := selectDeterministicParticipants(session, operators)
+		require.Len(t, result, 4)
 
 		// The 5th operator (missing share) should not be in the result
 		resultSet := make(map[int64]bool)
@@ -235,9 +308,8 @@ func TestSelectDeterministicParticipants(t *testing.T) {
 			}
 		}
 
-		threshold := 4
-		result := selectDeterministicParticipants(session, operators, threshold)
-		require.Len(t, result, threshold)
+		result := selectDeterministicParticipants(session, operators)
+		require.Len(t, result, 4)
 
 		resultSet := make(map[int64]bool)
 		for _, id := range result {
@@ -253,7 +325,7 @@ func TestSelectDeterministicParticipants(t *testing.T) {
 			commitments: make(map[int64][]types.G2Point),
 		}
 
-		// Only 3 operators sent both
+		// Only 3 operators sent both — caller would check len(result) >= threshold
 		for i := 0; i < 3; i++ {
 			id := nodeIDs[i]
 			elem := fr.NewElement(uint64(id))
@@ -261,8 +333,7 @@ func TestSelectDeterministicParticipants(t *testing.T) {
 			session.commitments[id] = []types.G2Point{}
 		}
 
-		threshold := 4
-		result := selectDeterministicParticipants(session, operators, threshold)
+		result := selectDeterministicParticipants(session, operators)
 		require.Len(t, result, 3, "should return all candidates when fewer than threshold")
 	})
 
@@ -279,9 +350,8 @@ func TestSelectDeterministicParticipants(t *testing.T) {
 			session.commitments[id] = []types.G2Point{}
 		}
 
-		threshold := 4
-		result1 := selectDeterministicParticipants(session, operators, threshold)
-		result2 := selectDeterministicParticipants(session, operators, threshold)
+		result1 := selectDeterministicParticipants(session, operators)
+		result2 := selectDeterministicParticipants(session, operators)
 		require.Equal(t, result1, result2, "should produce identical results on repeated calls")
 	})
 }

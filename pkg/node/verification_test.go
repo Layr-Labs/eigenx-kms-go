@@ -291,9 +291,16 @@ func TestWaitForVerifications(t *testing.T) {
 			SessionTimestamp: 12345,
 			Type:             "reshare",
 			Operators: []*peering.OperatorSetPeer{
-				{}, {}, {}, // 3 operators, threshold=⌈2*3/3⌉=2, need 1 verification
+				{}, {}, {}, // 3 operators, threshold=⌈2*3/3⌉=2, need min(1, receivedShares-1) verifications
 			},
+			shares:            make(map[int64]*fr.Element),
 			verifiedOperators: make(map[int64]bool),
+		}
+
+		// Simulate having received shares from all 3 operators (including self)
+		for i := int64(0); i < 3; i++ {
+			elem := fr.NewElement(uint64(i + 1))
+			session.shares[i] = &elem
 		}
 
 		node := &Node{
@@ -301,7 +308,7 @@ func TestWaitForVerifications(t *testing.T) {
 			activeSessions: map[int64]*ProtocolSession{12345: session},
 		}
 
-		// Only 1 verification — sufficient for reshare threshold (2-1=1)
+		// Only 1 verification — sufficient for reshare threshold (min(2-1, 3-1) = 1)
 		session.verifiedOperators[1] = true
 
 		err := node.WaitForVerifications(12345, 2*time.Second)
@@ -316,7 +323,14 @@ func TestWaitForVerifications(t *testing.T) {
 			Operators: []*peering.OperatorSetPeer{
 				{}, {}, {}, {}, {}, {}, // 6 operators, threshold=⌈2*6/3⌉=4, need 3 verifications
 			},
+			shares:            make(map[int64]*fr.Element),
 			verifiedOperators: make(map[int64]bool),
+		}
+
+		// Simulate having received shares from all 6 operators
+		for i := int64(0); i < 6; i++ {
+			elem := fr.NewElement(uint64(i + 1))
+			session.shares[i] = &elem
 		}
 
 		node := &Node{
@@ -324,7 +338,7 @@ func TestWaitForVerifications(t *testing.T) {
 			activeSessions: map[int64]*ProtocolSession{12345: session},
 		}
 
-		// Only 2 verifications, need 3 (threshold 4 minus self)
+		// Only 2 verifications, need 3 (min(threshold-1, receivedShares-1) = min(3, 5) = 3)
 		session.verifiedOperators[1] = true
 		session.verifiedOperators[2] = true
 

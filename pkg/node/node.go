@@ -132,7 +132,11 @@ func (s *ProtocolSession) HandleReceivedShare(senderNodeID int64, share *fr.Elem
 
 	s.shares[senderNodeID] = share
 
-	// Signal completion when all shares received
+	// Signal completion when ALL shares received (not threshold).
+	// The threshold fallback is handled by waitForSharesWithThreshold, which
+	// checks the map length after the channel-based wait times out.
+	// Note: self-share is stored before waitForShares is called, so len(s.shares)
+	// starts at 1 (self) when waiting begins.
 	if len(s.shares) == len(s.Operators) {
 		select {
 		case s.sharesCompleteChan <- true:
@@ -156,7 +160,8 @@ func (s *ProtocolSession) HandleReceivedCommitment(senderNodeID int64, commitmen
 
 	s.commitments[senderNodeID] = commitments
 
-	// Signal completion when all commitments received
+	// Signal completion when ALL commitments received (not threshold).
+	// The threshold fallback is handled by waitForCommitmentsWithThreshold.
 	if len(s.commitments) == len(s.Operators) {
 		select {
 		case s.commitmentsCompleteChan <- true:
@@ -1210,8 +1215,9 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	// Both use threshold fallback: if the wait times out but at least ⌈2n/3⌉
 	// shares/commitments were received, proceed to maintain liveness.
 	// Participant set agreement is ensured at finalization by deterministically
-	// selecting the first threshold operators (sorted by node ID) that sent
-	// both a share and a commitment.
+	// selecting all operators (sorted by node ID) that sent both a share and
+	// a commitment — all honest nodes with the same received data converge on
+	// the same set.
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
 	if err := waitForSharesWithThreshold(session, protocolTimeout, newThreshold, n.logger.Sugar()); err != nil {
 		return err
@@ -1285,15 +1291,34 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	}
 
 	// Wait for acknowledgements (as a dealer).
-	// We require a threshold (t) of *other* operators to ack, so that there exist t non-dealer holders
-	// of this dealer's contribution (robust even if the dealer goes offline later).
+	// We require threshold acks from other operators. If the full wait times out
+	// but at least threshold-1 acks were received, proceed — this handles the case
+	// where one operator went offline after sending shares but before acking.
 	myNodeID := addressToNodeID(n.OperatorAddress)
 	requiredAcks := newThreshold
 	if requiredAcks < 0 {
 		requiredAcks = 0
 	}
 	if err := waitForAcks(session, myNodeID, requiredAcks, protocolTimeout); err != nil {
-		return fmt.Errorf("insufficient reshare acknowledgements: %v", err)
+		// Threshold fallback: check if we have at least threshold-1 acks
+		session.mu.RLock()
+		ackMap := session.acks[myNodeID]
+		received := 0
+		if ackMap != nil {
+			received = len(ackMap)
+		}
+		session.mu.RUnlock()
+		fallbackRequired := newThreshold - 1
+		if fallbackRequired < 1 {
+			fallbackRequired = 1
+		}
+		if received >= fallbackRequired {
+			n.logger.Sugar().Warnw("Not all acks received but fallback threshold met, proceeding",
+				"received", received, "required", requiredAcks, "fallback", fallbackRequired,
+				"total_operators", len(operators))
+		} else {
+			return fmt.Errorf("insufficient reshare acknowledgements: %v", err)
+		}
 	}
 
 	// Phase 2: Build Merkle Tree and Submit to Contract
@@ -1385,10 +1410,10 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		"operator_address", n.OperatorAddress.Hex(),
 		"node_id", thisNodeID)
 
-	// Select a deterministic participant set: the first threshold operators (sorted
-	// by node ID) that sent both a share and a commitment. This ensures all honest
-	// nodes agree on the same set, preventing Lagrange coefficient divergence.
-	participantIDsForFinalize := selectDeterministicParticipants(session, operators, newThreshold)
+	// Select a deterministic participant set: all operators (sorted by node ID)
+	// that sent both a share and a commitment. This ensures all honest nodes
+	// agree on the same set, preventing Lagrange coefficient divergence.
+	participantIDsForFinalize := selectDeterministicParticipants(session, operators)
 	if len(participantIDsForFinalize) < newThreshold {
 		return fmt.Errorf("insufficient participants for reshare finalization: got %d, need %d",
 			len(participantIDsForFinalize), newThreshold)
@@ -1511,8 +1536,8 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	// Both use threshold fallback: if the wait times out but at least ⌈2n/3⌉
 	// shares/commitments were received, proceed to maintain liveness.
 	// Participant set agreement is ensured at finalization by deterministically
-	// selecting the first threshold operators (sorted by node ID) that sent
-	// both a share and a commitment.
+	// selecting all operators (sorted by node ID) that sent both a share and
+	// a commitment.
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
 	if err := waitForSharesWithThreshold(session, protocolTimeout, newThreshold, n.logger.Sugar()); err != nil {
 		return fmt.Errorf("failed to receive shares: %w", err)
@@ -1521,9 +1546,9 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		return fmt.Errorf("failed to receive commitments: %w", err)
 	}
 
-	// Select a deterministic participant set: the first threshold operators (sorted
-	// by node ID) that sent both a share and a commitment.
-	participantIDs := selectDeterministicParticipants(session, operators, newThreshold)
+	// Select a deterministic participant set: all operators (sorted by node ID)
+	// that sent both a share and a commitment.
+	participantIDs := selectDeterministicParticipants(session, operators)
 	if len(participantIDs) < newThreshold {
 		return fmt.Errorf("insufficient participants for reshare finalization: got %d, need %d",
 			len(participantIDs), newThreshold)
@@ -1690,7 +1715,15 @@ func waitForCommitmentsWithThreshold(session *ProtocolSession, timeout time.Dura
 // ascending, ensuring all honest nodes that received the same data will agree on
 // the same participant set. This is critical for Lagrange coefficient consistency
 // across nodes. The caller should verify len(result) >= threshold before proceeding.
-func selectDeterministicParticipants(session *ProtocolSession, operators []*peering.OperatorSetPeer, threshold int) []int64 {
+//
+// NOTE on cross-node agreement: This function guarantees determinism within a single
+// node's view. Cross-node agreement depends on all honest nodes having received the
+// same set of shares/commitments. The protocol mitigates divergence by (1) waiting
+// the full protocol timeout before checking threshold (maximizing data collection),
+// and (2) requiring both share AND commitment for inclusion. In a true partial-
+// partition scenario where nodes have different received sets, there is no additional
+// coordination mechanism — this is an architectural constraint of the current design.
+func selectDeterministicParticipants(session *ProtocolSession, operators []*peering.OperatorSetPeer) []int64 {
 	session.mu.RLock()
 	defer session.mu.RUnlock()
 
@@ -1967,7 +2000,8 @@ func (n *Node) VerifyOperatorBroadcast(
 	// For now, this is a placeholder that will be implemented when we integrate with the contract
 	// In Phase 7 integration tests, we'll add the actual contract query
 
-	// Step 2: Verify commitment hash matches broadcast
+	// Step 2: Compute commitment hash (will be verified against on-chain data in Phase 7)
+	// TODO: Compare broadcastCommitmentHash against contract-stored value once contract integration is complete
 	broadcastCommitmentHash := eigenxcrypto.HashCommitment(broadcast.Commitments)
 
 	// Step 3: Find MY ack in the broadcast
@@ -2012,11 +2046,16 @@ func (n *Node) VerifyOperatorBroadcast(
 		Proof: broadcast.MerkleProof,
 	}
 
-	// For Phase 6, we'll verify against the tree root
-	// In Phase 7, we'll verify against on-chain root from contract
-	// For now, just verify the proof is well-formed
 	if len(proof.Proof) == 0 {
 		return fmt.Errorf("merkle proof is empty")
+	}
+
+	// Verify the proof against the broadcast's merkle root.
+	// TODO: In Phase 7, verify against on-chain root from contract instead.
+	if broadcast.MerkleRoot != ([32]byte{}) {
+		if !merkle.VerifyProof(proof, broadcast.MerkleRoot) {
+			return fmt.Errorf("merkle proof verification failed against broadcast root")
+		}
 	}
 
 	// Mark operator as verified
@@ -2042,18 +2081,26 @@ func (n *Node) WaitForVerifications(sessionTimestamp int64, timeout time.Duratio
 
 	// For reshare, only expect threshold-1 verifications (matching the threshold
 	// semantics used for shares). For DKG, expect all n-1.
+	// Cap at receivedShareCount-1 since we can only verify operators we received
+	// shares from, and some may go offline before broadcasting.
 	expectedVerifications := len(session.Operators) - 1
 	if session.Type == "reshare" {
-		expectedVerifications = dkg.CalculateThreshold(len(session.Operators)) - 1
+		session.mu.RLock()
+		receivedShareCount := len(session.shares)
+		session.mu.RUnlock()
+		thresholdMinus1 := dkg.CalculateThreshold(len(session.Operators)) - 1
+		expectedVerifications = min(thresholdMinus1, receivedShareCount-1)
 	}
 
-	deadline := time.Now().Add(timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-time.After(time.Until(deadline)):
+		case <-ctx.Done():
 			session.mu.RLock()
 			verified := len(session.verifiedOperators)
 			session.mu.RUnlock()

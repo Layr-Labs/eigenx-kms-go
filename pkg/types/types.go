@@ -143,6 +143,7 @@ type CommitmentBroadcast struct {
 	Commitments      []G2Point          // Dealer's polynomial commitments
 	Acknowledgements []*Acknowledgement // All n-1 acks collected as dealer
 	MerkleProof      [][32]byte         // Merkle proof for specific recipient
+	MerkleRoot       [32]byte           // Root of ack merkle tree for proof verification
 }
 
 // CommitmentBroadcastMessage wraps CommitmentBroadcast for authenticated transport (Phase 3)
