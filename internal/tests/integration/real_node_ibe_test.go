@@ -22,8 +22,13 @@ func Test_IBEIntegration(t *testing.T) {
 	clientLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	// Create mock ContractCaller that returns test cluster operators
+	operatorAddresses := make([]common.Address, 0, len(cluster.Nodes))
+	for _, n := range cluster.Nodes {
+		operatorAddresses = append(operatorAddresses, n.GetOperatorAddress())
+	}
 	mockContractCaller := &mockContractCaller{
-		serverURLs: cluster.GetServerURLs(),
+		serverURLs:        cluster.GetServerURLs(),
+		operatorAddresses: operatorAddresses,
 	}
 
 	// Create KMS client with mock contract caller for testing
@@ -80,14 +85,19 @@ func Test_IBEIntegration(t *testing.T) {
 
 // mockContractCaller provides a test implementation that returns mock operators
 type mockContractCaller struct {
-	serverURLs []string
+	serverURLs        []string
+	operatorAddresses []common.Address
 }
 
 func (m *mockContractCaller) GetOperatorSetMembersWithPeering(avsAddress string, operatorSetID uint32) (*peering.OperatorSetPeers, error) {
 	var peers []*peering.OperatorSetPeer
 	for i, url := range m.serverURLs {
+		address := common.HexToAddress(fmt.Sprintf("0x%040d", i+1))
+		if i < len(m.operatorAddresses) {
+			address = m.operatorAddresses[i]
+		}
 		peers = append(peers, &peering.OperatorSetPeer{
-			OperatorAddress: common.HexToAddress(fmt.Sprintf("0x%040d", i+1)),
+			OperatorAddress: address,
 			SocketAddress:   url,
 		})
 	}
