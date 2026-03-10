@@ -1406,7 +1406,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 
 	// Phase 4: Wait for verifications
 	n.logger.Sugar().Infow("Reshare Phase 4: Waiting for operator verifications",
-		"expected_verifications", newThreshold-1)
+		"operator_address", n.OperatorAddress.Hex())
 
 	err = n.WaitForVerifications(session.SessionTimestamp, protocolTimeout)
 	if err != nil {
@@ -1555,6 +1555,30 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	}
 	if err := waitForCommitmentsWithThreshold(session, protocolTimeout, newThreshold, n.logger.Sugar()); err != nil {
 		return fmt.Errorf("failed to receive commitments: %w", err)
+	}
+
+	// Verify received shares against commitments and remove invalid ones.
+	// Without this, a dealer sending an invalid share would still be included
+	// in participant selection and corrupt ComputeNewKeyShare.
+	session.mu.RLock()
+	receivedShares := session.shares
+	receivedCommitments := session.commitments
+	session.mu.RUnlock()
+
+	invalidDealers := make([]int64, 0)
+	for dealerID, share := range receivedShares {
+		commitments := receivedCommitments[dealerID]
+		if !n.resharer.VerifyNewShare(dealerID, share, commitments) {
+			n.logInvalidShareComplaint("reshare-new-operator", sessionTimestamp, thisNodeID, dealerID, share, commitments)
+			invalidDealers = append(invalidDealers, dealerID)
+		}
+	}
+	if len(invalidDealers) > 0 {
+		session.mu.Lock()
+		for _, id := range invalidDealers {
+			delete(session.shares, id)
+		}
+		session.mu.Unlock()
 	}
 
 	// Select a deterministic participant set: all operators (sorted by node ID)
