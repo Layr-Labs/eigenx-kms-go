@@ -1159,12 +1159,11 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		return err
 	}
 
-	// Phase 1: Generate new shares
-	// Automatic reshare is a *share refresh*: keep the master secret fixed while re-randomizing shares.
-	// We do this by having every dealer contribute a random polynomial g_i with g_i(0)=0, and each
-	// participant updates their share: x'_j = x_j + Σ_i g_i(j).
-	zero := new(fr.Element).SetZero()
-	shares, commitments, err := n.resharer.GenerateNewShares(zero, newThreshold)
+	// Phase 1: Generate dealer polynomials anchored at each dealer's current share.
+	// Each dealer i samples f_i with f_i(0)=x_i and broadcasts commitments + per-recipient shares.
+	// Recipients then combine received shares via Lagrange to derive a refreshed share of the same
+	// master secret. This works for both existing and newly joining operators.
+	shares, commitments, err := n.resharer.GenerateNewShares(currentShare, newThreshold)
 	if err != nil {
 		return err
 	}
@@ -1394,37 +1393,11 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	receivedSharesForFinalize := session.shares
 	session.mu.RUnlock()
 
-	// Compute refreshed share: x'_j = x_j + Σ_i g_i(j)
-	delta := new(fr.Element).SetZero()
-	for _, share := range receivedSharesForFinalize {
-		if share == nil {
-			continue
-		}
-		delta.Add(delta, share)
-	}
-	newShare := new(fr.Element).Add(new(fr.Element).Set(currentShare), delta)
-
-	newKeyVersion := &types.KeyShareVersion{
-		Version:        sessionTimestamp,
-		PrivateShare:   newShare,
-		IsActive:       true,
-		ParticipantIDs: participantIDsForFinalize,
-	}
-
-	// Scale this node's first commitment by its Lagrange coefficient
-	// This ensures that when the client sums all operators' commitments[0], it gets g^s (master public key)
-	// We publish λ_j * (g^{x'_j}) so clients can reconstruct g^s by summing contributions.
-	lambda := eigenxcrypto.ComputeLagrangeCoefficient(thisNodeID, participantIDsForFinalize)
-	shareCommitment, err := eigenxcrypto.ScalarMulG2(eigenxcrypto.G2Generator, newShare)
-	if err != nil {
-		return fmt.Errorf("failed to compute share commitment: %w", err)
-	}
-	scaledFirstCommitment, err := eigenxcrypto.ScalarMulG2(*shareCommitment, lambda)
-	if err != nil {
-		return fmt.Errorf("failed to scale commitment: %w", err)
-	}
-
-	newKeyVersion.Commitments = []types.G2Point{*scaledFirstCommitment}
+	// Compute refreshed share using the same Lagrange reconstruction as the new-operator path.
+	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDsForFinalize, receivedSharesForFinalize, nil)
+	newKeyVersion.Version = sessionTimestamp
+	newKeyVersion.IsActive = true
+	newKeyVersion.ParticipantIDs = participantIDsForFinalize
 
 	// Persist new key version BEFORE adding to keystore
 	// This ensures we fail if persistence fails, preventing state inconsistency
