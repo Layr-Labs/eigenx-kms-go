@@ -341,6 +341,14 @@ func (s *Server) handleDKGAck(w http.ResponseWriter, r *http.Request) {
 	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
 	thisNodeID := util.AddressToNodeID(s.node.OperatorAddress)
 
+	if err := s.node.verifyAcknowledgement(session, senderPeer, senderNodeID, thisNodeID, ackMsg.SessionTimestamp, ackMsg.Ack); err != nil {
+		s.node.logger.Sugar().Warnw("Invalid DKG acknowledgement",
+			"from", senderPeer.OperatorAddress.Hex(),
+			"error", err)
+		http.Error(w, "Invalid acknowledgement", http.StatusBadRequest)
+		return
+	}
+
 	// Store ack in session (handles duplicate detection and completion signaling)
 	if err := session.HandleReceivedAck(thisNodeID, senderNodeID, ackMsg.Ack); err != nil {
 		s.node.logger.Sugar().Warnw("Failed to store ack",
@@ -498,6 +506,14 @@ func (s *Server) handleReshareAck(w http.ResponseWriter, r *http.Request) {
 	// Convert sender address to node ID
 	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
 	thisNodeID := util.AddressToNodeID(s.node.OperatorAddress)
+
+	if err := s.node.verifyAcknowledgement(session, senderPeer, senderNodeID, thisNodeID, ackMsg.SessionTimestamp, ackMsg.Ack); err != nil {
+		s.node.logger.Sugar().Warnw("Invalid reshare acknowledgement",
+			"from", senderPeer.OperatorAddress.Hex(),
+			"error", err)
+		http.Error(w, "Invalid acknowledgement", http.StatusBadRequest)
+		return
+	}
 
 	// Store ack in session
 	if err := session.HandleReceivedAck(thisNodeID, senderNodeID, ackMsg.Ack); err != nil {
