@@ -183,4 +183,3 @@ func (m *TestableContractCallerStub) GetPendingReleaseAsRelease(ctx context.Cont
 	}
 	return release, nil
 }
-
