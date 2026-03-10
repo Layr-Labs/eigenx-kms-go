@@ -1379,7 +1379,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 
 	// Phase 4: Wait for verifications
 	n.logger.Sugar().Infow("Reshare Phase 4: Waiting for operator verifications",
-		"expected_verifications", len(operators)-1)
+		"expected_verifications", newThreshold-1)
 
 	err = n.WaitForVerifications(session.SessionTimestamp, protocolTimeout)
 	if err != nil {
@@ -1964,7 +1964,12 @@ func (n *Node) WaitForVerifications(sessionTimestamp int64, timeout time.Duratio
 		return fmt.Errorf("session not found")
 	}
 
-	expectedVerifications := len(session.Operators) - 1 // All except self
+	// For reshare, only expect threshold-1 verifications (matching the threshold
+	// semantics used for shares). For DKG, expect all n-1.
+	expectedVerifications := len(session.Operators) - 1
+	if session.Type == "reshare" {
+		expectedVerifications = dkg.CalculateThreshold(len(session.Operators)) - 1
+	}
 
 	deadline := time.Now().Add(timeout)
 	ticker := time.NewTicker(500 * time.Millisecond)

@@ -284,6 +284,54 @@ func TestWaitForVerifications(t *testing.T) {
 		err := node.WaitForVerifications(12345, 2*time.Second)
 		require.NoError(t, err)
 	})
+
+	t.Run("Reshare succeeds with threshold-1 verifications", func(t *testing.T) {
+		logger, _ := zap.NewDevelopment()
+		session := &ProtocolSession{
+			SessionTimestamp: 12345,
+			Type:             "reshare",
+			Operators: []*peering.OperatorSetPeer{
+				{}, {}, {}, // 3 operators, threshold=⌈2*3/3⌉=2, need 1 verification
+			},
+			verifiedOperators: make(map[int64]bool),
+		}
+
+		node := &Node{
+			logger:         logger,
+			activeSessions: map[int64]*ProtocolSession{12345: session},
+		}
+
+		// Only 1 verification — sufficient for reshare threshold (2-1=1)
+		session.verifiedOperators[1] = true
+
+		err := node.WaitForVerifications(12345, 2*time.Second)
+		require.NoError(t, err)
+	})
+
+	t.Run("Reshare times out below threshold verifications", func(t *testing.T) {
+		logger, _ := zap.NewDevelopment()
+		session := &ProtocolSession{
+			SessionTimestamp: 12345,
+			Type:             "reshare",
+			Operators: []*peering.OperatorSetPeer{
+				{}, {}, {}, {}, {}, {}, // 6 operators, threshold=⌈2*6/3⌉=4, need 3 verifications
+			},
+			verifiedOperators: make(map[int64]bool),
+		}
+
+		node := &Node{
+			logger:         logger,
+			activeSessions: map[int64]*ProtocolSession{12345: session},
+		}
+
+		// Only 2 verifications, need 3 (threshold 4 minus self)
+		session.verifiedOperators[1] = true
+		session.verifiedOperators[2] = true
+
+		err := node.WaitForVerifications(12345, 100*time.Millisecond)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "verified 2/3")
+	})
 }
 
 // TestHashAcknowledgementForMerkle_Integration tests the hash function with real data (Phase 6)
