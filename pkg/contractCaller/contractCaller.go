@@ -93,10 +93,6 @@ type IContractCaller interface {
 	// GetAppLatestReleaseBlockNumber returns the block number of the latest CONFIRMED release.
 	GetAppLatestReleaseBlockNumber(app common.Address, opts *bind.CallOpts) (uint32, error)
 
-	// GetAppPendingReleaseBlockNumber returns the block number of the pending (unconfirmed) release,
-	// or 0 if none. Set by upgradeApp(), cleared by confirmUpgrade().
-	GetAppPendingReleaseBlockNumber(app common.Address, opts *bind.CallOpts) (uint32, error)
-
 	GetAppStatus(app common.Address, opts *bind.CallOpts) (uint8, error)
 
 	FilterAppUpgraded(apps []common.Address, filterOpts *bind.FilterOpts) (caller.AppUpgradedIterator, error)
@@ -106,8 +102,4 @@ type IContractCaller interface {
 	// GetLatestReleaseAsRelease returns the confirmed (active) release. This is only updated
 	// after the Coordinator calls confirmUpgrade(), preventing race conditions during upgrades.
 	GetLatestReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error)
-
-	// GetPendingReleaseAsRelease returns the pending (unconfirmed) release, if any.
-	// Returns an error if no upgrade is awaiting confirmation.
-	GetPendingReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error)
 }
