@@ -554,6 +554,11 @@ func (s *Server) handleReshareComplete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAppSign(w http.ResponseWriter, r *http.Request) {
+	// SECURITY/TRUST NOTE:
+	// Deployment is expected to
+	// enforce caller identity/authorization at the edge (e.g. WAF/ingress with HTTPS +
+	// mTLS and app-level policy). If that external control is not present, this endpoint
+	// should be treated as unsafe for public exposure.
 	var req types.AppSignRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

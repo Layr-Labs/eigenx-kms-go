@@ -223,6 +223,15 @@ func (c *Client) GetMasterPublicKey(operators *peering.OperatorSetPeers) (*types
 		allCommitments = append(allCommitments, res.commitments)
 	}
 
+	// SECURITY/CONSISTENCY NOTE (accepted behavior):
+	// This path is intentionally best-effort for now. We accept any non-empty set of
+	// commitments returned by reachable operators and compute a master public key from
+	// that subset. We do NOT currently enforce quorum, cross-operator version agreement,
+	// or authenticated/on-chain proof validation in this method.
+	//
+	// Rationale: prioritize availability when some operators are offline. The tradeoff is
+	// that clients can observe split views and may derive a master key that later fails
+	// decryption/reconstruction flows if responses were stale or Byzantine.
 	if len(allCommitments) == 0 {
 		return nil, fmt.Errorf("failed to collect commitments from any operator")
 	}
