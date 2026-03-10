@@ -91,7 +91,8 @@ func (m *MockContractCallerStub) GetLatestRelease(ctx context.Context, appID str
 }
 
 func (m *MockContractCallerStub) GetLatestReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error) {
-	// Return test release data
+	// Timestamp is intentionally 0 — this stub returns static data for simple tests.
+	// Use TestableContractCallerStub for tests that need realistic release data.
 	return &types.Release{
 		ImageDigest:  "sha256:test123",
 		EncryptedEnv: "encrypted-env-data-for-" + appID,
@@ -100,29 +101,57 @@ func (m *MockContractCallerStub) GetLatestReleaseAsRelease(ctx context.Context, 
 	}, nil
 }
 
-// TestableContractCallerStub extends MockContractCallerStub with test data configuration
+// TestableContractCallerStub extends MockContractCallerStub with test data configuration.
+// It simulates the two-phase upgrade flow: upgradeApp() writes to pendingReleases,
+// confirmUpgrade() promotes the pending release to the confirmed releases map.
 type TestableContractCallerStub struct {
 	MockContractCallerStub
-	releases map[string]*types.Release
-	mu       sync.RWMutex
+	releases        map[string]*types.Release // confirmed (active) releases
+	pendingReleases map[string]*types.Release // pending releases awaiting confirmation
+	mu              sync.RWMutex
 }
 
 // NewTestableContractCallerStub creates a new testable stub with configurable releases
 func NewTestableContractCallerStub() *TestableContractCallerStub {
 	return &TestableContractCallerStub{
-		releases: make(map[string]*types.Release),
+		releases:        make(map[string]*types.Release),
+		pendingReleases: make(map[string]*types.Release),
 	}
 }
 
-// AddTestRelease adds a test release for a specific app ID
+// AddTestRelease adds a confirmed test release for a specific app ID.
+// This simulates a release that has already been confirmed via confirmUpgrade().
 func (m *TestableContractCallerStub) AddTestRelease(appID string, release *types.Release) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.releases[appID] = release
-	fmt.Printf("Added test release for app_id: %s, image: %s\n", appID, release.ImageDigest)
 }
 
-// GetLatestReleaseAsRelease returns the configured test release for an app
+// SetPendingRelease simulates upgradeApp(): places a new release in the pending state.
+// The confirmed (active) release is unchanged until ConfirmPendingRelease is called.
+func (m *TestableContractCallerStub) SetPendingRelease(appID string, release *types.Release) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.pendingReleases[appID] = release
+}
+
+// ConfirmUpgrade simulates the on-chain confirmUpgrade(): promotes the pending release to confirmed.
+// Returns an error if no pending release exists for the app.
+func (m *TestableContractCallerStub) ConfirmUpgrade(appID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	pending, exists := m.pendingReleases[appID]
+	if !exists {
+		return fmt.Errorf("no pending release for app_id: %s", appID)
+	}
+	m.releases[appID] = pending
+	delete(m.pendingReleases, appID)
+	return nil
+}
+
+// GetLatestReleaseAsRelease returns the confirmed (active) release for an app.
+// In the two-phase upgrade model, this is only updated after confirmUpgrade() is called,
+// so in-flight requests issued before an upgrade are still validated correctly.
 func (m *TestableContractCallerStub) GetLatestReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -131,7 +160,5 @@ func (m *TestableContractCallerStub) GetLatestReleaseAsRelease(ctx context.Conte
 	if !exists {
 		return nil, fmt.Errorf("no release found for app_id: %s", appID)
 	}
-
-	fmt.Printf("Found release for app_id: %s, image: %s\n", appID, release.ImageDigest)
 	return release, nil
 }
