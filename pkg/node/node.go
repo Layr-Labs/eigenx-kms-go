@@ -1207,8 +1207,11 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	}
 
 	// Wait for shares and commitments using channel-based signaling.
-	// If the wait times out but we have at least threshold shares/commitments,
+	// Shares: if the wait times out but we have at least threshold shares,
 	// proceed anyway to maintain liveness when some operators are unresponsive.
+	// Commitments: always require all n — commitments are public and feed into
+	// participantIDsForFinalize / Lagrange coefficients, so all nodes must agree
+	// on the same participant set to preserve master public key correctness.
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
 	if err := waitForShares(session, protocolTimeout); err != nil {
 		session.mu.RLock()
@@ -1223,16 +1226,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		}
 	}
 	if err := waitForCommitments(session, protocolTimeout); err != nil {
-		session.mu.RLock()
-		received := len(session.commitments)
-		session.mu.RUnlock()
-		if received >= newThreshold {
-			n.logger.Sugar().Warnw("Not all commitments received but threshold met, proceeding with reshare",
-				"operator_address", n.OperatorAddress.Hex(),
-				"received", received, "threshold", newThreshold, "total_operators", len(operators))
-		} else {
-			return err
-		}
+		return err
 	}
 
 	// Update session to Phase 2 and persist
@@ -1511,8 +1505,11 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		"threshold", newThreshold)
 
 	// Wait for shares and commitments from existing operators using channel-based signaling.
-	// If the wait times out but we have at least threshold shares/commitments,
+	// Shares: if the wait times out but we have at least threshold shares,
 	// proceed anyway to maintain liveness when some operators are unresponsive.
+	// Commitments: always require all n — commitments are public and feed into
+	// participantIDs / Lagrange coefficients, so all nodes must agree on the
+	// same participant set to preserve master public key correctness.
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
 	if err := waitForShares(session, protocolTimeout); err != nil {
 		session.mu.RLock()
@@ -1527,16 +1524,7 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		}
 	}
 	if err := waitForCommitments(session, protocolTimeout); err != nil {
-		session.mu.RLock()
-		received := len(session.commitments)
-		session.mu.RUnlock()
-		if received >= newThreshold {
-			n.logger.Sugar().Warnw("Not all commitments received but threshold met, proceeding with reshare (new operator)",
-				"operator_address", n.OperatorAddress.Hex(),
-				"received", received, "threshold", newThreshold, "total_operators", len(operators))
-		} else {
-			return fmt.Errorf("failed to receive commitments: %w", err)
-		}
+		return fmt.Errorf("failed to receive commitments: %w", err)
 	}
 
 	// Collect all commitments and participant IDs from session
