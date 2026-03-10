@@ -54,4 +54,3 @@ func Test_collectVerifiedSharesForFinalize(t *testing.T) {
 		t.Fatalf("unexpected participantIDs ordering/content: %+v", participantIDs)
 	}
 }
-

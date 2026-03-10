@@ -72,4 +72,3 @@ func TestVerifyAcknowledgement_BindsFieldsAndSignature(t *testing.T) {
 		t.Fatal("expected tampered acknowledgement to be rejected")
 	}
 }
-
