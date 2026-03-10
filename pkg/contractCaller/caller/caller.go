@@ -35,7 +35,7 @@ type ContractCaller struct {
 	keyRegistrar         *IKeyRegistrar.IKeyRegistrar
 	releaseManager       *IReleaseManager.IReleaseManager
 	permissionController *IPermissionController.IPermissionController
-	appController        interface{} // AppController interface for EigenCompute apps (optional)
+	appController        AppControllerInterface // AppController for EigenCompute apps (optional, nil until SetAppController)
 
 	signer transactionSigner.ITransactionSigner
 }
