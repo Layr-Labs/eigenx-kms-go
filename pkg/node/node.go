@@ -1247,12 +1247,10 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	receivedCommitments := session.commitments
 	session.mu.RUnlock()
 
-	validShares := make(map[int64]*fr.Element)
+	invalidDealers := make([]int64, 0)
 	for dealerID, share := range receivedShares {
 		commitments := receivedCommitments[dealerID]
 		if n.resharer.VerifyNewShare(dealerID, share, commitments) {
-			validShares[dealerID] = share
-
 			// Create acknowledgement for verified share
 			ack := reshare.CreateAcknowledgement(thisNodeID, dealerID, sessionTimestamp, share, commitments, n.signAcknowledgement)
 
@@ -1287,7 +1285,20 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 				"dealer_id", dealerID)
 		} else {
 			n.logInvalidShareComplaint("reshare", sessionTimestamp, thisNodeID, dealerID, share, commitments)
+			invalidDealers = append(invalidDealers, dealerID)
 		}
+	}
+
+	// Remove invalid shares from session so they are excluded from participant
+	// selection and delta computation. Without this, an operator sending an
+	// invalid share would still be included in session.shares and corrupt the
+	// new key share.
+	if len(invalidDealers) > 0 {
+		session.mu.Lock()
+		for _, id := range invalidDealers {
+			delete(session.shares, id)
+		}
+		session.mu.Unlock()
 	}
 
 	// Wait for acknowledgements (as a dealer).
