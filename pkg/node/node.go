@@ -1685,11 +1685,11 @@ func waitForCommitmentsWithThreshold(session *ProtocolSession, timeout time.Dura
 	return nil
 }
 
-// selectDeterministicParticipants returns a deterministic participant set of exactly
-// `threshold` operators, chosen from those that sent both a share and a commitment.
-// The set is sorted by node ID ascending, ensuring all honest nodes that received
-// the same data will agree on the same participant set. This is critical for Lagrange
-// coefficient consistency across nodes.
+// selectDeterministicParticipants returns a deterministic participant set of ALL
+// operators that sent both a share and a commitment. The set is sorted by node ID
+// ascending, ensuring all honest nodes that received the same data will agree on
+// the same participant set. This is critical for Lagrange coefficient consistency
+// across nodes. The caller should verify len(result) >= threshold before proceeding.
 func selectDeterministicParticipants(session *ProtocolSession, operators []*peering.OperatorSetPeer, threshold int) []int64 {
 	session.mu.RLock()
 	defer session.mu.RUnlock()
@@ -1709,11 +1709,6 @@ func selectDeterministicParticipants(session *ProtocolSession, operators []*peer
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i] < candidates[j]
 	})
-
-	// Take first threshold entries
-	if len(candidates) > threshold {
-		candidates = candidates[:threshold]
-	}
 
 	return candidates
 }

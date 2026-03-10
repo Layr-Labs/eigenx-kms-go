@@ -167,7 +167,7 @@ func TestSelectDeterministicParticipants(t *testing.T) {
 		nodeIDs[i] = addressToNodeID(op.OperatorAddress)
 	}
 
-	t.Run("selects first threshold from intersection sorted by node ID", func(t *testing.T) {
+	t.Run("returns all candidates sorted by node ID without truncation", func(t *testing.T) {
 		session := &ProtocolSession{
 			Operators:   operators,
 			shares:      make(map[int64]*fr.Element),
@@ -183,7 +183,7 @@ func TestSelectDeterministicParticipants(t *testing.T) {
 
 		threshold := 4
 		result := selectDeterministicParticipants(session, operators, threshold)
-		require.Len(t, result, threshold)
+		require.Len(t, result, 5, "should return all candidates, not truncate to threshold")
 
 		// Verify sorted ascending
 		for i := 1; i < len(result); i++ {
