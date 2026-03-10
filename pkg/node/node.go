@@ -1213,17 +1213,8 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	// participantIDsForFinalize / Lagrange coefficients, so all nodes must agree
 	// on the same participant set to preserve master public key correctness.
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
-	if err := waitForShares(session, protocolTimeout); err != nil {
-		session.mu.RLock()
-		received := len(session.shares)
-		session.mu.RUnlock()
-		if received >= newThreshold {
-			n.logger.Sugar().Warnw("Not all shares received but threshold met, proceeding with reshare",
-				"operator_address", n.OperatorAddress.Hex(),
-				"received", received, "threshold", newThreshold, "total_operators", len(operators))
-		} else {
-			return err
-		}
+	if err := waitForSharesWithThreshold(session, protocolTimeout, newThreshold, n.logger.Sugar()); err != nil {
+		return err
 	}
 	if err := waitForCommitments(session, protocolTimeout); err != nil {
 		return err
@@ -1511,17 +1502,8 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	// participantIDs / Lagrange coefficients, so all nodes must agree on the
 	// same participant set to preserve master public key correctness.
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
-	if err := waitForShares(session, protocolTimeout); err != nil {
-		session.mu.RLock()
-		received := len(session.shares)
-		session.mu.RUnlock()
-		if received >= newThreshold {
-			n.logger.Sugar().Warnw("Not all shares received but threshold met, proceeding with reshare (new operator)",
-				"operator_address", n.OperatorAddress.Hex(),
-				"received", received, "threshold", newThreshold, "total_operators", len(operators))
-		} else {
-			return fmt.Errorf("failed to receive shares: %w", err)
-		}
+	if err := waitForSharesWithThreshold(session, protocolTimeout, newThreshold, n.logger.Sugar()); err != nil {
+		return fmt.Errorf("failed to receive shares: %w", err)
 	}
 	if err := waitForCommitments(session, protocolTimeout); err != nil {
 		return fmt.Errorf("failed to receive commitments: %w", err)
@@ -1635,6 +1617,23 @@ func waitForCommitments(session *ProtocolSession, timeout time.Duration) error {
 		session.mu.RUnlock()
 		return fmt.Errorf("timeout waiting for commitments: got %d/%d", received, expected)
 	}
+}
+
+// waitForSharesWithThreshold waits for all shares via channel signaling; on timeout,
+// proceeds if at least threshold shares were received.
+func waitForSharesWithThreshold(session *ProtocolSession, timeout time.Duration, threshold int, logger *zap.SugaredLogger) error {
+	if err := waitForShares(session, timeout); err != nil {
+		session.mu.RLock()
+		received := len(session.shares)
+		session.mu.RUnlock()
+		if received >= threshold {
+			logger.Warnw("Not all shares received but threshold met, proceeding with reshare",
+				"received", received, "threshold", threshold, "total_operators", len(session.Operators))
+			return nil
+		}
+		return err
+	}
+	return nil
 }
 
 // waitForAcks waits for at least required acknowledgements to be received for a specific dealer using polling.
