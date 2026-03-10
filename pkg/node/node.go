@@ -1394,7 +1394,10 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	session.mu.RUnlock()
 
 	// Compute refreshed share using the same Lagrange reconstruction as the new-operator path.
-	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDsForFinalize, receivedSharesForFinalize, nil)
+	newKeyVersion, err := n.resharer.ComputeNewKeyShare(participantIDsForFinalize, receivedSharesForFinalize, nil)
+	if err != nil {
+		return fmt.Errorf("failed to compute refreshed key share: %w", err)
+	}
 	newKeyVersion.Version = sessionTimestamp
 	newKeyVersion.IsActive = true
 	newKeyVersion.ParticipantIDs = participantIDsForFinalize
@@ -1487,7 +1490,10 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	session.mu.RUnlock()
 
 	// Compute new key share using Lagrange interpolation
-	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDs, receivedShares, allCommitments)
+	newKeyVersion, err := n.resharer.ComputeNewKeyShare(participantIDs, receivedShares, allCommitments)
+	if err != nil {
+		return fmt.Errorf("failed to compute new operator key share: %w", err)
+	}
 	newKeyVersion.Version = sessionTimestamp // Use session timestamp as version
 	newKeyVersion.IsActive = true            // First key version becomes active immediately
 
