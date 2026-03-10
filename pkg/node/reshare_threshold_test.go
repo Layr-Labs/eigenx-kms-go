@@ -164,8 +164,8 @@ func TestWaitForAcks_ThresholdFallback(t *testing.T) {
 
 	t.Run("succeeds when required acks received", func(t *testing.T) {
 		session := &ProtocolSession{
-			Operators:        makeTestOperators(n),
-			acks:             make(map[int64]map[int64]*types.Acknowledgement),
+			Operators:          makeTestOperators(n),
+			acks:               make(map[int64]map[int64]*types.Acknowledgement),
 			sharesCompleteChan: make(chan bool, 1),
 		}
 
@@ -181,8 +181,8 @@ func TestWaitForAcks_ThresholdFallback(t *testing.T) {
 
 	t.Run("times out when below required acks", func(t *testing.T) {
 		session := &ProtocolSession{
-			Operators:        makeTestOperators(n),
-			acks:             make(map[int64]map[int64]*types.Acknowledgement),
+			Operators:          makeTestOperators(n),
+			acks:               make(map[int64]map[int64]*types.Acknowledgement),
 			sharesCompleteChan: make(chan bool, 1),
 		}
 
@@ -206,8 +206,8 @@ func TestWaitForAcks_ThresholdFallback(t *testing.T) {
 
 	t.Run("fallback threshold-1 is sufficient", func(t *testing.T) {
 		session := &ProtocolSession{
-			Operators:        makeTestOperators(n),
-			acks:             make(map[int64]map[int64]*types.Acknowledgement),
+			Operators:          makeTestOperators(n),
+			acks:               make(map[int64]map[int64]*types.Acknowledgement),
 			sharesCompleteChan: make(chan bool, 1),
 		}
 

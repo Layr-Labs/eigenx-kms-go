@@ -394,7 +394,6 @@ func (c *Client) BroadcastCommitmentsWithProofs(
 			Commitments:      commitments,
 			Acknowledgements: acks,
 			MerkleProof:      proof.Proof,
-			MerkleRoot:       merkleTree.Root,
 		}
 
 		// Send to operator
