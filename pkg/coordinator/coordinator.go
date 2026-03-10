@@ -83,7 +83,7 @@ func (c *Coordinator) processPendingUpgrades(ctx context.Context) error {
 	if iter == nil {
 		return nil
 	}
-	defer iter.Close()
+	defer func() { _ = iter.Close() }()
 
 	var maxBlock uint64
 	for iter.Next() {
