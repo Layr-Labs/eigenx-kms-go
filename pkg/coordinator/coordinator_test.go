@@ -9,33 +9,8 @@ import (
 	kmsTypes "github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
-	ethTypes "github.com/ethereum/go-ethereum/core/types"
 	"go.uber.org/zap"
 )
-
-// mockAppUpgradedIterator is a test iterator that replays a fixed set of AppUpgraded events.
-type mockAppUpgradedIterator struct {
-	events []*contractCaller_caller_AppUpgradedEvent
-	index  int
-}
-
-// We use the caller package's exported type via the contractCaller package's interface.
-// Define a local alias for the event fields we need so the test doesn't need to import caller.
-type contractCaller_caller_AppUpgradedEvent = struct {
-	App common.Address
-	Raw ethTypes.Log
-}
-
-func newMockIterator(events []*contractCaller_caller_AppUpgradedEvent) *mockAppUpgradedIterator {
-	return &mockAppUpgradedIterator{events: events}
-}
-
-func (m *mockAppUpgradedIterator) Next() bool {
-	m.index++
-	return m.index <= len(m.events)
-}
-func (m *mockAppUpgradedIterator) Error() error { return nil }
-func (m *mockAppUpgradedIterator) Close() error { return nil }
 
 // coordinatorTestCallerStub extends TestableContractCallerStub with controllable
 // FilterAppUpgraded output for Coordinator unit tests.
