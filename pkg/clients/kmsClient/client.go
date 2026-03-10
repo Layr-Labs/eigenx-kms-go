@@ -8,10 +8,10 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
-	"github.com/ethereum/go-ethereum/common"
 	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	"go.uber.org/zap"
 
@@ -356,9 +356,18 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 				return
 			}
 
-			// Convert operator address to node ID (must match the IDs used during DKG)
-			operatorAddress := common.HexToAddress(response.OperatorAddress)
-			nodeID := util.AddressToNodeID(operatorAddress)
+			// SECURITY: bind response identity to the operator we actually queried.
+			// Never trust response.OperatorAddress as the source of truth for nodeID.
+			expectedAddress := op.OperatorAddress.Hex()
+			if !strings.EqualFold(response.OperatorAddress, expectedAddress) {
+				c.logger.Sugar().Warnw("Operator address mismatch in partial signature response",
+					"operator_index", idx,
+					"expected_operator_address", expectedAddress,
+					"response_operator_address", response.OperatorAddress,
+				)
+				return
+			}
+			nodeID := util.AddressToNodeID(op.OperatorAddress)
 
 			c.logger.Sugar().Debugw("Collected partial signature from operator",
 				"operator_index", idx,
@@ -377,6 +386,8 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 
 	// Collect results
 	partialSigs := make(map[int64]types.G1Point)
+	// TODO(security): only count cryptographically verified partial signatures.
+	// Current code counts non-zero shares and relies on later interpolation failure.
 	for res := range resultChan {
 		partialSigs[res.nodeID] = res.signature
 		if len(partialSigs) >= threshold {
@@ -813,9 +824,18 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 				return
 			}
 
-			// Convert operator address to node ID (must match the IDs used during DKG)
-			operatorAddress := common.HexToAddress(response.OperatorAddress)
-			nodeID := util.AddressToNodeID(operatorAddress)
+			// SECURITY: bind response identity to the operator we actually queried.
+			// Never trust response.OperatorAddress as the source of truth for nodeID.
+			expectedAddress := op.OperatorAddress.Hex()
+			if !strings.EqualFold(response.OperatorAddress, expectedAddress) {
+				c.logger.Sugar().Warnw("Operator address mismatch in partial signature response",
+					"operator_index", idx,
+					"expected_operator_address", expectedAddress,
+					"response_operator_address", response.OperatorAddress,
+				)
+				return
+			}
+			nodeID := util.AddressToNodeID(op.OperatorAddress)
 
 			c.logger.Sugar().Debugw("Collected partial signature", "operator_index", idx, "node_id", nodeID, "operator_address", response.OperatorAddress)
 			resultChan <- result{nodeID: nodeID, signature: response.PartialSignature, opAddress: response.OperatorAddress}
@@ -830,6 +850,8 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 
 	// Collect results
 	partialSigs := make(map[int64]types.G1Point)
+	// TODO(security): only count cryptographically verified partial signatures.
+	// Current code counts non-zero shares and relies on later interpolation failure.
 	for res := range resultChan {
 		partialSigs[res.nodeID] = res.signature
 		if len(partialSigs) >= threshold {
