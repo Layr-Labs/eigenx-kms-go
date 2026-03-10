@@ -284,6 +284,68 @@ func TestWaitForVerifications(t *testing.T) {
 		err := node.WaitForVerifications(12345, 2*time.Second)
 		require.NoError(t, err)
 	})
+
+	t.Run("Reshare succeeds with threshold-1 verifications", func(t *testing.T) {
+		logger, _ := zap.NewDevelopment()
+		session := &ProtocolSession{
+			SessionTimestamp: 12345,
+			Type:             "reshare",
+			Operators: []*peering.OperatorSetPeer{
+				{}, {}, {}, // 3 operators, threshold=⌈2*3/3⌉=2, need min(1, receivedShares-1) verifications
+			},
+			shares:            make(map[int64]*fr.Element),
+			verifiedOperators: make(map[int64]bool),
+		}
+
+		// Simulate having received shares from all 3 operators (including self)
+		for i := int64(0); i < 3; i++ {
+			elem := fr.NewElement(uint64(i + 1))
+			session.shares[i] = &elem
+		}
+
+		node := &Node{
+			logger:         logger,
+			activeSessions: map[int64]*ProtocolSession{12345: session},
+		}
+
+		// Only 1 verification — sufficient for reshare threshold (min(2-1, 3-1) = 1)
+		session.verifiedOperators[1] = true
+
+		err := node.WaitForVerifications(12345, 2*time.Second)
+		require.NoError(t, err)
+	})
+
+	t.Run("Reshare times out below threshold verifications", func(t *testing.T) {
+		logger, _ := zap.NewDevelopment()
+		session := &ProtocolSession{
+			SessionTimestamp: 12345,
+			Type:             "reshare",
+			Operators: []*peering.OperatorSetPeer{
+				{}, {}, {}, {}, {}, {}, // 6 operators, threshold=⌈2*6/3⌉=4, need 3 verifications
+			},
+			shares:            make(map[int64]*fr.Element),
+			verifiedOperators: make(map[int64]bool),
+		}
+
+		// Simulate having received shares from all 6 operators
+		for i := int64(0); i < 6; i++ {
+			elem := fr.NewElement(uint64(i + 1))
+			session.shares[i] = &elem
+		}
+
+		node := &Node{
+			logger:         logger,
+			activeSessions: map[int64]*ProtocolSession{12345: session},
+		}
+
+		// Only 2 verifications, need 3 (min(threshold-1, receivedShares-1) = min(3, 5) = 3)
+		session.verifiedOperators[1] = true
+		session.verifiedOperators[2] = true
+
+		err := node.WaitForVerifications(12345, 100*time.Millisecond)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "verified 2/3")
+	})
 }
 
 // TestHashAcknowledgementForMerkle_Integration tests the hash function with real data (Phase 6)
