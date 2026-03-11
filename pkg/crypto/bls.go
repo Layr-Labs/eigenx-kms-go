@@ -365,12 +365,21 @@ func binomial(n, k int) int {
 	}
 	result := 1
 	for i := 0; i < k; i++ {
-		result = result * (n - i) / (i + 1)
+		// Divide result by gcd first to keep intermediate values small and avoid overflow
+		g := gcd(result, i+1)
+		result = (result / g) * ((n - i) / ((i + 1) / g))
 		if result > 1_000_000_000 {
 			return 1_000_000_000 // cap to avoid overflow
 		}
 	}
 	return result
+}
+
+func gcd(a, b int) int {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a
 }
 
 // VerifyAppPrivateKey checks that a recovered app private key is consistent with
