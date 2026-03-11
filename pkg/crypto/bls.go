@@ -237,25 +237,39 @@ func RecoverAppPrivateKey(appID string, partialSigs map[int64]types.G1Point, thr
 	return result, nil
 }
 
-// maxRecoveryAttempts bounds the number of subset combinations tried during retry
+// DefaultMaxRecoveryAttempts bounds the number of subset combinations tried during retry
 // to prevent excessive computation with large operator sets. C(n,t) can grow quickly
 // (e.g., C(21,14) = 116,280), so we cap attempts at a practical limit.
-const maxRecoveryAttempts = 1000
+const DefaultMaxRecoveryAttempts = 1000
 
 // RecoverAppPrivateKeyWithRetry attempts to recover the app private key by trying
 // different threshold-sized subsets of partial signatures. If the initial subset
 // produces an invalid key (as determined by the validate function), it enumerates
-// C(n, threshold) combinations until a valid subset is found or maxRecoveryAttempts
+// C(n, threshold) combinations until a valid subset is found or DefaultMaxRecoveryAttempts
 // is reached. This provides BFT: up to (n - threshold) invalid signatures can be
 // tolerated (for small enough operator sets that all combinations fit within the cap).
 //
-// Complexity: worst-case O(min(C(n, threshold), maxRecoveryAttempts)) recovery attempts,
-// each involving Lagrange interpolation on G1 plus one validate call.
+// When C(n, threshold) exceeds the attempt cap, only a subset of combinations is tried
+// and full BFT tolerance is not guaranteed. The returned error distinguishes between
+// "all combinations exhausted" and "attempt cap reached".
+//
+// Complexity: worst-case O(min(C(n, threshold), DefaultMaxRecoveryAttempts)) recovery
+// attempts, each involving Lagrange interpolation on G1 plus one validate call.
 func RecoverAppPrivateKeyWithRetry(
 	appID string,
 	partialSigs map[int64]types.G1Point,
 	threshold int,
 	validate func(*types.G1Point) bool,
+) (*types.G1Point, error) {
+	return recoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, validate, DefaultMaxRecoveryAttempts)
+}
+
+func recoverAppPrivateKeyWithRetry(
+	appID string,
+	partialSigs map[int64]types.G1Point,
+	threshold int,
+	validate func(*types.G1Point) bool,
+	maxAttempts int,
 ) (*types.G1Point, error) {
 	if len(partialSigs) < threshold {
 		return nil, fmt.Errorf("insufficient partial signatures: got %d, need %d", len(partialSigs), threshold)
@@ -288,7 +302,9 @@ func RecoverAppPrivateKeyWithRetry(
 
 	// Enumerate all C(n, threshold) combinations using iterative generation
 	n := len(allParticipants)
+	totalCombinations := binomial(n, threshold)
 	attempts := 0
+	exhausted := false
 
 	// indices tracks current combination positions (0-indexed into allParticipants)
 	indices := make([]int, threshold)
@@ -308,7 +324,7 @@ func RecoverAppPrivateKeyWithRetry(
 			return recovered, nil
 		}
 
-		if attempts >= maxRecoveryAttempts {
+		if attempts >= maxAttempts {
 			break
 		}
 
@@ -318,7 +334,8 @@ func RecoverAppPrivateKeyWithRetry(
 			i--
 		}
 		if i < 0 {
-			break // All combinations exhausted
+			exhausted = true
+			break
 		}
 		indices[i]++
 		for j := i + 1; j < threshold; j++ {
@@ -326,8 +343,34 @@ func RecoverAppPrivateKeyWithRetry(
 		}
 	}
 
-	return nil, fmt.Errorf("failed to recover valid app private key: %d subset attempts failed (had %d signatures, needed %d valid)",
-		attempts, len(partialSigs), threshold)
+	if exhausted {
+		return nil, fmt.Errorf("failed to recover valid app private key: all %d combinations exhausted (had %d signatures, needed %d valid)",
+			attempts, len(partialSigs), threshold)
+	}
+	return nil, fmt.Errorf("failed to recover valid app private key: attempt cap (%d) reached after trying %d of %d total combinations — BFT guarantee incomplete (had %d signatures, threshold %d)",
+		maxAttempts, attempts, totalCombinations, len(partialSigs), threshold)
+}
+
+// binomial computes C(n, k) = n! / (k! * (n-k)!), capped to avoid overflow.
+func binomial(n, k int) int {
+	if k > n || k < 0 {
+		return 0
+	}
+	if k == 0 || k == n {
+		return 1
+	}
+	// Use the smaller of k and n-k for efficiency
+	if k > n-k {
+		k = n - k
+	}
+	result := 1
+	for i := 0; i < k; i++ {
+		result = result * (n - i) / (i + 1)
+		if result > 1_000_000_000 {
+			return 1_000_000_000 // cap to avoid overflow
+		}
+	}
+	return result
 }
 
 // VerifyAppPrivateKey checks that a recovered app private key is consistent with
