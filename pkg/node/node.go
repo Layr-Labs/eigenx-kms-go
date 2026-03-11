@@ -4,7 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/binary"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"sort"
 	"strings"
 	"sync"
@@ -1087,6 +1091,12 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	// Use validShares (only verified shares) for finalization
 	keyVersion := n.dkg.FinalizeKeyShare(validShares, allCommitments, participantIDs)
 	keyVersion.Version = session.SessionTimestamp // Use session timestamp as version
+	// Save the pre-computed MPK (combinedCommitments[0]) before overwriting Commitments,
+	// so operators can serve it for threshold agreement by clients
+	if len(keyVersion.Commitments) > 0 {
+		mpk := keyVersion.Commitments[0]
+		keyVersion.MasterPublicKey = &mpk
+	}
 	// Store THIS node's commitments (not allCommitments[0]) so that when the client
 	// queries all operators and sums their commitments[0], it computes the correct master public key
 	keyVersion.Commitments = commitments
@@ -1426,6 +1436,12 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 
 	newKeyVersion.Commitments = []types.G2Point{*scaledFirstCommitment}
 
+	// Carry forward MPK from the current active version (MPK doesn't change during reshare)
+	if currentVersion := n.keyStore.GetActiveVersion(); currentVersion != nil && currentVersion.MasterPublicKey != nil {
+		mpkCopy := *currentVersion.MasterPublicKey
+		newKeyVersion.MasterPublicKey = &mpkCopy
+	}
+
 	// Persist new key version BEFORE adding to keystore
 	// This ensures we fail if persistence fails, preventing state inconsistency
 	if err := n.persistence.SaveKeyShareVersion(newKeyVersion); err != nil {
@@ -1517,6 +1533,15 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDs, receivedShares, allCommitments)
 	newKeyVersion.Version = sessionTimestamp // Use session timestamp as version
 	newKeyVersion.IsActive = true            // First key version becomes active immediately
+
+	// Fetch MPK from existing operators using threshold agreement
+	// New operators cannot derive the MPK from reshare protocol data alone
+	mpk, err := n.fetchMPKFromPeers(operators)
+	if err != nil {
+		n.logger.Sugar().Warnw("Failed to fetch MPK from peers during new operator join", "error", err)
+	} else {
+		newKeyVersion.MasterPublicKey = mpk
+	}
 
 	// Persist first key version BEFORE adding to keystore (critical for new operator)
 	// This ensures we fail if persistence fails, preventing state inconsistency
@@ -1963,4 +1988,85 @@ func (n *Node) WaitForVerifications(sessionTimestamp int64, timeout time.Duratio
 			}
 		}
 	}
+}
+
+// fetchMPKFromPeers fetches the master public key from peer operators using threshold agreement.
+// Used by new operators joining via reshare who cannot derive the MPK from protocol data alone.
+func (n *Node) fetchMPKFromPeers(operators []*peering.OperatorSetPeer) (*types.G2Point, error) {
+	type mpkResult struct {
+		mpk *types.G2Point
+	}
+
+	resultChan := make(chan mpkResult, len(operators))
+	var wg sync.WaitGroup
+
+	httpClient := &http.Client{Timeout: 10 * time.Second}
+
+	for _, op := range operators {
+		if op.OperatorAddress == n.OperatorAddress {
+			continue // skip self
+		}
+		wg.Add(1)
+		go func(peer *peering.OperatorSetPeer) {
+			defer wg.Done()
+
+			resp, err := httpClient.Get(peer.SocketAddress + "/pubkey")
+			if err != nil {
+				n.logger.Sugar().Warnw("Failed to fetch MPK from peer", "peer", peer.SocketAddress, "error", err)
+				return
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			if resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(resp.Body)
+				n.logger.Sugar().Warnw("Peer returned error for MPK", "peer", peer.SocketAddress, "status", resp.StatusCode, "body", string(body))
+				return
+			}
+
+			var response struct {
+				MasterPublicKey *types.G2Point `json:"masterPublicKey"`
+			}
+			if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+				n.logger.Sugar().Warnw("Failed to decode MPK response", "peer", peer.SocketAddress, "error", err)
+				return
+			}
+
+			if response.MasterPublicKey == nil || len(response.MasterPublicKey.CompressedBytes) == 0 {
+				return
+			}
+
+			resultChan <- mpkResult{mpk: response.MasterPublicKey}
+		}(op)
+	}
+
+	go func() {
+		wg.Wait()
+		close(resultChan)
+	}()
+
+	// Threshold agreement: group by compressed bytes, pick the one with enough votes
+	mpkVotes := make(map[string][]*types.G2Point)
+	for res := range resultChan {
+		key := hex.EncodeToString(res.mpk.CompressedBytes)
+		mpkVotes[key] = append(mpkVotes[key], res.mpk)
+	}
+
+	threshold := dkg.CalculateThreshold(len(operators))
+	for _, votes := range mpkVotes {
+		if len(votes) >= threshold {
+			return votes[0], nil
+		}
+	}
+
+	return nil, fmt.Errorf("failed to reach threshold agreement on MPK: needed %d, best had %d votes", threshold, maxVotes(mpkVotes))
+}
+
+func maxVotes(votes map[string][]*types.G2Point) int {
+	m := 0
+	for _, v := range votes {
+		if len(v) > m {
+			m = len(v)
+		}
+	}
+	return m
 }
