@@ -247,23 +247,36 @@ func (c *Client) GetMasterPublicKey(operators *peering.OperatorSetPeers) (*types
 
 	if hasMPK {
 		threshold := dkg.CalculateThreshold(len(operators.Peers))
-		for key, count := range mpkCounts {
-			if count >= threshold {
-				c.logger.Sugar().Infow("Master public key determined via threshold agreement",
-					"agreeing_operators", count,
-					"threshold", threshold,
-					"total_responses", len(results),
-				)
-				return mpkVotes[key], nil
-			}
+		// Count total MPK respondents to decide if we have enough for threshold agreement
+		mpkRespondents := 0
+		for _, count := range mpkCounts {
+			mpkRespondents += count
 		}
-		return nil, fmt.Errorf("failed to reach threshold agreement on master public key: needed %d, got max %d agreeing out of %d responses",
-			dkg.CalculateThreshold(len(operators.Peers)), maxMPKVotes(mpkCounts), len(results))
+		if mpkRespondents >= threshold {
+			for key, count := range mpkCounts {
+				if count >= threshold {
+					c.logger.Sugar().Infow("Master public key determined via threshold agreement",
+						"agreeing_operators", count,
+						"threshold", threshold,
+						"total_responses", len(results),
+					)
+					return mpkVotes[key], nil
+				}
+			}
+			return nil, fmt.Errorf("failed to reach threshold agreement on master public key: needed %d, got max %d agreeing out of %d responses",
+				threshold, maxMPKVotes(mpkCounts), len(results))
+		}
+		// Not enough operators returned MPK for threshold agreement (e.g. rolling upgrade)
+		c.logger.Sugar().Warnw("Not enough operators returned MPK for threshold agreement, falling back to aggregation",
+			"mpk_respondents", mpkRespondents,
+			"threshold", threshold,
+		)
+	} else {
+		c.logger.Sugar().Warnw("No operators returned pre-computed MPK, falling back to commitment aggregation",
+			"responses", len(results))
 	}
 
 	// Fallback: aggregate commitments (backward compatibility with nodes that don't return MPK)
-	c.logger.Sugar().Warnw("No operators returned pre-computed MPK, falling back to commitment aggregation",
-		"responses", len(results))
 	masterPubKey, err := crypto.ComputeMasterPublicKey(allCommitments)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute master public key: %w", err)

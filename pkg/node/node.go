@@ -2316,19 +2316,24 @@ func (n *Node) WaitForVerifications(sessionTimestamp int64, timeout time.Duratio
 // fetchMPKFromPeers fetches the master public key from peer operators using threshold agreement.
 // Used by new operators joining via reshare who cannot derive the MPK from protocol data alone.
 func (n *Node) fetchMPKFromPeers(operators []*peering.OperatorSetPeer) (*types.G2Point, error) {
+	// Build peer list excluding self, then compute threshold from full operator set
+	peers := make([]*peering.OperatorSetPeer, 0, len(operators))
+	for _, op := range operators {
+		if op.OperatorAddress != n.OperatorAddress {
+			peers = append(peers, op)
+		}
+	}
+
 	type mpkResult struct {
 		mpk *types.G2Point
 	}
 
-	resultChan := make(chan mpkResult, len(operators))
+	resultChan := make(chan mpkResult, len(peers))
 	var wg sync.WaitGroup
 
 	httpClient := &http.Client{Timeout: 10 * time.Second}
 
-	for _, op := range operators {
-		if op.OperatorAddress == n.OperatorAddress {
-			continue // skip self
-		}
+	for _, op := range peers {
 		wg.Add(1)
 		go func(peer *peering.OperatorSetPeer) {
 			defer wg.Done()
@@ -2374,6 +2379,7 @@ func (n *Node) fetchMPKFromPeers(operators []*peering.OperatorSetPeer) (*types.G
 		mpkVotes[key] = append(mpkVotes[key], res.mpk)
 	}
 
+	// Use threshold based on the full operator set size (including self)
 	threshold := dkg.CalculateThreshold(len(operators))
 	for _, votes := range mpkVotes {
 		if len(votes) >= threshold {

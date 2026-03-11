@@ -371,9 +371,8 @@ func TestGetMasterPublicKey_ThresholdAgreement_AllHonest(t *testing.T) {
 	logger, err := zap.NewDevelopment()
 	require.NoError(t, err)
 
-	commitments := []types.G2Point{crypto.G2Generator}
-
 	// Create 4 mock servers all returning the same MPK
+	commitments := []types.G2Point{crypto.G2Generator}
 	peers := make([]*peering.OperatorSetPeer, 4)
 	for i := 0; i < 4; i++ {
 		srv := createMockPubkeyServer(t, commitments, &crypto.G2Generator)
@@ -529,5 +528,56 @@ func TestGetMasterPublicKey_FallbackToAggregation(t *testing.T) {
 	operators := &peering.OperatorSetPeers{Peers: peers}
 	mpk, err := client.GetMasterPublicKey(operators)
 	require.NoError(t, err, "Should fall back to aggregation when no MPK is returned")
+	require.NotNil(t, mpk)
+}
+
+func TestGetMasterPublicKey_RollingUpgrade_PartialMPK(t *testing.T) {
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	// 4 operators: 1 upgraded (returns MPK), 3 old (no MPK)
+	// Threshold = 3, so only 1 MPK respondent < threshold → should fall back to aggregation
+	commitments := []types.G2Point{crypto.G2Generator}
+	honestMPK := crypto.G2Generator
+
+	peers := make([]*peering.OperatorSetPeer, 4)
+
+	// 1 upgraded operator returns MPK
+	upgradedSrv := createMockPubkeyServer(t, commitments, &honestMPK)
+	defer upgradedSrv.Close()
+	peers[0] = &peering.OperatorSetPeer{
+		OperatorAddress: common.HexToAddress("0x1000000000000000000000000000000000000000"),
+		SocketAddress:   upgradedSrv.URL,
+	}
+
+	// 3 old operators return commitments but no MPK
+	for i := 1; i < 4; i++ {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			resp := map[string]interface{}{
+				"operatorAddress": "0x0000000000000000000000000000000000000001",
+				"commitments":     commitments,
+				"version":         int64(1),
+				"isActive":        true,
+			}
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(resp))
+		}))
+		defer srv.Close()
+		peers[i] = &peering.OperatorSetPeer{
+			OperatorAddress: common.HexToAddress("0x" + string(rune('1'+i)) + "000000000000000000000000000000000000000"),
+			SocketAddress:   srv.URL,
+		}
+	}
+
+	client := &Client{
+		avsAddress:    "0x1234567890123456789012345678901234567890",
+		operatorSetID: 0,
+		logger:        logger,
+		httpClient:    &http.Client{},
+	}
+
+	operators := &peering.OperatorSetPeers{Peers: peers}
+	mpk, err := client.GetMasterPublicKey(operators)
+	require.NoError(t, err, "Should fall back to aggregation during rolling upgrade with partial MPK responses")
 	require.NotNil(t, mpk)
 }
