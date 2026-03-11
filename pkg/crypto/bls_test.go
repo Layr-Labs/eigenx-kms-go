@@ -28,6 +28,7 @@ func Test_CryptoOperations(t *testing.T) {
 	t.Run("RecoverAppPrivateKeyWithRetry_MaxCorrupt", func(t *testing.T) { testRecoverAppPrivateKeyWithRetry_MaxCorrupt(t) })
 	t.Run("RecoverAppPrivateKeyWithRetry_TooManyCorrupt", func(t *testing.T) { testRecoverAppPrivateKeyWithRetry_TooManyCorrupt(t) })
 	t.Run("VerifyAppPrivateKey", func(t *testing.T) { testVerifyAppPrivateKey(t) })
+	t.Run("DecryptWithRetry_E2E", func(t *testing.T) { testDecryptWithRetry_E2E(t) })
 }
 
 // testScalarMulG1 tests scalar multiplication on G1
@@ -423,7 +424,7 @@ func generateTestPartialSigs(t *testing.T, appID string, n, threshold int) (map[
 	return partialSigs, expected, secret
 }
 
-// corruptPartialSig replaces the signature for the given nodeID with a random G1 point.
+// corruptPartialSig replaces the signature for the given nodeID with an arbitrary invalid G1 point.
 func corruptPartialSig(t *testing.T, sigs map[int64]types.G1Point, nodeID int64) {
 	t.Helper()
 	randomScalar := new(fr.Element).SetInt64(99999 + nodeID)
@@ -493,7 +494,7 @@ func testRecoverAppPrivateKeyWithRetry_TooManyCorrupt(t *testing.T) {
 		return candidate.IsEqual(expected)
 	})
 	require.Error(t, err, "Should fail when more than n-threshold signatures are corrupt")
-	require.Contains(t, err.Error(), "all")
+	require.Contains(t, err.Error(), "subset attempts failed")
 }
 
 func testVerifyAppPrivateKey(t *testing.T) {
@@ -528,4 +529,36 @@ func testVerifyAppPrivateKey(t *testing.T) {
 	valid, err = VerifyAppPrivateKey("wrong-app-id", *correctKey, *masterPubKey)
 	require.NoError(t, err)
 	require.False(t, valid, "Correct key with wrong appID should not verify")
+}
+
+// testDecryptWithRetry_E2E tests the full encrypt → corrupt partial sig → decrypt-with-retry flow.
+func testDecryptWithRetry_E2E(t *testing.T) {
+	appID := "test-e2e-decrypt-retry"
+	n, threshold := 7, 5
+	plaintext := []byte("secret data for e2e test")
+
+	partialSigs, _, secret := generateTestPartialSigs(t, appID, n, threshold)
+
+	// Compute master public key and encrypt
+	masterPubKey, err := ScalarMulG2(G2Generator, secret)
+	require.NoError(t, err)
+
+	ciphertext, err := EncryptForApp(appID, *masterPubKey, plaintext)
+	require.NoError(t, err)
+
+	// Corrupt one partial sig in the initial sorted subset
+	corruptPartialSig(t, partialSigs, 2)
+
+	// Recover with retry using trial decryption as validator
+	var decrypted []byte
+	_, err = RecoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
+		result, decErr := DecryptForApp(appID, *candidate, ciphertext)
+		if decErr != nil {
+			return false
+		}
+		decrypted = result
+		return true
+	})
+	require.NoError(t, err)
+	require.Equal(t, plaintext, decrypted, "Decrypted data should match original plaintext")
 }
