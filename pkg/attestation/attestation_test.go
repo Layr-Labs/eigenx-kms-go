@@ -28,7 +28,7 @@ func createProductionCsToken(provider AttestationProvider) ConfidentialSpaceToke
 		issuer = "https://portal.trustauthority.intel.com"
 		hwmodel = "INTEL_TDX"
 		attesterTcb = "" // Intel tokens don't have attester_tcb field
-		supportAttr = "EXPERIMENTAL"
+		supportAttr = "STABLE"
 		// TDX field is at root level for Intel tokens
 		tdxField = `,
 		"tdx": {
@@ -466,22 +466,30 @@ func TestValidationLogic(t *testing.T) {
 		testValidation(t, verifier, csToken, IntelTrustAuthority, true, "tdx submods not found")
 	})
 
-	t.Run("Intel: requires EXPERIMENTAL support attributes", func(t *testing.T) {
+	t.Run("Intel: requires STABLE support attributes", func(t *testing.T) {
 		csToken := createProductionCsToken(IntelTrustAuthority)
-		csToken.SubMods.ConfidentialSpace.SupportAttributes = []string{"EXPERIMENTAL"}
+		csToken.SubMods.ConfidentialSpace.SupportAttributes = []string{"STABLE"}
 		testValidation(t, verifier, csToken, IntelTrustAuthority, false, "")
 	})
 
-	t.Run("Intel: rejects STABLE support attributes", func(t *testing.T) {
+	t.Run("Intel: rejects EXPERIMENTAL support attributes", func(t *testing.T) {
 		csToken := createProductionCsToken(IntelTrustAuthority)
-		csToken.SubMods.ConfidentialSpace.SupportAttributes = []string{"STABLE"}
-		testValidation(t, verifier, csToken, IntelTrustAuthority, true, "Expected to contain EXPERIMENTAL")
+		csToken.SubMods.ConfidentialSpace.SupportAttributes = []string{"EXPERIMENTAL"}
+		testValidation(t, verifier, csToken, IntelTrustAuthority, true, "Expected to contain STABLE")
 	})
 
-	t.Run("Intel: rejects missing EXPERIMENTAL", func(t *testing.T) {
+	t.Run("Intel: rejects missing STABLE", func(t *testing.T) {
 		csToken := createProductionCsToken(IntelTrustAuthority)
 		csToken.SubMods.ConfidentialSpace.SupportAttributes = []string{"USABLE"}
-		testValidation(t, verifier, csToken, IntelTrustAuthority, true, "Expected to contain EXPERIMENTAL")
+		testValidation(t, verifier, csToken, IntelTrustAuthority, true, "Expected to contain STABLE")
+	})
+
+	t.Run("Intel and Google both require STABLE support attributes", func(t *testing.T) {
+		intelToken := createProductionCsToken(IntelTrustAuthority)
+		testValidation(t, verifier, intelToken, IntelTrustAuthority, false, "")
+
+		googleToken := createProductionCsToken(GoogleConfidentialSpace)
+		testValidation(t, verifier, googleToken, GoogleConfidentialSpace, false, "")
 	})
 
 	t.Run("debug token fails validation", func(t *testing.T) {
