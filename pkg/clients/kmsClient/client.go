@@ -432,6 +432,8 @@ func (c *Client) Decrypt(appID string, encryptedData []byte, operators *peering.
 // partial signatures. This provides BFT: if some operators returned invalid partial
 // signatures, the function rotates through alternative subsets until decryption succeeds.
 func decryptWithRetry(appID string, partialSigs map[int64]types.G1Point, threshold int, ciphertext []byte) ([]byte, error) {
+	// decrypted is populated as a side-effect of the validate closure, which
+	// RecoverAppPrivateKeyWithRetry calls synchronously on each candidate key.
 	var decrypted []byte
 	_, err := crypto.RecoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
 		result, decErr := crypto.DecryptForApp(appID, *candidate, ciphertext)
