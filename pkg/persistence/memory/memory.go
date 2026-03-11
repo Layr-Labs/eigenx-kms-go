@@ -306,16 +306,25 @@ func deepCopyKeyShareVersion(v *types.KeyShareVersion) *types.KeyShareVersion {
 		commitments[i] = types.G2Point{CompressedBytes: compressedCopy}
 	}
 
+	// Copy master public key
+	var masterPublicKeyCopy *types.G2Point
+	if v.MasterPublicKey != nil {
+		compressedCopy := make([]byte, len(v.MasterPublicKey.CompressedBytes))
+		copy(compressedCopy, v.MasterPublicKey.CompressedBytes)
+		masterPublicKeyCopy = &types.G2Point{CompressedBytes: compressedCopy}
+	}
+
 	// Copy participant IDs
 	participantIDs := make([]int64, len(v.ParticipantIDs))
 	copy(participantIDs, v.ParticipantIDs)
 
 	return &types.KeyShareVersion{
-		Version:        v.Version,
-		PrivateShare:   privateShareCopy,
-		Commitments:    commitments,
-		IsActive:       v.IsActive,
-		ParticipantIDs: participantIDs,
+		Version:         v.Version,
+		PrivateShare:    privateShareCopy,
+		Commitments:     commitments,
+		MasterPublicKey: masterPublicKeyCopy,
+		IsActive:        v.IsActive,
+		ParticipantIDs:  participantIDs,
 	}
 }
 

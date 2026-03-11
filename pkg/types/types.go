@@ -13,11 +13,12 @@ const KMSJWTAudience = "EigenX KMS"
 
 // KeyShareVersion represents a versioned set of key shares
 type KeyShareVersion struct {
-	Version        int64       // Unix timestamp (seconds) of the block that triggered this key version
-	PrivateShare   *fr.Element // This node's private key share
-	Commitments    []G2Point   // Public commitments (in G2 for master public key)
-	IsActive       bool        // Whether this version is the active one
-	ParticipantIDs []int64     // Which participants were in the operator set for this version
+	Version         int64       // Unix timestamp (seconds) of the block that triggered this key version
+	PrivateShare    *fr.Element // This node's private key share
+	Commitments     []G2Point   // Public commitments (in G2 for master public key)
+	MasterPublicKey *G2Point    // Pre-computed master public key for threshold agreement
+	IsActive        bool        // Whether this version is the active one
+	ParticipantIDs  []int64     // Which participants were in the operator set for this version
 }
 
 // G1Point represents a point on BLS12-381 G1 (used for signatures)

@@ -706,10 +706,11 @@ func (s *Server) handleGetCommitments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return commitments and operator address
+	// Return commitments, operator address, and pre-computed master public key
 	response := map[string]interface{}{
 		"operatorAddress": s.node.OperatorAddress.Hex(),
 		"commitments":     activeVersion.Commitments,
+		"masterPublicKey": activeVersion.MasterPublicKey,
 		"version":         activeVersion.Version,
 		"isActive":        activeVersion.IsActive,
 	}
