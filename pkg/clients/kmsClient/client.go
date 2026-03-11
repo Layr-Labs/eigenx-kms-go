@@ -453,7 +453,7 @@ func (c *Client) Decrypt(appID string, encryptedData []byte, operators *peering.
 // signatures, the function rotates through alternative subsets until decryption succeeds.
 func decryptWithRetry(appID string, partialSigs map[int64]types.G1Point, threshold int, ciphertext []byte) ([]byte, error) {
 	var decrypted []byte
-	recovered, err := crypto.RecoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
+	_, err := crypto.RecoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
 		result, decErr := crypto.DecryptForApp(appID, *candidate, ciphertext)
 		if decErr != nil {
 			return false
@@ -463,9 +463,6 @@ func decryptWithRetry(appID string, partialSigs map[int64]types.G1Point, thresho
 	})
 	if err != nil {
 		return nil, err
-	}
-	if recovered == nil {
-		return nil, fmt.Errorf("failed to recover valid app private key")
 	}
 	return decrypted, nil
 }
@@ -551,18 +548,22 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 
 	c.logger.Sugar().Info("Verified threshold agreement on environment data")
 
-	// Step 6: Get master public key for pairing-based validation of recovered key
-	masterPubKey, err := c.GetMasterPublicKey(operators)
-	if err != nil {
-		return nil, fmt.Errorf("failed to get master public key: %w", err)
-	}
-
-	// Step 7: Recover application private key with retry to tolerate invalid partial signatures
+	// Step 6: Recover application private key with retry to tolerate invalid partial signatures.
+	// Attempt pairing-based validation using master public key. If the master public key
+	// cannot be fetched (e.g., key rotation race), fall back to single-attempt recovery.
 	// partialSigs is already a map[int64]types.G1Point with correct node IDs
-	appPrivateKey, err := crypto.RecoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
-		valid, verifyErr := crypto.VerifyAppPrivateKey(appID, *candidate, *masterPubKey)
-		return verifyErr == nil && valid
-	})
+	var appPrivateKey *types.G1Point
+	masterPubKey, masterPKErr := c.GetMasterPublicKey(operators)
+	if masterPKErr == nil {
+		appPrivateKey, err = crypto.RecoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
+			valid, verifyErr := crypto.VerifyAppPrivateKey(appID, *candidate, *masterPubKey)
+			return verifyErr == nil && valid
+		})
+	} else {
+		c.logger.Sugar().Warnw("Failed to get master public key for retry validation, using single-attempt recovery",
+			"error", masterPKErr)
+		appPrivateKey, err = crypto.RecoverAppPrivateKey(appID, partialSigs, threshold)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to recover app private key: %w", err)
 	}

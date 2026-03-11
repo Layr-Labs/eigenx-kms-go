@@ -237,11 +237,20 @@ func RecoverAppPrivateKey(appID string, partialSigs map[int64]types.G1Point, thr
 	return result, nil
 }
 
+// maxRecoveryAttempts bounds the number of subset combinations tried during retry
+// to prevent excessive computation with large operator sets. C(n,t) can grow quickly
+// (e.g., C(21,14) = 116,280), so we cap attempts at a practical limit.
+const maxRecoveryAttempts = 1000
+
 // RecoverAppPrivateKeyWithRetry attempts to recover the app private key by trying
 // different threshold-sized subsets of partial signatures. If the initial subset
 // produces an invalid key (as determined by the validate function), it enumerates
-// all C(n, threshold) combinations until a valid subset is found.
-// This provides BFT: up to (n - threshold) invalid signatures can be tolerated.
+// C(n, threshold) combinations until a valid subset is found or maxRecoveryAttempts
+// is reached. This provides BFT: up to (n - threshold) invalid signatures can be
+// tolerated (for small enough operator sets that all combinations fit within the cap).
+//
+// Complexity: worst-case O(min(C(n, threshold), maxRecoveryAttempts)) recovery attempts,
+// each involving Lagrange interpolation on G1 plus one validate call.
 func RecoverAppPrivateKeyWithRetry(
 	appID string,
 	partialSigs map[int64]types.G1Point,
@@ -299,6 +308,10 @@ func RecoverAppPrivateKeyWithRetry(
 			return recovered, nil
 		}
 
+		if attempts >= maxRecoveryAttempts {
+			break
+		}
+
 		// Advance to next combination
 		i := threshold - 1
 		for i >= 0 && indices[i] == n-threshold+i {
@@ -313,7 +326,7 @@ func RecoverAppPrivateKeyWithRetry(
 		}
 	}
 
-	return nil, fmt.Errorf("failed to recover valid app private key: all %d subset attempts failed (had %d signatures, needed %d valid)",
+	return nil, fmt.Errorf("failed to recover valid app private key: %d subset attempts failed (had %d signatures, needed %d valid)",
 		attempts, len(partialSigs), threshold)
 }
 
