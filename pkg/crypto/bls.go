@@ -237,6 +237,136 @@ func RecoverAppPrivateKey(appID string, partialSigs map[int64]types.G1Point, thr
 	return result, nil
 }
 
+// RecoverAppPrivateKeyWithRetry attempts to recover the app private key by trying
+// different threshold-sized subsets of partial signatures. If the initial subset
+// produces an invalid key (as determined by the validate function), it enumerates
+// all C(n, threshold) combinations until a valid subset is found.
+// This provides BFT: up to (n - threshold) invalid signatures can be tolerated.
+func RecoverAppPrivateKeyWithRetry(
+	appID string,
+	partialSigs map[int64]types.G1Point,
+	threshold int,
+	validate func(*types.G1Point) bool,
+) (*types.G1Point, error) {
+	if len(partialSigs) < threshold {
+		return nil, fmt.Errorf("insufficient partial signatures: got %d, need %d", len(partialSigs), threshold)
+	}
+
+	// Sort all participant IDs for deterministic ordering
+	allParticipants := make([]int64, 0, len(partialSigs))
+	for id := range partialSigs {
+		allParticipants = append(allParticipants, id)
+	}
+	sort.Slice(allParticipants, func(i, j int) bool {
+		return allParticipants[i] < allParticipants[j]
+	})
+
+	// Helper to attempt recovery with a given subset
+	trySubset := func(subset []int64) (*types.G1Point, bool) {
+		subsetSigs := make(map[int64]types.G1Point, len(subset))
+		for _, id := range subset {
+			subsetSigs[id] = partialSigs[id]
+		}
+		recovered, err := RecoverAppPrivateKey(appID, subsetSigs, threshold)
+		if err != nil {
+			return nil, false
+		}
+		if validate(recovered) {
+			return recovered, true
+		}
+		return nil, false
+	}
+
+	// Enumerate all C(n, threshold) combinations using iterative generation
+	n := len(allParticipants)
+	attempts := 0
+
+	// indices tracks current combination positions (0-indexed into allParticipants)
+	indices := make([]int, threshold)
+	for i := range indices {
+		indices[i] = i
+	}
+
+	for {
+		// Build current subset from indices
+		subset := make([]int64, threshold)
+		for i, idx := range indices {
+			subset[i] = allParticipants[idx]
+		}
+
+		attempts++
+		if recovered, ok := trySubset(subset); ok {
+			return recovered, nil
+		}
+
+		// Advance to next combination
+		i := threshold - 1
+		for i >= 0 && indices[i] == n-threshold+i {
+			i--
+		}
+		if i < 0 {
+			break // All combinations exhausted
+		}
+		indices[i]++
+		for j := i + 1; j < threshold; j++ {
+			indices[j] = indices[j-1] + 1
+		}
+	}
+
+	return nil, fmt.Errorf("failed to recover valid app private key: all %d subset attempts failed (had %d signatures, needed %d valid)",
+		attempts, len(partialSigs), threshold)
+}
+
+// VerifyAppPrivateKey checks that a recovered app private key is consistent with
+// the master public key using the pairing equation:
+//
+//	e(appPrivKey, G2_gen) == e(H(appID), masterPubKey)
+func VerifyAppPrivateKey(appID string, appPrivKey types.G1Point, masterPubKey types.G2Point) (bool, error) {
+	// Hash appID to G1
+	qID, err := HashToG1(appID)
+	if err != nil {
+		return false, fmt.Errorf("failed to hash appID to G1: %w", err)
+	}
+
+	// Convert points to affine representations for pairing
+	privKeyAffine, err := bls.G1PointFromCompressedBytes(appPrivKey.CompressedBytes)
+	if err != nil {
+		return false, fmt.Errorf("failed to convert app private key: %w", err)
+	}
+	g2GenAffine, err := bls.G2PointFromCompressedBytes(G2Generator.CompressedBytes)
+	if err != nil {
+		return false, fmt.Errorf("failed to convert G2 generator: %w", err)
+	}
+	qIDAffine, err := bls.G1PointFromCompressedBytes(qID.CompressedBytes)
+	if err != nil {
+		return false, fmt.Errorf("failed to convert H(appID): %w", err)
+	}
+	masterPKAffine, err := bls.G2PointFromCompressedBytes(masterPubKey.CompressedBytes)
+	if err != nil {
+		return false, fmt.Errorf("failed to convert master public key: %w", err)
+	}
+
+	// Compute e(appPrivKey, G2_gen)
+	lhs, err := bls12381.Pair(
+		[]bls12381.G1Affine{*privKeyAffine.ToAffine()},
+		[]bls12381.G2Affine{*g2GenAffine.ToAffine()},
+	)
+	if err != nil {
+		return false, fmt.Errorf("failed to compute LHS pairing: %w", err)
+	}
+
+	// Compute e(H(appID), masterPubKey)
+	rhs, err := bls12381.Pair(
+		[]bls12381.G1Affine{*qIDAffine.ToAffine()},
+		[]bls12381.G2Affine{*masterPKAffine.ToAffine()},
+	)
+	if err != nil {
+		return false, fmt.Errorf("failed to compute RHS pairing: %w", err)
+	}
+
+	return lhs.Equal(&rhs), nil
+}
+
 // ComputeMasterPublicKey computes the master public key from commitments
 func ComputeMasterPublicKey(allCommitments [][]types.G2Point) (*types.G2Point, error) {
 	masterPK := types.ZeroG2Point()

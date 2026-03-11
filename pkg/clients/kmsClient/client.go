@@ -393,15 +393,13 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 		close(resultChan)
 	}()
 
-	// Collect results
+	// Collect all available results (not just threshold) to enable retry with
+	// alternative subsets if some operators provided invalid signatures (KMS-012)
 	partialSigs := make(map[int64]types.G1Point)
 	// TODO(security): only count cryptographically verified partial signatures.
 	// Current code counts non-zero shares and relies on later interpolation failure.
 	for res := range resultChan {
 		partialSigs[res.nodeID] = res.signature
-		if len(partialSigs) >= threshold {
-			break
-		}
 	}
 
 	if len(partialSigs) < threshold {
@@ -434,26 +432,42 @@ func (c *Client) Decrypt(appID string, encryptedData []byte, operators *peering.
 		threshold = (2*len(operators.Peers) + 2) / 3
 	}
 
-	// Collect partial signatures from operators
+	// Collect partial signatures from all available operators
 	partialSigs, err := c.CollectPartialSignatures(appID, operators, threshold)
 	if err != nil {
 		return nil, fmt.Errorf("failed to collect partial signatures: %w", err)
 	}
 
-	// Recover application private key
-	appPrivateKey, err := crypto.RecoverAppPrivateKey(appID, partialSigs, threshold)
-	if err != nil {
-		return nil, fmt.Errorf("failed to recover application private key: %w", err)
-	}
-
-	// Decrypt data
-	decryptedData, err := crypto.DecryptForApp(appID, *appPrivateKey, encryptedData)
+	// Recover application private key with retry to tolerate invalid partial signatures
+	decryptedData, err := decryptWithRetry(appID, partialSigs, threshold, encryptedData)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt data: %w", err)
 	}
 
 	c.logger.Sugar().Info("Successfully decrypted data")
 	return decryptedData, nil
+}
+
+// decryptWithRetry attempts decryption using different threshold-sized subsets of
+// partial signatures. This provides BFT: if some operators returned invalid partial
+// signatures, the function rotates through alternative subsets until decryption succeeds.
+func decryptWithRetry(appID string, partialSigs map[int64]types.G1Point, threshold int, ciphertext []byte) ([]byte, error) {
+	var decrypted []byte
+	recovered, err := crypto.RecoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
+		result, decErr := crypto.DecryptForApp(appID, *candidate, ciphertext)
+		if decErr != nil {
+			return false
+		}
+		decrypted = result
+		return true
+	})
+	if err != nil {
+		return nil, err
+	}
+	if recovered == nil {
+		return nil, fmt.Errorf("failed to recover valid app private key")
+	}
+	return decrypted, nil
 }
 
 // RetrieveSecretsWithOptions implements secret retrieval with configurable attestation method
@@ -537,9 +551,18 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 
 	c.logger.Sugar().Info("Verified threshold agreement on environment data")
 
-	// Step 6: Recover application private key using threshold signatures
+	// Step 6: Get master public key for pairing-based validation of recovered key
+	masterPubKey, err := c.GetMasterPublicKey(operators)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get master public key: %w", err)
+	}
+
+	// Step 7: Recover application private key with retry to tolerate invalid partial signatures
 	// partialSigs is already a map[int64]types.G1Point with correct node IDs
-	appPrivateKey, err := crypto.RecoverAppPrivateKey(appID, partialSigs, threshold)
+	appPrivateKey, err := crypto.RecoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
+		valid, verifyErr := crypto.VerifyAppPrivateKey(appID, *candidate, *masterPubKey)
+		return verifyErr == nil && valid
+	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to recover app private key: %w", err)
 	}
@@ -755,20 +778,14 @@ func (c *Client) DecryptForApp(appID string, ciphertext []byte, attestationTime 
 
 	threshold := dkg.CalculateThreshold(len(operators.Peers))
 
-	// Collect partial signatures from threshold operators
+	// Collect partial signatures from all available operators
 	partialSigs, err := c.collectPartialSignaturesForDecrypt(appID, operators, attestationTime, threshold)
 	if err != nil {
 		return nil, fmt.Errorf("failed to collect partial signatures: %w", err)
 	}
 
-	// Recover application private key
-	appPrivateKey, err := crypto.RecoverAppPrivateKey(appID, partialSigs, threshold)
-	if err != nil {
-		return nil, fmt.Errorf("failed to recover app private key: %w", err)
-	}
-
-	// Decrypt using recovered key
-	return crypto.DecryptForApp(appID, *appPrivateKey, ciphertext)
+	// Recover application private key with retry to tolerate invalid partial signatures
+	return decryptWithRetry(appID, partialSigs, threshold, ciphertext)
 }
 
 // collectPartialSignaturesForDecrypt collects partial signatures using operator address-based node IDs
@@ -857,21 +874,19 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 		close(resultChan)
 	}()
 
-	// Collect results
+	// Collect all available results (not just threshold) to enable retry with
+	// alternative subsets if some operators provided invalid signatures (KMS-012)
 	partialSigs := make(map[int64]types.G1Point)
 	// TODO(security): DOS vector. only count cryptographically verified partial signatures.
 	// Current code counts non-zero shares and relies on later interpolation failure.
 	for res := range resultChan {
 		partialSigs[res.nodeID] = res.signature
-		if len(partialSigs) >= threshold {
-			break
-		}
 	}
 
 	if len(partialSigs) < threshold {
 		return nil, fmt.Errorf("insufficient partial signatures: collected %d, needed %d", len(partialSigs), threshold)
 	}
 
-	c.logger.Sugar().Infow("Successfully collected threshold partial signatures", "collected", len(partialSigs), "threshold", threshold)
+	c.logger.Sugar().Infow("Successfully collected partial signatures", "collected", len(partialSigs), "threshold", threshold)
 	return partialSigs, nil
 }

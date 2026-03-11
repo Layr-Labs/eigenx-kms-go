@@ -23,6 +23,11 @@ func Test_CryptoOperations(t *testing.T) {
 	t.Run("HashCommitment", func(t *testing.T) { testHashCommitment(t) })
 	t.Run("RecoverAppPrivateKey", func(t *testing.T) { testRecoverAppPrivateKey(t) })
 	t.Run("ComputeMasterPublicKey", func(t *testing.T) { testComputeMasterPublicKey(t) })
+	t.Run("RecoverAppPrivateKeyWithRetry_AllValid", func(t *testing.T) { testRecoverAppPrivateKeyWithRetry_AllValid(t) })
+	t.Run("RecoverAppPrivateKeyWithRetry_OneCorrupt", func(t *testing.T) { testRecoverAppPrivateKeyWithRetry_OneCorrupt(t) })
+	t.Run("RecoverAppPrivateKeyWithRetry_MaxCorrupt", func(t *testing.T) { testRecoverAppPrivateKeyWithRetry_MaxCorrupt(t) })
+	t.Run("RecoverAppPrivateKeyWithRetry_TooManyCorrupt", func(t *testing.T) { testRecoverAppPrivateKeyWithRetry_TooManyCorrupt(t) })
+	t.Run("VerifyAppPrivateKey", func(t *testing.T) { testVerifyAppPrivateKey(t) })
 }
 
 // testScalarMulG1 tests scalar multiplication on G1
@@ -387,4 +392,140 @@ func testComputeMasterPublicKey(t *testing.T) {
 	if !masterPK.IsEqual(&expected) {
 		t.Error("Master public key should be sum of first commitments")
 	}
+}
+
+// generateTestPartialSigs creates n partial signatures for an appID using a random polynomial
+// of degree (threshold-1). Returns all partial sigs, the expected recovered key, and the master secret.
+func generateTestPartialSigs(t *testing.T, appID string, n, threshold int) (map[int64]types.G1Point, *types.G1Point, *fr.Element) {
+	t.Helper()
+
+	secret := new(fr.Element).SetInt64(42)
+	poly := make(polynomial.Polynomial, threshold)
+	poly[0].Set(secret)
+	for i := 1; i < threshold; i++ {
+		_, _ = poly[i].SetRandom()
+	}
+
+	msgPoint, err := HashToG1(appID)
+	require.NoError(t, err)
+
+	partialSigs := make(map[int64]types.G1Point)
+	for i := int64(1); i <= int64(n); i++ {
+		share := EvaluatePolynomial(poly, i)
+		sig, err := ScalarMulG1(*msgPoint, share)
+		require.NoError(t, err)
+		partialSigs[i] = *sig
+	}
+
+	expected, err := ScalarMulG1(*msgPoint, secret)
+	require.NoError(t, err)
+
+	return partialSigs, expected, secret
+}
+
+// corruptPartialSig replaces the signature for the given nodeID with a random G1 point.
+func corruptPartialSig(t *testing.T, sigs map[int64]types.G1Point, nodeID int64) {
+	t.Helper()
+	randomScalar := new(fr.Element).SetInt64(99999 + nodeID)
+	randomPoint, err := ScalarMulG1(G1Generator, randomScalar)
+	require.NoError(t, err)
+	sigs[nodeID] = *randomPoint
+}
+
+func testRecoverAppPrivateKeyWithRetry_AllValid(t *testing.T) {
+	appID := "test-retry-all-valid"
+	n, threshold := 7, 5 // (2*7+2)/3 = 5
+
+	partialSigs, expected, _ := generateTestPartialSigs(t, appID, n, threshold)
+
+	recovered, err := RecoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
+		return candidate.IsEqual(expected)
+	})
+	require.NoError(t, err)
+	require.True(t, recovered.IsEqual(expected), "Should recover correct key on first attempt")
+}
+
+func testRecoverAppPrivateKeyWithRetry_OneCorrupt(t *testing.T) {
+	appID := "test-retry-one-corrupt"
+	n, threshold := 7, 5
+
+	partialSigs, expected, _ := generateTestPartialSigs(t, appID, n, threshold)
+
+	// Corrupt node 2 (which is in the initial sorted subset [1,2,3,4,5])
+	corruptPartialSig(t, partialSigs, 2)
+
+	recovered, err := RecoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
+		return candidate.IsEqual(expected)
+	})
+	require.NoError(t, err)
+	require.True(t, recovered.IsEqual(expected), "Should recover correct key by swapping out corrupt operator")
+}
+
+func testRecoverAppPrivateKeyWithRetry_MaxCorrupt(t *testing.T) {
+	appID := "test-retry-max-corrupt"
+	n, threshold := 7, 5 // n - threshold = 2 corrupt signatures tolerable
+
+	partialSigs, expected, _ := generateTestPartialSigs(t, appID, n, threshold)
+
+	// Corrupt 2 nodes in the initial sorted subset
+	corruptPartialSig(t, partialSigs, 1)
+	corruptPartialSig(t, partialSigs, 3)
+
+	recovered, err := RecoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
+		return candidate.IsEqual(expected)
+	})
+	require.NoError(t, err)
+	require.True(t, recovered.IsEqual(expected), "Should recover with max tolerable corrupt signatures")
+}
+
+func testRecoverAppPrivateKeyWithRetry_TooManyCorrupt(t *testing.T) {
+	appID := "test-retry-too-many-corrupt"
+	n, threshold := 7, 5 // n - threshold = 2, so 3 corrupt should fail
+
+	partialSigs, expected, _ := generateTestPartialSigs(t, appID, n, threshold)
+
+	// Corrupt 3 nodes (more than n - threshold = 2)
+	corruptPartialSig(t, partialSigs, 1)
+	corruptPartialSig(t, partialSigs, 3)
+	corruptPartialSig(t, partialSigs, 6)
+
+	_, err := RecoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
+		return candidate.IsEqual(expected)
+	})
+	require.Error(t, err, "Should fail when more than n-threshold signatures are corrupt")
+	require.Contains(t, err.Error(), "all")
+}
+
+func testVerifyAppPrivateKey(t *testing.T) {
+	appID := "test-verify-key"
+	secret := new(fr.Element).SetInt64(12345)
+
+	// Compute master public key: secret * G2
+	masterPubKey, err := ScalarMulG2(G2Generator, secret)
+	require.NoError(t, err)
+
+	// Compute correct app private key: secret * H(appID)
+	msgPoint, err := HashToG1(appID)
+	require.NoError(t, err)
+	correctKey, err := ScalarMulG1(*msgPoint, secret)
+	require.NoError(t, err)
+
+	// Correct key should verify
+	valid, err := VerifyAppPrivateKey(appID, *correctKey, *masterPubKey)
+	require.NoError(t, err)
+	require.True(t, valid, "Correct app private key should verify against master public key")
+
+	// Wrong key (different secret) should fail
+	wrongSecret := new(fr.Element).SetInt64(99999)
+	wrongKey, err := ScalarMulG1(*msgPoint, wrongSecret)
+	require.NoError(t, err)
+
+	valid, err = VerifyAppPrivateKey(appID, *wrongKey, *masterPubKey)
+	require.NoError(t, err)
+	require.False(t, valid, "Wrong app private key should not verify")
+
+	// Wrong appID should fail
+	valid, err = VerifyAppPrivateKey("wrong-app-id", *correctKey, *masterPubKey)
+	require.NoError(t, err)
+	require.False(t, valid, "Correct key with wrong appID should not verify")
 }
