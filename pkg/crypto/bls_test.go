@@ -505,7 +505,7 @@ func testRecoverAppPrivateKeyWithRetry_CapReached(t *testing.T) {
 	partialSigs, expected, _ := generateTestPartialSigs(t, appID, n, threshold)
 
 	// Corrupt nodes 1 and 2 so only subsets excluding both are valid.
-	// The valid subset [3,4,5,6,7] is enumeration index 21 (the last one).
+	// The valid subset {3,4,5,6,7} is combination number 21 (the last of C(7,5)=21 total).
 	corruptPartialSig(t, partialSigs, 1)
 	corruptPartialSig(t, partialSigs, 2)
 
