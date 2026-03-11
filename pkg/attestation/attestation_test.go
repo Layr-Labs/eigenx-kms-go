@@ -28,7 +28,6 @@ func createProductionCsToken(provider AttestationProvider) ConfidentialSpaceToke
 		issuer = "https://portal.trustauthority.intel.com"
 		hwmodel = "INTEL_TDX"
 		attesterTcb = "" // Intel tokens don't have attester_tcb field
-		supportAttr = "STABLE"
 		// TDX field is at root level for Intel tokens
 		tdxField = `,
 		"tdx": {
