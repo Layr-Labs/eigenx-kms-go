@@ -1203,19 +1203,21 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 
 	allCommitments := make([][]types.G2Point, 0, len(trustedShares))
 	participantIDs := make([]int64, 0, len(trustedShares))
+	finalShares := make(map[int64]*fr.Element, len(trustedShares))
 
 	for _, op := range operators {
 		opNodeID := addressToNodeID(op.OperatorAddress)
-		if _, ok := trustedShares[opNodeID]; ok {
+		if share, ok := trustedShares[opNodeID]; ok {
 			if comm, ok := receivedCommitments[opNodeID]; ok {
 				allCommitments = append(allCommitments, comm)
 				participantIDs = append(participantIDs, opNodeID)
+				finalShares[opNodeID] = share
 			}
 		}
 	}
 
-	// Use trustedShares (polynomial-verified AND merkle-verified) for finalization
-	keyVersion := n.dkg.FinalizeKeyShare(trustedShares, allCommitments, participantIDs)
+	// Use finalShares (polynomial-verified AND merkle-verified, with matching commitments) for finalization
+	keyVersion := n.dkg.FinalizeKeyShare(finalShares, allCommitments, participantIDs)
 	keyVersion.Version = session.SessionTimestamp // Use session timestamp as version
 	// Commitments[0] is the constant term of the combined commitment polynomial,
 	// which equals the master public key: MPK = sum_i(C_i[0]) where C_i is dealer i's commitment.
@@ -1753,10 +1755,12 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		"trusted_dealers", len(trustedShares))
 
 	participantIDs := make([]int64, 0, len(trustedShares))
+	finalShares := make(map[int64]*fr.Element, len(trustedShares))
 	for _, op := range operators {
 		opNodeID := addressToNodeID(op.OperatorAddress)
-		if _, ok := trustedShares[opNodeID]; ok {
+		if share, ok := trustedShares[opNodeID]; ok {
 			participantIDs = append(participantIDs, opNodeID)
+			finalShares[opNodeID] = share
 		}
 	}
 
@@ -1766,7 +1770,7 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	}
 
 	// Compute new key share using verified dealer shares only.
-	newKeyVersion, err := n.resharer.ComputeNewKeyShare(participantIDs, trustedShares, nil)
+	newKeyVersion, err := n.resharer.ComputeNewKeyShare(participantIDs, finalShares, nil)
 	if err != nil {
 		return fmt.Errorf("failed to compute new operator key share: %w", err)
 	}
