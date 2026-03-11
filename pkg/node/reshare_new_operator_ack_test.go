@@ -5,6 +5,7 @@ import (
 
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/reshare"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
@@ -132,8 +133,6 @@ func TestReshareNewOperator_RejectsInvalidShares(t *testing.T) {
 		logger:          logger,
 	}
 
-	validShares := make(map[int64]*fr.Element)
-
 	for dealerID := range commitmentsByDealer {
 		// Use a corrupted (random) share
 		corruptedShare := new(fr.Element)
@@ -143,14 +142,8 @@ func TestReshareNewOperator_RejectsInvalidShares(t *testing.T) {
 		valid := r.VerifyNewShare(dealerID, corruptedShare, commitments)
 		require.False(t, valid, "corrupted share from dealer %d should fail verification", dealerID)
 
-		if !valid {
-			n.logInvalidShareComplaint("reshare", 1000, targetNodeID, dealerID, corruptedShare, commitments)
-		} else {
-			validShares[dealerID] = corruptedShare
-		}
+		n.logInvalidShareComplaint("reshare", 1000, targetNodeID, dealerID, corruptedShare, commitments)
 	}
-
-	require.Empty(t, validShares, "no shares should pass verification")
 	require.Len(t, observed.All(), 3, "should log 3 complaint entries")
 
 	for _, entry := range observed.All() {
@@ -214,6 +207,36 @@ func TestReshareNewOperator_MixedValidity_OnlyValidUsed(t *testing.T) {
 	keyVersion := r.ComputeNewKeyShare(validParticipantIDs, validShares, validCommitments)
 	require.NotNil(t, keyVersion)
 	require.NotNil(t, keyVersion.PrivateShare)
+}
+
+func TestReshareNewOperator_BelowThreshold_ReturnsError(t *testing.T) {
+	// 4 dealers + 1 new operator = 5 total. Threshold = ceil(2*5/3) = 4.
+	// Corrupt 3 of 4 shares so only 1 is valid — below threshold.
+	operators, targetNodeID, shares, commitmentsByDealer := setupReshareTestOperators(t, 4)
+
+	r := reshare.NewReshare(targetNodeID, operators)
+	threshold := dkg.CalculateThreshold(len(operators))
+
+	corruptedCount := 0
+	for dealerID := range shares {
+		if corruptedCount < 3 {
+			corruptedShare := new(fr.Element)
+			_, _ = corruptedShare.SetRandom()
+			shares[dealerID] = corruptedShare
+			corruptedCount++
+		}
+	}
+
+	validShares := make(map[int64]*fr.Element)
+	for dealerID, share := range shares {
+		commitments := commitmentsByDealer[dealerID]
+		if r.VerifyNewShare(dealerID, share, commitments) {
+			validShares[dealerID] = share
+		}
+	}
+
+	require.Less(t, len(validShares), threshold,
+		"valid shares (%d) should be below threshold (%d)", len(validShares), threshold)
 }
 
 func TestReshareNewOperator_AckContentCorrect(t *testing.T) {

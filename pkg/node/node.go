@@ -1497,9 +1497,12 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		return fmt.Errorf("failed to receive commitments: %w", err)
 	}
 
-	// Read session data
+	// Read session data (deep copy both maps to avoid data races after releasing lock)
 	session.mu.RLock()
-	receivedShares := session.shares
+	receivedShares := make(map[int64]*fr.Element, len(session.shares))
+	for k, v := range session.shares {
+		receivedShares[k] = v
+	}
 	receivedCommitments := make(map[int64][]types.G2Point, len(session.commitments))
 	for k, v := range session.commitments {
 		receivedCommitments[k] = v
@@ -1543,6 +1546,10 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 						"dealer_address", dealerPeer.OperatorAddress.Hex(),
 						"dealer_id", dealerID)
 				}
+			} else {
+				n.logger.Sugar().Warnw("Could not find peer info for dealer, skipping ack send",
+					"operator_address", n.OperatorAddress.Hex(),
+					"dealer_id", dealerID)
 			}
 
 			n.logger.Sugar().Infow("Verified and acked reshare share (new operator)",
@@ -1565,6 +1572,12 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 				validCommitments = append(validCommitments, comm)
 			}
 		}
+	}
+
+	// Verify we have enough valid shares to meet the threshold
+	requiredThreshold := dkg.CalculateThreshold(len(operators))
+	if len(validShares) < requiredThreshold {
+		return fmt.Errorf("insufficient valid shares for reshare: got %d, need %d", len(validShares), requiredThreshold)
 	}
 
 	// Compute new key share using Lagrange interpolation (only from valid shares)
