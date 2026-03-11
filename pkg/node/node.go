@@ -1245,7 +1245,13 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 
 	validShares := make(map[int64]*fr.Element)
 	for dealerID, share := range receivedShares {
-		commitments := receivedCommitments[dealerID]
+		commitments, hasCommitments := receivedCommitments[dealerID]
+		if !hasCommitments || len(commitments) == 0 {
+			n.logger.Sugar().Warnw("Missing commitments for dealer, skipping share",
+				"operator_address", n.OperatorAddress.Hex(),
+				"dealer_id", dealerID)
+			continue
+		}
 		if n.resharer.VerifyNewShare(dealerID, share, commitments) {
 			validShares[dealerID] = share
 

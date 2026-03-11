@@ -54,7 +54,8 @@ func setupReshareTestOperators(t *testing.T, numDealers int) (
 	return
 }
 
-// createTestOperatorsFromChainConfig is a helper that mirrors reshare_test.go's createTestOperators.
+// createTestOperatorsFromChainConfig is a simplified version of reshare_test.go's createTestOperators
+// for share verification tests (no BN254 keys or socket addresses).
 func createTestOperatorsFromChainConfig(t *testing.T, numOperators int) []*peering.OperatorSetPeer {
 	t.Helper()
 
