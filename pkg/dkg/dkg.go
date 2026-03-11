@@ -138,10 +138,16 @@ func GetReshareEpoch() int64 {
 
 // CreateAcknowledgement creates an acknowledgement for received shares
 // Phase 4: Updated to include shareHash and epoch
-func CreateAcknowledgement(nodeID, dealerID int64, epoch int64, share *fr.Element, commitments []types.G2Point, signer func(int64, [32]byte) []byte) *types.Acknowledgement {
+func CreateAcknowledgement(
+	nodeID, dealerID int64,
+	epoch int64,
+	share *fr.Element,
+	commitments []types.G2Point,
+	signer func(int64, int64, int64, [32]byte, [32]byte) []byte,
+) *types.Acknowledgement {
 	commitmentHash := crypto.HashCommitment(commitments)
 	shareHash := crypto.HashShareForAck(share)
-	signature := signer(dealerID, commitmentHash)
+	signature := signer(dealerID, nodeID, epoch, shareHash, commitmentHash)
 
 	return &types.Acknowledgement{
 		DealerID:       dealerID,

@@ -161,7 +161,10 @@ func testAcknowledgementWithNewFields(t *testing.T) {
 	commitments := testutil.CreateTestCommitments(t, 3)
 
 	// Mock signer
-	signer := func(dealer int64, hash [32]byte) []byte {
+	signer := func(dealer, player, ackEpoch int64, shareHash, hash [32]byte) []byte {
+		_ = player
+		_ = ackEpoch
+		_ = shareHash
 		return []byte("mock-signature")
 	}
 

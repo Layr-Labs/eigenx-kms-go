@@ -14,9 +14,9 @@ import (
 
 // Protocol represents the reshare protocol interface
 type Protocol interface {
-	GenerateNewShares(currentShare *fr.Element, newThreshold int) (map[int]*fr.Element, []types.G2Point, error)
-	VerifyNewShare(fromID int, share *fr.Element, commitments []types.G2Point) bool
-	ComputeNewKeyShare(dealerIDs []int, shares map[int]*fr.Element, allCommitments [][]types.G2Point) *types.KeyShareVersion
+	GenerateNewShares(currentShare *fr.Element, newThreshold int) (map[int64]*fr.Element, []types.G2Point, error)
+	VerifyNewShare(fromID int64, share *fr.Element, commitments []types.G2Point) bool
+	ComputeNewKeyShare(dealerIDs []int64, shares map[int64]*fr.Element, allCommitments [][]types.G2Point) (*types.KeyShareVersion, error)
 }
 
 // Reshare implements the reshare protocol
@@ -101,7 +101,11 @@ func (r *Reshare) VerifyNewShare(fromID int64, share *fr.Element, commitments []
 }
 
 // ComputeNewKeyShare computes the new key share using Lagrange interpolation
-func (r *Reshare) ComputeNewKeyShare(dealerIDs []int64, shares map[int64]*fr.Element, allCommitments [][]types.G2Point) *types.KeyShareVersion {
+func (r *Reshare) ComputeNewKeyShare(dealerIDs []int64, shares map[int64]*fr.Element, _ [][]types.G2Point) (*types.KeyShareVersion, error) {
+	if len(dealerIDs) == 0 {
+		return nil, fmt.Errorf("no dealer IDs provided")
+	}
+
 	// Compute x'_j = Σ_{i∈dealers} λ_i * s'_{ij}
 	newShare := new(fr.Element).SetZero()
 
@@ -116,13 +120,27 @@ func (r *Reshare) ComputeNewKeyShare(dealerIDs []int64, shares map[int64]*fr.Ele
 		newShare.Add(newShare, term)
 	}
 
+	// Publish commitments in the same form as existing operators so that /pubkey
+	// reconstruction semantics are consistent across operator join paths.
+	commitments := make([]types.G2Point, 0, 1)
+	shareCommitment, err := crypto.ScalarMulG2(crypto.G2Generator, newShare)
+	if err != nil {
+		return nil, fmt.Errorf("failed to compute share commitment: %w", err)
+	}
+	lambdaJ := crypto.ComputeLagrangeCoefficient(r.nodeID, dealerIDs)
+	scaledCommitment, scaleErr := crypto.ScalarMulG2(*shareCommitment, lambdaJ)
+	if scaleErr != nil {
+		return nil, fmt.Errorf("failed to scale commitment: %w", scaleErr)
+	}
+	commitments = append(commitments, *scaledCommitment)
+
 	return &types.KeyShareVersion{
 		Version:        0, // TODO: Use proper epoch calculation
 		PrivateShare:   newShare,
-		Commitments:    allCommitments[0],
+		Commitments:    commitments,
 		IsActive:       false,
 		ParticipantIDs: dealerIDs,
-	}
+	}, nil
 }
 
 // CreateCompletionSignature creates a completion signature for reshare
@@ -139,10 +157,15 @@ func CreateCompletionSignature(nodeID int, epoch int64, commitmentHash [32]byte,
 
 // CreateAcknowledgement creates an acknowledgement for received reshare (Phase 4)
 // Same signature as DKG for consistency
-func CreateAcknowledgement(nodeID, dealerID, epoch int64, share *fr.Element, commitments []types.G2Point, signer func(int64, [32]byte) []byte) *types.Acknowledgement {
+func CreateAcknowledgement(
+	nodeID, dealerID, epoch int64,
+	share *fr.Element,
+	commitments []types.G2Point,
+	signer func(int64, int64, int64, [32]byte, [32]byte) []byte,
+) *types.Acknowledgement {
 	commitmentHash := crypto.HashCommitment(commitments)
 	shareHash := crypto.HashShareForAck(share)
-	signature := signer(dealerID, commitmentHash)
+	signature := signer(dealerID, nodeID, epoch, shareHash, commitmentHash)
 
 	return &types.Acknowledgement{
 		DealerID:       dealerID,

@@ -125,6 +125,16 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Step 2b: Ensure attested application identity matches requested app.
+	if claims.AppID != req.AppID {
+		s.node.logger.Sugar().Warnw("App ID mismatch in attestation claims",
+			"node_id", s.node.OperatorAddress.Hex(),
+			"requested_app_id", req.AppID,
+			"attested_app_id", claims.AppID)
+		http.Error(w, "App ID mismatch - unauthorized app", http.StatusForbidden)
+		return
+	}
+
 	// Step 3: Query latest release from on-chain AppController
 	release, err := s.node.baseContractCaller.GetLatestReleaseAsRelease(r.Context(), req.AppID)
 	if err != nil {
@@ -341,6 +351,14 @@ func (s *Server) handleDKGAck(w http.ResponseWriter, r *http.Request) {
 	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
 	thisNodeID := util.AddressToNodeID(s.node.OperatorAddress)
 
+	if err := s.node.verifyAcknowledgement(session, senderPeer, senderNodeID, thisNodeID, ackMsg.SessionTimestamp, ackMsg.Ack); err != nil {
+		s.node.logger.Sugar().Warnw("Invalid DKG acknowledgement",
+			"from", senderPeer.OperatorAddress.Hex(),
+			"error", err)
+		http.Error(w, "Invalid acknowledgement", http.StatusBadRequest)
+		return
+	}
+
 	// Store ack in session (handles duplicate detection and completion signaling)
 	if err := session.HandleReceivedAck(thisNodeID, senderNodeID, ackMsg.Ack); err != nil {
 		s.node.logger.Sugar().Warnw("Failed to store ack",
@@ -499,6 +517,14 @@ func (s *Server) handleReshareAck(w http.ResponseWriter, r *http.Request) {
 	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
 	thisNodeID := util.AddressToNodeID(s.node.OperatorAddress)
 
+	if err := s.node.verifyAcknowledgement(session, senderPeer, senderNodeID, thisNodeID, ackMsg.SessionTimestamp, ackMsg.Ack); err != nil {
+		s.node.logger.Sugar().Warnw("Invalid reshare acknowledgement",
+			"from", senderPeer.OperatorAddress.Hex(),
+			"error", err)
+		http.Error(w, "Invalid acknowledgement", http.StatusBadRequest)
+		return
+	}
+
 	// Store ack in session
 	if err := session.HandleReceivedAck(thisNodeID, senderNodeID, ackMsg.Ack); err != nil {
 		s.node.logger.Sugar().Warnw("Failed to store reshare ack",
@@ -528,6 +554,11 @@ func (s *Server) handleReshareComplete(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleAppSign(w http.ResponseWriter, r *http.Request) {
+	// SECURITY/TRUST NOTE:
+	// Deployment is expected to
+	// enforce caller identity/authorization at the edge (e.g. WAF/ingress with HTTPS +
+	// mTLS and app-level policy). If that external control is not present, this endpoint
+	// should be treated as unsafe for public exposure.
 	var req types.AppSignRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

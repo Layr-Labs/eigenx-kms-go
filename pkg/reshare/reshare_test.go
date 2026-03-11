@@ -14,6 +14,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -23,6 +24,18 @@ func Test_ReshareProtocol(t *testing.T) {
 	t.Run("GenerateNewSharesNilCurrentShare", func(t *testing.T) { testGenerateNewSharesNilCurrentShare(t) })
 	t.Run("VerifyNewShare", func(t *testing.T) { testVerifyNewShare(t) })
 	t.Run("ComputeNewKeyShare", func(t *testing.T) { testComputeNewKeyShare(t) })
+	t.Run("ComputeNewKeyShareScaledCommitmentForNewOperator", func(t *testing.T) {
+		testComputeNewKeyShareScaledCommitmentForNewOperator(t)
+	})
+	t.Run("ComputeNewKeyShareWithNilCommitmentsStillPublishesContribution", func(t *testing.T) {
+		testComputeNewKeyShareWithNilCommitmentsStillPublishesContribution(t)
+	})
+	t.Run("DealerAnchoredResharePreservesSecretForNewRecipient", func(t *testing.T) {
+		testDealerAnchoredResharePreservesSecretForNewRecipient(t)
+	})
+	t.Run("ZeroConstantDealerPolynomialsDoNotBootstrapSecret", func(t *testing.T) {
+		testZeroConstantDealerPolynomialsDoNotBootstrapSecret(t)
+	})
 	t.Run("CreateCompletionSignature", func(t *testing.T) { testCreateCompletionSignature(t) })
 }
 
@@ -189,13 +202,216 @@ func testComputeNewKeyShare(t *testing.T) {
 		{{CompressedBytes: point1.Marshal()}},
 	}
 
-	keyVersion := r.ComputeNewKeyShare(dealerIDs, shares, allCommitments)
+	keyVersion, err := r.ComputeNewKeyShare(dealerIDs, shares, allCommitments)
+	if err != nil {
+		t.Fatalf("ComputeNewKeyShare failed: %v", err)
+	}
 	if keyVersion == nil {
 		t.Fatal("Expected non-nil key version")
 	}
 	if keyVersion.PrivateShare == nil {
 		t.Error("Expected non-nil private share")
 	}
+}
+
+func testComputeNewKeyShareScaledCommitmentForNewOperator(t *testing.T) {
+	operators := createTestOperators(t, 3)
+	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
+	r := NewReshare(nodeID, operators)
+
+	dealerIDs := []int64{1, 2, 3}
+	shares := map[int64]*fr.Element{
+		1: new(fr.Element).SetUint64(3),
+		2: new(fr.Element).SetUint64(5),
+		3: new(fr.Element).SetUint64(7),
+	}
+
+	identity := types.ZeroG2Point()
+	allCommitments := [][]types.G2Point{{*identity}, {*identity}, {*identity}}
+
+	keyVersion, err := r.ComputeNewKeyShare(dealerIDs, shares, allCommitments)
+	if err != nil {
+		t.Fatalf("ComputeNewKeyShare failed: %v", err)
+	}
+	if keyVersion == nil || keyVersion.PrivateShare == nil {
+		t.Fatal("Expected computed key version with non-nil private share")
+	}
+	if len(keyVersion.Commitments) == 0 {
+		t.Fatal("Expected non-empty commitments")
+	}
+
+	isZero, err := keyVersion.Commitments[0].IsZero()
+	if err != nil {
+		t.Fatalf("Failed to check if commitment is zero: %v", err)
+	}
+	if isZero {
+		t.Fatal("Expected non-zero commitment for new operator /pubkey contribution")
+	}
+
+	expectedShareCommitment, err := crypto.ScalarMulG2(crypto.G2Generator, keyVersion.PrivateShare)
+	if err != nil {
+		t.Fatalf("Failed to compute expected share commitment: %v", err)
+	}
+	lambda := crypto.ComputeLagrangeCoefficient(nodeID, dealerIDs)
+	expectedScaled, err := crypto.ScalarMulG2(*expectedShareCommitment, lambda)
+	if err != nil {
+		t.Fatalf("Failed to compute expected scaled commitment: %v", err)
+	}
+	if !expectedScaled.IsEqual(&keyVersion.Commitments[0]) {
+		t.Fatal("Expected first commitment to equal lambda-scaled share commitment")
+	}
+}
+
+func testDealerAnchoredResharePreservesSecretForNewRecipient(t *testing.T) {
+	operators := createTestOperators(t, 5) // 4 existing + 1 joining recipient
+	threshold := 3
+
+	recipientIDs := make([]int64, 0, len(operators))
+	for _, op := range operators {
+		recipientIDs = append(recipientIDs, util.AddressToNodeID(op.OperatorAddress))
+	}
+	dealerIDs := recipientIDs[:4]
+
+	oldSecret := new(fr.Element).SetUint64(4242)
+	oldPoly := make(polynomial.Polynomial, threshold)
+	oldPoly[0].Set(oldSecret)
+	for i := 1; i < threshold; i++ {
+		_, _ = oldPoly[i].SetRandom()
+	}
+
+	dealerCurrentShares := make(map[int64]*fr.Element)
+	for _, dealerID := range dealerIDs {
+		dealerCurrentShares[dealerID] = crypto.EvaluatePolynomial(oldPoly, dealerID)
+	}
+
+	sharesByDealer := make(map[int64]map[int64]*fr.Element)
+	for _, dealerID := range dealerIDs {
+		dealerResharer := NewReshare(dealerID, operators)
+		perRecipientShares, _, err := dealerResharer.GenerateNewShares(dealerCurrentShares[dealerID], threshold)
+		if err != nil {
+			t.Fatalf("Dealer %d failed to generate new shares: %v", dealerID, err)
+		}
+		sharesByDealer[dealerID] = perRecipientShares
+	}
+
+	finalShares := make(map[int64]*fr.Element)
+	for _, recipientID := range recipientIDs {
+		received := make(map[int64]*fr.Element, len(dealerIDs))
+		for _, dealerID := range dealerIDs {
+			received[dealerID] = sharesByDealer[dealerID][recipientID]
+		}
+
+		recipientResharer := NewReshare(recipientID, operators)
+		keyVersion, err := recipientResharer.ComputeNewKeyShare(dealerIDs, received, nil)
+		if err != nil {
+			t.Fatalf("ComputeNewKeyShare failed for recipient %d: %v", recipientID, err)
+		}
+		if keyVersion == nil || keyVersion.PrivateShare == nil {
+			t.Fatalf("Recipient %d failed to compute key share", recipientID)
+		}
+		finalShares[recipientID] = keyVersion.PrivateShare
+	}
+
+	recoveryShares := make(map[int64]*fr.Element, threshold)
+	for i := 0; i < threshold; i++ {
+		recoveryShares[recipientIDs[i]] = finalShares[recipientIDs[i]]
+	}
+	recovered, err := crypto.RecoverSecret(recoveryShares)
+	if err != nil {
+		t.Fatalf("Failed to recover secret from reshared final shares: %v", err)
+	}
+	if !recovered.Equal(oldSecret) {
+		t.Fatalf("Reshared secret mismatch: expected %v, got %v", oldSecret, recovered)
+	}
+}
+
+func testComputeNewKeyShareWithNilCommitmentsStillPublishesContribution(t *testing.T) {
+	operators := createTestOperators(t, 3)
+	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
+	r := NewReshare(nodeID, operators)
+
+	dealerIDs := []int64{1, 2, 3}
+	shares := map[int64]*fr.Element{
+		1: new(fr.Element).SetUint64(11),
+		2: new(fr.Element).SetUint64(13),
+		3: new(fr.Element).SetUint64(17),
+	}
+
+	keyVersion, err := r.ComputeNewKeyShare(dealerIDs, shares, nil)
+	if err != nil {
+		t.Fatalf("ComputeNewKeyShare failed: %v", err)
+	}
+	if keyVersion == nil || keyVersion.PrivateShare == nil {
+		t.Fatal("Expected computed key version with non-nil private share")
+	}
+	if len(keyVersion.Commitments) == 0 {
+		t.Fatal("Expected non-empty commitments even when allCommitments is nil")
+	}
+}
+
+func testZeroConstantDealerPolynomialsDoNotBootstrapSecret(t *testing.T) {
+	operators := createTestOperators(t, 5)
+	threshold := 3
+
+	recipientIDs := make([]int64, 0, len(operators))
+	for _, op := range operators {
+		recipientIDs = append(recipientIDs, util.AddressToNodeID(op.OperatorAddress))
+	}
+	dealerIDs := recipientIDs[:4]
+
+	// Construct non-zero original secret (what the cluster should preserve).
+	oldSecret := new(fr.Element).SetUint64(777)
+
+	// Simulate the old buggy behavior: each dealer uses zero-constant polynomial.
+	zero := new(fr.Element).SetZero()
+	sharesByDealer := make(map[int64]map[int64]*fr.Element)
+	for _, dealerID := range dealerIDs {
+		dealerResharer := NewReshare(dealerID, operators)
+		perRecipientShares, _, err := dealerResharer.GenerateNewShares(zero, threshold)
+		if err != nil {
+			t.Fatalf("Dealer %d failed to generate zero-constant shares: %v", dealerID, err)
+		}
+		sharesByDealer[dealerID] = perRecipientShares
+	}
+
+	// Every recipient combines dealer shares via Lagrange.
+	finalShares := make(map[int64]*fr.Element)
+	for _, recipientID := range recipientIDs {
+		received := make(map[int64]*fr.Element, len(dealerIDs))
+		for _, dealerID := range dealerIDs {
+			received[dealerID] = sharesByDealer[dealerID][recipientID]
+		}
+		recipientResharer := NewReshare(recipientID, operators)
+		keyVersion, err := recipientResharer.ComputeNewKeyShare(dealerIDs, received, nil)
+		if err != nil {
+			t.Fatalf("ComputeNewKeyShare failed for recipient %d: %v", recipientID, err)
+		}
+		if keyVersion == nil || keyVersion.PrivateShare == nil {
+			t.Fatalf("Expected computed key version for recipient %d", recipientID)
+		}
+		finalShares[recipientID] = keyVersion.PrivateShare
+	}
+
+	// Under zero-constant dealer polynomials, recovered secret must be 0, not oldSecret.
+	// This guards against reintroducing refresh-vs-join mismatch.
+	recoveryShares := make(map[int64]*fr.Element, threshold)
+	for i := 0; i < threshold; i++ {
+		recoveryShares[recipientIDs[i]] = finalShares[recipientIDs[i]]
+	}
+	recovered, err := crypto.RecoverSecret(recoveryShares)
+	if err == nil {
+		if recovered.Equal(oldSecret) {
+			t.Fatal("Zero-constant dealer polynomials unexpectedly bootstrapped original secret")
+		}
+		zeroRecovered := new(fr.Element).SetZero()
+		if !recovered.Equal(zeroRecovered) {
+			t.Fatalf("Expected recovered secret to be zero under zero-constant dealer polynomials, got %v", recovered)
+		}
+		return
+	}
+
+	// Current RecoverSecret rejects zero-valued secrets, which is also acceptable here:
+	// the zero-constant construction still fails to bootstrap the original non-zero secret.
 }
 
 // testCreateCompletionSignature tests completion signature creation
@@ -255,7 +471,10 @@ func Test_CreateAcknowledgement(t *testing.T) {
 	}
 
 	// Mock signer function
-	signer := func(dealer int64, hash [32]byte) []byte {
+	signer := func(dealer, player, ackEpoch int64, shareHash, hash [32]byte) []byte {
+		_ = player
+		_ = ackEpoch
+		_ = shareHash
 		return []byte("mock-signature")
 	}
 
