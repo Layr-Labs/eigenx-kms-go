@@ -25,6 +25,7 @@ import (
 
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller"
 	eigenxcrypto "github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
@@ -2037,6 +2038,12 @@ func (n *Node) fetchMPKFromPeers(operators []*peering.OperatorSetPeer) (*types.G
 			}
 
 			if response.MasterPublicKey == nil || len(response.MasterPublicKey.CompressedBytes) == 0 {
+				return
+			}
+
+			// Validate the bytes decode to a valid G2 curve point
+			if _, err := bls.G2PointFromCompressedBytes(response.MasterPublicKey.CompressedBytes); err != nil {
+				n.logger.Sugar().Warnw("Peer returned invalid G2 point for MPK", "peer", peer.SocketAddress, "error", err)
 				return
 			}
 
