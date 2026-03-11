@@ -1,8 +1,16 @@
 package kmsClient
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -204,4 +212,239 @@ func TestDecrypt_ValidationErrors(t *testing.T) {
 			assert.Contains(t, err.Error(), tt.expectedErr)
 		})
 	}
+}
+
+// createMockPubkeyServer creates a test HTTP server that returns a /pubkey response
+func createMockPubkeyServer(t *testing.T, commitments []types.G2Point, mpk *types.G2Point) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/pubkey" {
+			http.Error(w, "not found", http.StatusNotFound)
+			return
+		}
+		resp := map[string]interface{}{
+			"operatorAddress": "0x0000000000000000000000000000000000000001",
+			"commitments":     commitments,
+			"masterPublicKey": mpk,
+			"version":         int64(1),
+			"isActive":        true,
+		}
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(resp))
+	}))
+}
+
+func TestGetMasterPublicKey_ThresholdAgreement_AllHonest(t *testing.T) {
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	// Create 4 mock servers all returning the same MPK
+	commitments := []types.G2Point{crypto.G2Generator}
+	peers := make([]*peering.OperatorSetPeer, 4)
+	for i := 0; i < 4; i++ {
+		srv := createMockPubkeyServer(t, commitments, &crypto.G2Generator)
+		defer srv.Close()
+		peers[i] = &peering.OperatorSetPeer{
+			OperatorAddress: common.HexToAddress("0x" + string(rune('1'+i)) + "000000000000000000000000000000000000000"),
+			SocketAddress:   srv.URL,
+		}
+	}
+
+	client := &Client{
+		avsAddress:    "0x1234567890123456789012345678901234567890",
+		operatorSetID: 0,
+		logger:        logger,
+		httpClient:    &http.Client{},
+	}
+
+	operators := &peering.OperatorSetPeers{Peers: peers}
+	mpk, err := client.GetMasterPublicKey(operators)
+	require.NoError(t, err)
+	require.NotNil(t, mpk)
+	assert.True(t, mpk.IsEqual(&crypto.G2Generator), "MPK should match the honest value")
+}
+
+func TestGetMasterPublicKey_ThresholdAgreement_OneCorrupted(t *testing.T) {
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	honestCommitments := []types.G2Point{crypto.G2Generator}
+	honestMPK := crypto.G2Generator
+
+	// Create a different "corrupted" MPK
+	corruptedMPK := *types.ZeroG2Point()
+
+	// 4 operators: 3 honest, 1 corrupted
+	// Threshold for 4 operators = ceil(2*4/3) = 3
+	peers := make([]*peering.OperatorSetPeer, 4)
+
+	for i := 0; i < 3; i++ {
+		srv := createMockPubkeyServer(t, honestCommitments, &honestMPK)
+		defer srv.Close()
+		peers[i] = &peering.OperatorSetPeer{
+			OperatorAddress: common.HexToAddress("0x" + string(rune('1'+i)) + "000000000000000000000000000000000000000"),
+			SocketAddress:   srv.URL,
+		}
+	}
+
+	// Corrupted operator returns different MPK
+	corruptedSrv := createMockPubkeyServer(t, honestCommitments, &corruptedMPK)
+	defer corruptedSrv.Close()
+	peers[3] = &peering.OperatorSetPeer{
+		OperatorAddress: common.HexToAddress("0x4000000000000000000000000000000000000000"),
+		SocketAddress:   corruptedSrv.URL,
+	}
+
+	client := &Client{
+		avsAddress:    "0x1234567890123456789012345678901234567890",
+		operatorSetID: 0,
+		logger:        logger,
+		httpClient:    &http.Client{},
+	}
+
+	operators := &peering.OperatorSetPeers{Peers: peers}
+
+	// Verify threshold: for 4 operators, threshold = 3
+	require.Equal(t, 3, dkg.CalculateThreshold(4))
+
+	mpk, err := client.GetMasterPublicKey(operators)
+	require.NoError(t, err, "Should succeed with 3/4 honest operators (threshold=3)")
+	require.NotNil(t, mpk)
+	assert.True(t, mpk.IsEqual(&honestMPK), "MPK should match the honest value, not the corrupted one")
+}
+
+func TestGetMasterPublicKey_ThresholdAgreement_TooManyCorrupted(t *testing.T) {
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	honestCommitments := []types.G2Point{crypto.G2Generator}
+	honestMPK := crypto.G2Generator
+	corruptedMPK := *types.ZeroG2Point()
+
+	// 4 operators: 2 honest, 2 corrupted
+	// Threshold for 4 operators = 3, so neither group meets threshold
+	peers := make([]*peering.OperatorSetPeer, 4)
+
+	for i := 0; i < 2; i++ {
+		srv := createMockPubkeyServer(t, honestCommitments, &honestMPK)
+		defer srv.Close()
+		peers[i] = &peering.OperatorSetPeer{
+			OperatorAddress: common.HexToAddress("0x" + string(rune('1'+i)) + "000000000000000000000000000000000000000"),
+			SocketAddress:   srv.URL,
+		}
+	}
+
+	for i := 2; i < 4; i++ {
+		srv := createMockPubkeyServer(t, honestCommitments, &corruptedMPK)
+		defer srv.Close()
+		peers[i] = &peering.OperatorSetPeer{
+			OperatorAddress: common.HexToAddress("0x" + string(rune('1'+i)) + "000000000000000000000000000000000000000"),
+			SocketAddress:   srv.URL,
+		}
+	}
+
+	client := &Client{
+		avsAddress:    "0x1234567890123456789012345678901234567890",
+		operatorSetID: 0,
+		logger:        logger,
+		httpClient:    &http.Client{},
+	}
+
+	operators := &peering.OperatorSetPeers{Peers: peers}
+	mpk, err := client.GetMasterPublicKey(operators)
+	require.Error(t, err, "Should fail when threshold agreement cannot be reached")
+	assert.Nil(t, mpk)
+	assert.Contains(t, err.Error(), "failed to reach threshold agreement")
+}
+
+func TestGetMasterPublicKey_FallbackToAggregation(t *testing.T) {
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	// Create servers that return commitments but NO masterPublicKey (simulating old nodes)
+	commitments := []types.G2Point{crypto.G2Generator}
+
+	peers := make([]*peering.OperatorSetPeer, 3)
+
+	for i := 0; i < 3; i++ {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			resp := map[string]interface{}{
+				"operatorAddress": "0x0000000000000000000000000000000000000001",
+				"commitments":     commitments,
+				"version":         int64(1),
+				"isActive":        true,
+				// No masterPublicKey field - simulating old node
+			}
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(resp))
+		}))
+		defer srv.Close()
+		peers[i] = &peering.OperatorSetPeer{
+			OperatorAddress: common.HexToAddress("0x" + string(rune('1'+i)) + "000000000000000000000000000000000000000"),
+			SocketAddress:   srv.URL,
+		}
+	}
+
+	client := &Client{
+		avsAddress:    "0x1234567890123456789012345678901234567890",
+		operatorSetID: 0,
+		logger:        logger,
+		httpClient:    &http.Client{},
+	}
+
+	operators := &peering.OperatorSetPeers{Peers: peers}
+	mpk, err := client.GetMasterPublicKey(operators)
+	require.NoError(t, err, "Should fall back to aggregation when no MPK is returned")
+	require.NotNil(t, mpk)
+}
+
+func TestGetMasterPublicKey_RollingUpgrade_PartialMPK(t *testing.T) {
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	// 4 operators: 1 upgraded (returns MPK), 3 old (no MPK)
+	// Threshold = 3, so only 1 MPK respondent < threshold → should fall back to aggregation
+	commitments := []types.G2Point{crypto.G2Generator}
+	honestMPK := crypto.G2Generator
+
+	peers := make([]*peering.OperatorSetPeer, 4)
+
+	// 1 upgraded operator returns MPK
+	upgradedSrv := createMockPubkeyServer(t, commitments, &honestMPK)
+	defer upgradedSrv.Close()
+	peers[0] = &peering.OperatorSetPeer{
+		OperatorAddress: common.HexToAddress("0x1000000000000000000000000000000000000000"),
+		SocketAddress:   upgradedSrv.URL,
+	}
+
+	// 3 old operators return commitments but no MPK
+	for i := 1; i < 4; i++ {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			resp := map[string]interface{}{
+				"operatorAddress": "0x0000000000000000000000000000000000000001",
+				"commitments":     commitments,
+				"version":         int64(1),
+				"isActive":        true,
+			}
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(resp))
+		}))
+		defer srv.Close()
+		peers[i] = &peering.OperatorSetPeer{
+			OperatorAddress: common.HexToAddress("0x" + string(rune('1'+i)) + "000000000000000000000000000000000000000"),
+			SocketAddress:   srv.URL,
+		}
+	}
+
+	client := &Client{
+		avsAddress:    "0x1234567890123456789012345678901234567890",
+		operatorSetID: 0,
+		logger:        logger,
+		httpClient:    &http.Client{},
+	}
+
+	operators := &peering.OperatorSetPeers{Peers: peers}
+	mpk, err := client.GetMasterPublicKey(operators)
+	require.NoError(t, err, "Should fall back to aggregation during rolling upgrade with partial MPK responses")
+	require.NotNil(t, mpk)
 }

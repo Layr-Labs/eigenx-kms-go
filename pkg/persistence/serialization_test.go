@@ -44,6 +44,44 @@ func TestMarshalUnmarshalKeyShareVersion_RoundTrip(t *testing.T) {
 	assert.True(t, original.PrivateShare.Equal(restored.PrivateShare))
 }
 
+// TestMarshalUnmarshalKeyShareVersion_WithMasterPublicKey tests round-trip with MasterPublicKey
+func TestMarshalUnmarshalKeyShareVersion_WithMasterPublicKey(t *testing.T) {
+	privateShare := fr.NewElement(uint64(12345))
+	mpk := &types.G2Point{CompressedBytes: []byte{99, 88, 77, 66}}
+
+	original := &types.KeyShareVersion{
+		Version:         1234567890,
+		PrivateShare:    &privateShare,
+		Commitments:     []types.G2Point{{CompressedBytes: []byte{10, 20, 30}}},
+		MasterPublicKey: mpk,
+		IsActive:        true,
+		ParticipantIDs:  []int64{1, 2, 3},
+	}
+
+	data, err := MarshalKeyShareVersion(original)
+	require.NoError(t, err)
+
+	restored, err := UnmarshalKeyShareVersion(data)
+	require.NoError(t, err)
+	require.NotNil(t, restored)
+
+	require.NotNil(t, restored.MasterPublicKey)
+	assert.Equal(t, original.MasterPublicKey.CompressedBytes, restored.MasterPublicKey.CompressedBytes)
+}
+
+// TestUnmarshalKeyShareVersion_BackwardCompat tests that old data without MasterPublicKey deserializes correctly
+func TestUnmarshalKeyShareVersion_BackwardCompat(t *testing.T) {
+	// JSON without MasterPublicKey field (simulating data from old version)
+	oldJSON := []byte(`{"Version":1234567890,"PrivateShare":null,"Commitments":[{"CompressedBytes":"CgoeHg=="}],"IsActive":true,"ParticipantIDs":[1,2,3]}`)
+
+	restored, err := UnmarshalKeyShareVersion(oldJSON)
+	require.NoError(t, err)
+	require.NotNil(t, restored)
+	assert.Nil(t, restored.MasterPublicKey, "MasterPublicKey should be nil for old data without the field")
+	assert.Equal(t, int64(1234567890), restored.Version)
+	assert.True(t, restored.IsActive)
+}
+
 // TestMarshalKeyShareVersion_NilInput tests error handling for nil input
 func TestMarshalKeyShareVersion_NilInput(t *testing.T) {
 	_, err := MarshalKeyShareVersion(nil)

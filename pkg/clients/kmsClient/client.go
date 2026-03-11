@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/ecdsa"
 	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +17,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
@@ -144,14 +146,15 @@ func (c *Client) GetMasterPublicKey(operators *peering.OperatorSetPeers) (*types
 	c.logger.Sugar().Infow("Collecting commitments from operators", "count", len(operators.Peers))
 
 	type result struct {
-		commitments []types.G2Point
-		opAddress   string
+		commitments     []types.G2Point
+		masterPublicKey *types.G2Point
+		opAddress       string
 	}
 
 	resultChan := make(chan result, len(operators.Peers))
 	var wg sync.WaitGroup
 
-	// Collect commitments from all operators concurrently
+	// Collect commitments and pre-computed MPK from all operators concurrently
 	for i, operator := range operators.Peers {
 		wg.Add(1)
 		go func(idx int, op *peering.OperatorSetPeer) {
@@ -181,6 +184,7 @@ func (c *Client) GetMasterPublicKey(operators *peering.OperatorSetPeers) (*types
 			var response struct {
 				OperatorAddress string          `json:"operatorAddress"`
 				Commitments     []types.G2Point `json:"commitments"`
+				MasterPublicKey *types.G2Point  `json:"masterPublicKey"`
 				Version         int64           `json:"version"`
 				IsActive        bool            `json:"isActive"`
 			}
@@ -207,7 +211,7 @@ func (c *Client) GetMasterPublicKey(operators *peering.OperatorSetPeers) (*types
 				"operator_index", idx,
 				"operator_address", response.OperatorAddress,
 			)
-			resultChan <- result{commitments: response.Commitments, opAddress: response.OperatorAddress}
+			resultChan <- result{commitments: response.Commitments, masterPublicKey: response.MasterPublicKey, opAddress: response.OperatorAddress}
 		}(i, operator)
 	}
 
@@ -219,16 +223,67 @@ func (c *Client) GetMasterPublicKey(operators *peering.OperatorSetPeers) (*types
 
 	// Collect results
 	var allCommitments [][]types.G2Point
+	var results []result
 	for res := range resultChan {
 		allCommitments = append(allCommitments, res.commitments)
+		results = append(results, res)
 	}
 
-	if len(allCommitments) == 0 {
+	if len(results) == 0 {
 		return nil, fmt.Errorf("failed to collect commitments from any operator")
 	}
 
-	// Compute master public key from commitments
-	c.logger.Sugar().Infow("Computing master public key", "commitments", len(allCommitments))
+	// Try threshold agreement on pre-computed MPK first
+	mpkVotes := make(map[string]*types.G2Point)
+	mpkCounts := make(map[string]int)
+	hasMPK := false
+	for _, res := range results {
+		if res.masterPublicKey != nil && len(res.masterPublicKey.CompressedBytes) > 0 {
+			// Validate the bytes decode to a valid G2 curve point
+			if _, err := bls.G2PointFromCompressedBytes(res.masterPublicKey.CompressedBytes); err != nil {
+				c.logger.Sugar().Warnw("Operator returned invalid G2 point for MPK, skipping",
+					"operator", res.opAddress, "error", err)
+				continue
+			}
+			hasMPK = true
+			key := hex.EncodeToString(res.masterPublicKey.CompressedBytes)
+			mpkVotes[key] = res.masterPublicKey
+			mpkCounts[key]++
+		}
+	}
+
+	if hasMPK {
+		threshold := dkg.CalculateThreshold(len(operators.Peers))
+		// Count total MPK respondents to decide if we have enough for threshold agreement
+		mpkRespondents := 0
+		for _, count := range mpkCounts {
+			mpkRespondents += count
+		}
+		if mpkRespondents >= threshold {
+			for key, count := range mpkCounts {
+				if count >= threshold {
+					c.logger.Sugar().Infow("Master public key determined via threshold agreement",
+						"agreeing_operators", count,
+						"threshold", threshold,
+						"total_responses", len(results),
+					)
+					return mpkVotes[key], nil
+				}
+			}
+			return nil, fmt.Errorf("failed to reach threshold agreement on master public key: needed %d, got max %d agreeing out of %d responses",
+				threshold, maxMPKVotes(mpkCounts), len(results))
+		}
+		// Not enough operators returned MPK for threshold agreement (e.g. rolling upgrade)
+		c.logger.Sugar().Warnw("Not enough operators returned MPK for threshold agreement, falling back to aggregation",
+			"mpk_respondents", mpkRespondents,
+			"threshold", threshold,
+		)
+	} else {
+		c.logger.Sugar().Warnw("No operators returned pre-computed MPK, falling back to commitment aggregation",
+			"responses", len(results))
+	}
+
+	// Fallback: aggregate commitments (backward compatibility with nodes that don't return MPK)
 	masterPubKey, err := crypto.ComputeMasterPublicKey(allCommitments)
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute master public key: %w", err)
@@ -843,4 +898,14 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 
 	c.logger.Sugar().Infow("Successfully collected threshold partial signatures", "collected", len(partialSigs), "threshold", threshold)
 	return partialSigs, nil
+}
+
+func maxMPKVotes(counts map[string]int) int {
+	m := 0
+	for _, c := range counts {
+		if c > m {
+			m = c
+		}
+	}
+	return m
 }
