@@ -1073,19 +1073,39 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 		"operator_address", n.OperatorAddress.Hex(),
 		"node_id", thisNodeID)
 
-	allCommitments := make([][]types.G2Point, 0, len(receivedCommitments))
-	participantIDs := make([]int64, 0, len(receivedCommitments))
+	// Build trusted dealer set: intersection of polynomial-verified shares and merkle-verified operators.
+	// Self is always trusted (a node doesn't verify its own broadcast).
+	session.mu.RLock()
+	verifiedOps := make(map[int64]bool, len(session.verifiedOperators))
+	for k, v := range session.verifiedOperators {
+		verifiedOps[k] = v
+	}
+	session.mu.RUnlock()
+	verifiedOps[thisNodeID] = true
+
+	trustedShares := trustedDealerIDs(validShares, verifiedOps)
+
+	n.logger.Sugar().Infow("Dealer filtering for DKG finalization",
+		"total_received", len(receivedShares),
+		"polynomial_verified", len(validShares),
+		"merkle_verified", len(verifiedOps),
+		"trusted_dealers", len(trustedShares))
+
+	allCommitments := make([][]types.G2Point, 0, len(trustedShares))
+	participantIDs := make([]int64, 0, len(trustedShares))
 
 	for _, op := range operators {
 		opNodeID := addressToNodeID(op.OperatorAddress)
-		if comm, ok := receivedCommitments[opNodeID]; ok {
-			allCommitments = append(allCommitments, comm)
-			participantIDs = append(participantIDs, opNodeID)
+		if _, ok := trustedShares[opNodeID]; ok {
+			if comm, ok := receivedCommitments[opNodeID]; ok {
+				allCommitments = append(allCommitments, comm)
+				participantIDs = append(participantIDs, opNodeID)
+			}
 		}
 	}
 
-	// Use validShares (only verified shares) for finalization
-	keyVersion := n.dkg.FinalizeKeyShare(validShares, allCommitments, participantIDs)
+	// Use trustedShares (polynomial-verified AND merkle-verified) for finalization
+	keyVersion := n.dkg.FinalizeKeyShare(trustedShares, allCommitments, participantIDs)
 	keyVersion.Version = session.SessionTimestamp // Use session timestamp as version
 	// Store THIS node's commitments (not allCommitments[0]) so that when the client
 	// queries all operators and sums their commitments[0], it computes the correct master public key
@@ -1380,23 +1400,36 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		"operator_address", n.OperatorAddress.Hex(),
 		"node_id", thisNodeID)
 
-	// Collect all commitments and participant IDs for finalization from session
+	// Build trusted dealer set: intersection of polynomial-verified shares and merkle-verified operators.
+	// Self is always trusted (a node doesn't verify its own broadcast).
 	session.mu.RLock()
-	participantIDsForFinalize := make([]int64, 0, len(session.commitments))
+	verifiedOps := make(map[int64]bool, len(session.verifiedOperators))
+	for k, v := range session.verifiedOperators {
+		verifiedOps[k] = v
+	}
+	session.mu.RUnlock()
+	verifiedOps[thisNodeID] = true
 
+	trustedShares := trustedDealerIDs(validShares, verifiedOps)
+
+	n.logger.Sugar().Infow("Dealer filtering for reshare finalization",
+		"total_received", len(receivedShares),
+		"polynomial_verified", len(validShares),
+		"merkle_verified", len(verifiedOps),
+		"trusted_dealers", len(trustedShares))
+
+	participantIDsForFinalize := make([]int64, 0, len(trustedShares))
 	for _, op := range operators {
 		opNodeID := addressToNodeID(op.OperatorAddress)
-		if _, ok := session.commitments[opNodeID]; ok {
+		if _, ok := trustedShares[opNodeID]; ok {
 			participantIDsForFinalize = append(participantIDsForFinalize, opNodeID)
 		}
 	}
 
-	receivedSharesForFinalize := session.shares
-	session.mu.RUnlock()
-
 	// Compute refreshed share: x'_j = x_j + Σ_i g_i(j)
+	// Only sum shares from trusted dealers (polynomial-verified AND merkle-verified)
 	delta := new(fr.Element).SetZero()
-	for _, share := range receivedSharesForFinalize {
+	for _, share := range trustedShares {
 		if share == nil {
 			continue
 		}
@@ -1497,24 +1530,43 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		return fmt.Errorf("failed to receive commitments: %w", err)
 	}
 
-	// Collect all commitments and participant IDs from session
+	// Verify received shares against polynomial commitments before using them.
+	// New operators can't do merkle verification (they don't send acks), but polynomial
+	// commitment verification still catches malformed shares.
 	session.mu.RLock()
-	allCommitments := make([][]types.G2Point, 0, len(session.commitments))
-	participantIDs := make([]int64, 0, len(session.commitments))
+	receivedSharesRaw := session.shares
+	receivedCommitmentsRaw := session.commitments
+	session.mu.RUnlock()
 
-	for _, op := range operators {
-		opNodeID := addressToNodeID(op.OperatorAddress)
-		if comm, ok := session.commitments[opNodeID]; ok {
-			allCommitments = append(allCommitments, comm)
-			participantIDs = append(participantIDs, opNodeID)
+	validShares := make(map[int64]*fr.Element, len(receivedSharesRaw))
+	for dealerID, share := range receivedSharesRaw {
+		commitments := receivedCommitmentsRaw[dealerID]
+		if n.resharer.VerifyNewShare(dealerID, share, commitments) {
+			validShares[dealerID] = share
+		} else {
+			n.logInvalidShareComplaint("reshare-new", sessionTimestamp, thisNodeID, dealerID, share, commitments)
 		}
 	}
 
-	receivedShares := session.shares
-	session.mu.RUnlock()
+	n.logger.Sugar().Infow("Dealer filtering for new operator reshare finalization",
+		"total_received", len(receivedSharesRaw),
+		"polynomial_verified", len(validShares))
 
-	// Compute new key share using Lagrange interpolation
-	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDs, receivedShares, allCommitments)
+	allCommitments := make([][]types.G2Point, 0, len(validShares))
+	participantIDs := make([]int64, 0, len(validShares))
+
+	for _, op := range operators {
+		opNodeID := addressToNodeID(op.OperatorAddress)
+		if _, ok := validShares[opNodeID]; ok {
+			if comm, ok := receivedCommitmentsRaw[opNodeID]; ok {
+				allCommitments = append(allCommitments, comm)
+				participantIDs = append(participantIDs, opNodeID)
+			}
+		}
+	}
+
+	// Compute new key share using Lagrange interpolation (only from verified shares)
+	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDs, validShares, allCommitments)
 	newKeyVersion.Version = sessionTimestamp // Use session timestamp as version
 	newKeyVersion.IsActive = true            // First key version becomes active immediately
 
@@ -1727,6 +1779,18 @@ func (n *Node) verifyMessage(authMsg *types.AuthenticatedMessage, senderPeer *pe
 		return fmt.Errorf("unsupported curve type for sender: %v", senderPeer.CurveType)
 	}
 	return nil
+}
+
+// trustedDealerIDs returns the subset of validShares whose dealers also passed
+// merkle proof verification (present in verifiedOperators).
+func trustedDealerIDs(validShares map[int64]*fr.Element, verifiedOperators map[int64]bool) map[int64]*fr.Element {
+	trusted := make(map[int64]*fr.Element, len(validShares))
+	for dealerID, share := range validShares {
+		if verifiedOperators[dealerID] {
+			trusted[dealerID] = share
+		}
+	}
+	return trusted
 }
 
 func (n *Node) logInvalidShareComplaint(protocol string, sessionTimestamp int64, receiverNodeID int64, dealerID int64, share *fr.Element, commitments []types.G2Point) {
