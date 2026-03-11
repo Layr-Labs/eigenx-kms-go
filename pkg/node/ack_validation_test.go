@@ -43,11 +43,11 @@ func TestVerifyAcknowledgement_BindsFieldsAndSignature(t *testing.T) {
 	ack := &types.Acknowledgement{
 		DealerID:       dealerID,
 		PlayerID:       playerID,
-		Epoch:          epoch,
+		SessionTimestamp:          epoch,
 		ShareHash:      shareHash,
 		CommitmentHash: commitmentHash,
 	}
-	ack.Signature = n.signAcknowledgement(ack.DealerID, ack.PlayerID, ack.Epoch, ack.ShareHash, ack.CommitmentHash)
+	ack.Signature = n.signAcknowledgement(ack.DealerID, ack.PlayerID, ack.SessionTimestamp, ack.ShareHash, ack.CommitmentHash)
 
 	session := &ProtocolSession{
 		commitments: map[int64][]types.G2Point{
@@ -67,7 +67,7 @@ func TestVerifyAcknowledgement_BindsFieldsAndSignature(t *testing.T) {
 
 	// Tamper epoch: signature/semantic binding must fail.
 	tampered := *ack
-	tampered.Epoch = epoch + 1
+	tampered.SessionTimestamp = epoch + 1
 	if err := n.verifyAcknowledgement(session, senderPeer, playerID, dealerID, epoch, &tampered); err == nil {
 		t.Fatal("expected tampered acknowledgement to be rejected")
 	}
