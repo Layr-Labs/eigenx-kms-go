@@ -104,6 +104,27 @@ func TestSelfDealerAlwaysTrusted(t *testing.T) {
 	require.Len(t, trustedWithSelf, 3)
 }
 
+func TestSelfInVerifiedButNotInValidShares(t *testing.T) {
+	// Edge case: self is in verifiedOperators but NOT in validShares.
+	// In practice this can't happen (a node's own polynomial always verifies),
+	// but trustedDealerIDs should still handle it correctly — the self share
+	// should not appear in the result because validShares is the authoritative source.
+	selfNodeID := int64(1)
+
+	validShares := map[int64]*fr.Element{
+		2: new(fr.Element).SetInt64(10),
+		3: new(fr.Element).SetInt64(20),
+	}
+
+	verifiedOps := map[int64]bool{selfNodeID: true, 2: true, 3: true}
+
+	trusted := trustedDealerIDs(validShares, verifiedOps)
+	require.Len(t, trusted, 2, "self should not appear when absent from validShares")
+	require.Nil(t, trusted[selfNodeID])
+	require.NotNil(t, trusted[2])
+	require.NotNil(t, trusted[3])
+}
+
 func TestReshareFinalizationUsesFilteredShares(t *testing.T) {
 	// This test validates that the reshare delta computation only sums trusted shares.
 	// It simulates the reshare finalization logic from node.go.

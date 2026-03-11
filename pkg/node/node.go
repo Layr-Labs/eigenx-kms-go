@@ -1093,19 +1093,21 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 
 	allCommitments := make([][]types.G2Point, 0, len(trustedShares))
 	participantIDs := make([]int64, 0, len(trustedShares))
+	finalShares := make(map[int64]*fr.Element, len(trustedShares))
 
 	for _, op := range operators {
 		opNodeID := addressToNodeID(op.OperatorAddress)
-		if _, ok := trustedShares[opNodeID]; ok {
+		if share, ok := trustedShares[opNodeID]; ok {
 			if comm, ok := receivedCommitments[opNodeID]; ok {
 				allCommitments = append(allCommitments, comm)
 				participantIDs = append(participantIDs, opNodeID)
+				finalShares[opNodeID] = share
 			}
 		}
 	}
 
-	// Use trustedShares (polynomial-verified AND merkle-verified) for finalization
-	keyVersion := n.dkg.FinalizeKeyShare(trustedShares, allCommitments, participantIDs)
+	// Use finalShares (polynomial-verified AND merkle-verified, with matching commitments) for finalization
+	keyVersion := n.dkg.FinalizeKeyShare(finalShares, allCommitments, participantIDs)
 	keyVersion.Version = session.SessionTimestamp // Use session timestamp as version
 	// Store THIS node's commitments (not allCommitments[0]) so that when the client
 	// queries all operators and sums their commitments[0], it computes the correct master public key
@@ -1554,19 +1556,21 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 
 	allCommitments := make([][]types.G2Point, 0, len(validShares))
 	participantIDs := make([]int64, 0, len(validShares))
+	finalShares := make(map[int64]*fr.Element, len(validShares))
 
 	for _, op := range operators {
 		opNodeID := addressToNodeID(op.OperatorAddress)
-		if _, ok := validShares[opNodeID]; ok {
+		if share, ok := validShares[opNodeID]; ok {
 			if comm, ok := receivedCommitmentsRaw[opNodeID]; ok {
 				allCommitments = append(allCommitments, comm)
 				participantIDs = append(participantIDs, opNodeID)
+				finalShares[opNodeID] = share
 			}
 		}
 	}
 
-	// Compute new key share using Lagrange interpolation (only from verified shares)
-	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDs, validShares, allCommitments)
+	// Compute new key share using Lagrange interpolation (only from verified shares with matching commitments)
+	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDs, finalShares, allCommitments)
 	newKeyVersion.Version = sessionTimestamp // Use session timestamp as version
 	newKeyVersion.IsActive = true            // First key version becomes active immediately
 
