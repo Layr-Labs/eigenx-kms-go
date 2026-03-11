@@ -1928,8 +1928,8 @@ func (n *Node) verifyAcknowledgement(
 	if ack.DealerID != expectedDealerID {
 		return fmt.Errorf("ack dealer mismatch: got %d expected %d", ack.DealerID, expectedDealerID)
 	}
-	if ack.Epoch != sessionTimestamp {
-		return fmt.Errorf("ack epoch mismatch: got %d expected %d", ack.Epoch, sessionTimestamp)
+	if ack.SessionTimestamp != sessionTimestamp {
+		return fmt.Errorf("ack epoch mismatch: got %d expected %d", ack.SessionTimestamp, sessionTimestamp)
 	}
 	if len(ack.Signature) == 0 {
 		return fmt.Errorf("ack signature is empty")
@@ -1946,7 +1946,7 @@ func (n *Node) verifyAcknowledgement(
 		return fmt.Errorf("ack commitment hash mismatch")
 	}
 
-	msg := buildAcknowledgementSigningMessage(ack.DealerID, ack.PlayerID, ack.Epoch, ack.ShareHash, ack.CommitmentHash)
+	msg := buildAcknowledgementSigningMessage(ack.DealerID, ack.PlayerID, ack.SessionTimestamp, ack.ShareHash, ack.CommitmentHash)
 	msgHash := crypto.Keccak256Hash(msg)
 
 	switch senderPeer.CurveType {
