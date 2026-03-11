@@ -367,28 +367,16 @@ func createMockPubkeyServer(t *testing.T, commitments []types.G2Point, mpk *type
 	}))
 }
 
-// generateTestMPK generates a deterministic G2 point for testing
-func generateTestMPK(t *testing.T) *types.G2Point {
-	t.Helper()
-	gen := crypto.G2Generator
-	return &gen
-}
-
 func TestGetMasterPublicKey_ThresholdAgreement_AllHonest(t *testing.T) {
 	logger, err := zap.NewDevelopment()
 	require.NoError(t, err)
 
-	// Create a valid MPK (use G2 generator as test point)
-	honestMPK := generateTestMPK(t)
-	_ = honestMPK
 	commitments := []types.G2Point{crypto.G2Generator}
 
 	// Create 4 mock servers all returning the same MPK
-	var servers []*httptest.Server
 	peers := make([]*peering.OperatorSetPeer, 4)
 	for i := 0; i < 4; i++ {
 		srv := createMockPubkeyServer(t, commitments, &crypto.G2Generator)
-		servers = append(servers, srv)
 		defer srv.Close()
 		peers[i] = &peering.OperatorSetPeer{
 			OperatorAddress: common.HexToAddress("0x" + string(rune('1'+i)) + "000000000000000000000000000000000000000"),
@@ -422,12 +410,10 @@ func TestGetMasterPublicKey_ThresholdAgreement_OneCorrupted(t *testing.T) {
 
 	// 4 operators: 3 honest, 1 corrupted
 	// Threshold for 4 operators = ceil(2*4/3) = 3
-	var servers []*httptest.Server
 	peers := make([]*peering.OperatorSetPeer, 4)
 
 	for i := 0; i < 3; i++ {
 		srv := createMockPubkeyServer(t, honestCommitments, &honestMPK)
-		servers = append(servers, srv)
 		defer srv.Close()
 		peers[i] = &peering.OperatorSetPeer{
 			OperatorAddress: common.HexToAddress("0x" + string(rune('1'+i)) + "000000000000000000000000000000000000000"),
@@ -437,7 +423,6 @@ func TestGetMasterPublicKey_ThresholdAgreement_OneCorrupted(t *testing.T) {
 
 	// Corrupted operator returns different MPK
 	corruptedSrv := createMockPubkeyServer(t, honestCommitments, &corruptedMPK)
-	servers = append(servers, corruptedSrv)
 	defer corruptedSrv.Close()
 	peers[3] = &peering.OperatorSetPeer{
 		OperatorAddress: common.HexToAddress("0x4000000000000000000000000000000000000000"),
@@ -472,12 +457,10 @@ func TestGetMasterPublicKey_ThresholdAgreement_TooManyCorrupted(t *testing.T) {
 
 	// 4 operators: 2 honest, 2 corrupted
 	// Threshold for 4 operators = 3, so neither group meets threshold
-	var servers []*httptest.Server
 	peers := make([]*peering.OperatorSetPeer, 4)
 
 	for i := 0; i < 2; i++ {
 		srv := createMockPubkeyServer(t, honestCommitments, &honestMPK)
-		servers = append(servers, srv)
 		defer srv.Close()
 		peers[i] = &peering.OperatorSetPeer{
 			OperatorAddress: common.HexToAddress("0x" + string(rune('1'+i)) + "000000000000000000000000000000000000000"),
@@ -487,7 +470,6 @@ func TestGetMasterPublicKey_ThresholdAgreement_TooManyCorrupted(t *testing.T) {
 
 	for i := 2; i < 4; i++ {
 		srv := createMockPubkeyServer(t, honestCommitments, &corruptedMPK)
-		servers = append(servers, srv)
 		defer srv.Close()
 		peers[i] = &peering.OperatorSetPeer{
 			OperatorAddress: common.HexToAddress("0x" + string(rune('1'+i)) + "000000000000000000000000000000000000000"),
@@ -516,7 +498,6 @@ func TestGetMasterPublicKey_FallbackToAggregation(t *testing.T) {
 	// Create servers that return commitments but NO masterPublicKey (simulating old nodes)
 	commitments := []types.G2Point{crypto.G2Generator}
 
-	var servers []*httptest.Server
 	peers := make([]*peering.OperatorSetPeer, 3)
 
 	for i := 0; i < 3; i++ {
@@ -531,7 +512,6 @@ func TestGetMasterPublicKey_FallbackToAggregation(t *testing.T) {
 			w.Header().Set("Content-Type", "application/json")
 			require.NoError(t, json.NewEncoder(w).Encode(resp))
 		}))
-		servers = append(servers, srv)
 		defer srv.Close()
 		peers[i] = &peering.OperatorSetPeer{
 			OperatorAddress: common.HexToAddress("0x" + string(rune('1'+i)) + "000000000000000000000000000000000000000"),
