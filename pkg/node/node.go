@@ -1230,10 +1230,17 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		"operator_address", n.OperatorAddress.Hex(),
 		"node_id", thisNodeID)
 
-	// Get shares and commitments from session
+	// Shallow-copy both maps so we can iterate without holding the lock.
+	// Map-level copy prevents races from new entries; element values are not mutated after storage.
 	session.mu.RLock()
-	receivedShares := session.shares
-	receivedCommitments := session.commitments
+	receivedShares := make(map[int64]*fr.Element, len(session.shares))
+	for k, v := range session.shares {
+		receivedShares[k] = v
+	}
+	receivedCommitments := make(map[int64][]types.G2Point, len(session.commitments))
+	for k, v := range session.commitments {
+		receivedCommitments[k] = v
+	}
 	session.mu.RUnlock()
 
 	validShares := make(map[int64]*fr.Element)
@@ -1268,6 +1275,10 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 						"dealer_address", dealerPeer.OperatorAddress.Hex(),
 						"dealer_id", dealerID)
 				}
+			} else {
+				n.logger.Sugar().Warnw("Could not find peer info for dealer, skipping ack send",
+					"operator_address", n.OperatorAddress.Hex(),
+					"dealer_id", dealerID)
 			}
 
 			n.logger.Sugar().Infow("Verified and acked reshare share",

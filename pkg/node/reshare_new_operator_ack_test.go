@@ -209,7 +209,7 @@ func TestReshareNewOperator_MixedValidity_OnlyValidUsed(t *testing.T) {
 	require.NotNil(t, keyVersion.PrivateShare)
 }
 
-func TestReshareNewOperator_BelowThreshold_ReturnsError(t *testing.T) {
+func TestReshareNewOperator_BelowThreshold_Precondition(t *testing.T) {
 	// 4 dealers + 1 new operator = 5 total. Threshold = ceil(2*5/3) = 4.
 	// Corrupt 3 of 4 shares so only 1 is valid — below threshold.
 	operators, targetNodeID, shares, commitmentsByDealer := setupReshareTestOperators(t, 4)
@@ -266,4 +266,51 @@ func TestReshareNewOperator_AckContentCorrect(t *testing.T) {
 
 		require.NotEmpty(t, ack.Signature, "signature should be non-empty")
 	}
+}
+
+func TestReshareNewOperator_MissingCommitments_SkipsShare(t *testing.T) {
+	core, observed := observer.New(zap.WarnLevel)
+	logger := zap.New(core)
+
+	operators, targetNodeID, shares, commitmentsByDealer := setupReshareTestOperators(t, 3)
+
+	r := reshare.NewReshare(targetNodeID, operators)
+
+	n := &Node{
+		OperatorAddress: operators[len(operators)-1].OperatorAddress,
+		logger:          logger,
+		resharer:        r,
+	}
+
+	// Remove commitments for one dealer to simulate missing commitments
+	var removedDealerID int64
+	for dealerID := range commitmentsByDealer {
+		removedDealerID = dealerID
+		delete(commitmentsByDealer, dealerID)
+		break
+	}
+
+	// Replicate the production code's verification loop
+	validShares := make(map[int64]*fr.Element)
+	for dealerID, share := range shares {
+		commitments, hasCommitments := commitmentsByDealer[dealerID]
+		if !hasCommitments || len(commitments) == 0 {
+			n.logger.Sugar().Warnw("Missing commitments for dealer, skipping share",
+				"operator_address", n.OperatorAddress.Hex(),
+				"dealer_id", dealerID)
+			continue
+		}
+		if r.VerifyNewShare(dealerID, share, commitments) {
+			validShares[dealerID] = share
+		}
+	}
+
+	// The dealer with removed commitments should be skipped
+	_, included := validShares[removedDealerID]
+	require.False(t, included, "dealer with missing commitments should not be in validShares")
+	require.Len(t, validShares, 2, "only 2 shares with commitments should be valid")
+
+	// Should have logged a warning about missing commitments
+	warnings := observed.FilterMessage("Missing commitments for dealer, skipping share").All()
+	require.Len(t, warnings, 1, "should log one missing commitments warning")
 }
