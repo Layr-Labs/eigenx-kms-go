@@ -1497,7 +1497,8 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		return fmt.Errorf("failed to receive commitments: %w", err)
 	}
 
-	// Read session data (deep copy both maps to avoid data races after releasing lock)
+	// Shallow-copy both maps so we can iterate without holding the lock.
+	// Map-level copy prevents races from new entries; element values are not mutated after storage.
 	session.mu.RLock()
 	receivedShares := make(map[int64]*fr.Element, len(session.shares))
 	for k, v := range session.shares {
@@ -1516,7 +1517,13 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 
 	validShares := make(map[int64]*fr.Element)
 	for dealerID, share := range receivedShares {
-		commitments := receivedCommitments[dealerID]
+		commitments, hasCommitments := receivedCommitments[dealerID]
+		if !hasCommitments || len(commitments) == 0 {
+			n.logger.Sugar().Warnw("Missing commitments for dealer, skipping share",
+				"operator_address", n.OperatorAddress.Hex(),
+				"dealer_id", dealerID)
+			continue
+		}
 		if n.resharer.VerifyNewShare(dealerID, share, commitments) {
 			validShares[dealerID] = share
 
@@ -1552,7 +1559,7 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 					"dealer_id", dealerID)
 			}
 
-			n.logger.Sugar().Infow("Verified and acked reshare share (new operator)",
+			n.logger.Sugar().Infow("Verified reshare share (new operator)",
 				"operator_address", n.OperatorAddress.Hex(),
 				"node_id", thisNodeID,
 				"dealer_id", dealerID)
@@ -1568,9 +1575,7 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		opNodeID := addressToNodeID(op.OperatorAddress)
 		if _, ok := validShares[opNodeID]; ok {
 			validParticipantIDs = append(validParticipantIDs, opNodeID)
-			if comm, ok := receivedCommitments[opNodeID]; ok {
-				validCommitments = append(validCommitments, comm)
-			}
+			validCommitments = append(validCommitments, receivedCommitments[opNodeID])
 		}
 	}
 

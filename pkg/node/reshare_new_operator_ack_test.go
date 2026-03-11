@@ -36,7 +36,7 @@ func setupReshareTestOperators(t *testing.T, numDealers int) (
 	shares = make(map[int64]*fr.Element)
 	commitmentsByDealer = make(map[int64][]types.G2Point)
 
-	threshold := (2*len(allOps) + 2) / 3
+	threshold := dkg.CalculateThreshold(len(allOps))
 
 	for i := 0; i < numDealers; i++ {
 		dealerNodeID := util.AddressToNodeID(allOps[i].OperatorAddress)
