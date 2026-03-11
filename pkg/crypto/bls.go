@@ -363,12 +363,13 @@ func binomial(n, k int) int {
 	}
 	result := 1
 	for i := 0; i < k; i++ {
-		// Divide result by gcd first to keep intermediate values small and avoid overflow
+		// Use int64 intermediate and gcd to prevent overflow on 32-bit platforms
 		g := gcd(result, i+1)
-		result = (result / g) * ((n - i) / ((i + 1) / g))
-		if result > 1_000_000_000 {
-			return 1_000_000_000 // cap to avoid overflow
+		product := int64(result/g) * int64((n-i)/((i+1)/g))
+		if product > 1_000_000_000 {
+			return 1_000_000_000
 		}
+		result = int(product)
 	}
 	return result
 }
