@@ -1497,24 +1497,78 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		return fmt.Errorf("failed to receive commitments: %w", err)
 	}
 
-	// Collect all commitments and participant IDs from session
+	// Read session data
 	session.mu.RLock()
-	allCommitments := make([][]types.G2Point, 0, len(session.commitments))
-	participantIDs := make([]int64, 0, len(session.commitments))
+	receivedShares := session.shares
+	receivedCommitments := make(map[int64][]types.G2Point, len(session.commitments))
+	for k, v := range session.commitments {
+		receivedCommitments[k] = v
+	}
+	session.mu.RUnlock()
 
-	for _, op := range operators {
-		opNodeID := addressToNodeID(op.OperatorAddress)
-		if comm, ok := session.commitments[opNodeID]; ok {
-			allCommitments = append(allCommitments, comm)
-			participantIDs = append(participantIDs, opNodeID)
+	// Phase 1b: Verify shares and send acknowledgements
+	n.logger.Sugar().Infow("Reshare (new operator) Phase 1b: Verifying shares and sending acknowledgements",
+		"operator_address", n.OperatorAddress.Hex(),
+		"node_id", thisNodeID)
+
+	validShares := make(map[int64]*fr.Element)
+	for dealerID, share := range receivedShares {
+		commitments := receivedCommitments[dealerID]
+		if n.resharer.VerifyNewShare(dealerID, share, commitments) {
+			validShares[dealerID] = share
+
+			// Create acknowledgement for verified share
+			ack := reshare.CreateAcknowledgement(thisNodeID, dealerID, sessionTimestamp, share, commitments, n.signAcknowledgement)
+
+			// Find dealer's peer info for transport
+			var dealerPeer *peering.OperatorSetPeer
+			for _, op := range operators {
+				if addressToNodeID(op.OperatorAddress) == dealerID {
+					dealerPeer = op
+					break
+				}
+			}
+
+			if dealerPeer != nil {
+				// Send acknowledgement to dealer
+				err := n.transport.SendReshareAcknowledgement(ack, dealerPeer, session.SessionTimestamp)
+				if err != nil {
+					n.logger.Sugar().Warnw("Failed to send reshare acknowledgement",
+						"operator_address", n.OperatorAddress.Hex(),
+						"dealer_address", dealerPeer.OperatorAddress.Hex(),
+						"error", err)
+				} else {
+					n.logger.Sugar().Debugw("Sent reshare acknowledgement",
+						"operator_address", n.OperatorAddress.Hex(),
+						"dealer_address", dealerPeer.OperatorAddress.Hex(),
+						"dealer_id", dealerID)
+				}
+			}
+
+			n.logger.Sugar().Infow("Verified and acked reshare share (new operator)",
+				"operator_address", n.OperatorAddress.Hex(),
+				"node_id", thisNodeID,
+				"dealer_id", dealerID)
+		} else {
+			n.logInvalidShareComplaint("reshare", sessionTimestamp, thisNodeID, dealerID, share, commitments)
 		}
 	}
 
-	receivedShares := session.shares
-	session.mu.RUnlock()
+	// Rebuild participant lists from valid shares only
+	validParticipantIDs := make([]int64, 0, len(validShares))
+	validCommitments := make([][]types.G2Point, 0, len(validShares))
+	for _, op := range operators {
+		opNodeID := addressToNodeID(op.OperatorAddress)
+		if _, ok := validShares[opNodeID]; ok {
+			validParticipantIDs = append(validParticipantIDs, opNodeID)
+			if comm, ok := receivedCommitments[opNodeID]; ok {
+				validCommitments = append(validCommitments, comm)
+			}
+		}
+	}
 
-	// Compute new key share using Lagrange interpolation
-	newKeyVersion := n.resharer.ComputeNewKeyShare(participantIDs, receivedShares, allCommitments)
+	// Compute new key share using Lagrange interpolation (only from valid shares)
+	newKeyVersion := n.resharer.ComputeNewKeyShare(validParticipantIDs, validShares, validCommitments)
 	newKeyVersion.Version = sessionTimestamp // Use session timestamp as version
 	newKeyVersion.IsActive = true            // First key version becomes active immediately
 
