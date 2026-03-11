@@ -540,7 +540,7 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 			return verifyErr == nil && valid
 		})
 	} else {
-		c.logger.Sugar().Warnw("Failed to get master public key for retry validation, using single-attempt recovery",
+		c.logger.Sugar().Warnw("SECURITY DEGRADED: failed to get master public key, falling back to single-attempt recovery without BFT retry — invalid partial signatures will not be tolerated",
 			"error", masterPKErr)
 		appPrivateKey, err = crypto.RecoverAppPrivateKey(appID, partialSigs, threshold)
 	}

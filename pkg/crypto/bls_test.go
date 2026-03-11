@@ -27,6 +27,7 @@ func Test_CryptoOperations(t *testing.T) {
 	t.Run("RecoverAppPrivateKeyWithRetry_OneCorrupt", func(t *testing.T) { testRecoverAppPrivateKeyWithRetry_OneCorrupt(t) })
 	t.Run("RecoverAppPrivateKeyWithRetry_MaxCorrupt", func(t *testing.T) { testRecoverAppPrivateKeyWithRetry_MaxCorrupt(t) })
 	t.Run("RecoverAppPrivateKeyWithRetry_TooManyCorrupt", func(t *testing.T) { testRecoverAppPrivateKeyWithRetry_TooManyCorrupt(t) })
+	t.Run("RecoverAppPrivateKeyWithRetry_CapReached", func(t *testing.T) { testRecoverAppPrivateKeyWithRetry_CapReached(t) })
 	t.Run("VerifyAppPrivateKey", func(t *testing.T) { testVerifyAppPrivateKey(t) })
 	t.Run("DecryptWithRetry_E2E", func(t *testing.T) { testDecryptWithRetry_E2E(t) })
 }
@@ -494,7 +495,34 @@ func testRecoverAppPrivateKeyWithRetry_TooManyCorrupt(t *testing.T) {
 		return candidate.IsEqual(expected)
 	})
 	require.Error(t, err, "Should fail when more than n-threshold signatures are corrupt")
-	require.Contains(t, err.Error(), "subset attempts failed")
+	require.Contains(t, err.Error(), "combinations exhausted")
+}
+
+func testRecoverAppPrivateKeyWithRetry_CapReached(t *testing.T) {
+	appID := "test-retry-cap-reached"
+	n, threshold := 7, 5 // C(7,5) = 21 total combinations
+
+	partialSigs, expected, _ := generateTestPartialSigs(t, appID, n, threshold)
+
+	// Corrupt nodes 1 and 2 so only subsets excluding both are valid.
+	// The valid subset [3,4,5,6,7] is enumeration index 21 (the last one).
+	corruptPartialSig(t, partialSigs, 1)
+	corruptPartialSig(t, partialSigs, 2)
+
+	// With a cap of 5, we won't reach the valid subset
+	_, err := recoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
+		return candidate.IsEqual(expected)
+	}, 5)
+	require.Error(t, err, "Should fail when cap is reached before valid subset")
+	require.Contains(t, err.Error(), "attempt cap")
+	require.Contains(t, err.Error(), "BFT guarantee incomplete")
+
+	// With the full cap (21+), should succeed
+	recovered, err := recoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
+		return candidate.IsEqual(expected)
+	}, 100)
+	require.NoError(t, err)
+	require.True(t, recovered.IsEqual(expected), "Should succeed when cap is high enough")
 }
 
 func testVerifyAppPrivateKey(t *testing.T) {
