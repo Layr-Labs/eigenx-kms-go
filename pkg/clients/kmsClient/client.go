@@ -17,6 +17,7 @@ import (
 	"go.uber.org/zap"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
@@ -238,6 +239,12 @@ func (c *Client) GetMasterPublicKey(operators *peering.OperatorSetPeers) (*types
 	hasMPK := false
 	for _, res := range results {
 		if res.masterPublicKey != nil && len(res.masterPublicKey.CompressedBytes) > 0 {
+			// Validate the bytes decode to a valid G2 curve point
+			if _, err := bls.G2PointFromCompressedBytes(res.masterPublicKey.CompressedBytes); err != nil {
+				c.logger.Sugar().Warnw("Operator returned invalid G2 point for MPK, skipping",
+					"operator", res.opAddress, "error", err)
+				continue
+			}
 			hasMPK = true
 			key := hex.EncodeToString(res.masterPublicKey.CompressedBytes)
 			mpkVotes[key] = res.masterPublicKey
