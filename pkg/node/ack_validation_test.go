@@ -41,11 +41,11 @@ func TestVerifyAcknowledgement_BindsFieldsAndSignature(t *testing.T) {
 	commitmentHash := eigenxcrypto.HashCommitment(commitments)
 
 	ack := &types.Acknowledgement{
-		DealerID:       dealerID,
-		PlayerID:       playerID,
-		SessionTimestamp:          epoch,
-		ShareHash:      shareHash,
-		CommitmentHash: commitmentHash,
+		DealerID:         dealerID,
+		PlayerID:         playerID,
+		SessionTimestamp: epoch,
+		ShareHash:        shareHash,
+		CommitmentHash:   commitmentHash,
 	}
 	ack.Signature = n.signAcknowledgement(ack.DealerID, ack.PlayerID, ack.SessionTimestamp, ack.ShareHash, ack.CommitmentHash)
 
