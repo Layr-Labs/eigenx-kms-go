@@ -47,9 +47,11 @@ interface IEigenKMSCommitmentRegistryErrors {
     error AcksMustBeFromDifferentPlayers();
 
     /// @notice Thrown when equivocation for this dealer and epoch has already been proven
+    /// @dev Selector: 0xdaf8db80
     error EquivocationAlreadyProven();
 
     /// @notice Thrown when the two acks carry different dealer addresses
+    /// @dev Selector: 0xbcd365b3
     error DealerMismatch();
 
     /// @notice Thrown when first ack is not in merkle tree
