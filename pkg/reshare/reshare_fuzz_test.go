@@ -264,7 +264,7 @@ func FuzzZeroConstantDealerPolynomialsDoNotPreserveOriginalSecret(f *testing.F) 
 		}
 
 		operators := testOperators(n)
-		newThreshold := threshold(len(operators))
+		newThreshold := dkg.CalculateThreshold(len(operators))
 		zero := new(fr.Element).SetZero()
 		oldSecret := deriveScalar(seed)
 
