@@ -402,6 +402,7 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 	n.logger.Sugar().Infow("Block interval boundary reached",
 		"operator_address", n.OperatorAddress.Hex(),
 		"block_number", blockNumber,
+		"block_timestamp", blockTimestamp,
 		"block_interval", blockInterval)
 
 	// Step 6: Fetch current operators
@@ -1613,6 +1614,11 @@ func (n *Node) SignAppID(appID string, attestationTime int64) (types.G1Point, er
 	var keyVersion *types.KeyShareVersion
 	if attestationTime > 0 {
 		keyVersion = n.keyStore.GetKeyVersionAtTime(attestationTime)
+		if keyVersion == nil {
+			n.logger.Sugar().Warnw("No key version found for attestation time, falling back to active",
+				"attestation_time", attestationTime,
+				"app_id", appID)
+		}
 	}
 	if keyVersion == nil {
 		keyVersion = n.keyStore.GetActiveVersion()
@@ -1929,7 +1935,7 @@ func (n *Node) verifyAcknowledgement(
 		return fmt.Errorf("ack dealer mismatch: got %d expected %d", ack.DealerID, expectedDealerID)
 	}
 	if ack.SessionTimestamp != sessionTimestamp {
-		return fmt.Errorf("ack epoch mismatch: got %d expected %d", ack.SessionTimestamp, sessionTimestamp)
+		return fmt.Errorf("ack session timestamp mismatch: got %d expected %d", ack.SessionTimestamp, sessionTimestamp)
 	}
 	if len(ack.Signature) == 0 {
 		return fmt.Errorf("ack signature is empty")
