@@ -1615,12 +1615,9 @@ func (n *Node) SignAppID(appID string, attestationTime int64) (types.G1Point, er
 	if attestationTime > 0 {
 		keyVersion = n.keyStore.GetKeyVersionAtTime(attestationTime)
 		if keyVersion == nil {
-			n.logger.Sugar().Warnw("No key version found for attestation time, falling back to active",
-				"attestation_time", attestationTime,
-				"app_id", appID)
+			return types.G1Point{}, fmt.Errorf("no key version found for attestation time %d", attestationTime)
 		}
-	}
-	if keyVersion == nil {
+	} else {
 		keyVersion = n.keyStore.GetActiveVersion()
 	}
 	return n.signAppIDWithVersion(appID, keyVersion)
