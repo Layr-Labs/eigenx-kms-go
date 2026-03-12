@@ -1,6 +1,7 @@
 package node
 
 import (
+	"math/big"
 	"testing"
 	"time"
 
@@ -8,7 +9,6 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/merkle"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
@@ -71,13 +71,13 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 			activeSessions:  map[int64]*ProtocolSession{12345: session},
 		}
 
-		// Broadcast with no ack for my node (use different player ID)
+		// Broadcast with no ack for my node (use different player address)
 		broadcast := &types.CommitmentBroadcast{
 			FromOperatorID:   2,
 			SessionTimestamp: 5,
 			Commitments:      []types.G2Point{},
 			Acknowledgements: []*types.Acknowledgement{
-				{PlayerID: 999}, // Different player ID than my node
+				{PlayerAddress: common.HexToAddress("0x999")}, // Different address than my node
 			},
 		}
 
@@ -89,7 +89,6 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 	t.Run("No share received error", func(t *testing.T) {
 		logger, _ := zap.NewDevelopment()
 		myAddr := common.HexToAddress("0x0000000000000000000000000000000000000001")
-		myNodeID := util.AddressToNodeID(myAddr)
 
 		session := &ProtocolSession{
 			SessionTimestamp:  12345,
@@ -111,7 +110,7 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 			SessionTimestamp: 5,
 			Commitments:      []types.G2Point{},
 			Acknowledgements: []*types.Acknowledgement{
-				{PlayerID: myNodeID, ShareHash: [32]byte{1, 2, 3}}, // Use correct node ID
+				{PlayerAddress: myAddr, ShareHash: [32]byte{1, 2, 3}},
 			},
 		}
 
@@ -123,7 +122,6 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 	t.Run("Share hash mismatch error", func(t *testing.T) {
 		logger, _ := zap.NewDevelopment()
 		myAddr := common.HexToAddress("0x0000000000000000000000000000000000000001")
-		myNodeID := util.AddressToNodeID(myAddr)
 
 		// Create a real share
 		realShare := fr.NewElement(12345)
@@ -155,8 +153,8 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 			Commitments:      []types.G2Point{},
 			Acknowledgements: []*types.Acknowledgement{
 				{
-					PlayerID:  myNodeID,  // Use correct node ID
-					ShareHash: wrongHash, // Wrong hash!
+					PlayerAddress: myAddr,
+					ShareHash:     wrongHash, // Wrong hash!
 				},
 			},
 			MerkleProof: [][32]byte{{1}}, // Non-empty proof
@@ -170,7 +168,7 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 	t.Run("Successful verification", func(t *testing.T) {
 		logger, _ := zap.NewDevelopment()
 		myAddr := common.HexToAddress("0x0000000000000000000000000000000000000001")
-		myNodeID := util.AddressToNodeID(myAddr)
+		dealerAddr := common.HexToAddress("0x0000000000000000000000000000000000000002")
 
 		// Create a real share
 		realShare := fr.NewElement(12345)
@@ -198,11 +196,11 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 			Commitments:      []types.G2Point{},
 			Acknowledgements: []*types.Acknowledgement{
 				{
-					PlayerID:         myNodeID,         // Use correct node ID
-					ShareHash:        correctShareHash, // Correct hash
+					PlayerAddress:    myAddr,
+					DealerAddress:    dealerAddr,
+					ShareHash:        correctShareHash,
 					CommitmentHash:   [32]byte{},
 					SessionTimestamp: 5,
-					DealerID:         2,
 				},
 			},
 			MerkleProof: [][32]byte{{1, 2, 3}}, // Non-empty proof
@@ -290,8 +288,8 @@ func TestWaitForVerifications(t *testing.T) {
 func TestHashAcknowledgementForMerkle_Integration(t *testing.T) {
 	share := fr.NewElement(99999)
 	ack := &types.Acknowledgement{
-		PlayerID:         1,
-		DealerID:         2,
+		PlayerAddress:    common.BigToAddress(big.NewInt(1)),
+		DealerAddress:    common.BigToAddress(big.NewInt(2)),
 		SessionTimestamp: 5,
 		ShareHash:        crypto.HashShareForAck(&share),
 		CommitmentHash:   [32]byte{10, 11, 12},
@@ -312,8 +310,8 @@ func TestMerkleProofVerification_Integration(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		share := fr.NewElement(uint64(100 + i))
 		acks[i] = &types.Acknowledgement{
-			PlayerID:         int64(i + 1),
-			DealerID:         99,
+			PlayerAddress:    common.BigToAddress(big.NewInt(int64(i + 1))),
+			DealerAddress:    common.BigToAddress(big.NewInt(99)),
 			SessionTimestamp: 5,
 			ShareHash:        crypto.HashShareForAck(&share),
 			CommitmentHash:   [32]byte{byte(i)},

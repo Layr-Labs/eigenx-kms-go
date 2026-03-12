@@ -136,29 +136,6 @@ func GetReshareEpoch() int64 {
 	return 0 // Placeholder - should use time.Now().Unix() / RESHARE_FREQUENCY
 }
 
-// CreateAcknowledgement creates an acknowledgement for received shares
-// Phase 4: Updated to include shareHash and epoch
-func CreateAcknowledgement(
-	nodeID, dealerID int64,
-	epoch int64,
-	share *fr.Element,
-	commitments []types.G2Point,
-	signer func(int64, int64, int64, [32]byte, [32]byte) []byte,
-) *types.Acknowledgement {
-	commitmentHash := crypto.HashCommitment(commitments)
-	shareHash := crypto.HashShareForAck(share)
-	signature := signer(dealerID, nodeID, epoch, shareHash, commitmentHash)
-
-	return &types.Acknowledgement{
-		DealerID:         dealerID,
-		PlayerID:         nodeID,
-		SessionTimestamp: epoch,
-		ShareHash:        shareHash,
-		CommitmentHash:   commitmentHash,
-		Signature:        signature,
-	}
-}
-
 // BuildAcknowledgementMerkleTree creates a merkle tree from collected acknowledgements (Phase 4)
 // This is called after collecting all n-1 acknowledgements from other operators
 // Returns the merkle tree for proof generation and the root hash for contract submission

@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
@@ -41,11 +42,6 @@ func deriveScalar(b []byte) *fr.Element {
 	return s
 }
 
-// threshold mirrors the DKG/reshare rule ⌈2n/3⌉.
-func threshold(n int) int {
-	return (2*n + 2) / 3
-}
-
 func FuzzGenerateVerifyAndComputeNewKeyShare(f *testing.F) {
 	f.Add(3, []byte("seed"))
 	f.Add(5, []byte("another-seed"))
@@ -61,7 +57,7 @@ func FuzzGenerateVerifyAndComputeNewKeyShare(f *testing.F) {
 		}
 
 		operators := testOperators(n)
-		newThreshold := threshold(len(operators))
+		newThreshold := dkg.CalculateThreshold(len(operators))
 
 		currentShare := deriveScalar(seed)
 
@@ -131,7 +127,7 @@ func FuzzVerifyShareRejectsTamperedShare(f *testing.F) {
 		}
 
 		operators := testOperators(n)
-		newThreshold := threshold(len(operators))
+		newThreshold := dkg.CalculateThreshold(len(operators))
 		currentShare := deriveScalar(seed)
 
 		dealerID := util.AddressToNodeID(operators[0].OperatorAddress)
@@ -169,7 +165,7 @@ func FuzzVerifyShareRejectsMismatchedCommitments(f *testing.F) {
 		}
 
 		operators := testOperators(n)
-		newThreshold := threshold(len(operators))
+		newThreshold := dkg.CalculateThreshold(len(operators))
 
 		// Generate two different share sets.
 		share1 := deriveScalar(seed1)
@@ -216,7 +212,7 @@ func FuzzComputeNewKeyShareThresholdSubset(f *testing.F) {
 		}
 
 		operators := testOperators(n)
-		newThreshold := threshold(len(operators))
+		newThreshold := dkg.CalculateThreshold(len(operators))
 		currentShare := deriveScalar(seed)
 
 		dealerID := util.AddressToNodeID(operators[0].OperatorAddress)
@@ -268,7 +264,7 @@ func FuzzZeroConstantDealerPolynomialsDoNotPreserveOriginalSecret(f *testing.F) 
 		}
 
 		operators := testOperators(n)
-		newThreshold := threshold(len(operators))
+		newThreshold := dkg.CalculateThreshold(len(operators))
 		zero := new(fr.Element).SetZero()
 		oldSecret := deriveScalar(seed)
 

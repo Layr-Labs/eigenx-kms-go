@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/merkle"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
@@ -155,41 +156,8 @@ func CreateCompletionSignature(nodeID int, epoch int64, commitmentHash [32]byte,
 	}
 }
 
-// CreateAcknowledgement creates an acknowledgement for received reshare (Phase 4)
-// Same signature as DKG for consistency
-func CreateAcknowledgement(
-	nodeID, dealerID, epoch int64,
-	share *fr.Element,
-	commitments []types.G2Point,
-	signer func(int64, int64, int64, [32]byte, [32]byte) []byte,
-) *types.Acknowledgement {
-	commitmentHash := crypto.HashCommitment(commitments)
-	shareHash := crypto.HashShareForAck(share)
-	signature := signer(dealerID, nodeID, epoch, shareHash, commitmentHash)
-
-	return &types.Acknowledgement{
-		DealerID:         dealerID,
-		PlayerID:         nodeID,
-		SessionTimestamp: epoch,
-		ShareHash:        shareHash,
-		CommitmentHash:   commitmentHash,
-		Signature:        signature,
-	}
-}
-
-// BuildAcknowledgementMerkleTree creates a merkle tree from collected acknowledgements (Phase 4)
-// This is called after collecting all n-1 acknowledgements from other operators
-// Returns the merkle tree for proof generation and the root hash for contract submission
+// BuildAcknowledgementMerkleTree creates a merkle tree from collected acknowledgements.
+// Delegates to dkg.BuildAcknowledgementMerkleTree as the canonical implementation.
 func BuildAcknowledgementMerkleTree(acks []*types.Acknowledgement) (*merkle.MerkleTree, error) {
-	if len(acks) == 0 {
-		return nil, nil // No tree for empty acks
-	}
-
-	// Build merkle tree using the merkle package
-	tree, err := merkle.BuildMerkleTree(acks)
-	if err != nil {
-		return nil, err
-	}
-
-	return tree, nil
+	return dkg.BuildAcknowledgementMerkleTree(acks)
 }

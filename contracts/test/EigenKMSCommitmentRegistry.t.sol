@@ -248,7 +248,7 @@ contract EigenKMSCommitmentRegistryTest is Test, IEigenKMSCommitmentRegistryErro
 
         IEigenKMSCommitmentRegistry.AckData memory ack1 = IEigenKMSCommitmentRegistry.AckData({
             player: operator2,
-            dealerID: 1,
+            dealer: operator1,
             shareHash: keccak256("share1"),
             commitmentHash: commitmentHash,
             proof: emptyProof
@@ -256,7 +256,7 @@ contract EigenKMSCommitmentRegistryTest is Test, IEigenKMSCommitmentRegistryErro
 
         IEigenKMSCommitmentRegistry.AckData memory ack2 = IEigenKMSCommitmentRegistry.AckData({
             player: operator3,
-            dealerID: 1,
+            dealer: operator1,
             shareHash: keccak256("share2"),
             commitmentHash: commitmentHash,
             proof: emptyProof
@@ -278,7 +278,7 @@ contract EigenKMSCommitmentRegistryTest is Test, IEigenKMSCommitmentRegistryErro
 
         IEigenKMSCommitmentRegistry.AckData memory ack1 = IEigenKMSCommitmentRegistry.AckData({
             player: operator2,
-            dealerID: 1,
+            dealer: operator1,
             shareHash: sameHash,
             commitmentHash: keccak256("commitment"),
             proof: emptyProof
@@ -286,7 +286,7 @@ contract EigenKMSCommitmentRegistryTest is Test, IEigenKMSCommitmentRegistryErro
 
         IEigenKMSCommitmentRegistry.AckData memory ack2 = IEigenKMSCommitmentRegistry.AckData({
             player: operator3,
-            dealerID: 1,
+            dealer: operator1,
             shareHash: sameHash, // Same hash
             commitmentHash: keccak256("commitment"),
             proof: emptyProof
@@ -303,7 +303,7 @@ contract EigenKMSCommitmentRegistryTest is Test, IEigenKMSCommitmentRegistryErro
 
         IEigenKMSCommitmentRegistry.AckData memory ack1 = IEigenKMSCommitmentRegistry.AckData({
             player: operator2,
-            dealerID: 1,
+            dealer: operator1,
             shareHash: keccak256("hash1"),
             commitmentHash: keccak256("commitment"),
             proof: emptyProof
@@ -311,13 +311,65 @@ contract EigenKMSCommitmentRegistryTest is Test, IEigenKMSCommitmentRegistryErro
 
         IEigenKMSCommitmentRegistry.AckData memory ack2 = IEigenKMSCommitmentRegistry.AckData({
             player: operator3,
-            dealerID: 1,
+            dealer: operator1,
             shareHash: keccak256("hash2"),
             commitmentHash: keccak256("commitment"),
             proof: emptyProof
         });
 
         vm.expectRevert(NoCommitment.selector);
+        registry.proveEquivocation(epoch, operator1, ack1, ack2);
+    }
+
+    /// @notice Test proveEquivocation succeeds and emits EquivocationProven when proofs are valid
+    function test_ProveEquivocation_Success() public {
+        uint64 epoch = 5;
+        bytes32 commitmentHash = keccak256("commitment");
+        bytes32 shareHash1 = keccak256("share1");
+        bytes32 shareHash2 = keccak256("share2");
+
+        // Compute leaf hashes matching the contract's encoding:
+        // keccak256(abi.encodePacked(player, dealer, epoch, shareHash, commitmentHash))
+        bytes32 leaf1 = keccak256(abi.encodePacked(operator2, operator1, epoch, shareHash1, commitmentHash));
+        bytes32 leaf2 = keccak256(abi.encodePacked(operator3, operator1, epoch, shareHash2, commitmentHash));
+
+        // Build 2-leaf OpenZeppelin-compatible merkle root: sort leaves, then hash the pair
+        bytes32 merkleRoot;
+        if (leaf1 < leaf2) {
+            merkleRoot = keccak256(abi.encodePacked(leaf1, leaf2));
+        } else {
+            merkleRoot = keccak256(abi.encodePacked(leaf2, leaf1));
+        }
+
+        // Operator1 (dealer) submits commitment with the merkle root
+        vm.prank(operator1);
+        registry.submitCommitment(epoch, commitmentHash, merkleRoot);
+
+        // Each leaf's proof is the sibling (the other leaf)
+        bytes32[] memory proof1 = new bytes32[](1);
+        proof1[0] = leaf2;
+        bytes32[] memory proof2 = new bytes32[](1);
+        proof2[0] = leaf1;
+
+        IEigenKMSCommitmentRegistry.AckData memory ack1 = IEigenKMSCommitmentRegistry.AckData({
+            player: operator2,
+            dealer: operator1,
+            shareHash: shareHash1,
+            commitmentHash: commitmentHash,
+            proof: proof1
+        });
+
+        IEigenKMSCommitmentRegistry.AckData memory ack2 = IEigenKMSCommitmentRegistry.AckData({
+            player: operator3,
+            dealer: operator1,
+            shareHash: shareHash2,
+            commitmentHash: commitmentHash,
+            proof: proof2
+        });
+
+        vm.expectEmit(true, true, false, true);
+        emit IEigenKMSCommitmentRegistry.EquivocationProven(epoch, operator1, operator2, operator3);
+
         registry.proveEquivocation(epoch, operator1, ack1, ack2);
     }
 

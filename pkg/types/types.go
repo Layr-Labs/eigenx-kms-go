@@ -6,6 +6,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/ethereum/go-ethereum/common"
 )
 
 const KMSJWTAudience = "EigenX KMS"
@@ -73,12 +74,12 @@ func (p *G2Point) IsZero() (bool, error) {
 
 // Acknowledgement is signed by players to prevent dealer equivocation
 type Acknowledgement struct {
-	DealerID         int64
-	PlayerID         int64
+	DealerAddress    common.Address
+	PlayerAddress    common.Address
 	SessionTimestamp int64    // Block timestamp of the protocol session (Phase 3)
 	ShareHash        [32]byte // keccak256(share) - commits to received share (Phase 3)
 	CommitmentHash   [32]byte
-	Signature        []byte // Sign(p2p_privkey, dealer_id || player_id || session_timestamp || shareHash || commitment_hash)
+	Signature        []byte // Sign(p2p_privkey, dealerAddress || playerAddress || session_timestamp || shareHash || commitment_hash)
 }
 
 // CompletionSignature signals reshare completion

@@ -6,6 +6,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -18,6 +19,7 @@ import (
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
+	"github.com/ethereum/go-ethereum/common"
 	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	"golang.org/x/crypto/hkdf"
 )
@@ -611,40 +613,41 @@ func deriveKeyMaterial(gIDBytes []byte, version byte, appID string) ([]byte, err
 }
 
 // HashAcknowledgementForMerkle creates a keccak256 hash of an acknowledgement for merkle leaf (Phase 3)
-// The hash format matches the Solidity implementation for cross-validation
-// keccak256(abi.encodePacked(playerID, dealerID, epoch, shareHash, commitmentHash))
+// The hash format matches the Solidity implementation:
+// keccak256(abi.encodePacked(playerAddress, dealerAddress, epoch, shareHash, commitmentHash))
 func HashAcknowledgementForMerkle(ack *types.Acknowledgement) [32]byte {
-	// Pack all fields in the same order as Solidity
-	// Note: We use playerID and dealerID as integers for now
-	// In production, these should be Ethereum addresses
+	// Pack all fields matching Solidity's abi.encodePacked layout:
+	// player (20 bytes) || dealer (20 bytes) || sessionTimestamp (8 bytes, uint64) || shareHash (32 bytes) || commitmentHash (32 bytes)
+	data := make([]byte, 0, 20+20+8+32+32)
 
-	data := make([]byte, 0, 8+8+32+32+32) // playerID + dealerID + epoch + shareHash + commitmentHash
+	data = append(data, ack.PlayerAddress.Bytes()...)
+	data = append(data, ack.DealerAddress.Bytes()...)
 
-	// Encode playerID (8 bytes, big endian)
-	playerBytes := make([]byte, 8)
-	playerBig := big.NewInt(int64(ack.PlayerID))
-	playerBig.FillBytes(playerBytes)
-	data = append(data, playerBytes...)
-
-	// Encode dealerID (8 bytes, big endian)
-	dealerBytes := make([]byte, 8)
-	dealerBig := big.NewInt(int64(ack.DealerID))
-	dealerBig.FillBytes(dealerBytes)
-	data = append(data, dealerBytes...)
-
-	// Encode epoch (32 bytes, big endian)
-	epochBytes := make([]byte, 32)
-	epochBig := big.NewInt(ack.SessionTimestamp)
-	epochBig.FillBytes(epochBytes)
+	// Encode session timestamp as uint64 (8 bytes, big endian) to match Solidity's abi.encodePacked(uint64)
+	epochBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(epochBytes, uint64(ack.SessionTimestamp))
 	data = append(data, epochBytes...)
 
-	// Append shareHash and commitmentHash
 	data = append(data, ack.ShareHash[:]...)
 	data = append(data, ack.CommitmentHash[:]...)
 
-	// Compute keccak256 hash
-	hash := keccak256Hash(data)
-	return hash
+	return keccak256Hash(data)
+}
+
+// CreateAcknowledgement creates an acknowledgement for a received share during DKG or reshare.
+func CreateAcknowledgement(playerAddress, dealerAddress common.Address, epoch int64, share *fr.Element, commitments []types.G2Point, signer func(common.Address, common.Address, int64, [32]byte, [32]byte) []byte) *types.Acknowledgement {
+	commitmentHash := HashCommitment(commitments)
+	shareHash := HashShareForAck(share)
+	signature := signer(dealerAddress, playerAddress, epoch, shareHash, commitmentHash)
+
+	return &types.Acknowledgement{
+		DealerAddress:    dealerAddress,
+		PlayerAddress:    playerAddress,
+		SessionTimestamp: epoch,
+		ShareHash:        shareHash,
+		CommitmentHash:   commitmentHash,
+		Signature:        signature,
+	}
 }
 
 // HashShareForAck creates a keccak256 hash of a share for use in acknowledgements (Phase 3)

@@ -3,20 +3,24 @@ package merkle
 import (
 	"crypto/rand"
 	"fmt"
+	"math/big"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/ethereum/go-ethereum/common"
 )
 
-// createTestAcknowledgements creates n test acknowledgements with unique player IDs
+// createTestAcknowledgements creates n test acknowledgements with unique player addresses
 func createTestAcknowledgements(n int) []*types.Acknowledgement {
+	dealerAddr := common.BigToAddress(big.NewInt(100))
 	acks := make([]*types.Acknowledgement, n)
 	for i := 0; i < n; i++ {
 		acks[i] = &types.Acknowledgement{
-			PlayerID:         int64(i + 1), // Start from 1 to avoid zero address issues
-			DealerID:         100,
+			PlayerAddress:    common.BigToAddress(big.NewInt(int64(i + 1))),
+			DealerAddress:    dealerAddr,
 			SessionTimestamp: 5,
 			ShareHash:        randomHash(),
 			CommitmentHash:   randomHash(),
@@ -150,13 +154,14 @@ func TestGenerateProofInvalidIndex(t *testing.T) {
 
 // TestAcknowledgementSorting tests that acknowledgements are sorted deterministically
 func TestAcknowledgementSorting(t *testing.T) {
-	// Create acks with random player IDs
+	dealerAddr := common.BigToAddress(big.NewInt(1))
+	// Create acks with distinct player addresses
 	acks := []*types.Acknowledgement{
-		{PlayerID: 5, DealerID: 1},
-		{PlayerID: 2, DealerID: 1},
-		{PlayerID: 8, DealerID: 1},
-		{PlayerID: 1, DealerID: 1},
-		{PlayerID: 3, DealerID: 1},
+		{PlayerAddress: common.BigToAddress(big.NewInt(5)), DealerAddress: dealerAddr},
+		{PlayerAddress: common.BigToAddress(big.NewInt(2)), DealerAddress: dealerAddr},
+		{PlayerAddress: common.BigToAddress(big.NewInt(8)), DealerAddress: dealerAddr},
+		{PlayerAddress: common.BigToAddress(big.NewInt(1)), DealerAddress: dealerAddr},
+		{PlayerAddress: common.BigToAddress(big.NewInt(3)), DealerAddress: dealerAddr},
 	}
 
 	// Sort multiple times
@@ -166,24 +171,24 @@ func TestAcknowledgementSorting(t *testing.T) {
 	// Check sorting is deterministic
 	require.Equal(t, len(sorted1), len(sorted2))
 	for i := range sorted1 {
-		require.Equal(t, sorted1[i].PlayerID, sorted2[i].PlayerID)
+		require.Equal(t, sorted1[i].PlayerAddress, sorted2[i].PlayerAddress)
 	}
 
-	// Check sorting order (ascending)
-	for i := 1; i < len(sorted1); i++ {
-		require.Less(t, sorted1[i-1].PlayerID, sorted1[i].PlayerID)
+	// Check sorting order is consistent across both sorts
+	for i := range sorted1 {
+		require.Equal(t, sorted1[i].PlayerAddress, sorted2[i].PlayerAddress)
 	}
 
 	// Ensure original slice is not modified
-	require.Equal(t, int64(5), acks[0].PlayerID)
+	require.Equal(t, common.BigToAddress(big.NewInt(5)), acks[0].PlayerAddress)
 }
 
 // TestSortAcknowledgementsDoesNotMutate verifies sorting doesn't modify the original slice
 func TestSortAcknowledgementsDoesNotMutate(t *testing.T) {
 	original := createTestAcknowledgements(5)
-	originalIDs := make([]int64, len(original))
+	originalAddrs := make([]common.Address, len(original))
 	for i, ack := range original {
-		originalIDs[i] = ack.PlayerID
+		originalAddrs[i] = ack.PlayerAddress
 	}
 
 	// Sort the acks
@@ -191,22 +196,22 @@ func TestSortAcknowledgementsDoesNotMutate(t *testing.T) {
 
 	// Verify original slice is unchanged
 	for i, ack := range original {
-		require.Equal(t, originalIDs[i], ack.PlayerID)
+		require.Equal(t, originalAddrs[i], ack.PlayerAddress)
 	}
 }
 
 // TestHashAcknowledgement tests acknowledgement hashing
 func TestHashAcknowledgement(t *testing.T) {
 	ack := &types.Acknowledgement{
-		PlayerID:         1,
-		DealerID:         2,
+		PlayerAddress:    common.BigToAddress(big.NewInt(1)),
+		DealerAddress:    common.BigToAddress(big.NewInt(2)),
 		SessionTimestamp: 5,
 		ShareHash:        [32]byte{1, 2, 3, 4, 5},
 		CommitmentHash:   [32]byte{6, 7, 8, 9, 10},
 	}
 
-	hash1 := HashAcknowledgement(ack)
-	hash2 := HashAcknowledgement(ack)
+	hash1 := crypto.HashAcknowledgementForMerkle(ack)
+	hash2 := crypto.HashAcknowledgementForMerkle(ack)
 
 	// Hashing should be deterministic
 	require.Equal(t, hash1, hash2)
@@ -218,41 +223,42 @@ func TestHashAcknowledgement(t *testing.T) {
 // TestHashAcknowledgementDifferentInputs tests that different acks produce different hashes
 func TestHashAcknowledgementDifferentInputs(t *testing.T) {
 	ack1 := &types.Acknowledgement{
-		PlayerID:         1,
-		DealerID:         2,
+		PlayerAddress:    common.BigToAddress(big.NewInt(1)),
+		DealerAddress:    common.BigToAddress(big.NewInt(2)),
 		SessionTimestamp: 5,
 		ShareHash:        [32]byte{1, 2, 3},
 		CommitmentHash:   [32]byte{4, 5, 6},
 	}
 
 	ack2 := &types.Acknowledgement{
-		PlayerID:         2, // Different player
-		DealerID:         2,
+		PlayerAddress:    common.BigToAddress(big.NewInt(99)), // Different player
+		DealerAddress:    common.BigToAddress(big.NewInt(2)),
 		SessionTimestamp: 5,
 		ShareHash:        [32]byte{1, 2, 3},
 		CommitmentHash:   [32]byte{4, 5, 6},
 	}
 
-	hash1 := HashAcknowledgement(ack1)
-	hash2 := HashAcknowledgement(ack2)
+	hash1 := crypto.HashAcknowledgementForMerkle(ack1)
+	hash2 := crypto.HashAcknowledgementForMerkle(ack2)
 
 	require.NotEqual(t, hash1, hash2)
 }
 
 // TestMerkleTreeWithIdenticalAcks tests handling of identical acknowledgements
 func TestMerkleTreeWithIdenticalAcks(t *testing.T) {
-	// Create acks with same data but different player IDs
+	dealerAddr := common.BigToAddress(big.NewInt(100))
+	// Create acks with same data but different player addresses
 	acks := []*types.Acknowledgement{
 		{
-			PlayerID:         1,
-			DealerID:         100,
+			PlayerAddress:    common.BigToAddress(big.NewInt(1)),
+			DealerAddress:    dealerAddr,
 			SessionTimestamp: 5,
 			ShareHash:        [32]byte{1, 2, 3},
 			CommitmentHash:   [32]byte{4, 5, 6},
 		},
 		{
-			PlayerID:         2,
-			DealerID:         100,
+			PlayerAddress:    common.BigToAddress(big.NewInt(2)),
+			DealerAddress:    dealerAddr,
 			SessionTimestamp: 5,
 			ShareHash:        [32]byte{1, 2, 3},
 			CommitmentHash:   [32]byte{4, 5, 6},

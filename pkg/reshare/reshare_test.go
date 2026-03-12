@@ -446,8 +446,8 @@ func testCreateCompletionSignature(t *testing.T) {
 
 // Test_CreateAcknowledgement tests acknowledgement creation for reshare (Phase 4)
 func Test_CreateAcknowledgement(t *testing.T) {
-	nodeID := int64(1)
-	dealerID := int64(2)
+	playerAddr := common.BigToAddress(big.NewInt(1))
+	dealerAddr := common.BigToAddress(big.NewInt(2))
 	epoch := int64(54321)
 
 	// Create test share
@@ -471,23 +471,23 @@ func Test_CreateAcknowledgement(t *testing.T) {
 	}
 
 	// Mock signer function
-	signer := func(dealer, player, ackEpoch int64, shareHash, hash [32]byte) []byte {
+	signer := func(dealer, player common.Address, ackEpoch int64, shareHash, hash [32]byte) []byte {
 		_ = player
 		_ = ackEpoch
 		_ = shareHash
 		return []byte("mock-signature")
 	}
 
-	ack := CreateAcknowledgement(nodeID, dealerID, epoch, &share, commitments, signer)
+	ack := crypto.CreateAcknowledgement(playerAddr, dealerAddr, epoch, &share, commitments, signer)
 
 	if ack == nil {
 		t.Fatal("Expected non-nil acknowledgement")
 	}
-	if ack.PlayerID != nodeID {
-		t.Errorf("Expected PlayerID %d, got %d", nodeID, ack.PlayerID)
+	if ack.PlayerAddress != playerAddr {
+		t.Errorf("Expected PlayerAddress %s, got %s", playerAddr.Hex(), ack.PlayerAddress.Hex())
 	}
-	if ack.DealerID != dealerID {
-		t.Errorf("Expected DealerID %d, got %d", dealerID, ack.DealerID)
+	if ack.DealerAddress != dealerAddr {
+		t.Errorf("Expected DealerAddress %s, got %s", dealerAddr.Hex(), ack.DealerAddress.Hex())
 	}
 	if ack.SessionTimestamp != epoch {
 		t.Errorf("Expected Epoch %d, got %d", epoch, ack.SessionTimestamp)
@@ -514,12 +514,13 @@ func Test_CreateAcknowledgement(t *testing.T) {
 // Test_BuildAcknowledgementMerkleTree_Reshare tests merkle tree building for reshare (Phase 4)
 func Test_BuildAcknowledgementMerkleTree_Reshare(t *testing.T) {
 	// Create test acknowledgements
+	dealerAddr50 := common.BigToAddress(big.NewInt(50))
 	acks := make([]*types.Acknowledgement, 3)
 	for i := 0; i < 3; i++ {
 		share := fr.NewElement(uint64(200 + i))
 		acks[i] = &types.Acknowledgement{
-			PlayerID:         int64(i + 1),
-			DealerID:         50,
+			PlayerAddress:    common.BigToAddress(big.NewInt(int64(i + 1))),
+			DealerAddress:    dealerAddr50,
 			SessionTimestamp: 10,
 			ShareHash:        crypto.HashShareForAck(&share),
 			CommitmentHash:   [32]byte{byte(i * 2), byte(i*2 + 1)},

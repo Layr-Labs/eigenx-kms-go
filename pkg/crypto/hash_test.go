@@ -5,6 +5,7 @@ import (
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,8 +39,8 @@ func TestHashShareForAck_DifferentShares(t *testing.T) {
 // TestHashAcknowledgementForMerkle tests acknowledgement hashing for merkle trees
 func TestHashAcknowledgementForMerkle(t *testing.T) {
 	ack := &types.Acknowledgement{
-		PlayerID:         1,
-		DealerID:         2,
+		PlayerAddress:    common.HexToAddress("0x1000000000000000000000000000000000000001"),
+		DealerAddress:    common.HexToAddress("0x2000000000000000000000000000000000000002"),
 		SessionTimestamp: 5,
 		ShareHash:        [32]byte{1, 2, 3, 4, 5},
 		CommitmentHash:   [32]byte{6, 7, 8, 9, 10},
@@ -58,18 +59,18 @@ func TestHashAcknowledgementForMerkle(t *testing.T) {
 // TestHashAcknowledgementForMerkle_DifferentInputs tests that different acks produce different hashes
 func TestHashAcknowledgementForMerkle_DifferentInputs(t *testing.T) {
 	baseAck := &types.Acknowledgement{
-		PlayerID:         1,
-		DealerID:         2,
+		PlayerAddress:    common.HexToAddress("0x1000000000000000000000000000000000000001"),
+		DealerAddress:    common.HexToAddress("0x2000000000000000000000000000000000000002"),
 		SessionTimestamp: 5,
 		ShareHash:        [32]byte{1, 2, 3},
 		CommitmentHash:   [32]byte{4, 5, 6},
 	}
 
-	// Test different player IDs
-	t.Run("Different PlayerID", func(t *testing.T) {
+	// Test different player addresses
+	t.Run("Different PlayerAddress", func(t *testing.T) {
 		ack1 := *baseAck
 		ack2 := *baseAck
-		ack2.PlayerID = 3
+		ack2.PlayerAddress = common.HexToAddress("0x3000000000000000000000000000000000000003")
 
 		hash1 := HashAcknowledgementForMerkle(&ack1)
 		hash2 := HashAcknowledgementForMerkle(&ack2)
@@ -77,11 +78,11 @@ func TestHashAcknowledgementForMerkle_DifferentInputs(t *testing.T) {
 		require.NotEqual(t, hash1, hash2)
 	})
 
-	// Test different dealer IDs
-	t.Run("Different DealerID", func(t *testing.T) {
+	// Test different dealer addresses
+	t.Run("Different DealerAddress", func(t *testing.T) {
 		ack1 := *baseAck
 		ack2 := *baseAck
-		ack2.DealerID = 99
+		ack2.DealerAddress = common.HexToAddress("0x9900000000000000000000000000000000000099")
 
 		hash1 := HashAcknowledgementForMerkle(&ack1)
 		hash2 := HashAcknowledgementForMerkle(&ack2)

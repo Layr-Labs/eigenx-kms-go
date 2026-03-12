@@ -3,6 +3,8 @@ package merkle
 import (
 	"fmt"
 	"testing"
+
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 )
 
 // BenchmarkMerkleTreeBuild benchmarks merkle tree construction with various sizes
@@ -64,7 +66,7 @@ func BenchmarkHashAcknowledgement(b *testing.B) {
 
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		_ = HashAcknowledgement(ack)
+		_ = crypto.HashAcknowledgementForMerkle(ack)
 	}
 }
 
