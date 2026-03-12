@@ -19,11 +19,11 @@ import (
 type MemoryPersistence struct {
 	mu sync.RWMutex
 
-	// Key share storage: epoch -> KeyShareVersion
+	// Key share storage: timestamp -> KeyShareVersion
 	keyShares map[int64]*types.KeyShareVersion
 
 	// Active version tracking
-	activeVersionEpoch int64
+	activeVersionTimestamp int64
 
 	// Node state
 	nodeState *persistence.NodeState
@@ -67,8 +67,8 @@ func (m *MemoryPersistence) SaveKeyShareVersion(version *types.KeyShareVersion) 
 	return nil
 }
 
-// LoadKeyShareVersion retrieves a key share version by epoch.
-func (m *MemoryPersistence) LoadKeyShareVersion(epoch int64) (*types.KeyShareVersion, error) {
+// LoadKeyShareVersion retrieves a key share version by block timestamp.
+func (m *MemoryPersistence) LoadKeyShareVersion(timestamp int64) (*types.KeyShareVersion, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -76,7 +76,7 @@ func (m *MemoryPersistence) LoadKeyShareVersion(epoch int64) (*types.KeyShareVer
 		return nil, fmt.Errorf("persistence layer is closed")
 	}
 
-	version, exists := m.keyShares[epoch]
+	version, exists := m.keyShares[timestamp]
 	if !exists {
 		return nil, nil // Not found is not an error
 	}
@@ -85,7 +85,7 @@ func (m *MemoryPersistence) LoadKeyShareVersion(epoch int64) (*types.KeyShareVer
 	return deepCopyKeyShareVersion(version), nil
 }
 
-// ListKeyShareVersions returns all key share versions sorted by epoch.
+// ListKeyShareVersions returns all key share versions sorted by block timestamp.
 func (m *MemoryPersistence) ListKeyShareVersions() ([]*types.KeyShareVersion, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -94,26 +94,26 @@ func (m *MemoryPersistence) ListKeyShareVersions() ([]*types.KeyShareVersion, er
 		return nil, fmt.Errorf("persistence layer is closed")
 	}
 
-	// Collect epochs and sort
-	epochs := make([]int64, 0, len(m.keyShares))
-	for epoch := range m.keyShares {
-		epochs = append(epochs, epoch)
+	// Collect timestamps and sort
+	timestamps := make([]int64, 0, len(m.keyShares))
+	for ts := range m.keyShares {
+		timestamps = append(timestamps, ts)
 	}
-	sort.Slice(epochs, func(i, j int) bool {
-		return epochs[i] < epochs[j]
+	sort.Slice(timestamps, func(i, j int) bool {
+		return timestamps[i] < timestamps[j]
 	})
 
 	// Build sorted list with deep copies
-	result := make([]*types.KeyShareVersion, 0, len(epochs))
-	for _, epoch := range epochs {
-		result = append(result, deepCopyKeyShareVersion(m.keyShares[epoch]))
+	result := make([]*types.KeyShareVersion, 0, len(timestamps))
+	for _, ts := range timestamps {
+		result = append(result, deepCopyKeyShareVersion(m.keyShares[ts]))
 	}
 
 	return result, nil
 }
 
-// DeleteKeyShareVersion removes a key share version.
-func (m *MemoryPersistence) DeleteKeyShareVersion(epoch int64) error {
+// DeleteKeyShareVersion removes a key share version by block timestamp.
+func (m *MemoryPersistence) DeleteKeyShareVersion(timestamp int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -121,12 +121,12 @@ func (m *MemoryPersistence) DeleteKeyShareVersion(epoch int64) error {
 		return fmt.Errorf("persistence layer is closed")
 	}
 
-	delete(m.keyShares, epoch)
+	delete(m.keyShares, timestamp)
 	return nil
 }
 
-// SetActiveVersionEpoch stores the active version epoch.
-func (m *MemoryPersistence) SetActiveVersionEpoch(epoch int64) error {
+// SetActiveVersionTimestamp stores the active version block timestamp.
+func (m *MemoryPersistence) SetActiveVersionTimestamp(timestamp int64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -134,12 +134,12 @@ func (m *MemoryPersistence) SetActiveVersionEpoch(epoch int64) error {
 		return fmt.Errorf("persistence layer is closed")
 	}
 
-	m.activeVersionEpoch = epoch
+	m.activeVersionTimestamp = timestamp
 	return nil
 }
 
-// GetActiveVersionEpoch retrieves the active version epoch.
-func (m *MemoryPersistence) GetActiveVersionEpoch() (int64, error) {
+// GetActiveVersionTimestamp retrieves the active version block timestamp.
+func (m *MemoryPersistence) GetActiveVersionTimestamp() (int64, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -147,7 +147,7 @@ func (m *MemoryPersistence) GetActiveVersionEpoch() (int64, error) {
 		return 0, fmt.Errorf("persistence layer is closed")
 	}
 
-	return m.activeVersionEpoch, nil
+	return m.activeVersionTimestamp, nil
 }
 
 // SaveNodeState persists node operational state.
@@ -352,11 +352,11 @@ func deepCopyProtocolSessionState(s *persistence.ProtocolSessionState) *persiste
 		ackMapCopy := make(map[int64]*types.Acknowledgement)
 		for receiverID, ack := range ackMap {
 			ackCopy := &types.Acknowledgement{
-				PlayerID:       ack.PlayerID,
-				DealerID:       ack.DealerID,
-				Epoch:          ack.Epoch,
-				ShareHash:      ack.ShareHash,      // [32]byte is copied by value
-				CommitmentHash: ack.CommitmentHash, // [32]byte is copied by value
+				PlayerID:         ack.PlayerID,
+				DealerID:         ack.DealerID,
+				SessionTimestamp: ack.SessionTimestamp,
+				ShareHash:        ack.ShareHash,      // [32]byte is copied by value
+				CommitmentHash:   ack.CommitmentHash, // [32]byte is copied by value
 			}
 			if len(ack.Signature) > 0 {
 				signatureCopy := make([]byte, len(ack.Signature))

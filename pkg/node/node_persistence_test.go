@@ -160,7 +160,7 @@ func testNodeRestart_CleanShutdown(t *testing.T) {
 	// Persist it
 	err = node1.persistence.SaveKeyShareVersion(testVersion)
 	require.NoError(t, err)
-	err = node1.persistence.SetActiveVersionEpoch(testVersion.Version)
+	err = node1.persistence.SetActiveVersionTimestamp(testVersion.Version)
 	require.NoError(t, err)
 
 	t.Logf("Node 1 persisted key version: %d", testVersion.Version)
@@ -491,7 +491,7 @@ func testNodeRestart_MultipleKeyVersions(t *testing.T) {
 	}
 
 	// Set active version
-	err = node1.persistence.SetActiveVersionEpoch(versions[2].Version)
+	err = node1.persistence.SetActiveVersionTimestamp(versions[2].Version)
 	require.NoError(t, err)
 
 	t.Logf("Persisted 3 key versions: %d, %d, %d", versions[0].Version, versions[1].Version, versions[2].Version)

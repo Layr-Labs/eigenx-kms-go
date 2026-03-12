@@ -509,7 +509,7 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 			AttestationMethod: opts.AttestationMethod,
 			Attestation:       attestationBytes,
 			RSAPubKeyTmp:      opts.RSAPublicKeyPEM,
-			AttestTime:        time.Now().Unix(),
+			AttestationTime:   time.Now().Unix(),
 		}
 
 	default:
@@ -727,7 +727,7 @@ func (c *Client) createECDSAAttestationRequest(appID string, opts *SecretsOption
 		Challenge:         []byte(challenge),
 		PublicKey:         publicKey,
 		RSAPubKeyTmp:      rsaPubKeyPEM,
-		AttestTime:        time.Now().Unix(),
+		AttestationTime:   time.Now().Unix(),
 	}, nil
 }
 

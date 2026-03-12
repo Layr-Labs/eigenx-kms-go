@@ -175,7 +175,7 @@ func testAcknowledgementWithNewFields(t *testing.T) {
 	// Verify all fields are set correctly
 	require.Equal(t, nodeID, ack.PlayerID)
 	require.Equal(t, dealerID, ack.DealerID)
-	require.Equal(t, epoch, ack.Epoch, "Epoch should be set (Phase 3)")
+	require.Equal(t, epoch, ack.SessionTimestamp, "Epoch should be set (Phase 3)")
 	require.NotEqual(t, [32]byte{}, ack.ShareHash, "ShareHash should be set (Phase 3)")
 	require.NotEqual(t, [32]byte{}, ack.CommitmentHash)
 	require.NotEmpty(t, ack.Signature)
@@ -193,12 +193,12 @@ func testAcknowledgementWithNewFields(t *testing.T) {
 	require.NotNil(t, reshareAck)
 
 	// Both should produce same result
-	require.Equal(t, ack.Epoch, reshareAck.Epoch)
+	require.Equal(t, ack.SessionTimestamp, reshareAck.SessionTimestamp)
 	require.Equal(t, ack.ShareHash, reshareAck.ShareHash)
 	require.Equal(t, ack.CommitmentHash, reshareAck.CommitmentHash)
 
 	t.Logf("✓ Acknowledgement creation with new fields passed")
-	t.Logf("  - Epoch field: %d", ack.Epoch)
+	t.Logf("  - Epoch field: %d", ack.SessionTimestamp)
 	t.Logf("  - ShareHash: %x...", ack.ShareHash[:4])
 	t.Logf("  - DKG and Reshare produce consistent acks")
 }

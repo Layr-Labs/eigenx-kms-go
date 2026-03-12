@@ -15,12 +15,12 @@ func createTestAcknowledgements(n int) []*types.Acknowledgement {
 	acks := make([]*types.Acknowledgement, n)
 	for i := 0; i < n; i++ {
 		acks[i] = &types.Acknowledgement{
-			PlayerID:       int64(i + 1), // Start from 1 to avoid zero address issues
-			DealerID:       100,
-			Epoch:          5,
-			ShareHash:      randomHash(),
-			CommitmentHash: randomHash(),
-			Signature:      []byte("test-signature"),
+			PlayerID:         int64(i + 1), // Start from 1 to avoid zero address issues
+			DealerID:         100,
+			SessionTimestamp: 5,
+			ShareHash:        randomHash(),
+			CommitmentHash:   randomHash(),
+			Signature:        []byte("test-signature"),
 		}
 	}
 	return acks
@@ -198,11 +198,11 @@ func TestSortAcknowledgementsDoesNotMutate(t *testing.T) {
 // TestHashAcknowledgement tests acknowledgement hashing
 func TestHashAcknowledgement(t *testing.T) {
 	ack := &types.Acknowledgement{
-		PlayerID:       1,
-		DealerID:       2,
-		Epoch:          5,
-		ShareHash:      [32]byte{1, 2, 3, 4, 5},
-		CommitmentHash: [32]byte{6, 7, 8, 9, 10},
+		PlayerID:         1,
+		DealerID:         2,
+		SessionTimestamp: 5,
+		ShareHash:        [32]byte{1, 2, 3, 4, 5},
+		CommitmentHash:   [32]byte{6, 7, 8, 9, 10},
 	}
 
 	hash1 := HashAcknowledgement(ack)
@@ -218,19 +218,19 @@ func TestHashAcknowledgement(t *testing.T) {
 // TestHashAcknowledgementDifferentInputs tests that different acks produce different hashes
 func TestHashAcknowledgementDifferentInputs(t *testing.T) {
 	ack1 := &types.Acknowledgement{
-		PlayerID:       1,
-		DealerID:       2,
-		Epoch:          5,
-		ShareHash:      [32]byte{1, 2, 3},
-		CommitmentHash: [32]byte{4, 5, 6},
+		PlayerID:         1,
+		DealerID:         2,
+		SessionTimestamp: 5,
+		ShareHash:        [32]byte{1, 2, 3},
+		CommitmentHash:   [32]byte{4, 5, 6},
 	}
 
 	ack2 := &types.Acknowledgement{
-		PlayerID:       2, // Different player
-		DealerID:       2,
-		Epoch:          5,
-		ShareHash:      [32]byte{1, 2, 3},
-		CommitmentHash: [32]byte{4, 5, 6},
+		PlayerID:         2, // Different player
+		DealerID:         2,
+		SessionTimestamp: 5,
+		ShareHash:        [32]byte{1, 2, 3},
+		CommitmentHash:   [32]byte{4, 5, 6},
 	}
 
 	hash1 := HashAcknowledgement(ack1)
@@ -244,18 +244,18 @@ func TestMerkleTreeWithIdenticalAcks(t *testing.T) {
 	// Create acks with same data but different player IDs
 	acks := []*types.Acknowledgement{
 		{
-			PlayerID:       1,
-			DealerID:       100,
-			Epoch:          5,
-			ShareHash:      [32]byte{1, 2, 3},
-			CommitmentHash: [32]byte{4, 5, 6},
+			PlayerID:         1,
+			DealerID:         100,
+			SessionTimestamp: 5,
+			ShareHash:        [32]byte{1, 2, 3},
+			CommitmentHash:   [32]byte{4, 5, 6},
 		},
 		{
-			PlayerID:       2,
-			DealerID:       100,
-			Epoch:          5,
-			ShareHash:      [32]byte{1, 2, 3},
-			CommitmentHash: [32]byte{4, 5, 6},
+			PlayerID:         2,
+			DealerID:         100,
+			SessionTimestamp: 5,
+			ShareHash:        [32]byte{1, 2, 3},
+			CommitmentHash:   [32]byte{4, 5, 6},
 		},
 	}
 

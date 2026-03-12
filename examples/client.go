@@ -48,7 +48,7 @@ func ExampleAppClient() {
 		AttestationMethod: "gcp", // Can be "gcp", "intel", or "ecdsa"
 		Attestation:       attestationBytes,
 		RSAPubKeyTmp:      pubKeyPEM,
-		AttestTime:        time.Now().Unix(),
+		AttestationTime:   time.Now().Unix(),
 	}
 
 	// Step 4: Request secrets from multiple KMS servers (threshold required)

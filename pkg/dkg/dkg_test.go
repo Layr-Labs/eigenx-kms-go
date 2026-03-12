@@ -235,8 +235,8 @@ func testCreateAcknowledgement(t *testing.T) {
 		t.Errorf("Expected DealerID %d, got %d", dealerID, ack.DealerID)
 	}
 	// Phase 4: Verify new fields
-	if ack.Epoch != epoch {
-		t.Errorf("Expected Epoch %d, got %d", epoch, ack.Epoch)
+	if ack.SessionTimestamp != epoch {
+		t.Errorf("Expected Epoch %d, got %d", epoch, ack.SessionTimestamp)
 	}
 	if ack.ShareHash == [32]byte{} {
 		t.Error("ShareHash should not be empty")
@@ -265,12 +265,12 @@ func Test_BuildAcknowledgementMerkleTree(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		share := fr.NewElement(uint64(100 + i))
 		acks[i] = &types.Acknowledgement{
-			PlayerID:       int64(i + 1),
-			DealerID:       99,
-			Epoch:          5,
-			ShareHash:      crypto.HashShareForAck(&share),
-			CommitmentHash: [32]byte{byte(i), byte(i + 1), byte(i + 2)},
-			Signature:      []byte("sig"),
+			PlayerID:         int64(i + 1),
+			DealerID:         99,
+			SessionTimestamp: 5,
+			ShareHash:        crypto.HashShareForAck(&share),
+			CommitmentHash:   [32]byte{byte(i), byte(i + 1), byte(i + 2)},
+			Signature:        []byte("sig"),
 		}
 	}
 

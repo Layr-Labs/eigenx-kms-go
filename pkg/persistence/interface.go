@@ -14,35 +14,35 @@ import "github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 type INodePersistence interface {
 	// Key Share Management
 
-	// SaveKeyShareVersion persists a key share version indexed by epoch timestamp.
-	// The version is stored using the epoch as the key.
+	// SaveKeyShareVersion persists a key share version indexed by block timestamp.
+	// The version is stored using the block timestamp as the key.
 	// Returns error only on storage failure, not if version already exists (idempotent).
 	SaveKeyShareVersion(version *types.KeyShareVersion) error
 
-	// LoadKeyShareVersion retrieves a key share version by epoch timestamp.
+	// LoadKeyShareVersion retrieves a key share version by block timestamp.
 	// Returns nil if version doesn't exist, error only on storage failure.
-	LoadKeyShareVersion(epoch int64) (*types.KeyShareVersion, error)
+	LoadKeyShareVersion(timestamp int64) (*types.KeyShareVersion, error)
 
-	// ListKeyShareVersions returns all persisted key share versions sorted by epoch (ascending).
+	// ListKeyShareVersions returns all persisted key share versions sorted by block timestamp (ascending).
 	// Returns empty slice if no versions exist, error only on storage failure.
 	ListKeyShareVersions() ([]*types.KeyShareVersion, error)
 
-	// DeleteKeyShareVersion removes a key share version by epoch timestamp.
+	// DeleteKeyShareVersion removes a key share version by block timestamp.
 	// Idempotent - returns nil if version doesn't exist.
 	// Returns error only on storage failure.
-	DeleteKeyShareVersion(epoch int64) error
+	DeleteKeyShareVersion(timestamp int64) error
 
 	// Active Version Tracking
 
-	// SetActiveVersionEpoch stores which key version is currently active.
-	// This is a pointer to the epoch of the active KeyShareVersion.
-	// Setting epoch=0 indicates no active version.
-	SetActiveVersionEpoch(epoch int64) error
+	// SetActiveVersionTimestamp stores which key version is currently active.
+	// This is a pointer to the block timestamp of the active KeyShareVersion.
+	// Setting timestamp=0 indicates no active version.
+	SetActiveVersionTimestamp(timestamp int64) error
 
-	// GetActiveVersionEpoch returns the epoch of the active version.
+	// GetActiveVersionTimestamp returns the block timestamp of the active version.
 	// Returns 0 if no active version is set (first run).
 	// Returns error only on storage failure.
-	GetActiveVersionEpoch() (int64, error)
+	GetActiveVersionTimestamp() (int64, error)
 
 	// Node Operational State
 

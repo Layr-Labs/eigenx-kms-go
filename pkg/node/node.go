@@ -37,12 +37,6 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
 
-const (
-	// ReshareFrequency is the frequency of resharing in seconds (deprecated)
-	// Deprecated: Use block-based intervals via config.GetReshareBlockIntervalForChain
-	ReshareFrequency = 10 * 60 // 10 minutes
-)
-
 // Node represents a KMS node
 type Node struct {
 	// Identity
@@ -286,7 +280,7 @@ func (n *Node) saveSession(session *ProtocolSession) error {
 // Config holds node configuration
 type Config struct {
 	OperatorAddress string         // Ethereum address of the operator (hex string)
-	Port            int            //HTTP server port
+	Port            int            // HTTP server port
 	ChainID         config.ChainId // Ethereum chain ID
 	AVSAddress      string         // AVS contract address (hex string)
 	OperatorSetId   uint32         // Operator set ID
@@ -364,6 +358,7 @@ func (n *Node) startScheduler(ctx context.Context) {
 // checkScheduledOperations checks for block interval boundaries and executes appropriate protocol
 func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 	blockNumber := int64(block.Number.Value())
+	blockTimestamp := int64(block.Timestamp.Value())
 
 	// Step 1: Get block interval for this chain
 	blockInterval := config.GetReshareBlockIntervalForChain(n.ChainID)
@@ -407,6 +402,7 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 	n.logger.Sugar().Infow("Block interval boundary reached",
 		"operator_address", n.OperatorAddress.Hex(),
 		"block_number", blockNumber,
+		"block_timestamp", blockTimestamp,
 		"block_interval", blockInterval)
 
 	// Step 6: Fetch current operators
@@ -419,7 +415,20 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 		return
 	}
 
-	// Step 7: Determine if I'm a new or existing operator
+	// Step 7: Skip if a protocol session is already in progress
+	n.sessionMutex.RLock()
+	activeCount := len(n.activeSessions)
+	n.sessionMutex.RUnlock()
+	if activeCount > 0 {
+		n.logger.Sugar().Infow("Skipping boundary: protocol session already in progress",
+			"operator_address", n.OperatorAddress.Hex(),
+			"block_number", blockNumber,
+			"block_timestamp", blockTimestamp,
+			"active_sessions", activeCount)
+		return
+	}
+
+	// Step 8: Determine if I'm a new or existing operator
 	if !n.hasExistingShares() {
 		// I'm a new operator - need to determine cluster state
 		clusterState := n.detectClusterState(operators)
@@ -428,10 +437,11 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 			// No master key exists - run genesis DKG
 			n.logger.Sugar().Infow("Triggering genesis DKG at block boundary",
 				"operator_address", n.OperatorAddress.Hex(),
-				"block_number", blockNumber)
+				"block_number", blockNumber,
+				"block_timestamp", blockTimestamp)
 
 			go func() {
-				if err := n.RunDKG(blockNumber); err != nil {
+				if err := n.RunDKG(blockTimestamp); err != nil {
 					n.logger.Sugar().Errorw("Genesis DKG failed",
 						"operator_address", n.OperatorAddress.Hex(),
 						"error", err)
@@ -441,10 +451,11 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 			// Existing cluster - join via reshare
 			n.logger.Sugar().Infow("Joining existing cluster via reshare",
 				"operator_address", n.OperatorAddress.Hex(),
-				"block_number", blockNumber)
+				"block_number", blockNumber,
+				"block_timestamp", blockTimestamp)
 
 			go func() {
-				if err := n.RunReshareAsNewOperator(blockNumber); err != nil {
+				if err := n.RunReshareAsNewOperator(blockTimestamp); err != nil {
 					n.logger.Sugar().Errorw("Failed to join cluster via reshare",
 						"operator_address", n.OperatorAddress.Hex(),
 						"error", err)
@@ -456,10 +467,11 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 		n.logger.Sugar().Infow("Triggering automatic reshare",
 			"operator_address", n.OperatorAddress.Hex(),
 			"block_number", blockNumber,
+			"block_timestamp", blockTimestamp,
 			"block_interval", blockInterval)
 
 		go func() {
-			if err := n.RunReshareAsExistingOperator(blockNumber); err != nil {
+			if err := n.RunReshareAsExistingOperator(blockTimestamp); err != nil {
 				n.logger.Sugar().Errorw("Automatic reshare failed",
 					"operator_address", n.OperatorAddress.Hex(),
 					"error", err)
@@ -547,23 +559,31 @@ func (n *Node) RestoreState() error {
 		"count", len(versions))
 
 	for _, version := range versions {
+		// Warn if a persisted version looks like a block number rather than a Unix timestamp.
+		// Unix timestamps are >= 1_000_000_000 (Sep 2001); block numbers are well below that.
+		// This can happen when upgrading from a pre-fix deployment that stored block numbers.
+		if version.Version < 1_000_000_000 {
+			n.logger.Sugar().Warnw("Persisted key version looks like a block number, not a Unix timestamp — key lookup by attestation time may fail",
+				"operator_address", n.OperatorAddress.Hex(),
+				"version", version.Version)
+		}
 		n.keyStore.AddVersion(version)
 	}
 
 	// 3. Restore active version pointer
-	activeEpoch, err := n.persistence.GetActiveVersionEpoch()
+	activeTimestamp, err := n.persistence.GetActiveVersionTimestamp()
 	if err != nil {
-		return fmt.Errorf("failed to load active version epoch: %w", err)
+		return fmt.Errorf("failed to load active version timestamp: %w", err)
 	}
 
-	if activeEpoch > 0 {
+	if activeTimestamp > 0 {
 		// Find and set the active version in keystore
 		for _, version := range versions {
-			if version.Version == activeEpoch {
+			if version.Version == activeTimestamp {
 				n.keyStore.SetActiveVersion(version)
 				n.logger.Sugar().Infow("Restored active key version",
 					"operator_address", n.OperatorAddress.Hex(),
-					"epoch", activeEpoch)
+					"version", activeTimestamp)
 				break
 			}
 		}
@@ -1129,7 +1149,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	}
 
 	// Persist active version pointer
-	if err := n.persistence.SetActiveVersionEpoch(keyVersion.Version); err != nil {
+	if err := n.persistence.SetActiveVersionTimestamp(keyVersion.Version); err != nil {
 		n.logger.Sugar().Errorw("Failed to persist active version pointer - DKG cannot complete",
 			"operator_address", n.OperatorAddress.Hex(),
 			"error", err)
@@ -1441,7 +1461,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	}
 
 	// Update active version pointer
-	if err := n.persistence.SetActiveVersionEpoch(newKeyVersion.Version); err != nil {
+	if err := n.persistence.SetActiveVersionTimestamp(newKeyVersion.Version); err != nil {
 		n.logger.Sugar().Errorw("Failed to persist active version pointer - reshare cannot complete",
 			"operator_address", n.OperatorAddress.Hex(),
 			"error", err)
@@ -1552,7 +1572,7 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	}
 
 	// Set as active version
-	if err := n.persistence.SetActiveVersionEpoch(newKeyVersion.Version); err != nil {
+	if err := n.persistence.SetActiveVersionTimestamp(newKeyVersion.Version); err != nil {
 		n.logger.Sugar().Errorw("Failed to persist active version pointer - cannot join cluster",
 			"operator_address", n.OperatorAddress.Hex(),
 			"error", err)
@@ -1570,27 +1590,37 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	return nil
 }
 
-// SignAppID signs an application ID
-func (n *Node) SignAppID(appID string, attestationTime int64) types.G1Point {
-	keyVersion := n.keyStore.GetKeyVersionAtTime(attestationTime, ReshareFrequency)
-	if keyVersion == nil {
-		keyVersion = n.keyStore.GetActiveVersion()
-	}
-
+// signAppIDWithVersion computes a partial BLS signature for appID using a pre-resolved key version.
+func (n *Node) signAppIDWithVersion(appID string, keyVersion *types.KeyShareVersion) (types.G1Point, error) {
 	if keyVersion == nil || keyVersion.PrivateShare == nil {
-		return types.G1Point{}
+		return types.G1Point{}, fmt.Errorf("no private share available")
 	}
 
 	privateShare := new(fr.Element).Set(keyVersion.PrivateShare)
 	qID, err := eigenxcrypto.HashToG1(appID)
 	if err != nil {
-		return types.G1Point{}
+		return types.G1Point{}, fmt.Errorf("HashToG1 failed: %w", err)
 	}
 	partialSig, err := eigenxcrypto.ScalarMulG1(*qID, privateShare)
 	if err != nil {
-		return types.G1Point{}
+		return types.G1Point{}, fmt.Errorf("ScalarMulG1 failed: %w", err)
 	}
-	return *partialSig
+	return *partialSig, nil
+}
+
+// SignAppID signs an application ID using the key version active at attestationTime.
+// attestationTime == 0 means "use the currently active version".
+func (n *Node) SignAppID(appID string, attestationTime int64) (types.G1Point, error) {
+	var keyVersion *types.KeyShareVersion
+	if attestationTime > 0 {
+		keyVersion = n.keyStore.GetKeyVersionAtTime(attestationTime)
+		if keyVersion == nil {
+			return types.G1Point{}, fmt.Errorf("no key version found for attestation time %d", attestationTime)
+		}
+	} else {
+		keyVersion = n.keyStore.GetActiveVersion()
+	}
+	return n.signAppIDWithVersion(appID, keyVersion)
 }
 
 // Wait functions using channel-based completion signaling
@@ -1812,7 +1842,7 @@ func (n *Node) submitCommitmentWithRetry(
 		n.logger.Sugar().Infow("Submitting commitment to Base contract",
 			"attempt", attempt+1,
 			"max_attempts", maxRetries,
-			"epoch", epoch,
+			"session_timestamp", epoch,
 			"commitment_hash", fmt.Sprintf("0x%x", commitmentHash),
 			"merkle_root", fmt.Sprintf("0x%x", merkleRoot))
 
@@ -1828,7 +1858,7 @@ func (n *Node) submitCommitmentWithRetry(
 		if err == nil {
 			n.logger.Sugar().Infow("Commitment submitted successfully to Base chain",
 				"attempt", attempt+1,
-				"epoch", epoch)
+				"session_timestamp", epoch)
 			return nil
 		}
 
@@ -1901,8 +1931,8 @@ func (n *Node) verifyAcknowledgement(
 	if ack.DealerID != expectedDealerID {
 		return fmt.Errorf("ack dealer mismatch: got %d expected %d", ack.DealerID, expectedDealerID)
 	}
-	if ack.Epoch != sessionTimestamp {
-		return fmt.Errorf("ack epoch mismatch: got %d expected %d", ack.Epoch, sessionTimestamp)
+	if ack.SessionTimestamp != sessionTimestamp {
+		return fmt.Errorf("ack session timestamp mismatch: got %d expected %d", ack.SessionTimestamp, sessionTimestamp)
 	}
 	if len(ack.Signature) == 0 {
 		return fmt.Errorf("ack signature is empty")
@@ -1919,7 +1949,7 @@ func (n *Node) verifyAcknowledgement(
 		return fmt.Errorf("ack commitment hash mismatch")
 	}
 
-	msg := buildAcknowledgementSigningMessage(ack.DealerID, ack.PlayerID, ack.Epoch, ack.ShareHash, ack.CommitmentHash)
+	msg := buildAcknowledgementSigningMessage(ack.DealerID, ack.PlayerID, ack.SessionTimestamp, ack.ShareHash, ack.CommitmentHash)
 	msgHash := crypto.Keccak256Hash(msg)
 
 	switch senderPeer.CurveType {
@@ -2031,7 +2061,7 @@ func (n *Node) VerifyOperatorBroadcast(
 
 	n.logger.Sugar().Debugw("Verified operator broadcast",
 		"from_operator", broadcast.FromOperatorID,
-		"epoch", broadcast.Epoch,
+		"session_timestamp", broadcast.SessionTimestamp,
 		"commitment_hash", fmt.Sprintf("%x", broadcastCommitmentHash[:8]),
 	)
 

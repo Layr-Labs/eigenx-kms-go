@@ -43,7 +43,7 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 
 		broadcast := &types.CommitmentBroadcast{
 			FromOperatorID:   2,
-			Epoch:            5,
+			SessionTimestamp: 5,
 			Commitments:      []types.G2Point{},
 			Acknowledgements: []*types.Acknowledgement{},
 		}
@@ -73,9 +73,9 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 
 		// Broadcast with no ack for my node (use different player ID)
 		broadcast := &types.CommitmentBroadcast{
-			FromOperatorID: 2,
-			Epoch:          5,
-			Commitments:    []types.G2Point{},
+			FromOperatorID:   2,
+			SessionTimestamp: 5,
+			Commitments:      []types.G2Point{},
 			Acknowledgements: []*types.Acknowledgement{
 				{PlayerID: 999}, // Different player ID than my node
 			},
@@ -107,9 +107,9 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 
 		// Broadcast with my ack but no share received
 		broadcast := &types.CommitmentBroadcast{
-			FromOperatorID: 2,
-			Epoch:          5,
-			Commitments:    []types.G2Point{},
+			FromOperatorID:   2,
+			SessionTimestamp: 5,
+			Commitments:      []types.G2Point{},
 			Acknowledgements: []*types.Acknowledgement{
 				{PlayerID: myNodeID, ShareHash: [32]byte{1, 2, 3}}, // Use correct node ID
 			},
@@ -150,9 +150,9 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 		require.NotEqual(t, expectedHash, wrongHash, "Test setup error: hashes should be different")
 
 		broadcast := &types.CommitmentBroadcast{
-			FromOperatorID: 2,
-			Epoch:          5,
-			Commitments:    []types.G2Point{},
+			FromOperatorID:   2,
+			SessionTimestamp: 5,
+			Commitments:      []types.G2Point{},
 			Acknowledgements: []*types.Acknowledgement{
 				{
 					PlayerID:  myNodeID,  // Use correct node ID
@@ -193,16 +193,16 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 		}
 
 		broadcast := &types.CommitmentBroadcast{
-			FromOperatorID: 2,
-			Epoch:          5,
-			Commitments:    []types.G2Point{},
+			FromOperatorID:   2,
+			SessionTimestamp: 5,
+			Commitments:      []types.G2Point{},
 			Acknowledgements: []*types.Acknowledgement{
 				{
-					PlayerID:       myNodeID,         // Use correct node ID
-					ShareHash:      correctShareHash, // Correct hash
-					CommitmentHash: [32]byte{},
-					Epoch:          5,
-					DealerID:       2,
+					PlayerID:         myNodeID,         // Use correct node ID
+					ShareHash:        correctShareHash, // Correct hash
+					CommitmentHash:   [32]byte{},
+					SessionTimestamp: 5,
+					DealerID:         2,
 				},
 			},
 			MerkleProof: [][32]byte{{1, 2, 3}}, // Non-empty proof
@@ -290,11 +290,11 @@ func TestWaitForVerifications(t *testing.T) {
 func TestHashAcknowledgementForMerkle_Integration(t *testing.T) {
 	share := fr.NewElement(99999)
 	ack := &types.Acknowledgement{
-		PlayerID:       1,
-		DealerID:       2,
-		Epoch:          5,
-		ShareHash:      crypto.HashShareForAck(&share),
-		CommitmentHash: [32]byte{10, 11, 12},
+		PlayerID:         1,
+		DealerID:         2,
+		SessionTimestamp: 5,
+		ShareHash:        crypto.HashShareForAck(&share),
+		CommitmentHash:   [32]byte{10, 11, 12},
 	}
 
 	hash := crypto.HashAcknowledgementForMerkle(ack)
@@ -312,11 +312,11 @@ func TestMerkleProofVerification_Integration(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		share := fr.NewElement(uint64(100 + i))
 		acks[i] = &types.Acknowledgement{
-			PlayerID:       int64(i + 1),
-			DealerID:       99,
-			Epoch:          5,
-			ShareHash:      crypto.HashShareForAck(&share),
-			CommitmentHash: [32]byte{byte(i)},
+			PlayerID:         int64(i + 1),
+			DealerID:         99,
+			SessionTimestamp: 5,
+			ShareHash:        crypto.HashShareForAck(&share),
+			CommitmentHash:   [32]byte{byte(i)},
 		}
 	}
 

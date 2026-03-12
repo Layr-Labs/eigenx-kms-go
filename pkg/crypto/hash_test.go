@@ -38,11 +38,11 @@ func TestHashShareForAck_DifferentShares(t *testing.T) {
 // TestHashAcknowledgementForMerkle tests acknowledgement hashing for merkle trees
 func TestHashAcknowledgementForMerkle(t *testing.T) {
 	ack := &types.Acknowledgement{
-		PlayerID:       1,
-		DealerID:       2,
-		Epoch:          5,
-		ShareHash:      [32]byte{1, 2, 3, 4, 5},
-		CommitmentHash: [32]byte{6, 7, 8, 9, 10},
+		PlayerID:         1,
+		DealerID:         2,
+		SessionTimestamp: 5,
+		ShareHash:        [32]byte{1, 2, 3, 4, 5},
+		CommitmentHash:   [32]byte{6, 7, 8, 9, 10},
 	}
 
 	hash1 := HashAcknowledgementForMerkle(ack)
@@ -58,11 +58,11 @@ func TestHashAcknowledgementForMerkle(t *testing.T) {
 // TestHashAcknowledgementForMerkle_DifferentInputs tests that different acks produce different hashes
 func TestHashAcknowledgementForMerkle_DifferentInputs(t *testing.T) {
 	baseAck := &types.Acknowledgement{
-		PlayerID:       1,
-		DealerID:       2,
-		Epoch:          5,
-		ShareHash:      [32]byte{1, 2, 3},
-		CommitmentHash: [32]byte{4, 5, 6},
+		PlayerID:         1,
+		DealerID:         2,
+		SessionTimestamp: 5,
+		ShareHash:        [32]byte{1, 2, 3},
+		CommitmentHash:   [32]byte{4, 5, 6},
 	}
 
 	// Test different player IDs
@@ -93,7 +93,7 @@ func TestHashAcknowledgementForMerkle_DifferentInputs(t *testing.T) {
 	t.Run("Different Epoch", func(t *testing.T) {
 		ack1 := *baseAck
 		ack2 := *baseAck
-		ack2.Epoch = 10
+		ack2.SessionTimestamp = 10
 
 		hash1 := HashAcknowledgementForMerkle(&ack1)
 		hash2 := HashAcknowledgementForMerkle(&ack2)

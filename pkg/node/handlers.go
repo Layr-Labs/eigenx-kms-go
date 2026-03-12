@@ -152,12 +152,17 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Step 5: Get appropriate key share based on attestation time
 	var keyVersion *types.KeyShareVersion
-	if req.AttestTime > 0 {
+	if req.AttestationTime > 0 {
 		// Use key version from the specified time
-		keyVersion = s.node.keyStore.GetKeyVersionAtTime(req.AttestTime, ReshareFrequency)
-	}
-	if keyVersion == nil {
-		// Fallback to active version
+		keyVersion = s.node.keyStore.GetKeyVersionAtTime(req.AttestationTime)
+		if keyVersion == nil {
+			s.node.logger.Sugar().Warnw("No key version found for attestation time",
+				"node_id", s.node.OperatorAddress.Hex(),
+				"attestation_time", req.AttestationTime)
+			http.Error(w, "No key version found for the specified attestation time", http.StatusNotFound)
+			return
+		}
+	} else {
 		keyVersion = s.node.keyStore.GetActiveVersion()
 	}
 
@@ -167,13 +172,18 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 5: Generate partial signature for this app
+	// Step 6: Generate partial signature for this app using the already-resolved key version
 	// partial_sig = H(app_id)^{key_share}
-	partialSig := s.node.SignAppID(req.AppID, req.AttestTime)
+	partialSig, err := s.node.signAppIDWithVersion(req.AppID, keyVersion)
+	if err != nil {
+		s.node.logger.Sugar().Errorw("Failed to compute partial signature", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
 
 	s.node.logger.Sugar().Infow("Generated partial signature", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID)
 
-	// Step 6: Serialize partial signature for encryption
+	// Step 7: Serialize partial signature for encryption
 	partialSigBytes, err := json.Marshal(partialSig)
 	if err != nil {
 		s.node.logger.Sugar().Errorw("Failed to serialize partial signature", "node_id", s.node.OperatorAddress.Hex(), "error", err)
@@ -181,7 +191,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 7: Encrypt partial signature with ephemeral RSA public key
+	// Step 8: Encrypt partial signature with ephemeral RSA public key
 	encryptedPartialSig, err := s.node.rsaEncryption.Encrypt(partialSigBytes, req.RSAPubKeyTmp)
 	if err != nil {
 		s.node.logger.Sugar().Errorw("Failed to encrypt partial signature", "node_id", s.node.OperatorAddress.Hex(), "error", err)
@@ -189,7 +199,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 8: Create response
+	// Step 9: Create response
 	response := types.SecretsResponseV1{
 		EncryptedEnv:        release.EncryptedEnv,
 		PublicEnv:           release.PublicEnv,
@@ -553,19 +563,45 @@ func (s *Server) handleReshareComplete(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// handleAppSign handles partial signature requests from KMS clients.
+// NOTE: This endpoint is intentionally client-facing (not node-to-node) and does not
+// use validateAuthenticatedMessage. It is called by the kmsClient CLI to collect partial
+// BLS signatures for IBE decryption. Callers do not hold BN254 operator keys.
 func (s *Server) handleAppSign(w http.ResponseWriter, r *http.Request) {
 	// SECURITY/TRUST NOTE:
 	// Deployment is expected to
 	// enforce caller identity/authorization at the edge (e.g. WAF/ingress with HTTPS +
 	// mTLS and app-level policy). If that external control is not present, this endpoint
 	// should be treated as unsafe for public exposure.
-	var req types.AppSignRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	partialSig := s.node.SignAppID(req.AppID, req.AttestationTime)
+	var req types.AppSignRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "Failed to parse request", http.StatusBadRequest)
+		return
+	}
+
+	if req.AppID == "" {
+		http.Error(w, "app_id is required", http.StatusBadRequest)
+		return
+	}
+
+	partialSig, err := s.node.SignAppID(req.AppID, req.AttestationTime)
+	if err != nil {
+		s.node.logger.Sugar().Errorw("Failed to compute partial signature for app",
+			"node_id", s.node.OperatorAddress.Hex(),
+			"app_id", req.AppID,
+			"error", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
+	s.node.logger.Sugar().Infow("Served partial signature",
+		"node_id", s.node.OperatorAddress.Hex(),
+		"app_id", req.AppID)
 
 	resp := types.AppSignResponse{
 		OperatorAddress:  s.node.OperatorAddress.Hex(),
@@ -573,7 +609,9 @@ func (s *Server) handleAppSign(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		s.node.logger.Sugar().Errorw("Failed to encode app sign response", "error", err)
+	}
 }
 
 // handleGetCommitments handles requests for public key commitments
@@ -622,7 +660,7 @@ func (s *Server) handleCommitmentBroadcast(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Get session (should already exist from DKG/Reshare flow)
-	session := s.node.getSession(msg.SessionID)
+	session := s.node.getSession(msg.SessionTimestamp)
 	if session == nil {
 		http.Error(w, "Session not found", http.StatusNotFound)
 		return
@@ -630,7 +668,7 @@ func (s *Server) handleCommitmentBroadcast(w http.ResponseWriter, r *http.Reques
 
 	s.node.logger.Sugar().Debugw("Received commitment broadcast",
 		"from", msg.FromOperatorID,
-		"epoch", msg.Broadcast.Epoch,
+		"session_timestamp", msg.Broadcast.SessionTimestamp,
 		"num_acks", len(msg.Broadcast.Acknowledgements),
 		"num_commitments", len(msg.Broadcast.Commitments),
 		"proof_length", len(msg.Broadcast.MerkleProof),
@@ -638,10 +676,10 @@ func (s *Server) handleCommitmentBroadcast(w http.ResponseWriter, r *http.Reques
 
 	// Phase 6: Verify the broadcast against on-chain commitment
 	contractRegistryAddr := s.node.commitmentRegistryAddress
-	if err := s.node.VerifyOperatorBroadcast(msg.SessionID, msg.Broadcast, contractRegistryAddr); err != nil {
+	if err := s.node.VerifyOperatorBroadcast(msg.SessionTimestamp, msg.Broadcast, contractRegistryAddr); err != nil {
 		s.node.logger.Sugar().Errorw("Failed to verify operator broadcast",
 			"from_operator", msg.FromOperatorID,
-			"session", msg.SessionID,
+			"session", msg.SessionTimestamp,
 			"error", err,
 		)
 		http.Error(w, fmt.Sprintf("verification failed: %v", err), http.StatusBadRequest)

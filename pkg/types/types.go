@@ -12,7 +12,7 @@ const KMSJWTAudience = "EigenX KMS"
 
 // KeyShareVersion represents a versioned set of key shares
 type KeyShareVersion struct {
-	Version        int64       // Unix timestamp epoch of when this version was created
+	Version        int64       // Unix timestamp (seconds) of the block that triggered this key version
 	PrivateShare   *fr.Element // This node's private key share
 	Commitments    []G2Point   // Public commitments (in G2 for master public key)
 	IsActive       bool        // Whether this version is the active one
@@ -73,20 +73,20 @@ func (p *G2Point) IsZero() (bool, error) {
 
 // Acknowledgement is signed by players to prevent dealer equivocation
 type Acknowledgement struct {
-	DealerID       int64
-	PlayerID       int64
-	Epoch          int64    // Which reshare round (Phase 3)
-	ShareHash      [32]byte // keccak256(share) - commits to received share (Phase 3)
-	CommitmentHash [32]byte
-	Signature      []byte // Sign(p2p_privkey, dealer_id || player_id || epoch || shareHash || commitment_hash)
+	DealerID         int64
+	PlayerID         int64
+	SessionTimestamp int64    // Block timestamp of the protocol session (Phase 3)
+	ShareHash        [32]byte // keccak256(share) - commits to received share (Phase 3)
+	CommitmentHash   [32]byte
+	Signature        []byte // Sign(p2p_privkey, dealer_id || player_id || session_timestamp || shareHash || commitment_hash)
 }
 
 // CompletionSignature signals reshare completion
 type CompletionSignature struct {
-	NodeID         int
-	Epoch          int64
-	CommitmentHash [32]byte
-	Signature      []byte // Sign(p2p_privkey, epoch || commitment_hash)
+	NodeID           int
+	SessionTimestamp int64
+	CommitmentHash   [32]byte
+	Signature        []byte // Sign(p2p_privkey, session_timestamp || commitment_hash)
 }
 
 // AppSignRequest represents a request to sign for an application
@@ -107,7 +107,7 @@ type SecretsRequestV1 struct {
 	AttestationMethod string `json:"attestation_method"` // Attestation method: "gcp", "intel", "ecdsa" (default: "gcp")
 	Attestation       []byte `json:"attestation"`        // Attestation data (JWT for GCP/Intel, signature for ECDSA)
 	RSAPubKeyTmp      []byte `json:"rsa_pubkey_tmp"`     // Ephemeral RSA public key
-	AttestTime        int64  `json:"attest_time"`        // For key versioning
+	AttestationTime   int64  `json:"attestation_time"`   // For key versioning
 	// ECDSA-specific fields (only used when attestation_method is "ecdsa")
 	Challenge []byte `json:"challenge,omitempty"`  // Challenge for ECDSA attestation
 	PublicKey []byte `json:"public_key,omitempty"` // Public key for ECDSA attestation
@@ -139,7 +139,7 @@ type Release struct {
 // CommitmentBroadcast represents a broadcast of commitments with acknowledgements and merkle proofs (Phase 3)
 type CommitmentBroadcast struct {
 	FromOperatorID   int64              // Operator sending the broadcast
-	Epoch            int64              // Which reshare round
+	SessionTimestamp int64              // Block timestamp of the protocol session
 	Commitments      []G2Point          // Dealer's polynomial commitments
 	Acknowledgements []*Acknowledgement // All n-1 acks collected as dealer
 	MerkleProof      [][32]byte         // Merkle proof for specific recipient
@@ -147,8 +147,8 @@ type CommitmentBroadcast struct {
 
 // CommitmentBroadcastMessage wraps CommitmentBroadcast for authenticated transport (Phase 3)
 type CommitmentBroadcastMessage struct {
-	FromOperatorID int64
-	ToOperatorID   int64
-	SessionID      int64 // Same as Epoch for correlation
-	Broadcast      *CommitmentBroadcast
+	FromOperatorID   int64
+	ToOperatorID     int64
+	SessionTimestamp int64 // Block timestamp of the protocol session (same as Broadcast.SessionTimestamp)
+	Broadcast        *CommitmentBroadcast
 }

@@ -113,18 +113,20 @@ func (ks *KeyStore) ClearPendingVersion() {
 	ks.pendingVersion = nil
 }
 
-// GetKeyVersionAtTime returns the key version for a specific time
-func (ks *KeyStore) GetKeyVersionAtTime(timestamp int64, reshareFrequency int64) *types.KeyShareVersion {
+// GetKeyVersionAtTime returns the key version that was active at the given timestamp.
+// It returns the latest version whose Version (block timestamp) is <= the given timestamp.
+func (ks *KeyStore) GetKeyVersionAtTime(timestamp int64) *types.KeyShareVersion {
 	ks.mu.RLock()
 	defer ks.mu.RUnlock()
 
-	epoch := timestamp / reshareFrequency
-
+	var best *types.KeyShareVersion
 	for _, version := range ks.keyVersions {
-		if version.Version == epoch {
-			return version
+		if version.Version <= timestamp {
+			if best == nil || version.Version > best.Version {
+				best = version
+			}
 		}
 	}
 
-	return ks.activeVersion
+	return best
 }

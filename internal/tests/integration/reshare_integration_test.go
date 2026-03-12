@@ -64,7 +64,10 @@ func testFullReshareProtocol(t *testing.T) {
 
 	// Verify all nodes can generate partial signatures before reshare
 	for i, node := range cluster.Nodes {
-		partialSig := node.SignAppID(appID, time.Now().Unix())
+		partialSig, err := node.SignAppID(appID, time.Now().Unix())
+		if err != nil {
+			t.Fatalf("Node %d SignAppID failed: %v", i+1, err)
+		}
 		isZero, err := partialSig.IsZero()
 		if err != nil {
 			t.Fatalf("Failed to check if partial signature is zero: %v", err)

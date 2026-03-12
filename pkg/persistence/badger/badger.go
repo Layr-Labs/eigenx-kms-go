@@ -158,8 +158,8 @@ func (b *BadgerPersistence) SaveKeyShareVersion(version *types.KeyShareVersion) 
 	})
 }
 
-// LoadKeyShareVersion retrieves a key share version
-func (b *BadgerPersistence) LoadKeyShareVersion(epoch int64) (*types.KeyShareVersion, error) {
+// LoadKeyShareVersion retrieves a key share version by block timestamp
+func (b *BadgerPersistence) LoadKeyShareVersion(timestamp int64) (*types.KeyShareVersion, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -167,7 +167,7 @@ func (b *BadgerPersistence) LoadKeyShareVersion(epoch int64) (*types.KeyShareVer
 		return nil, fmt.Errorf("persistence layer is closed")
 	}
 
-	key := fmt.Sprintf("%s%d", keyPrefixKeyShare, epoch)
+	key := fmt.Sprintf("%s%d", keyPrefixKeyShare, timestamp)
 
 	var data []byte
 	err := b.db.View(func(txn *badgerdb.Txn) error {
@@ -202,7 +202,7 @@ func (b *BadgerPersistence) LoadKeyShareVersion(epoch int64) (*types.KeyShareVer
 	return version, nil
 }
 
-// ListKeyShareVersions returns all key share versions sorted by epoch
+// ListKeyShareVersions returns all key share versions sorted by block timestamp
 func (b *BadgerPersistence) ListKeyShareVersions() ([]*types.KeyShareVersion, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
@@ -257,8 +257,8 @@ func (b *BadgerPersistence) ListKeyShareVersions() ([]*types.KeyShareVersion, er
 	return versions, nil
 }
 
-// DeleteKeyShareVersion removes a key share version
-func (b *BadgerPersistence) DeleteKeyShareVersion(epoch int64) error {
+// DeleteKeyShareVersion removes a key share version by block timestamp
+func (b *BadgerPersistence) DeleteKeyShareVersion(timestamp int64) error {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -266,15 +266,15 @@ func (b *BadgerPersistence) DeleteKeyShareVersion(epoch int64) error {
 		return fmt.Errorf("persistence layer is closed")
 	}
 
-	key := fmt.Sprintf("%s%d", keyPrefixKeyShare, epoch)
+	key := fmt.Sprintf("%s%d", keyPrefixKeyShare, timestamp)
 
 	return b.db.Update(func(txn *badgerdb.Txn) error {
 		return txn.Delete([]byte(key))
 	})
 }
 
-// SetActiveVersionEpoch stores the active version epoch
-func (b *BadgerPersistence) SetActiveVersionEpoch(epoch int64) error {
+// SetActiveVersionTimestamp stores the active version block timestamp
+func (b *BadgerPersistence) SetActiveVersionTimestamp(timestamp int64) error {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -284,15 +284,15 @@ func (b *BadgerPersistence) SetActiveVersionEpoch(epoch int64) error {
 
 	// Convert int64 to bytes
 	buf := make([]byte, 8)
-	binary.BigEndian.PutUint64(buf, uint64(epoch))
+	binary.BigEndian.PutUint64(buf, uint64(timestamp))
 
 	return b.db.Update(func(txn *badgerdb.Txn) error {
 		return txn.Set([]byte(keyPrefixActiveVersion), buf)
 	})
 }
 
-// GetActiveVersionEpoch retrieves the active version epoch
-func (b *BadgerPersistence) GetActiveVersionEpoch() (int64, error) {
+// GetActiveVersionTimestamp retrieves the active version block timestamp
+func (b *BadgerPersistence) GetActiveVersionTimestamp() (int64, error) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 
@@ -300,7 +300,7 @@ func (b *BadgerPersistence) GetActiveVersionEpoch() (int64, error) {
 		return 0, fmt.Errorf("persistence layer is closed")
 	}
 
-	var epoch int64
+	var timestamp int64
 
 	err := b.db.View(func(txn *badgerdb.Txn) error {
 		item, err := txn.Get([]byte(keyPrefixActiveVersion))
@@ -315,16 +315,16 @@ func (b *BadgerPersistence) GetActiveVersionEpoch() (int64, error) {
 			if len(val) != 8 {
 				return fmt.Errorf("invalid active version data length: %d", len(val))
 			}
-			epoch = int64(binary.BigEndian.Uint64(val))
+			timestamp = int64(binary.BigEndian.Uint64(val))
 			return nil
 		})
 	})
 
 	if err != nil {
-		return 0, fmt.Errorf("failed to get active version epoch: %w", err)
+		return 0, fmt.Errorf("failed to get active version timestamp: %w", err)
 	}
 
-	return epoch, nil
+	return timestamp, nil
 }
 
 // SaveNodeState persists node operational state

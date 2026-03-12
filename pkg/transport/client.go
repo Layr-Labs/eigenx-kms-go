@@ -390,7 +390,7 @@ func (c *Client) BroadcastCommitmentsWithProofs(
 		// Create broadcast message with proof
 		broadcast := &types.CommitmentBroadcast{
 			FromOperatorID:   c.nodeID,
-			Epoch:            epoch,
+			SessionTimestamp: epoch,
 			Commitments:      commitments,
 			Acknowledgements: acks,
 			MerkleProof:      proof.Proof,
@@ -416,10 +416,10 @@ func (c *Client) sendCommitmentBroadcast(
 
 	// Create message wrapper
 	msg := types.CommitmentBroadcastMessage{
-		FromOperatorID: c.nodeID,
-		ToOperatorID:   toNodeID,
-		SessionID:      sessionTimestamp,
-		Broadcast:      broadcast,
+		FromOperatorID:   c.nodeID,
+		ToOperatorID:     toNodeID,
+		SessionTimestamp: sessionTimestamp,
+		Broadcast:        broadcast,
 	}
 
 	// Serialize message
