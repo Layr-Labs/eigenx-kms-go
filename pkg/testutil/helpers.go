@@ -1,6 +1,7 @@
 package testutil
 
 import (
+	"fmt"
 	"math/big"
 	"testing"
 
@@ -40,7 +41,7 @@ func CreateTestOperators(t *testing.T, numOperators int) []*peering.OperatorSetP
 	for i := 0; i < numOperators; i++ {
 		operators[i] = &peering.OperatorSetPeer{
 			OperatorAddress: common.HexToAddress(addresses[i]),
-			SocketAddress:   "http://localhost:" + string(rune(9000+i)),
+			SocketAddress:   fmt.Sprintf("http://localhost:%d", 9000+i),
 		}
 	}
 

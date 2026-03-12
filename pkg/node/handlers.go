@@ -361,7 +361,7 @@ func (s *Server) handleDKGAck(w http.ResponseWriter, r *http.Request) {
 	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
 	thisNodeID := util.AddressToNodeID(s.node.OperatorAddress)
 
-	if err := s.node.verifyAcknowledgement(session, senderPeer, senderNodeID, thisNodeID, ackMsg.SessionTimestamp, ackMsg.Ack); err != nil {
+	if err := s.node.verifyAcknowledgement(session, senderPeer, thisNodeID, ackMsg.SessionTimestamp, ackMsg.Ack); err != nil {
 		s.node.logger.Sugar().Warnw("Invalid DKG acknowledgement",
 			"from", senderPeer.OperatorAddress.Hex(),
 			"error", err)
@@ -527,7 +527,7 @@ func (s *Server) handleReshareAck(w http.ResponseWriter, r *http.Request) {
 	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
 	thisNodeID := util.AddressToNodeID(s.node.OperatorAddress)
 
-	if err := s.node.verifyAcknowledgement(session, senderPeer, senderNodeID, thisNodeID, ackMsg.SessionTimestamp, ackMsg.Ack); err != nil {
+	if err := s.node.verifyAcknowledgement(session, senderPeer, thisNodeID, ackMsg.SessionTimestamp, ackMsg.Ack); err != nil {
 		s.node.logger.Sugar().Warnw("Invalid reshare acknowledgement",
 			"from", senderPeer.OperatorAddress.Hex(),
 			"error", err)

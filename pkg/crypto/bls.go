@@ -6,6 +6,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -616,16 +617,15 @@ func deriveKeyMaterial(gIDBytes []byte, version byte, appID string) ([]byte, err
 // keccak256(abi.encodePacked(playerAddress, dealerAddress, epoch, shareHash, commitmentHash))
 func HashAcknowledgementForMerkle(ack *types.Acknowledgement) [32]byte {
 	// Pack all fields matching Solidity's abi.encodePacked layout:
-	// player (20 bytes) || dealer (20 bytes) || sessionTimestamp (32 bytes, uint256) || shareHash (32 bytes) || commitmentHash (32 bytes)
-	data := make([]byte, 0, 20+20+32+32+32)
+	// player (20 bytes) || dealer (20 bytes) || sessionTimestamp (8 bytes, uint64) || shareHash (32 bytes) || commitmentHash (32 bytes)
+	data := make([]byte, 0, 20+20+8+32+32)
 
 	data = append(data, ack.PlayerAddress.Bytes()...)
 	data = append(data, ack.DealerAddress.Bytes()...)
 
-	// Encode session timestamp (32 bytes, big endian)
-	epochBytes := make([]byte, 32)
-	epochBig := big.NewInt(ack.SessionTimestamp)
-	epochBig.FillBytes(epochBytes)
+	// Encode session timestamp as uint64 (8 bytes, big endian) to match Solidity's abi.encodePacked(uint64)
+	epochBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(epochBytes, uint64(ack.SessionTimestamp))
 	data = append(data, epochBytes...)
 
 	data = append(data, ack.ShareHash[:]...)

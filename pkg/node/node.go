@@ -1918,7 +1918,7 @@ func (n *Node) signAcknowledgement(dealerAddress, playerAddress common.Address, 
 func (n *Node) verifyAcknowledgement(
 	session *ProtocolSession,
 	senderPeer *peering.OperatorSetPeer,
-	senderNodeID, expectedDealerID int64,
+	expectedDealerID int64,
 	sessionTimestamp int64,
 	ack *types.Acknowledgement,
 ) error {
