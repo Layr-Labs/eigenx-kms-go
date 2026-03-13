@@ -95,7 +95,7 @@ type Server struct {
 	httpServer *http.Server
 
 	// jtiMu guards jtiCache to prevent concurrent replay attacks.
-	jtiMu   sync.Mutex
+	jtiMu    sync.Mutex
 	jtiCache map[string]int64 // jti -> expiry unix timestamp
 }
 
