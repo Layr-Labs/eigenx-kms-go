@@ -15,6 +15,13 @@ var (
 	G2Generator *G2Point
 )
 
+const (
+	// hashToG1SignatureDST is the standard BLS signature domain.
+	hashToG1SignatureDST = "BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_"
+	// hashToG1IBEDST is the IBE identity hashing domain for EigenX.
+	hashToG1IBEDST = "EIGENX_KMS_IBE_BLS12381G1_XMD:SHA-256_SSWU_RO_"
+)
+
 func init() {
 	// Initialize generators
 	_, _, g1Gen, g2Gen := bls12381.Generators()
@@ -104,7 +111,21 @@ func AddG2(a, b *G2Point) (*G2Point, error) {
 
 // HashToG1 hashes a message to a G1 point using proper hash-to-curve
 func HashToG1(msg []byte) (*G1Point, error) {
-	g1Point, err := bls12381.HashToG1(msg, []byte("BLS_SIG_BLS12381G1_XMD:SHA-256_SSWU_RO_NUL_"))
+	return HashToG1ForSignature(msg)
+}
+
+// HashToG1ForSignature hashes a message to G1 for BLS signatures.
+func HashToG1ForSignature(msg []byte) (*G1Point, error) {
+	g1Point, err := bls12381.HashToG1(msg, []byte(hashToG1SignatureDST))
+	if err != nil {
+		return nil, fmt.Errorf("failed to hash to G1: %w", err)
+	}
+	return NewG1Point(&g1Point), nil
+}
+
+// HashToG1ForIBE hashes an identity to G1 for IBE key derivation.
+func HashToG1ForIBE(identity []byte) (*G1Point, error) {
+	g1Point, err := bls12381.HashToG1(identity, []byte(hashToG1IBEDST))
 	if err != nil {
 		return nil, fmt.Errorf("failed to hash to G1: %w", err)
 	}
@@ -165,7 +186,7 @@ func (sk *PrivateKey) GetPublicKeyG2() *PublicKeyG2 {
 
 // SignG1 signs a message by hashing to G1 and multiplying by private key
 func (sk *PrivateKey) SignG1(msg []byte) (*SignatureG1, error) {
-	msgPoint, err := HashToG1(msg)
+	msgPoint, err := HashToG1ForSignature(msg)
 	if err != nil {
 		return nil, fmt.Errorf("failed to hash to G1: %w", err)
 	}
@@ -196,7 +217,7 @@ func VerifyG1(pubkey *PublicKeyG2, msg []byte, sig *SignatureG1) (bool, error) {
 		return false, fmt.Errorf("pubkey or sig is nil")
 	}
 
-	msgPoint, err := HashToG1(msg)
+	msgPoint, err := HashToG1ForSignature(msg)
 	if err != nil {
 		return false, fmt.Errorf("failed to hash to G1: %w", err)
 	}

@@ -10,6 +10,7 @@ import (
 func Test_BLSOperations(t *testing.T) {
 	t.Run("PointOperations", func(t *testing.T) { testPointOperations(t) })
 	t.Run("HashToPoint", func(t *testing.T) { testHashToPoint(t) })
+	t.Run("HashDomainSeparation", func(t *testing.T) { testHashDomainSeparation(t) })
 	t.Run("SignatureScheme", func(t *testing.T) { testSignatureScheme(t) })
 	t.Run("PolynomialSecretSharing", func(t *testing.T) { testPolynomialSecretSharing(t) })
 	t.Run("ShareVerification", func(t *testing.T) { testShareVerification(t) })
@@ -91,6 +92,33 @@ func testHashToPoint(t *testing.T) {
 	}
 	if g1Point.Equal(g1Point3) {
 		t.Error("Different messages should hash to different points")
+	}
+}
+
+func testHashDomainSeparation(t *testing.T) {
+	msg := []byte("same-input-across-protocols")
+
+	sigPoint, err := HashToG1ForSignature(msg)
+	if err != nil {
+		t.Fatalf("Failed to hash signature domain to G1: %v", err)
+	}
+
+	ibePoint, err := HashToG1ForIBE(msg)
+	if err != nil {
+		t.Fatalf("Failed to hash IBE domain to G1: %v", err)
+	}
+
+	if sigPoint.Equal(ibePoint) {
+		t.Fatal("Signature and IBE hash domains must produce different G1 points")
+	}
+
+	// Compatibility check: generic HashToG1 follows signature domain.
+	defaultPoint, err := HashToG1(msg)
+	if err != nil {
+		t.Fatalf("Failed to hash default domain to G1: %v", err)
+	}
+	if !defaultPoint.Equal(sigPoint) {
+		t.Fatal("Default HashToG1 must match signature domain hash")
 	}
 }
 
