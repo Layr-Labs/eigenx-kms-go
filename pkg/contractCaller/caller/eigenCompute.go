@@ -191,7 +191,7 @@ func (cc *ContractCaller) resolveLatestRelease(ctx context.Context, appID string
 		return [32]byte{}, Env{}, nil, types.ContainerPolicy{}, 0, fmt.Errorf("failed to filter app upgraded: %w", err)
 	}
 	cc.logger.Sugar().Debug("App upgraded events filtered successfully")
-	defer appUpgrades.Close()
+	defer func() { _ = appUpgrades.Close() }()
 
 	var lastAppUpgrade *AppUpgradedEvent
 	for appUpgrades.Next() {
