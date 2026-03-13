@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/big"
 
+	iappctl "github.com/Layr-Labs/eigenx-kms-go/pkg/middleware-bindings/IAppController"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -41,25 +42,37 @@ type AppUpgradedEvent struct {
 	Raw          ethTypes.Log
 }
 
-// AppRelease represents the release data structure.
-// TODO: ContainerPolicy is a forward-looking field not yet in the on-chain ABI.
-// Once the Solidity contract is updated and bindings regenerated, this struct
-// should be replaced by the generated type to keep it in sync with the contract.
-type AppRelease struct {
-	RmsRelease      RmsRelease
-	PublicEnv       []byte
-	EncryptedEnv    []byte
-	ContainerPolicy types.ContainerPolicy
-}
+// AppRelease is an alias for the generated ABI binding type.
+type AppRelease = iappctl.IAppControllerAppRelease
 
-// RmsRelease represents the RMS release structure
-type RmsRelease struct {
-	Artifacts []Artifact
-}
+// RmsRelease is an alias for the generated ABI binding type.
+type RmsRelease = iappctl.IAppControllerRmsRelease
 
-// Artifact represents a container artifact
-type Artifact struct {
-	Digest [32]byte
+// Artifact is an alias for the generated ABI binding type.
+type Artifact = iappctl.IAppControllerArtifact
+
+// contractPolicyToTypes converts the ABI-encoded ContainerPolicy (parallel string arrays
+// for env maps) to the domain types.ContainerPolicy (map[string]string).
+func contractPolicyToTypes(p iappctl.IAppControllerContainerPolicy) types.ContainerPolicy {
+	env := make(map[string]string, len(p.EnvKeys))
+	for i, k := range p.EnvKeys {
+		if i < len(p.EnvValues) {
+			env[k] = p.EnvValues[i]
+		}
+	}
+	envOverride := make(map[string]string, len(p.EnvOverrideKeys))
+	for i, k := range p.EnvOverrideKeys {
+		if i < len(p.EnvOverrideValues) {
+			envOverride[k] = p.EnvOverrideValues[i]
+		}
+	}
+	return types.ContainerPolicy{
+		Args:          p.Args,
+		CmdOverride:   p.CmdOverride,
+		Env:           env,
+		EnvOverride:   envOverride,
+		RestartPolicy: p.RestartPolicy,
+	}
 }
 
 // SetAppController configures the AppController contract for EigenCompute app operations
@@ -205,7 +218,7 @@ func (cc *ContractCaller) resolveLatestRelease(ctx context.Context, appID string
 	}
 	cc.logger.Sugar().Debug("Latest release data prepared", "app_id", appID, "public_env_vars_count", len(publicEnv))
 
-	return release.RmsRelease.Artifacts[0].Digest, publicEnv, release.EncryptedEnv, release.ContainerPolicy, lastAppUpgrade.Raw.BlockNumber, nil
+	return release.RmsRelease.Artifacts[0].Digest, publicEnv, release.EncryptedEnv, contractPolicyToTypes(release.ContainerPolicy), lastAppUpgrade.Raw.BlockNumber, nil
 }
 
 // GetLatestRelease retrieves the latest release information for an app.
