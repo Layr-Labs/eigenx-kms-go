@@ -510,7 +510,7 @@ func testSecretsEndpointEnvOverrideSuccess(t *testing.T) {
 		AttestationMethod: "gcp",
 		Attestation:       attestationBytes,
 		RSAPubKeyTmp:      pubKeyPEM,
-		AttestTime:        time.Now().Unix(),
+		AttestationTime:   time.Now().Unix(),
 	}
 	reqBody, _ := json.Marshal(req)
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
@@ -574,7 +574,7 @@ func testSecretsEndpointContainerPolicySuccess(t *testing.T) {
 		AttestationMethod: "gcp",
 		Attestation:       attestationBytes,
 		RSAPubKeyTmp:      pubKeyPEM,
-		AttestTime:        time.Now().Unix(),
+		AttestationTime:   time.Now().Unix(),
 	}
 	reqBody, _ := json.Marshal(req)
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
