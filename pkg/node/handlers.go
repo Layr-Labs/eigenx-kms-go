@@ -154,7 +154,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	// Step 4b: Verify container execution policy matches on-chain values
 	if err := validateContainerPolicy(claims.ContainerPolicy, release.ContainerPolicy); err != nil {
 		s.node.logger.Sugar().Warnw("Container policy mismatch", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
-		http.Error(w, fmt.Sprintf("Container policy mismatch: %v", err), http.StatusForbidden)
+		http.Error(w, "Container policy mismatch", http.StatusForbidden)
 		return
 	}
 
