@@ -378,6 +378,8 @@ func TestSecretsEndpoint_BothMethodsEnabled(t *testing.T) {
 			AppID:       "test-app-gcp",
 			ImageDigest: "sha256:gcp-image",
 			Nonce:       hex.EncodeToString(hGCP[:]),
+			JTI:         "both-methods-gcp-jti",
+			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
 		},
 	}
 	ecdsaMethod := attestation.NewECDSAAttestationMethodDefault()
@@ -414,6 +416,8 @@ func TestSecretsEndpoint_BothMethodsEnabled(t *testing.T) {
 		AppID:       "test-app-gcp",
 		ImageDigest: "sha256:gcp-image",
 		Nonce:       hex.EncodeToString(hGCP[:]),
+		JTI:         "both-methods-gcp-jti-req",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
 	}
 	gcpClaimsBytes, _ := json.Marshal(gcpClaims)
 	reqGCP := kmsTypes.SecretsRequestV1{
