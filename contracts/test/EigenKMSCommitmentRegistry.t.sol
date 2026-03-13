@@ -40,6 +40,8 @@ contract EigenKMSCommitmentRegistryTest is Test, IEigenKMSCommitmentRegistryErro
         uint64 indexed epoch, address indexed operator, bytes32 commitmentHash, bytes32 ackMerkleRoot
     );
 
+    event EquivocationProven(uint64 indexed epoch, address indexed dealer, address player1, address player2);
+
     function setUp() public {
         // Deploy mock certificate verifiers
         mockECDSAVerifier = new MockCertificateVerifier();
@@ -266,33 +268,149 @@ contract EigenKMSCommitmentRegistryTest is Test, IEigenKMSCommitmentRegistryErro
         registry.proveEquivocation(epoch, operator1, ack1, ack2);
     }
 
-    /// @notice Test proveEquivocation rejects same shareHashes
-    function test_ProveEquivocation_RejectSameShareHash() public {
+    /// @notice Test proveEquivocation rejects when the two acks carry different dealer addresses
+    function test_ProveEquivocation_RejectDealerMismatch() public {
         uint64 epoch = 5;
 
         vm.prank(operator1);
         registry.submitCommitment(epoch, keccak256("commitment"), keccak256("root"));
 
-        bytes32 sameHash = keccak256("same");
         bytes32[] memory emptyProof = new bytes32[](0);
 
         IEigenKMSCommitmentRegistry.AckData memory ack1 = IEigenKMSCommitmentRegistry.AckData({
             player: operator2,
             dealer: operator1,
-            shareHash: sameHash,
-            commitmentHash: keccak256("commitment"),
+            shareHash: keccak256("share A"),
+            commitmentHash: keccak256("commitment poly A"),
+            proof: emptyProof
+        });
+
+        IEigenKMSCommitmentRegistry.AckData memory ack2 = IEigenKMSCommitmentRegistry.AckData({
+            player: operator3,
+            dealer: operator2, // Different dealer — mismatched acks
+            shareHash: keccak256("share B"),
+            commitmentHash: keccak256("commitment poly B"),
+            proof: emptyProof
+        });
+
+        vm.expectRevert(DealerMismatch.selector);
+        registry.proveEquivocation(epoch, operator1, ack1, ack2);
+    }
+
+    /// @notice Test proveEquivocation rejects when both acks reference the same player
+    function test_ProveEquivocation_RejectSamePlayer() public {
+        uint64 epoch = 5;
+
+        vm.prank(operator1);
+        registry.submitCommitment(epoch, keccak256("commitment"), keccak256("root"));
+
+        bytes32[] memory emptyProof = new bytes32[](0);
+
+        IEigenKMSCommitmentRegistry.AckData memory ack1 = IEigenKMSCommitmentRegistry.AckData({
+            player: operator2,
+            dealer: operator1,
+            shareHash: keccak256("share A"),
+            commitmentHash: keccak256("commitment poly A"),
+            proof: emptyProof
+        });
+
+        IEigenKMSCommitmentRegistry.AckData memory ack2 = IEigenKMSCommitmentRegistry.AckData({
+            player: operator2, // Same player — invalid equivocation proof
+            dealer: operator1,
+            shareHash: keccak256("share A"),
+            commitmentHash: keccak256("commitment poly B"),
+            proof: emptyProof
+        });
+
+        vm.expectRevert(AcksMustBeFromDifferentPlayers.selector);
+        registry.proveEquivocation(epoch, operator1, ack1, ack2);
+    }
+
+    /// @notice Test proveEquivocation rejects when both shareHash and commitmentHash are identical (no equivocation)
+    function test_ProveEquivocation_RejectNoEquivocation() public {
+        uint64 epoch = 5;
+
+        vm.prank(operator1);
+        registry.submitCommitment(epoch, keccak256("commitment"), keccak256("root"));
+
+        bytes32 sameShareHash = keccak256("same share");
+        bytes32 sameCommitmentHash = keccak256("commitment");
+        bytes32[] memory emptyProof = new bytes32[](0);
+
+        IEigenKMSCommitmentRegistry.AckData memory ack1 = IEigenKMSCommitmentRegistry.AckData({
+            player: operator2,
+            dealer: operator1,
+            shareHash: sameShareHash,
+            commitmentHash: sameCommitmentHash,
             proof: emptyProof
         });
 
         IEigenKMSCommitmentRegistry.AckData memory ack2 = IEigenKMSCommitmentRegistry.AckData({
             player: operator3,
             dealer: operator1,
-            shareHash: sameHash, // Same hash
-            commitmentHash: keccak256("commitment"),
+            shareHash: sameShareHash, // Same shareHash
+            commitmentHash: sameCommitmentHash, // Same commitmentHash — no equivocation
             proof: emptyProof
         });
 
-        vm.expectRevert(ShareHashesMustDiffer.selector);
+        vm.expectRevert(NoEquivocationDetected.selector);
+        registry.proveEquivocation(epoch, operator1, ack1, ack2);
+    }
+
+    /// @notice End-to-end test: dealer sends different polynomial commitments to two players
+    ///         (same share value, different commitmentHash). Verifies EquivocationProven is emitted.
+    /// @dev Two-leaf Merkle tree is constructed inline:
+    ///      leaf  = keccak256(abi.encodePacked(player, dealerID, epoch, shareHash, commitmentHash))
+    ///      root  = keccak256(sorted(leaf1, leaf2))   [OZ MerkleProof commutative pair]
+    ///      proof = [otherLeaf]
+    function test_ProveEquivocation_DifferentCommitmentHash_EmitsEquivocationProven() public {
+        uint64 epoch = 5;
+        bytes32 sameShareHash = keccak256("same share"); // two polynomials that agree at this point
+        bytes32 commitmentHashA = keccak256("commitment poly A");
+        bytes32 commitmentHashB = keccak256("commitment poly B");
+
+        // Compute leaf hashes using the same encoding as proveEquivocation
+        bytes32 leaf1 =
+            keccak256(abi.encodePacked(operator2, operator1, epoch, sameShareHash, commitmentHashA));
+        bytes32 leaf2 =
+            keccak256(abi.encodePacked(operator3, operator1, epoch, sameShareHash, commitmentHashB));
+
+        // Build two-leaf root using OZ's commutative (sorted) pair hash
+        bytes32 merkleRoot = leaf1 < leaf2
+            ? keccak256(abi.encodePacked(leaf1, leaf2))
+            : keccak256(abi.encodePacked(leaf2, leaf1));
+
+        vm.prank(operator1);
+        registry.submitCommitment(epoch, keccak256("dealer commitment"), merkleRoot);
+
+        bytes32[] memory proof1 = new bytes32[](1);
+        proof1[0] = leaf2;
+
+        bytes32[] memory proof2 = new bytes32[](1);
+        proof2[0] = leaf1;
+
+        IEigenKMSCommitmentRegistry.AckData memory ack1 = IEigenKMSCommitmentRegistry.AckData({
+            player: operator2,
+            dealer: operator1,
+            shareHash: sameShareHash,
+            commitmentHash: commitmentHashA,
+            proof: proof1
+        });
+
+        IEigenKMSCommitmentRegistry.AckData memory ack2 = IEigenKMSCommitmentRegistry.AckData({
+            player: operator3,
+            dealer: operator1,
+            shareHash: sameShareHash, // identical share — old guard would have blocked this
+            commitmentHash: commitmentHashB, // different polynomial commitment — equivocation
+            proof: proof2
+        });
+
+        vm.expectEmit(true, true, false, true);
+        emit EquivocationProven(epoch, operator1, operator2, operator3);
+        registry.proveEquivocation(epoch, operator1, ack1, ack2);
+
+        // Second call with the same (or any) acks must revert — equivocation already recorded
+        vm.expectRevert(EquivocationAlreadyProven.selector);
         registry.proveEquivocation(epoch, operator1, ack1, ack2);
     }
 

@@ -38,9 +38,21 @@ interface IEigenKMSCommitmentRegistryErrors {
     /// @dev Selector: 0x5b07c989
     error NoCommitment();
 
-    /// @notice Thrown when shareHashes are the same (not equivocation)
-    /// @dev Selector: 0xdc3fa63c
-    error ShareHashesMustDiffer();
+    /// @notice Thrown when neither shareHash nor commitmentHash differs between the two acks (not equivocation)
+    /// @dev Selector: 0xe6096175
+    error NoEquivocationDetected();
+
+    /// @notice Thrown when both acks reference the same player (cannot prove equivocation against oneself)
+    /// @dev Selector: 0xcb76bd63
+    error AcksMustBeFromDifferentPlayers();
+
+    /// @notice Thrown when equivocation for this dealer and epoch has already been proven
+    /// @dev Selector: 0xdaf8db80
+    error EquivocationAlreadyProven();
+
+    /// @notice Thrown when the two acks carry different dealer addresses
+    /// @dev Selector: 0xbcd365b3
+    error DealerMismatch();
 
     /// @notice Thrown when first ack is not in merkle tree
     /// @dev Selector: 0x7990605b

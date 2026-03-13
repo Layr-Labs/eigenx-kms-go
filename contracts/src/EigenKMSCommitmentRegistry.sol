@@ -121,12 +121,20 @@ contract EigenKMSCommitmentRegistry is
     }
 
     /**
-     * @notice Prove that an operator equivocated by sending different shares to different players
-     * @dev Verifies that both acks are in dealer's merkle tree but have different shareHashes
+     * @notice Prove that an operator equivocated by sending different shares or commitments to different players
+     * @dev Verifies that both acks are in the dealer's merkle tree but differ in shareHash or commitmentHash.
+     *      Idempotent per (epoch, dealer) pair — subsequent calls revert with EquivocationAlreadyProven.
+     *      Equivocation is proven when a dealer distributed inconsistent data to different players, which
+     *      can take two forms:
+     *        1. Same polynomial commitment, different shares (shareHash differs)
+     *        2. Different polynomial commitments sent to different players (commitmentHash differs)
+     *      Both forms prevent the network from computing a consistent master public key.
+     *      Both acks must be valid leaves in the dealer's merkle tree, binding the commitmentHash
+     *      to the dealer's own submission via keccak256(player || dealerID || epoch || shareHash || commitmentHash).
      * @param epoch The epoch in which equivocation occurred
      * @param dealer The operator who equivocated
-     * @param ack1 First acknowledgement data
-     * @param ack2 Second acknowledgement data
+     * @param ack1 First acknowledgement data with merkle proof (must be from a different player than ack2)
+     * @param ack2 Second acknowledgement data with merkle proof (must be from a different player than ack1)
      */
     function proveEquivocation(
         uint64 epoch,
@@ -136,7 +144,10 @@ contract EigenKMSCommitmentRegistry is
     ) external override {
         bytes32 root = commitments[epoch][dealer].ackMerkleRoot;
         if (root == bytes32(0)) revert NoCommitment();
-        if (ack1.shareHash == ack2.shareHash) revert ShareHashesMustDiffer();
+        if (equivocationProven[epoch][dealer]) revert EquivocationAlreadyProven();
+        if (ack1.player == ack2.player) revert AcksMustBeFromDifferentPlayers();
+        if (ack1.dealer != ack2.dealer) revert DealerMismatch();
+        if (ack1.shareHash == ack2.shareHash && ack1.commitmentHash == ack2.commitmentHash) revert NoEquivocationDetected();
 
         bytes32 hash1 =
             keccak256(abi.encodePacked(ack1.player, ack1.dealer, epoch, ack1.shareHash, ack1.commitmentHash));
@@ -146,6 +157,7 @@ contract EigenKMSCommitmentRegistry is
         if (!MerkleProof.verify(ack1.proof, root, hash1)) revert Ack1Invalid();
         if (!MerkleProof.verify(ack2.proof, root, hash2)) revert Ack2Invalid();
 
+        equivocationProven[epoch][dealer] = true;
         emit EquivocationProven(epoch, dealer, ack1.player, ack2.player);
 
         // Note: Actual slashing would integrate with EigenLayer here
