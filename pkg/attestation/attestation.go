@@ -228,7 +228,7 @@ func (av *AttestationVerifier) VerifyAttestation(ctx context.Context, tokenStrin
 type validationConfig struct {
 	expectedHwModel     string
 	requireAttesterTCB  bool
-	requiredSupportAttr string // "STABLE" for Google, "EXPERIMENTAL" for Intel
+	requiredSupportAttr string // "STABLE" for both Google and Intel
 	requireTDXSubmods   bool
 }
 
@@ -243,7 +243,7 @@ var (
 	intelValidationConfig = validationConfig{
 		expectedHwModel:     "INTEL_TDX",
 		requireAttesterTCB:  false,
-		requiredSupportAttr: "EXPERIMENTAL",
+		requiredSupportAttr: "STABLE",
 		requireTDXSubmods:   true,
 	}
 )
