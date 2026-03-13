@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	kmsTypes "github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -58,7 +59,7 @@ func TestGCPAttestationMethodVerifyNoncePropagation(t *testing.T) {
 	mockVerifier := NewMockAttestationVerifierInterface(t)
 	mockVerifier.EXPECT().
 		VerifyAttestation(context.Background(), "test-token", GoogleConfidentialSpace).
-		Return(&AttestationClaims{
+		Return(&kmsTypes.AttestationClaims{
 			AppID:       "my-app",
 			ImageDigest: "sha256:abc",
 			Nonce:       "deadbeef",
