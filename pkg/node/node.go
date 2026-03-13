@@ -1313,9 +1313,12 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	}
 
 	// Wait for shares and commitments. New operators (running RunReshareAsNewOperator) do not
-	// contribute shares, so we only expect len(operators)-numNewOperators contributions.
+	// contribute shares, so only existing operators can contribute. We require a threshold of
+	// those existing operators rather than all of them, so resharing can proceed even if some
+	// existing operators are offline (per KMS-010 recommendation).
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
-	requiredContributions := len(operators) - numNewOperators
+	existingOperators := len(operators) - numNewOperators
+	requiredContributions := dkg.CalculateThreshold(existingOperators)
 	if err := waitForNShares(session, requiredContributions, protocolTimeout); err != nil {
 		return err
 	}
@@ -1584,10 +1587,13 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	}
 
 	// New operators DON'T generate shares - only receive from existing operators.
-	// Expect len(operators)-numNewOperators shares/commitments: only existing operators contribute.
-	requiredContributions := len(operators) - numNewOperators
+	// We require a threshold of existing operators rather than all of them, so resharing
+	// can proceed even if some existing operators are offline (per KMS-010 recommendation).
+	existingOperators := len(operators) - numNewOperators
+	requiredContributions := dkg.CalculateThreshold(existingOperators)
 	n.logger.Sugar().Infow("Waiting for shares from existing operators",
 		"operator_address", n.OperatorAddress.Hex(),
+		"existing_operators", existingOperators,
 		"expected_shares", requiredContributions)
 
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
