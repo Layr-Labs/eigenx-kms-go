@@ -2,6 +2,8 @@ package node
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -97,6 +99,10 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "rsa_pubkey_tmp is required", http.StatusBadRequest)
 		return
 	}
+	if len(req.RSAPubKeyTmp) > 8192 {
+		http.Error(w, "rsa_pubkey_tmp too large", http.StatusBadRequest)
+		return
+	}
 
 	s.node.logger.Sugar().Infow("Processing secrets request", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "attestation_method", req.AttestationMethod)
 
@@ -136,6 +142,38 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Step 2c: For GCP/Intel attestation, verify the nonce binds rsa_pubkey_tmp to the attestation
+	// token, preventing a MITM from substituting a different ephemeral RSA key (KMS-004).
+	if req.AttestationMethod == "gcp" || req.AttestationMethod == "intel" {
+		h := sha256.Sum256(req.RSAPubKeyTmp)
+		expectedNonce := hex.EncodeToString(h[:])
+		if strings.ToLower(claims.Nonce) != expectedNonce {
+			s.node.logger.Sugar().Warnw("Attestation nonce mismatch: rsa_pubkey_tmp not bound to attestation token",
+				"node_id", s.node.OperatorAddress.Hex(),
+				"app_id", req.AppID)
+			http.Error(w, "attestation nonce mismatch", http.StatusUnauthorized)
+			return
+		}
+
+		// Step 2d: Reject replayed attestation JWTs by tracking the jti claim.
+		// This prevents DoS/replay attacks where a valid JWT is submitted multiple times.
+		if claims.JTI == "" {
+			s.node.logger.Sugar().Warnw("Attestation token missing jti claim",
+				"node_id", s.node.OperatorAddress.Hex(),
+				"app_id", req.AppID)
+			http.Error(w, "attestation token missing jti", http.StatusUnauthorized)
+			return
+		}
+		if !s.checkAndStoreJTI(claims.JTI, claims.ExpiresAt) {
+			s.node.logger.Sugar().Warnw("Replayed attestation token rejected",
+				"node_id", s.node.OperatorAddress.Hex(),
+				"app_id", req.AppID,
+				"jti", claims.JTI)
+			http.Error(w, "attestation token already used", http.StatusUnauthorized)
+			return
+		}
+	}
+
 	// Step 3: Query latest release from on-chain AppController
 	release, err := s.node.baseContractCaller.GetLatestReleaseAsRelease(r.Context(), req.AppID)
 	if err != nil {
@@ -144,7 +182,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 4: Verify image digest matches
+	// Step 5: Verify image digest matches
 	if claims.ImageDigest != release.ImageDigest {
 		s.node.logger.Sugar().Warnw("Image digest mismatch", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "expected", release.ImageDigest, "got", claims.ImageDigest)
 		http.Error(w, "Image digest mismatch - unauthorized image", http.StatusForbidden)
@@ -180,7 +218,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 6: Generate partial signature for this app using the already-resolved key version
+	// Step 7: Generate partial signature for this app using the already-resolved key version
 	// partial_sig = H(app_id)^{key_share}
 	partialSig, err := s.node.signAppIDWithVersion(req.AppID, keyVersion)
 	if err != nil {
@@ -191,7 +229,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 
 	s.node.logger.Sugar().Infow("Generated partial signature", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID)
 
-	// Step 7: Serialize partial signature for encryption
+	// Step 8: Serialize partial signature for encryption
 	partialSigBytes, err := json.Marshal(partialSig)
 	if err != nil {
 		s.node.logger.Sugar().Errorw("Failed to serialize partial signature", "node_id", s.node.OperatorAddress.Hex(), "error", err)
@@ -199,7 +237,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 8: Encrypt partial signature with ephemeral RSA public key
+	// Step 9: Encrypt partial signature with ephemeral RSA public key
 	encryptedPartialSig, err := s.node.rsaEncryption.Encrypt(partialSigBytes, req.RSAPubKeyTmp)
 	if err != nil {
 		s.node.logger.Sugar().Errorw("Failed to encrypt partial signature", "node_id", s.node.OperatorAddress.Hex(), "error", err)
@@ -207,7 +245,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 9: Create response
+	// Step 10: Create response
 	response := types.SecretsResponseV1{
 		EncryptedEnv:        release.EncryptedEnv,
 		PublicEnv:           release.PublicEnv,

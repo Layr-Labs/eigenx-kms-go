@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -363,12 +365,21 @@ func TestSecretsEndpoint_BothMethodsEnabled(t *testing.T) {
 	slogger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 	manager := attestation.NewAttestationManager(slogger)
 
+	// Generate RSA keys upfront so the nonce can be embedded in the GCP stub claims.
+	_, pubKeyPEM, err := encryption.GenerateKeyPair(2048)
+	require.NoError(t, err)
+
+	hGCP := sha256.Sum256(pubKeyPEM)
+
 	// Register both methods
 	gcpStub := &stubAttestationMethod{
 		name: "gcp",
 		claims: &kmsTypes.AttestationClaims{
 			AppID:       "test-app-gcp",
 			ImageDigest: "sha256:gcp-image",
+			Nonce:       hex.EncodeToString(hGCP[:]),
+			JTI:         "both-methods-gcp-jti",
+			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
 		},
 	}
 	ecdsaMethod := attestation.NewECDSAAttestationMethodDefault()
@@ -400,14 +411,19 @@ func TestSecretsEndpoint_BothMethodsEnabled(t *testing.T) {
 	}
 	mockCC.AddTestRelease("test-app-ecdsa", releaseECDSA)
 
-	_, pubKeyPEM, err := encryption.GenerateKeyPair(2048)
-	require.NoError(t, err)
-
 	// Test 1: Use GCP method
+	gcpClaims := kmsTypes.AttestationClaims{
+		AppID:       "test-app-gcp",
+		ImageDigest: "sha256:gcp-image",
+		Nonce:       hex.EncodeToString(hGCP[:]),
+		JTI:         "both-methods-gcp-jti-req",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+	}
+	gcpClaimsBytes, _ := json.Marshal(gcpClaims)
 	reqGCP := kmsTypes.SecretsRequestV1{
 		AppID:             "test-app-gcp",
 		AttestationMethod: "gcp",
-		Attestation:       []byte("dummy-gcp-token"),
+		Attestation:       gcpClaimsBytes,
 		RSAPubKeyTmp:      pubKeyPEM,
 	}
 

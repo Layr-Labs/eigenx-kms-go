@@ -3,6 +3,8 @@ package node
 import (
 	"fmt"
 	"net/http"
+	"sync"
+	"time"
 )
 
 /*
@@ -91,12 +93,17 @@ Authentication:
 type Server struct {
 	node       *Node
 	httpServer *http.Server
+
+	// jtiMu guards jtiCache to prevent concurrent replay attacks.
+	jtiMu    sync.Mutex
+	jtiCache map[string]int64 // jti -> expiry unix timestamp
 }
 
 // NewServer creates a new server instance
 func NewServer(node *Node, port int) *Server {
 	s := &Server{
-		node: node,
+		node:     node,
+		jtiCache: make(map[string]int64),
 	}
 
 	mux := http.NewServeMux()
@@ -149,6 +156,30 @@ func (s *Server) Stop() error {
 // GetHandler returns the HTTP handler (for testing)
 func (s *Server) GetHandler() http.Handler {
 	return s.httpServer.Handler
+}
+
+// checkAndStoreJTI checks whether jti has been used before and, if not, records it
+// until expiresAt. Returns true if the jti is new (allowed), false if it is a replay.
+// Expired entries are purged lazily on each call.
+func (s *Server) checkAndStoreJTI(jti string, expiresAt int64) bool {
+	now := time.Now().Unix()
+
+	s.jtiMu.Lock()
+	defer s.jtiMu.Unlock()
+
+	// Purge expired entries
+	for k, exp := range s.jtiCache {
+		if now >= exp {
+			delete(s.jtiCache, k)
+		}
+	}
+
+	if _, seen := s.jtiCache[jti]; seen {
+		return false
+	}
+
+	s.jtiCache[jti] = expiresAt
+	return true
 }
 
 // Note: Handler implementations moved to handlers.go

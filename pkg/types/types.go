@@ -138,7 +138,9 @@ type AttestationClaims struct {
 	AppID           string
 	ImageDigest     string
 	Nonce           string
+	JTI             string // JWT ID — used to prevent replay attacks
 	IssuedAt        int64
+	ExpiresAt       int64 // Unix timestamp; used to expire JTI cache entries
 	PublicKey       []byte
 	ContainerPolicy ContainerPolicy
 }
