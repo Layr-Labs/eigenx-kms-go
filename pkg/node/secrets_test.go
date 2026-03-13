@@ -44,6 +44,7 @@ func Test_SecretsEndpoint(t *testing.T) {
 	t.Run("NonceMismatch", func(t *testing.T) { testSecretsEndpointNonceMismatch(t) })
 	t.Run("IntelNonceMismatch", func(t *testing.T) { testSecretsEndpointIntelNonceMismatch(t) })
 	t.Run("EmptyNonce", func(t *testing.T) { testSecretsEndpointEmptyNonce(t) })
+	t.Run("JTIReplay", func(t *testing.T) { testSecretsEndpointJTIReplay(t) })
 	t.Run("ContainerPolicyMismatch", func(t *testing.T) { testSecretsEndpointContainerPolicyMismatch(t) })
 	t.Run("ContainerPolicyCmdOverrideMismatch", func(t *testing.T) { testSecretsEndpointCmdOverrideMismatch(t) })
 	t.Run("ContainerPolicyEnvOverrideMismatch", func(t *testing.T) { testSecretsEndpointEnvOverrideMismatch(t) })
@@ -163,6 +164,8 @@ func testSecretsEndpointFlow(t *testing.T) {
 		IssuedAt:    time.Now().Unix(),
 		PublicKey:   pubKeyPEM,
 		Nonce:       hex.EncodeToString(h[:]),
+		JTI:         "flow-test-jti",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
 	}
 	attestationBytes, _ := json.Marshal(testClaims)
 
@@ -258,6 +261,8 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 		IssuedAt:    time.Now().Unix(),
 		PublicKey:   []byte("dummy-key"),
 		Nonce:       hex.EncodeToString(hd[:]),
+		JTI:         "image-digest-mismatch-jti",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
 	}
 	attestationBytes, _ := json.Marshal(testClaims)
 
@@ -440,6 +445,57 @@ func testSecretsEndpointEmptyNonce(t *testing.T) {
 	}
 }
 
+// testSecretsEndpointJTIReplay tests that a GCP attestation JWT cannot be
+// submitted twice (replay/DoS prevention via jti tracking).
+func testSecretsEndpointJTIReplay(t *testing.T) {
+	server, mockCaller := newTestServer(t)
+
+	mockCaller.AddTestRelease("test-app", &kmsTypes.Release{
+		ImageDigest:  "sha256:test123",
+		EncryptedEnv: "env-data",
+		PublicEnv:    "PUBLIC=value",
+		Timestamp:    time.Now().Unix(),
+	})
+
+	rsaKey := []byte("test-rsa-key")
+	h := sha256.Sum256(rsaKey)
+	testClaims := kmsTypes.AttestationClaims{
+		AppID:       "test-app",
+		ImageDigest: "sha256:test123",
+		IssuedAt:    time.Now().Unix(),
+		Nonce:       hex.EncodeToString(h[:]),
+		JTI:         "replay-attack-jti",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+	}
+	attestationBytes, _ := json.Marshal(testClaims)
+
+	req := kmsTypes.SecretsRequestV1{
+		AppID:             "test-app",
+		AttestationMethod: "gcp",
+		Attestation:       attestationBytes,
+		RSAPubKeyTmp:      rsaKey,
+	}
+	reqBody, _ := json.Marshal(req)
+
+	// First request: fails because no key share is configured — but the JTI gets stored
+	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
+	w := httptest.NewRecorder()
+	server.handleSecretsRequest(w, httpReq)
+	// Expect failure (no key share), but NOT 401 (JTI should be accepted the first time)
+	if w.Code == http.StatusUnauthorized {
+		t.Fatalf("First request should not fail with 401 (JTI replay rejection), got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Second request with the same JTI: must be rejected as a replay
+	reqBody2, _ := json.Marshal(req)
+	httpReq2 := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody2))
+	w2 := httptest.NewRecorder()
+	server.handleSecretsRequest(w2, httpReq2)
+	if w2.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status 401 for replayed JTI, got %d: %s", w2.Code, w2.Body.String())
+	}
+}
+
 // testSecretsEndpointContainerPolicyMismatch tests that mismatched container execution
 // fields are rejected even when the image digest matches.
 func testSecretsEndpointContainerPolicyMismatch(t *testing.T) {
@@ -462,6 +518,8 @@ func testSecretsEndpointContainerPolicyMismatch(t *testing.T) {
 		AppID:       "test-app",
 		ImageDigest: "sha256:correct-digest",
 		Nonce:       hex.EncodeToString(hn[:]),
+		JTI:         "container-policy-mismatch-jti",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
 		ContainerPolicy: kmsTypes.ContainerPolicy{
 			Args:          []string{"/malicious.sh", "exploit"}, // wrong args
 			RestartPolicy: "Never",
@@ -506,6 +564,8 @@ func testSecretsEndpointCmdOverrideMismatch(t *testing.T) {
 		AppID:       "test-app",
 		ImageDigest: "sha256:correct-digest",
 		Nonce:       hex.EncodeToString(hn[:]),
+		JTI:         "cmd-override-mismatch-jti",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
 		ContainerPolicy: kmsTypes.ContainerPolicy{
 			CmdOverride: []string{"/bin/server", "--port=9999"}, // wrong port
 		},
@@ -549,6 +609,8 @@ func testSecretsEndpointEnvOverrideMismatch(t *testing.T) {
 		AppID:       "test-app",
 		ImageDigest: "sha256:correct-digest",
 		Nonce:       hex.EncodeToString(hn[:]),
+		JTI:         "env-override-mismatch-jti",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
 		ContainerPolicy: kmsTypes.ContainerPolicy{
 			EnvOverride: map[string]string{"LOG_LEVEL": "debug"}, // wrong value
 		},
@@ -604,6 +666,8 @@ func testSecretsEndpointEnvOverrideSuccess(t *testing.T) {
 		AppID:       "test-app",
 		ImageDigest: "sha256:correct-digest",
 		Nonce:       hex.EncodeToString(h[:]),
+		JTI:         "env-override-success-jti",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
 		ContainerPolicy: kmsTypes.ContainerPolicy{
 			EnvOverride: map[string]string{
 				"LOG_LEVEL": "info",
@@ -668,6 +732,8 @@ func testSecretsEndpointContainerPolicySuccess(t *testing.T) {
 		AppID:       "my-app",
 		ImageDigest: "sha256:app-digest",
 		Nonce:       hex.EncodeToString(h[:]),
+		JTI:         "container-policy-success-jti",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
 		ContainerPolicy: kmsTypes.ContainerPolicy{
 			Args:          []string{"/entrypoint.sh", "start"},
 			RestartPolicy: "Never",

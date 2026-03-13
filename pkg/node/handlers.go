@@ -154,6 +154,24 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "attestation nonce mismatch", http.StatusUnauthorized)
 			return
 		}
+
+		// Step 2d: Reject replayed attestation JWTs by tracking the jti claim.
+		// This prevents DoS/replay attacks where a valid JWT is submitted multiple times.
+		if claims.JTI == "" {
+			s.node.logger.Sugar().Warnw("Attestation token missing jti claim",
+				"node_id", s.node.OperatorAddress.Hex(),
+				"app_id", req.AppID)
+			http.Error(w, "attestation token missing jti", http.StatusUnauthorized)
+			return
+		}
+		if !s.checkAndStoreJTI(claims.JTI, claims.ExpiresAt) {
+			s.node.logger.Sugar().Warnw("Replayed attestation token rejected",
+				"node_id", s.node.OperatorAddress.Hex(),
+				"app_id", req.AppID,
+				"jti", claims.JTI)
+			http.Error(w, "attestation token already used", http.StatusUnauthorized)
+			return
+		}
 	}
 
 	// Step 3: Query latest release from on-chain AppController

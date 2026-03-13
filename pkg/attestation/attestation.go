@@ -206,11 +206,15 @@ func (av *AttestationVerifier) VerifyAttestation(ctx context.Context, tokenStrin
 		return nil, fmt.Errorf("failed to extract nonce: %w", err)
 	}
 
+	jti, _ := token.JwtID()
+
 	result := &types.AttestationClaims{
 		AppID:       appID,
 		ImageDigest: csToken.SubMods.Container.ImageDigest,
 		Nonce:       nonce,
+		JTI:         jti,
 		IssuedAt:    csToken.Iat,
+		ExpiresAt:   csToken.Exp,
 		ContainerPolicy: types.ContainerPolicy{
 			Args:          csToken.SubMods.Container.Args,
 			CmdOverride:   csToken.SubMods.Container.CmdOverride,
@@ -220,7 +224,7 @@ func (av *AttestationVerifier) VerifyAttestation(ctx context.Context, tokenStrin
 		},
 	}
 
-	av.logger.Debug("Attestation claims extracted", "app_id", appID, "image_digest", csToken.SubMods.Container.ImageDigest, "nonce", nonce)
+	av.logger.Debug("Attestation claims extracted", "app_id", appID, "image_digest", csToken.SubMods.Container.ImageDigest, "nonce", nonce, "jti", jti)
 	return result, nil
 }
 
