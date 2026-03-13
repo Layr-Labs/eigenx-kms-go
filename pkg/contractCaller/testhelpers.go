@@ -86,8 +86,8 @@ func (m *MockContractCallerStub) FilterAppUpgraded(apps []common.Address, filter
 	return nil, nil
 }
 
-func (m *MockContractCallerStub) GetLatestRelease(ctx context.Context, appID string) ([32]byte, caller.Env, []byte, error) {
-	return [32]byte{}, nil, nil, nil
+func (m *MockContractCallerStub) GetLatestRelease(ctx context.Context, appID string) ([32]byte, caller.Env, []byte, types.ContainerPolicy, error) {
+	return [32]byte{}, nil, nil, types.ContainerPolicy{}, nil
 }
 
 func (m *MockContractCallerStub) GetLatestReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error) {
@@ -119,7 +119,6 @@ func (m *TestableContractCallerStub) AddTestRelease(appID string, release *types
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.releases[appID] = release
-	fmt.Printf("Added test release for app_id: %s, image: %s\n", appID, release.ImageDigest)
 }
 
 // GetLatestReleaseAsRelease returns the configured test release for an app
@@ -132,6 +131,5 @@ func (m *TestableContractCallerStub) GetLatestReleaseAsRelease(ctx context.Conte
 		return nil, fmt.Errorf("no release found for app_id: %s", appID)
 	}
 
-	fmt.Printf("Found release for app_id: %s, image: %s\n", appID, release.ImageDigest)
 	return release, nil
 }

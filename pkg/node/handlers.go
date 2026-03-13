@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -147,6 +148,13 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	if claims.ImageDigest != release.ImageDigest {
 		s.node.logger.Sugar().Warnw("Image digest mismatch", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "expected", release.ImageDigest, "got", claims.ImageDigest)
 		http.Error(w, "Image digest mismatch - unauthorized image", http.StatusForbidden)
+		return
+	}
+
+	// Step 4b: Verify container execution policy matches on-chain values
+	if err := validateContainerPolicy(claims.ContainerPolicy, release.ContainerPolicy); err != nil {
+		s.node.logger.Sugar().Warnw("Container policy mismatch", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
+		http.Error(w, "Container policy mismatch", http.StatusForbidden)
 		return
 	}
 
@@ -561,6 +569,38 @@ func (s *Server) handleReshareComplete(w http.ResponseWriter, r *http.Request) {
 
 	s.node.logger.Sugar().Infow("Received reshare completion", "node_id", s.node.OperatorAddress.Hex(), "from_node", msg.Completion.NodeID)
 	w.WriteHeader(http.StatusOK)
+}
+
+// validateContainerPolicy checks that the container execution fields in the JWT claims
+// match the on-chain policy registered by the app developer. Fields with zero/empty
+// values in the policy are not enforced, allowing developers to restrict only the
+// fields they care about.
+func validateContainerPolicy(claims types.ContainerPolicy, policy types.ContainerPolicy) error {
+	if len(policy.Args) > 0 && !slices.Equal(claims.Args, policy.Args) {
+		return fmt.Errorf("args mismatch: expected %v, got %v", policy.Args, claims.Args)
+	}
+
+	if len(policy.CmdOverride) > 0 && !slices.Equal(claims.CmdOverride, policy.CmdOverride) {
+		return fmt.Errorf("cmd_override mismatch: expected %v, got %v", policy.CmdOverride, claims.CmdOverride)
+	}
+
+	for key, expectedVal := range policy.Env {
+		if actualVal, ok := claims.Env[key]; !ok || actualVal != expectedVal {
+			return fmt.Errorf("env mismatch for key %q: expected %q, got %q", key, expectedVal, actualVal)
+		}
+	}
+
+	for key, expectedVal := range policy.EnvOverride {
+		if actualVal, ok := claims.EnvOverride[key]; !ok || actualVal != expectedVal {
+			return fmt.Errorf("env_override mismatch for key %q: expected %q, got %q", key, expectedVal, actualVal)
+		}
+	}
+
+	if policy.RestartPolicy != "" && claims.RestartPolicy != policy.RestartPolicy {
+		return fmt.Errorf("restart_policy mismatch: expected %q, got %q", policy.RestartPolicy, claims.RestartPolicy)
+	}
+
+	return nil
 }
 
 // handleAppSign handles partial signature requests from KMS clients.

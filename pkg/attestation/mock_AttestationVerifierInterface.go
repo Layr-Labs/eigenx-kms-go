@@ -7,6 +7,7 @@ package attestation
 import (
 	"context"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -38,23 +39,23 @@ func (_m *MockAttestationVerifierInterface) EXPECT() *MockAttestationVerifierInt
 }
 
 // VerifyAttestation provides a mock function for the type MockAttestationVerifierInterface
-func (_mock *MockAttestationVerifierInterface) VerifyAttestation(ctx context.Context, tokenString string, provider AttestationProvider) (*AttestationClaims, error) {
+func (_mock *MockAttestationVerifierInterface) VerifyAttestation(ctx context.Context, tokenString string, provider AttestationProvider) (*types.AttestationClaims, error) {
 	ret := _mock.Called(ctx, tokenString, provider)
 
 	if len(ret) == 0 {
 		panic("no return value specified for VerifyAttestation")
 	}
 
-	var r0 *AttestationClaims
+	var r0 *types.AttestationClaims
 	var r1 error
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, AttestationProvider) (*AttestationClaims, error)); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, AttestationProvider) (*types.AttestationClaims, error)); ok {
 		return returnFunc(ctx, tokenString, provider)
 	}
-	if returnFunc, ok := ret.Get(0).(func(context.Context, string, AttestationProvider) *AttestationClaims); ok {
+	if returnFunc, ok := ret.Get(0).(func(context.Context, string, AttestationProvider) *types.AttestationClaims); ok {
 		r0 = returnFunc(ctx, tokenString, provider)
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(*AttestationClaims)
+			r0 = ret.Get(0).(*types.AttestationClaims)
 		}
 	}
 	if returnFunc, ok := ret.Get(1).(func(context.Context, string, AttestationProvider) error); ok {
@@ -101,12 +102,12 @@ func (_c *MockAttestationVerifierInterface_VerifyAttestation_Call) Run(run func(
 	return _c
 }
 
-func (_c *MockAttestationVerifierInterface_VerifyAttestation_Call) Return(attestationClaims *AttestationClaims, err error) *MockAttestationVerifierInterface_VerifyAttestation_Call {
+func (_c *MockAttestationVerifierInterface_VerifyAttestation_Call) Return(attestationClaims *types.AttestationClaims, err error) *MockAttestationVerifierInterface_VerifyAttestation_Call {
 	_c.Call.Return(attestationClaims, err)
 	return _c
 }
 
-func (_c *MockAttestationVerifierInterface_VerifyAttestation_Call) RunAndReturn(run func(ctx context.Context, tokenString string, provider AttestationProvider) (*AttestationClaims, error)) *MockAttestationVerifierInterface_VerifyAttestation_Call {
+func (_c *MockAttestationVerifierInterface_VerifyAttestation_Call) RunAndReturn(run func(ctx context.Context, tokenString string, provider AttestationProvider) (*types.AttestationClaims, error)) *MockAttestationVerifierInterface_VerifyAttestation_Call {
 	_c.Call.Return(run)
 	return _c
 }

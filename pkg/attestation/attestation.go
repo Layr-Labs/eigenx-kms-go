@@ -34,13 +34,7 @@ const (
 )
 
 type AttestationVerifierInterface interface {
-	VerifyAttestation(ctx context.Context, tokenString string, provider AttestationProvider) (*AttestationClaims, error)
-}
-
-type AttestationClaims struct {
-	AppID       string `json:"app_id"`
-	ImageDigest string `json:"image_digest"`
-	Nonce       string `json:"nonce"`
+	VerifyAttestation(ctx context.Context, tokenString string, provider AttestationProvider) (*types.AttestationClaims, error)
 }
 
 // Structured types for attestation token parsing
@@ -49,6 +43,7 @@ type ConfidentialSpaceToken struct {
 	Audience    any        `json:"aud"`
 	Exp         int64      `json:"exp"`
 	Nbf         int64      `json:"nbf"`
+	Iat         int64      `json:"iat"`
 	EatNonce    any        `json:"eat_nonce,omitempty"` // string for Google, []string for Intel
 	SwName      string     `json:"swname"`
 	AttesterTCB []string   `json:"attester_tcb,omitempty"` // Only in Google CS
@@ -75,7 +70,12 @@ type ConfidentialSpace struct {
 }
 
 type Container struct {
-	ImageDigest string `json:"image_digest"`
+	ImageDigest   string            `json:"image_digest"`
+	Args          []string          `json:"args"`
+	CmdOverride   []string          `json:"cmd_override"`
+	Env           map[string]string `json:"env"`
+	EnvOverride   map[string]string `json:"env_override"`
+	RestartPolicy string            `json:"restart_policy"`
 }
 
 type GCE struct {
@@ -119,7 +119,7 @@ func NewAttestationVerifier(ctx context.Context, logger *slog.Logger, projectID 
 	}, nil
 }
 
-func (av *AttestationVerifier) VerifyAttestation(ctx context.Context, tokenString string, provider AttestationProvider) (*AttestationClaims, error) {
+func (av *AttestationVerifier) VerifyAttestation(ctx context.Context, tokenString string, provider AttestationProvider) (*types.AttestationClaims, error) {
 	av.logger.Debug("Starting attestation verification", "token_length", len(tokenString), "provider", provider)
 
 	// Get provider-specific configuration
@@ -206,10 +206,18 @@ func (av *AttestationVerifier) VerifyAttestation(ctx context.Context, tokenStrin
 		return nil, fmt.Errorf("failed to extract nonce: %w", err)
 	}
 
-	result := &AttestationClaims{
+	result := &types.AttestationClaims{
 		AppID:       appID,
 		ImageDigest: csToken.SubMods.Container.ImageDigest,
 		Nonce:       nonce,
+		IssuedAt:    csToken.Iat,
+		ContainerPolicy: types.ContainerPolicy{
+			Args:          csToken.SubMods.Container.Args,
+			CmdOverride:   csToken.SubMods.Container.CmdOverride,
+			Env:           csToken.SubMods.Container.Env,
+			EnvOverride:   csToken.SubMods.Container.EnvOverride,
+			RestartPolicy: csToken.SubMods.Container.RestartPolicy,
+		},
 	}
 
 	av.logger.Debug("Attestation claims extracted", "app_id", appID, "image_digest", csToken.SubMods.Container.ImageDigest, "nonce", nonce)

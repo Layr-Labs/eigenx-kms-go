@@ -121,20 +121,35 @@ type SecretsResponseV1 struct {
 	EncryptedPartialSig []byte `json:"encrypted_partial_sig"` // RSA encrypted partial sig
 }
 
+// ContainerPolicy defines the expected container execution parameters for an app release.
+// These values are stored on-chain by the app developer via createApp() / upgradeApp() and
+// verified by each KMS operator node against the JWT submods.container claims.
+// An empty or nil field means "no restriction" — validation is skipped for that field.
+type ContainerPolicy struct {
+	Args          []string          `json:"args"`
+	CmdOverride   []string          `json:"cmd_override"`
+	Env           map[string]string `json:"env"`
+	EnvOverride   map[string]string `json:"env_override"`
+	RestartPolicy string            `json:"restart_policy"`
+}
+
 // AttestationClaims represents parsed attestation data
 type AttestationClaims struct {
-	AppID       string
-	ImageDigest string
-	IssuedAt    int64
-	PublicKey   []byte
+	AppID           string
+	ImageDigest     string
+	Nonce           string
+	IssuedAt        int64
+	PublicKey       []byte
+	ContainerPolicy ContainerPolicy
 }
 
 // Release represents application release data from on-chain registry
 type Release struct {
-	ImageDigest  string `json:"image_digest"`
-	EncryptedEnv string `json:"encrypted_env"`
-	PublicEnv    string `json:"public_env"`
-	Timestamp    int64  `json:"timestamp"`
+	ImageDigest     string          `json:"image_digest"`
+	EncryptedEnv    string          `json:"encrypted_env"`
+	PublicEnv       string          `json:"public_env"`
+	Timestamp       int64           `json:"timestamp"`
+	ContainerPolicy ContainerPolicy `json:"container_policy"`
 }
 
 // CommitmentBroadcast represents a broadcast of commitments with acknowledgements and merkle proofs (Phase 3)

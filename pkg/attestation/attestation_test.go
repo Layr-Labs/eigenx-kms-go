@@ -287,6 +287,10 @@ func TestVerifyAttestation(t *testing.T) {
 			require.NotNil(t, claims)
 			require.Equal(t, "0xb69a8c848a4b79f4c1810c31156d80e7eaff874a", claims.AppID)
 			require.Equal(t, "sha256:1580f84f1585dbecd84479ae867b6d586de31a19bbc9e551f2fbc20f9df59ec9", claims.ImageDigest)
+			// Container execution fields must be extracted from the JWT
+			require.Equal(t, []string{"/usr/local/bin/compute-source-env.sh", "npm", "start"}, claims.ContainerPolicy.Args)
+			require.Equal(t, "Never", claims.ContainerPolicy.RestartPolicy)
+			require.Equal(t, "18.20.8", claims.ContainerPolicy.Env["NODE_VERSION"])
 		})
 
 		t.Run("invalid issuer", func(t *testing.T) {

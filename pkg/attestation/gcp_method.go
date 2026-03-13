@@ -53,11 +53,5 @@ func (g *GCPAttestationMethod) Verify(request *AttestationRequest) (*types.Attes
 		return nil, fmt.Errorf("attestation verification failed: %w", err)
 	}
 
-	// Map attestation.AttestationClaims to types.AttestationClaims
-	return &types.AttestationClaims{
-		AppID:       claims.AppID,
-		ImageDigest: claims.ImageDigest,
-		IssuedAt:    0,        // Not available in JWT claims
-		PublicKey:   []byte{}, // Not available in JWT claims
-	}, nil
+	return claims, nil
 }
