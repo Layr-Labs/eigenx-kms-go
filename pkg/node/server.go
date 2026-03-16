@@ -97,13 +97,17 @@ type Server struct {
 	// jtiMu guards jtiCache to prevent concurrent replay attacks.
 	jtiMu    sync.Mutex
 	jtiCache map[string]int64 // jti -> expiry unix timestamp
+
+	// stopJTICleanup signals the background JTI cleanup goroutine to exit.
+	stopJTICleanup chan struct{}
 }
 
 // NewServer creates a new server instance
 func NewServer(node *Node, port int) *Server {
 	s := &Server{
-		node:     node,
-		jtiCache: make(map[string]int64),
+		node:           node,
+		jtiCache:       make(map[string]int64),
+		stopJTICleanup: make(chan struct{}),
 	}
 
 	mux := http.NewServeMux()
@@ -137,8 +141,9 @@ func NewServer(node *Node, port int) *Server {
 	return s
 }
 
-// Start starts the HTTP server
+// Start starts the HTTP server and the background JTI cleanup goroutine.
 func (s *Server) Start() error {
+	go s.runJTICleanup()
 	go func() {
 		s.node.logger.Sugar().Infow("Starting HTTP server", "operator_address", s.node.OperatorAddress.Hex(), "port", s.httpServer.Addr)
 		if err := s.httpServer.ListenAndServe(); err != http.ErrServerClosed {
@@ -148,8 +153,9 @@ func (s *Server) Start() error {
 	return nil
 }
 
-// Stop stops the HTTP server
+// Stop stops the HTTP server and the background JTI cleanup goroutine.
 func (s *Server) Stop() error {
+	close(s.stopJTICleanup)
 	return s.httpServer.Close()
 }
 
@@ -160,19 +166,10 @@ func (s *Server) GetHandler() http.Handler {
 
 // checkAndStoreJTI checks whether jti has been used before and, if not, records it
 // until expiresAt. Returns true if the jti is new (allowed), false if it is a replay.
-// Expired entries are purged lazily on each call.
+// Expired entries are purged by a background goroutine (see runJTICleanup).
 func (s *Server) checkAndStoreJTI(jti string, expiresAt int64) bool {
-	now := time.Now().Unix()
-
 	s.jtiMu.Lock()
 	defer s.jtiMu.Unlock()
-
-	// Purge expired entries
-	for k, exp := range s.jtiCache {
-		if now >= exp {
-			delete(s.jtiCache, k)
-		}
-	}
 
 	if _, seen := s.jtiCache[jti]; seen {
 		return false
@@ -180,6 +177,32 @@ func (s *Server) checkAndStoreJTI(jti string, expiresAt int64) bool {
 
 	s.jtiCache[jti] = expiresAt
 	return true
+}
+
+// jtiCleanupInterval controls how often the background goroutine purges expired JTIs.
+const jtiCleanupInterval = 1 * time.Minute
+
+// runJTICleanup periodically removes expired entries from the JTI cache.
+// It runs until stopJTICleanup is closed.
+func (s *Server) runJTICleanup() {
+	ticker := time.NewTicker(jtiCleanupInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-s.stopJTICleanup:
+			return
+		case <-ticker.C:
+			now := time.Now().Unix()
+			s.jtiMu.Lock()
+			for k, exp := range s.jtiCache {
+				if now >= exp {
+					delete(s.jtiCache, k)
+				}
+			}
+			s.jtiMu.Unlock()
+		}
+	}
 }
 
 // Note: Handler implementations moved to handlers.go
