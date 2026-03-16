@@ -100,6 +100,7 @@ type Server struct {
 
 	// stopJTICleanup signals the background JTI cleanup goroutine to exit.
 	stopJTICleanup chan struct{}
+	stopOnce       sync.Once
 }
 
 // NewServer creates a new server instance
@@ -154,8 +155,9 @@ func (s *Server) Start() error {
 }
 
 // Stop stops the HTTP server and the background JTI cleanup goroutine.
+// Safe to call multiple times.
 func (s *Server) Stop() error {
-	close(s.stopJTICleanup)
+	s.stopOnce.Do(func() { close(s.stopJTICleanup) })
 	return s.httpServer.Close()
 }
 
