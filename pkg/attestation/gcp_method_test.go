@@ -1,9 +1,12 @@
 package attestation
 
 import (
+	"context"
 	"testing"
 
+	kmsTypes "github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGCPAttestationMethodName(t *testing.T) {
@@ -50,6 +53,26 @@ func TestGCPAttestationMethodVerifyEmptyAttestation(t *testing.T) {
 	_, err := method.Verify(request)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "empty")
+}
+
+func TestGCPAttestationMethodVerifyNoncePropagation(t *testing.T) {
+	mockVerifier := NewMockAttestationVerifierInterface(t)
+	mockVerifier.EXPECT().
+		VerifyAttestation(context.Background(), "test-token", GoogleConfidentialSpace).
+		Return(&kmsTypes.AttestationClaims{
+			AppID:       "my-app",
+			ImageDigest: "sha256:abc",
+			Nonce:       "deadbeef",
+		}, nil)
+
+	method := &GCPAttestationMethod{verifier: mockVerifier, provider: GoogleConfidentialSpace}
+	claims, err := method.Verify(&AttestationRequest{
+		AppID:       "my-app",
+		Attestation: []byte("test-token"),
+	})
+
+	require.NoError(t, err)
+	assert.Equal(t, "deadbeef", claims.Nonce)
 }
 
 // Note: Full integration tests with real AttestationVerifier are in attestation_test.go
