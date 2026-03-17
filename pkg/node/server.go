@@ -166,14 +166,23 @@ func (s *Server) GetHandler() http.Handler {
 	return s.httpServer.Handler
 }
 
+// maxJTICacheSize is the upper bound on tracked JTIs. If the cache is full,
+// new tokens are rejected to prevent memory exhaustion from DDoS.
+const maxJTICacheSize = 100_000
+
 // checkAndStoreJTI checks whether jti has been used before and, if not, records it
-// until expiresAt. Returns true if the jti is new (allowed), false if it is a replay.
+// until expiresAt. Returns true if the jti is new (allowed), false if it is a replay
+// or the cache is at capacity.
 // Expired entries are purged by a background goroutine (see runJTICleanup).
 func (s *Server) checkAndStoreJTI(jti string, expiresAt int64) bool {
 	s.jtiMu.Lock()
 	defer s.jtiMu.Unlock()
 
 	if _, seen := s.jtiCache[jti]; seen {
+		return false
+	}
+
+	if len(s.jtiCache) >= maxJTICacheSize {
 		return false
 	}
 
