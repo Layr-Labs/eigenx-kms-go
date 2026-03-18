@@ -1436,8 +1436,10 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	// Wait for acknowledgements (as a dealer).
 	// We require a threshold (t) of *other* operators to ack, so that there exist t non-dealer holders
 	// of this dealer's contribution (robust even if the dealer goes offline later).
-	// New operators don't send acks (they only receive shares), so the reachable ack count is
-	// len(operators)-numNewOperators. Apply CalculateThreshold to that contributor set so the
+	// Both existing and new operators send acks, so the reachable ack count is
+	// len(operators)-1 (everyone except this dealer). However, new operators may lag behind
+	// existing ones, so we use the existing-operator count as the contributor set to avoid
+	// blocking on stragglers. Apply CalculateThreshold to that contributor set so the
 	// threshold is never higher than the number of operators that can actually respond.
 	myNodeID := addressToNodeID(n.OperatorAddress)
 	requiredAcks := dkg.CalculateThreshold(len(operators) - numNewOperators)
@@ -1651,13 +1653,9 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	receivedCommitments := session.commitments
 	session.mu.RUnlock()
 
-	// Verify all dealer shares before finalization to prevent poisoned-share key divergence.
-	validShares, participantIDs := collectVerifiedSharesForFinalize(
-		operators,
-		receivedShares,
-		receivedCommitments,
-		n.resharer.VerifyNewShare,
-	)
+	// Verify all dealer shares and send acknowledgements to prevent dealer equivocation.
+	validShares := make(map[int64]*fr.Element)
+	participantIDs := make([]int64, 0)
 	for _, op := range operators {
 		dealerID := addressToNodeID(op.OperatorAddress)
 		share, hasShare := receivedShares[dealerID]
@@ -1665,7 +1663,45 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		if !hasShare || share == nil || !hasCommitments || len(commitments) == 0 {
 			continue
 		}
-		if _, ok := validShares[dealerID]; !ok {
+		if n.resharer.VerifyNewShare(dealerID, share, commitments) {
+			validShares[dealerID] = share
+			participantIDs = append(participantIDs, dealerID)
+
+			// Find dealer's peer info for transport
+			var dealerPeer *peering.OperatorSetPeer
+			for _, p := range operators {
+				if addressToNodeID(p.OperatorAddress) == dealerID {
+					dealerPeer = p
+					break
+				}
+			}
+
+			if dealerPeer == nil {
+				continue
+			}
+
+			// Create acknowledgement for verified share using operator addresses
+			ack := eigenxcrypto.CreateAcknowledgement(n.OperatorAddress, dealerPeer.OperatorAddress, sessionTimestamp, share, commitments, n.signAcknowledgement)
+
+			// Send acknowledgement to dealer
+			err := n.transport.SendReshareAcknowledgement(ack, dealerPeer, session.SessionTimestamp)
+			if err != nil {
+				n.logger.Sugar().Warnw("Failed to send reshare acknowledgement (new operator)",
+					"operator_address", n.OperatorAddress.Hex(),
+					"dealer_address", dealerPeer.OperatorAddress.Hex(),
+					"error", err)
+			} else {
+				n.logger.Sugar().Debugw("Sent reshare acknowledgement (new operator)",
+					"operator_address", n.OperatorAddress.Hex(),
+					"dealer_address", dealerPeer.OperatorAddress.Hex(),
+					"dealer_id", dealerID)
+			}
+
+			n.logger.Sugar().Infow("Verified and acked reshare share (new operator)",
+				"operator_address", n.OperatorAddress.Hex(),
+				"node_id", thisNodeID,
+				"dealer_id", dealerID)
+		} else {
 			n.logInvalidShareComplaint("reshare-new-operator", sessionTimestamp, thisNodeID, dealerID, share, commitments)
 		}
 	}
