@@ -1669,6 +1669,19 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 			n.logInvalidShareComplaint("reshare-new-operator", sessionTimestamp, thisNodeID, dealerID, share, commitments)
 		}
 	}
+
+	// Wait for dealer commitment broadcasts (merkle tree verification)
+	n.logger.Sugar().Infow("Reshare (new operator): Waiting for operator commitment broadcasts",
+		"operator_address", n.OperatorAddress.Hex(),
+		"expected_verifications", len(operators)-1)
+
+	err = n.WaitForVerifications(session.SessionTimestamp, protocolTimeout)
+	if err != nil {
+		n.logger.Sugar().Warnw("Verification phase incomplete in reshare (new operator)", "error", err)
+	} else {
+		n.logger.Sugar().Infow("All operator broadcasts verified successfully in reshare (new operator)")
+	}
+
 	requiredShares := dkg.CalculateThreshold(len(operators))
 	if len(participantIDs) < requiredShares {
 		return fmt.Errorf("insufficient verified shares for new-operator finalize: got %d, need %d", len(participantIDs), requiredShares)
