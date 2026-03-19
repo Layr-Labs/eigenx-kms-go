@@ -90,6 +90,7 @@ type IContractCaller interface {
 
 	GetAppOperatorSetId(app common.Address, opts *bind.CallOpts) (uint32, error)
 
+	// GetAppLatestReleaseBlockNumber returns the block number of the latest CONFIRMED release.
 	GetAppLatestReleaseBlockNumber(app common.Address, opts *bind.CallOpts) (uint32, error)
 
 	GetAppStatus(app common.Address, opts *bind.CallOpts) (uint8, error)
@@ -98,5 +99,7 @@ type IContractCaller interface {
 
 	GetLatestRelease(ctx context.Context, appID string) ([32]byte, caller.Env, []byte, types.ContainerPolicy, error)
 
+	// GetLatestReleaseAsRelease returns the confirmed (active) release. This is only updated
+	// after the Coordinator calls confirmUpgrade(), preventing race conditions during upgrades.
 	GetLatestReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error)
 }

@@ -21,6 +21,9 @@ type Env map[string]string
 type AppControllerInterface interface {
 	GetAppCreator(opts *bind.CallOpts, app common.Address) (common.Address, error)
 	GetAppOperatorSetId(opts *bind.CallOpts, app common.Address) (uint32, error)
+	// GetAppLatestReleaseBlockNumber returns the block number of the latest CONFIRMED release.
+	// A release is confirmed only after confirmUpgrade() has been called by the Coordinator,
+	// which prevents race conditions during in-flight requests at upgrade time.
 	GetAppLatestReleaseBlockNumber(opts *bind.CallOpts, app common.Address) (uint32, error)
 	GetAppStatus(opts *bind.CallOpts, app common.Address) (uint8, error)
 	FilterAppUpgraded(opts *bind.FilterOpts, apps []common.Address) (AppUpgradedIterator, error)
@@ -91,11 +94,7 @@ func (cc *ContractCaller) getAppController() (AppControllerInterface, error) {
 	if cc.appController == nil {
 		return nil, fmt.Errorf("appController not initialized - call SetAppController first")
 	}
-	ctrl, ok := cc.appController.(AppControllerInterface)
-	if !ok {
-		return nil, fmt.Errorf("appController has unexpected type %T", cc.appController)
-	}
-	return ctrl, nil
+	return cc.appController, nil
 }
 
 // GetAppCreator returns the creator address for a given app
@@ -124,7 +123,8 @@ func (cc *ContractCaller) GetAppOperatorSetId(app common.Address, opts *bind.Cal
 	return setId, nil
 }
 
-// GetAppLatestReleaseBlockNumber returns the block number of the latest release for a given app
+// GetAppLatestReleaseBlockNumber returns the block number of the latest CONFIRMED release for a given app.
+// This is the release that has been acknowledged by the Coordinator via confirmUpgrade().
 func (cc *ContractCaller) GetAppLatestReleaseBlockNumber(app common.Address, opts *bind.CallOpts) (uint32, error) {
 	appCtrl, err := cc.getAppController()
 	if err != nil {
