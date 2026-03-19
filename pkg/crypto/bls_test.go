@@ -30,6 +30,7 @@ func Test_CryptoOperations(t *testing.T) {
 	t.Run("RecoverAppPrivateKeyWithRetry_CapReached", func(t *testing.T) { testRecoverAppPrivateKeyWithRetry_CapReached(t) })
 	t.Run("VerifyAppPrivateKey", func(t *testing.T) { testVerifyAppPrivateKey(t) })
 	t.Run("DecryptWithRetry_E2E", func(t *testing.T) { testDecryptWithRetry_E2E(t) })
+	t.Run("ValidateCiphertextFormat", func(t *testing.T) { testValidateCiphertextFormat(t) })
 }
 
 // testScalarMulG1 tests scalar multiplication on G1
@@ -589,4 +590,59 @@ func testDecryptWithRetry_E2E(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, plaintext, decrypted, "Decrypted data should match original plaintext")
+}
+
+func testValidateCiphertextFormat(t *testing.T) {
+	// Valid ciphertext should pass
+	appID := "test-validate-format"
+	n, threshold := 4, 3
+	partialSigs, _, secret := generateTestPartialSigs(t, appID, n, threshold)
+	_ = partialSigs
+
+	masterPubKey, err := ScalarMulG2(G2Generator, secret)
+	require.NoError(t, err)
+
+	validCiphertext, err := EncryptForApp(appID, *masterPubKey, []byte("hello"))
+	require.NoError(t, err)
+	require.NoError(t, ValidateCiphertextFormat(validCiphertext))
+
+	tests := []struct {
+		name       string
+		ciphertext []byte
+		errContain string
+	}{
+		{
+			name:       "nil ciphertext",
+			ciphertext: nil,
+			errContain: "ciphertext too short",
+		},
+		{
+			name:       "empty ciphertext",
+			ciphertext: []byte{},
+			errContain: "ciphertext too short",
+		},
+		{
+			name:       "too short",
+			ciphertext: []byte("short"),
+			errContain: "ciphertext too short",
+		},
+		{
+			name:       "wrong magic",
+			ciphertext: append([]byte("XYZ"), validCiphertext[3:]...),
+			errContain: "invalid ciphertext format",
+		},
+		{
+			name:       "wrong version",
+			ciphertext: func() []byte { c := make([]byte, len(validCiphertext)); copy(c, validCiphertext); c[3] = 0xFF; return c }(),
+			errContain: "unsupported ciphertext version",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := ValidateCiphertextFormat(tt.ciphertext)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tt.errContain)
+		})
+	}
 }

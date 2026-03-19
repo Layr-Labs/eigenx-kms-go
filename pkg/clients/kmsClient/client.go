@@ -451,7 +451,17 @@ func (c *Client) Decrypt(appID string, encryptedData []byte, operators *peering.
 // decryptWithRetry attempts decryption using different threshold-sized subsets of
 // partial signatures. This provides BFT: if some operators returned invalid partial
 // signatures, the function rotates through alternative subsets until decryption succeeds.
+//
+// If the ciphertext itself is malformed (invalid format, wrong version, etc.), the
+// function fails fast without retrying, since no subset of partial signatures can fix
+// invalid input.
 func decryptWithRetry(appID string, partialSigs map[int64]types.G1Point, threshold int, ciphertext []byte) ([]byte, error) {
+	// Validate ciphertext format upfront — retrying with different key subsets
+	// cannot fix a structurally invalid ciphertext.
+	if err := crypto.ValidateCiphertextFormat(ciphertext); err != nil {
+		return nil, fmt.Errorf("invalid ciphertext: %w", err)
+	}
+
 	// decrypted is populated as a side-effect of the validate closure, which
 	// RecoverAppPrivateKeyWithRetry calls synchronously on each candidate key.
 	var decrypted []byte

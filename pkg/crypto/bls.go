@@ -666,6 +666,23 @@ func EncryptForApp(appID string, masterPublicKey types.G2Point, plaintext []byte
 //   - Derives AES key from g_ID using HKDF with version-aware domain separation
 //   - Decrypts with AES-GCM and verifies authentication using AAD
 //
+// ValidateCiphertextFormat checks that the ciphertext has a valid IBE format
+// (magic number, version, minimum length) without attempting decryption.
+// Use this to fail fast on malformed input before attempting key recovery retries.
+func ValidateCiphertextFormat(ciphertext []byte) error {
+	if len(ciphertext) < minCiphertextSize {
+		return errors.New("ciphertext too short")
+	}
+	if !bytes.Equal(ciphertext[:magicSize], []byte(ibeMagic)) {
+		return errors.New("invalid ciphertext format: missing or incorrect magic number")
+	}
+	version := ciphertext[magicSize]
+	if version != ibeVersion {
+		return fmt.Errorf("unsupported ciphertext version: %d", version)
+	}
+	return nil
+}
+
 // Expected ciphertext format matches EncryptForApp output
 func DecryptForApp(appID string, appPrivateKey types.G1Point, ciphertext []byte) ([]byte, error) {
 
@@ -674,22 +691,13 @@ func DecryptForApp(appID string, appPrivateKey types.G1Point, ciphertext []byte)
 		return nil, err
 	}
 
-	// Check for version header
-	// Expected format: magic(3) || version(1) || C1(96) || nonce(12) || encrypted_data
-	if len(ciphertext) < minCiphertextSize {
-		return nil, errors.New("ciphertext too short")
+	// Validate ciphertext format
+	if err := ValidateCiphertextFormat(ciphertext); err != nil {
+		return nil, err
 	}
 
-	// Verify magic number
-	if !bytes.Equal(ciphertext[:magicSize], []byte(ibeMagic)) {
-		return nil, errors.New("invalid ciphertext format: missing or incorrect magic number")
-	}
-
-	// Check version
+	// Extract version for downstream use
 	version := ciphertext[magicSize]
-	if version != ibeVersion {
-		return nil, fmt.Errorf("unsupported ciphertext version: %d", version)
-	}
 
 	// Extract C1 from ciphertext (after header)
 	c1Start := headerSize
