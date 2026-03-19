@@ -632,8 +632,13 @@ func testValidateCiphertextFormat(t *testing.T) {
 			errContain: "invalid ciphertext format",
 		},
 		{
-			name:       "wrong version",
-			ciphertext: func() []byte { c := make([]byte, len(validCiphertext)); copy(c, validCiphertext); c[3] = 0xFF; return c }(),
+			name: "wrong version",
+			ciphertext: func() []byte {
+				c := make([]byte, len(validCiphertext))
+				copy(c, validCiphertext)
+				c[3] = 0xFF
+				return c
+			}(),
 			errContain: "unsupported ciphertext version",
 		},
 	}
