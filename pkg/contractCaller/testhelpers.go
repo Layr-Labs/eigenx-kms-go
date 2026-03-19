@@ -149,6 +149,23 @@ func (m *TestableContractCallerStub) ConfirmUpgrade(appID string) error {
 	return nil
 }
 
+// GetLatestRelease returns the confirmed release data for an app in its raw form.
+// Delegates to the releases map so behaviour is consistent with GetLatestReleaseAsRelease.
+func (m *TestableContractCallerStub) GetLatestRelease(ctx context.Context, appID string) ([32]byte, caller.Env, []byte, types.ContainerPolicy, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	release, exists := m.releases[appID]
+	if !exists {
+		return [32]byte{}, nil, nil, types.ContainerPolicy{}, fmt.Errorf("no release found for app_id: %s", appID)
+	}
+
+	var digest [32]byte
+	copy(digest[:], []byte(release.ImageDigest))
+
+	return digest, nil, []byte(release.EncryptedEnv), release.ContainerPolicy, nil
+}
+
 // GetLatestReleaseAsRelease returns the confirmed (active) release for an app.
 // In the two-phase upgrade model, this is only updated after confirmUpgrade() is called,
 // so in-flight requests issued before an upgrade are still validated correctly.

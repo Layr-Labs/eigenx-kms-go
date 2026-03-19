@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -510,7 +511,6 @@ func testSecretsEndpointJTIReplay(t *testing.T) {
 	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
 	w := httptest.NewRecorder()
 	f.server.handleSecretsRequest(w, httpReq)
-	// Expect failure (no key share for this rsaKey), but NOT 401 (JTI should be accepted the first time)
 	if w.Code == http.StatusUnauthorized {
 		t.Fatalf("First request should not fail with 401 (JTI replay rejection), got %d: %s", w.Code, w.Body.String())
 	}
@@ -822,7 +822,7 @@ func testSecretsEndpointTwoPhaseUpgrade(t *testing.T) {
 			AppID:       "test-app",
 			ImageDigest: imageDigest,
 			Nonce:       nonce,
-			JTI:         "two-phase-jti-" + hex.EncodeToString([]byte{byte(jtiCounter)}),
+			JTI:         fmt.Sprintf("two-phase-jti-%d", jtiCounter),
 			IssuedAt:    time.Now().Unix(),
 			ExpiresAt:   time.Now().Add(time.Hour).Unix(),
 			PublicKey:   pubKeyPEM,
