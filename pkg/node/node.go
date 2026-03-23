@@ -113,34 +113,6 @@ type ProtocolSession struct {
 // In production it always points to util.AddressToNodeID.
 var addressToNodeID = util.AddressToNodeID
 
-// collectVerifiedSharesForFinalize filters dealer shares to only those that
-// have both a share and commitments and pass verification, preserving operator order.
-func collectVerifiedSharesForFinalize(
-	operators []*peering.OperatorSetPeer,
-	shares map[int64]*fr.Element,
-	commitments map[int64][]types.G2Point,
-	verifyFn func(int64, *fr.Element, []types.G2Point) bool,
-) (map[int64]*fr.Element, []int64) {
-	validShares := make(map[int64]*fr.Element)
-	participantIDs := make([]int64, 0, len(operators))
-
-	for _, op := range operators {
-		dealerID := addressToNodeID(op.OperatorAddress)
-		share, hasShare := shares[dealerID]
-		comm, hasCommitments := commitments[dealerID]
-		if !hasShare || share == nil || !hasCommitments || len(comm) == 0 {
-			continue
-		}
-
-		if verifyFn(dealerID, share, comm) {
-			validShares[dealerID] = share
-			participantIDs = append(participantIDs, dealerID)
-		}
-	}
-
-	return validShares, participantIDs
-}
-
 // HandleReceivedShare stores a share and signals completion if all shares received
 // Returns error if duplicate share detected
 func (s *ProtocolSession) HandleReceivedShare(senderNodeID int64, share *fr.Element) error {
@@ -1667,33 +1639,20 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 			validShares[dealerID] = share
 			participantIDs = append(participantIDs, dealerID)
 
-			// Find dealer's peer info for transport
-			var dealerPeer *peering.OperatorSetPeer
-			for _, p := range operators {
-				if addressToNodeID(p.OperatorAddress) == dealerID {
-					dealerPeer = p
-					break
-				}
-			}
-
-			if dealerPeer == nil {
-				continue
-			}
-
 			// Create acknowledgement for verified share using operator addresses
-			ack := eigenxcrypto.CreateAcknowledgement(n.OperatorAddress, dealerPeer.OperatorAddress, sessionTimestamp, share, commitments, n.signAcknowledgement)
+			ack := eigenxcrypto.CreateAcknowledgement(n.OperatorAddress, op.OperatorAddress, sessionTimestamp, share, commitments, n.signAcknowledgement)
 
 			// Send acknowledgement to dealer
-			err := n.transport.SendReshareAcknowledgement(ack, dealerPeer, session.SessionTimestamp)
+			err := n.transport.SendReshareAcknowledgement(ack, op, session.SessionTimestamp)
 			if err != nil {
 				n.logger.Sugar().Warnw("Failed to send reshare acknowledgement (new operator)",
 					"operator_address", n.OperatorAddress.Hex(),
-					"dealer_address", dealerPeer.OperatorAddress.Hex(),
+					"dealer_address", op.OperatorAddress.Hex(),
 					"error", err)
 			} else {
 				n.logger.Sugar().Debugw("Sent reshare acknowledgement (new operator)",
 					"operator_address", n.OperatorAddress.Hex(),
-					"dealer_address", dealerPeer.OperatorAddress.Hex(),
+					"dealer_address", op.OperatorAddress.Hex(),
 					"dealer_id", dealerID)
 			}
 
