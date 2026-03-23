@@ -131,7 +131,11 @@ func (s *ProtocolSession) HandleReceivedShare(senderNodeID int64, share *fr.Elem
 
 	s.shares[senderNodeID] = share
 
-	// Signal completion when EXACTLY all shares received
+	// Signal completion when ALL shares received (not threshold).
+	// The threshold fallback is handled by waitForNShares, which polls
+	// the map length until the required count is reached or timeout.
+	// Note: self-share is stored before waitForShares is called, so len(s.shares)
+	// starts at 1 (self) when waiting begins.
 	if len(s.shares) == len(s.Operators) {
 		select {
 		case s.sharesCompleteChan <- true:
@@ -155,7 +159,8 @@ func (s *ProtocolSession) HandleReceivedCommitment(senderNodeID int64, commitmen
 
 	s.commitments[senderNodeID] = commitments
 
-	// Signal completion when EXACTLY all commitments received
+	// Signal completion when ALL commitments received (not threshold).
+	// The threshold fallback is handled by waitForCommitmentsWithThreshold.
 	if len(s.commitments) == len(s.Operators) {
 		select {
 		case s.commitmentsCompleteChan <- true:
@@ -1041,6 +1046,12 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 		if n.dkg.VerifyShare(dealerID, share, commitments) {
 			validShares[dealerID] = share
 
+			// Skip sending ack to self — a dealer does not need to ack its own share.
+			if dealerID == thisNodeID {
+				n.logger.Sugar().Debugw("Skipping self-ack", "operator_address", n.OperatorAddress.Hex(), "dealer_id", dealerID)
+				continue
+			}
+
 			// Find dealer's peer info for transport
 			var dealerPeer *peering.OperatorSetPeer
 			for _, op := range operators {
@@ -1396,17 +1407,31 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		"operator_address", n.OperatorAddress.Hex(),
 		"node_id", thisNodeID)
 
-	// Get shares and commitments from session
+	// Copy shares and commitments from session under lock to avoid data races.
+	// After threshold fallback, late-arriving shares may still be written concurrently.
 	session.mu.RLock()
-	receivedShares := session.shares
-	receivedCommitments := session.commitments
+	receivedShares := make(map[int64]*fr.Element, len(session.shares))
+	for id, s := range session.shares {
+		receivedShares[id] = s
+	}
+	receivedCommitments := make(map[int64][]types.G2Point, len(session.commitments))
+	for id, c := range session.commitments {
+		receivedCommitments[id] = c
+	}
 	session.mu.RUnlock()
 
 	validShares := make(map[int64]*fr.Element)
+	invalidDealers := make([]int64, 0)
 	for dealerID, share := range receivedShares {
 		commitments := receivedCommitments[dealerID]
 		if n.resharer.VerifyNewShare(dealerID, share, commitments) {
 			validShares[dealerID] = share
+
+			// Skip sending ack to self — a dealer does not need to ack its own share.
+			if dealerID == thisNodeID {
+				n.logger.Sugar().Debugw("Skipping self-ack for reshare", "operator_address", n.OperatorAddress.Hex(), "dealer_id", dealerID)
+				continue
+			}
 
 			// Find dealer's peer info for transport
 			var dealerPeer *peering.OperatorSetPeer
@@ -1444,7 +1469,20 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 				"dealer_id", dealerID)
 		} else {
 			n.logInvalidShareComplaint("reshare", sessionTimestamp, thisNodeID, dealerID, share, commitments)
+			invalidDealers = append(invalidDealers, dealerID)
 		}
+	}
+
+	// Remove invalid shares from session so they are excluded from participant
+	// selection and delta computation. Without this, an operator sending an
+	// invalid share would still be included in session.shares and corrupt the
+	// new key share.
+	if len(invalidDealers) > 0 {
+		session.mu.Lock()
+		for _, id := range invalidDealers {
+			delete(session.shares, id)
+		}
+		session.mu.Unlock()
 	}
 
 	// Wait for acknowledgements (as a dealer).
@@ -1461,7 +1499,25 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		requiredAcks = 0
 	}
 	if err := waitForAcks(session, myNodeID, requiredAcks, protocolTimeout); err != nil {
-		return fmt.Errorf("insufficient reshare acknowledgements: %v", err)
+		// Threshold fallback: check if we have at least threshold-1 acks
+		session.mu.RLock()
+		ackMap := session.acks[myNodeID]
+		received := 0
+		if ackMap != nil {
+			received = len(ackMap)
+		}
+		session.mu.RUnlock()
+		fallbackRequired := requiredAcks - 1
+		if fallbackRequired < 1 {
+			fallbackRequired = 1
+		}
+		if received >= fallbackRequired {
+			n.logger.Sugar().Warnw("Not all acks received but fallback threshold met, proceeding",
+				"received", received, "required", requiredAcks, "fallback", fallbackRequired,
+				"total_operators", len(operators))
+		} else {
+			return fmt.Errorf("insufficient reshare acknowledgements: %v", err)
+		}
 	}
 
 	// Phase 2: Build Merkle Tree and Submit to Contract
@@ -1538,7 +1594,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 
 	// Phase 4: Wait for verifications
 	n.logger.Sugar().Infow("Reshare Phase 4: Waiting for operator verifications",
-		"expected_verifications", len(operators)-1)
+		"operator_address", n.OperatorAddress.Hex())
 
 	err = n.WaitForVerifications(session.SessionTimestamp, protocolTimeout)
 	if err != nil {
@@ -1686,10 +1742,17 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		return fmt.Errorf("failed to receive commitments: %w", err)
 	}
 
-	// Collect shares and commitments from session
+	// Copy shares and commitments from session under lock to avoid data races.
+	// After threshold fallback, late-arriving shares may still be written concurrently.
 	session.mu.RLock()
-	receivedShares := session.shares
-	receivedCommitments := session.commitments
+	receivedShares := make(map[int64]*fr.Element, len(session.shares))
+	for id, s := range session.shares {
+		receivedShares[id] = s
+	}
+	receivedCommitments := make(map[int64][]types.G2Point, len(session.commitments))
+	for id, c := range session.commitments {
+		receivedCommitments[id] = c
+	}
 	session.mu.RUnlock()
 
 	// Verify all dealer shares and send acknowledgements to prevent dealer equivocation.
@@ -2301,7 +2364,8 @@ func (n *Node) VerifyOperatorBroadcast(
 	// For now, this is a placeholder that will be implemented when we integrate with the contract
 	// In Phase 7 integration tests, we'll add the actual contract query
 
-	// Step 2: Verify commitment hash matches broadcast
+	// Step 2: Compute commitment hash (will be verified against on-chain data in Phase 7)
+	// TODO: Compare broadcastCommitmentHash against contract-stored value once contract integration is complete
 	broadcastCommitmentHash := eigenxcrypto.HashCommitment(broadcast.Commitments)
 
 	// Step 3: Find MY ack in the broadcast
@@ -2337,17 +2401,13 @@ func (n *Node) VerifyOperatorBroadcast(
 			myAck.ShareHash, expectedShareHash)
 	}
 
-	// Step 5: Verify merkle proof
-	leafHash := eigenxcrypto.HashAcknowledgementForMerkle(myAck)
-	proof := &merkle.MerkleProof{
-		Leaf:  leafHash,
-		Proof: broadcast.MerkleProof,
-	}
-
-	// For Phase 6, we'll verify against the tree root
-	// In Phase 7, we'll verify against on-chain root from contract
-	// For now, just verify the proof is well-formed
-	if len(proof.Proof) == 0 {
+	// Step 5: Verify merkle proof is present
+	// NOTE: Full proof verification requires the leaf index, which is not currently
+	// transmitted in CommitmentBroadcast. The broadcast only carries the sibling hashes
+	// ([][32]byte) but not the leaf's position in the tree. Full verification will be
+	// implemented in Phase 7 when we verify against on-chain root from contract, which
+	// will also supply the leaf index. For now, verify the proof is non-empty.
+	if len(broadcast.MerkleProof) == 0 {
 		return fmt.Errorf("merkle proof is empty")
 	}
 
@@ -2372,15 +2432,28 @@ func (n *Node) WaitForVerifications(sessionTimestamp int64, timeout time.Duratio
 		return fmt.Errorf("session not found")
 	}
 
-	expectedVerifications := len(session.Operators) - 1 // All except self
+	// For reshare, only expect threshold-1 verifications (matching the threshold
+	// semantics used for shares). For DKG, expect all n-1.
+	// Cap at receivedShareCount-1 since we can only verify operators we received
+	// shares from, and some may go offline before broadcasting.
+	expectedVerifications := len(session.Operators) - 1
+	if session.Type == "reshare" {
+		session.mu.RLock()
+		receivedShareCount := len(session.shares)
+		session.mu.RUnlock()
+		thresholdMinus1 := dkg.CalculateThreshold(len(session.Operators)) - 1
+		expectedVerifications = min(thresholdMinus1, receivedShareCount-1)
+	}
 
-	deadline := time.Now().Add(timeout)
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
 
 	for {
 		select {
-		case <-time.After(time.Until(deadline)):
+		case <-ctx.Done():
 			session.mu.RLock()
 			verified := len(session.verifiedOperators)
 			session.mu.RUnlock()
