@@ -412,25 +412,23 @@ func VerifyAppPrivateKey(appID string, appPrivKey types.G1Point, masterPubKey ty
 		return false, fmt.Errorf("failed to convert master public key: %w", err)
 	}
 
-	// Compute e(appPrivKey, G2_gen)
-	lhs, err := bls12381.Pair(
-		[]bls12381.G1Affine{*privKeyAffine.ToAffine()},
-		[]bls12381.G2Affine{*g2GenAffine.ToAffine()},
+	// Multi-pairing check: e(appPrivKey, G2_gen) · e(-H(appID), masterPubKey) == 1
+	// This is equivalent to e(appPrivKey, G2_gen) == e(H(appID), masterPubKey)
+	// but uses a single Miller loop + final exponentiation instead of two separate
+	// pairings, giving ~30-40% speedup. This matters in the retry hot path where
+	// VerifyAppPrivateKey may be called up to DefaultMaxRecoveryAttempts times.
+	var negQID bls12381.G1Affine
+	negQID.Neg(qIDAffine.ToAffine())
+
+	ok, err := bls12381.PairingCheck(
+		[]bls12381.G1Affine{*privKeyAffine.ToAffine(), negQID},
+		[]bls12381.G2Affine{*g2GenAffine.ToAffine(), *masterPKAffine.ToAffine()},
 	)
 	if err != nil {
-		return false, fmt.Errorf("failed to compute LHS pairing: %w", err)
+		return false, fmt.Errorf("failed to compute pairing check: %w", err)
 	}
 
-	// Compute e(H(appID), masterPubKey)
-	rhs, err := bls12381.Pair(
-		[]bls12381.G1Affine{*qIDAffine.ToAffine()},
-		[]bls12381.G2Affine{*masterPKAffine.ToAffine()},
-	)
-	if err != nil {
-		return false, fmt.Errorf("failed to compute RHS pairing: %w", err)
-	}
-
-	return lhs.Equal(&rhs), nil
+	return ok, nil
 }
 
 // ComputeMasterPublicKey computes the master public key from commitments
