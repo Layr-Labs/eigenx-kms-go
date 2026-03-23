@@ -1202,6 +1202,10 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	if len(keyVersion.Commitments) > 0 {
 		mpk := keyVersion.Commitments[0]
 		keyVersion.MasterPublicKey = &mpk
+	} else {
+		n.logger.Sugar().Errorw("DKG produced key version with empty commitments - MasterPublicKey will be nil",
+			"operator_address", n.OperatorAddress.Hex(),
+			"session_timestamp", session.SessionTimestamp)
 	}
 	// Store THIS node's commitments (not allCommitments[0]) so that when the client
 	// queries all operators and sums their commitments[0], it computes the correct master public key
@@ -1712,9 +1716,10 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 
 	// Fetch MPK from existing operators using threshold agreement
 	// New operators cannot derive the MPK from reshare protocol data alone
-	mpk, err := n.fetchMPKFromPeers(operators)
+	mpk, err := n.fetchMPKFromPeers(ctx, operators)
 	if err != nil {
-		n.logger.Sugar().Warnw("Failed to fetch MPK from peers during new operator join", "error", err)
+		n.logger.Sugar().Warnw("Failed to fetch MPK from peers during new operator join - this operator will not contribute to client MPK threshold agreement until next reshare or restart",
+			"error", err)
 	} else {
 		newKeyVersion.MasterPublicKey = mpk
 	}
@@ -2316,7 +2321,7 @@ func (n *Node) WaitForVerifications(sessionTimestamp int64, timeout time.Duratio
 
 // fetchMPKFromPeers fetches the master public key from peer operators using threshold agreement.
 // Used by new operators joining via reshare who cannot derive the MPK from protocol data alone.
-func (n *Node) fetchMPKFromPeers(operators []*peering.OperatorSetPeer) (*types.G2Point, error) {
+func (n *Node) fetchMPKFromPeers(ctx context.Context, operators []*peering.OperatorSetPeer) (*types.G2Point, error) {
 	// Build peer list excluding self, then compute threshold from full operator set
 	peers := make([]*peering.OperatorSetPeer, 0, len(operators))
 	for _, op := range operators {
@@ -2339,7 +2344,12 @@ func (n *Node) fetchMPKFromPeers(operators []*peering.OperatorSetPeer) (*types.G
 		go func(peer *peering.OperatorSetPeer) {
 			defer wg.Done()
 
-			resp, err := httpClient.Get(peer.SocketAddress + "/pubkey")
+			req, err := http.NewRequestWithContext(ctx, http.MethodGet, peer.SocketAddress+"/pubkey", nil)
+			if err != nil {
+				n.logger.Sugar().Warnw("Failed to create MPK request", "peer", peer.SocketAddress, "error", err)
+				return
+			}
+			resp, err := httpClient.Do(req)
 			if err != nil {
 				n.logger.Sugar().Warnw("Failed to fetch MPK from peer", "peer", peer.SocketAddress, "error", err)
 				return
