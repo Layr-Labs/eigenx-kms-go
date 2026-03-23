@@ -237,6 +237,200 @@ func RecoverAppPrivateKey(appID string, partialSigs map[int64]types.G1Point, thr
 	return result, nil
 }
 
+// DefaultMaxRecoveryAttempts bounds the number of subset combinations tried during retry
+// to prevent excessive computation with large operator sets. C(n,t) can grow quickly
+// (e.g., C(21,14) = 116,280), so we cap attempts at a practical limit.
+const DefaultMaxRecoveryAttempts = 1000
+
+// RecoverAppPrivateKeyWithRetry attempts to recover the app private key by trying
+// different threshold-sized subsets of partial signatures. If the initial subset
+// produces an invalid key (as determined by the validate function), it enumerates
+// C(n, threshold) combinations until a valid subset is found or DefaultMaxRecoveryAttempts
+// is reached. This provides BFT: up to (n - threshold) invalid signatures can be
+// tolerated (for small enough operator sets that all combinations fit within the cap).
+//
+// When C(n, threshold) exceeds the attempt cap, only a subset of combinations is tried
+// and full BFT tolerance is not guaranteed. The returned error distinguishes between
+// "all combinations exhausted" and "attempt cap reached".
+//
+// Complexity: worst-case O(min(C(n, threshold), DefaultMaxRecoveryAttempts)) recovery
+// attempts, each involving Lagrange interpolation on G1 plus one validate call.
+func RecoverAppPrivateKeyWithRetry(
+	appID string,
+	partialSigs map[int64]types.G1Point,
+	threshold int,
+	validate func(*types.G1Point) bool,
+) (*types.G1Point, error) {
+	return recoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, validate, DefaultMaxRecoveryAttempts)
+}
+
+func recoverAppPrivateKeyWithRetry(
+	appID string,
+	partialSigs map[int64]types.G1Point,
+	threshold int,
+	validate func(*types.G1Point) bool,
+	maxAttempts int,
+) (*types.G1Point, error) {
+	if len(partialSigs) < threshold {
+		return nil, fmt.Errorf("insufficient partial signatures: got %d, need %d", len(partialSigs), threshold)
+	}
+
+	// Sort all participant IDs for deterministic ordering
+	allParticipants := make([]int64, 0, len(partialSigs))
+	for id := range partialSigs {
+		allParticipants = append(allParticipants, id)
+	}
+	sort.Slice(allParticipants, func(i, j int) bool {
+		return allParticipants[i] < allParticipants[j]
+	})
+
+	// Helper to attempt recovery with a given subset
+	trySubset := func(subset []int64) (*types.G1Point, bool) {
+		subsetSigs := make(map[int64]types.G1Point, len(subset))
+		for _, id := range subset {
+			subsetSigs[id] = partialSigs[id]
+		}
+		recovered, err := RecoverAppPrivateKey(appID, subsetSigs, threshold)
+		if err != nil {
+			return nil, false
+		}
+		if validate(recovered) {
+			return recovered, true
+		}
+		return nil, false
+	}
+
+	// Enumerate all C(n, threshold) combinations using iterative generation
+	n := len(allParticipants)
+	totalCombinations := binomial(n, threshold)
+	attempts := 0
+	exhausted := false
+
+	// indices tracks current combination positions (0-indexed into allParticipants)
+	indices := make([]int, threshold)
+	for i := range indices {
+		indices[i] = i
+	}
+
+	for {
+		// Build current subset from indices
+		subset := make([]int64, threshold)
+		for i, idx := range indices {
+			subset[i] = allParticipants[idx]
+		}
+
+		attempts++
+		if recovered, ok := trySubset(subset); ok {
+			return recovered, nil
+		}
+
+		if attempts >= maxAttempts {
+			break
+		}
+
+		// Advance to next combination
+		i := threshold - 1
+		for i >= 0 && indices[i] == n-threshold+i {
+			i--
+		}
+		if i < 0 {
+			exhausted = true
+			break
+		}
+		indices[i]++
+		for j := i + 1; j < threshold; j++ {
+			indices[j] = indices[j-1] + 1
+		}
+	}
+
+	if exhausted {
+		return nil, fmt.Errorf("failed to recover valid app private key: all %d combinations exhausted (had %d signatures, needed %d valid)",
+			attempts, len(partialSigs), threshold)
+	}
+	return nil, fmt.Errorf("failed to recover valid app private key: attempt cap (%d) reached after trying %d of %d total combinations — BFT guarantee incomplete (had %d signatures, threshold %d)",
+		maxAttempts, attempts, totalCombinations, len(partialSigs), threshold)
+}
+
+// binomial computes C(n, k) = n! / (k! * (n-k)!), capped to avoid overflow.
+func binomial(n, k int) int {
+	if k > n || k < 0 {
+		return 0
+	}
+	if k == 0 || k == n {
+		return 1
+	}
+	// Use the smaller of k and n-k for efficiency
+	if k > n-k {
+		k = n - k
+	}
+	result := 1
+	for i := 0; i < k; i++ {
+		// Use int64 intermediate and gcd to prevent overflow on 32-bit platforms
+		g := gcd(result, i+1)
+		product := int64(result/g) * int64((n-i)/((i+1)/g))
+		if product > 1_000_000_000 {
+			return 1_000_000_000
+		}
+		result = int(product)
+	}
+	return result
+}
+
+func gcd(a, b int) int {
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a
+}
+
+// VerifyAppPrivateKey checks that a recovered app private key is consistent with
+// the master public key using the pairing equation:
+//
+//	e(appPrivKey, G2_gen) == e(H(appID), masterPubKey)
+func VerifyAppPrivateKey(appID string, appPrivKey types.G1Point, masterPubKey types.G2Point) (bool, error) {
+	// Hash appID to G1
+	qID, err := HashToG1(appID)
+	if err != nil {
+		return false, fmt.Errorf("failed to hash appID to G1: %w", err)
+	}
+
+	// Convert points to affine representations for pairing
+	privKeyAffine, err := bls.G1PointFromCompressedBytes(appPrivKey.CompressedBytes)
+	if err != nil {
+		return false, fmt.Errorf("failed to convert app private key: %w", err)
+	}
+	g2GenAffine, err := bls.G2PointFromCompressedBytes(G2Generator.CompressedBytes)
+	if err != nil {
+		return false, fmt.Errorf("failed to convert G2 generator: %w", err)
+	}
+	qIDAffine, err := bls.G1PointFromCompressedBytes(qID.CompressedBytes)
+	if err != nil {
+		return false, fmt.Errorf("failed to convert H(appID): %w", err)
+	}
+	masterPKAffine, err := bls.G2PointFromCompressedBytes(masterPubKey.CompressedBytes)
+	if err != nil {
+		return false, fmt.Errorf("failed to convert master public key: %w", err)
+	}
+
+	// Multi-pairing check: e(appPrivKey, G2_gen) · e(-H(appID), masterPubKey) == 1
+	// This is equivalent to e(appPrivKey, G2_gen) == e(H(appID), masterPubKey)
+	// but uses a single Miller loop + final exponentiation instead of two separate
+	// pairings, giving ~30-40% speedup. This matters in the retry hot path where
+	// VerifyAppPrivateKey may be called up to DefaultMaxRecoveryAttempts times.
+	var negQID bls12381.G1Affine
+	negQID.Neg(qIDAffine.ToAffine())
+
+	ok, err := bls12381.PairingCheck(
+		[]bls12381.G1Affine{*privKeyAffine.ToAffine(), negQID},
+		[]bls12381.G2Affine{*g2GenAffine.ToAffine(), *masterPKAffine.ToAffine()},
+	)
+	if err != nil {
+		return false, fmt.Errorf("failed to compute pairing check: %w", err)
+	}
+
+	return ok, nil
+}
+
 // ComputeMasterPublicKey computes the master public key from commitments
 func ComputeMasterPublicKey(allCommitments [][]types.G2Point) (*types.G2Point, error) {
 	masterPK := types.ZeroG2Point()
@@ -458,7 +652,24 @@ func EncryptForApp(appID string, masterPublicKey types.G2Point, plaintext []byte
 	return finalCiphertext, nil
 }
 
-// DecryptForApp decrypts data using the recovered application private key with AES-GCM
+// ValidateCiphertextFormat checks that the ciphertext has a valid IBE format
+// (magic number, version, minimum length) without attempting decryption.
+// Use this to fail fast on malformed input before attempting key recovery retries.
+func ValidateCiphertextFormat(ciphertext []byte) error {
+	if len(ciphertext) < minCiphertextSize {
+		return errors.New("ciphertext too short")
+	}
+	if !bytes.Equal(ciphertext[:magicSize], []byte(ibeMagic)) {
+		return errors.New("invalid ciphertext format: missing or incorrect magic number")
+	}
+	version := ciphertext[magicSize]
+	if version != ibeVersion {
+		return fmt.Errorf("unsupported ciphertext version: %d", version)
+	}
+	return nil
+}
+
+// DecryptForApp decrypts data using the recovered application private key with AES-GCM.
 //
 // This implements the Boneh-Franklin IBE decryption:
 //   - Validates ciphertext format (magic, version)
@@ -470,7 +681,7 @@ func EncryptForApp(appID string, masterPublicKey types.G2Point, plaintext []byte
 //   - Derives AES key from g_ID using HKDF with version-aware domain separation
 //   - Decrypts with AES-GCM and verifies authentication using AAD
 //
-// Expected ciphertext format matches EncryptForApp output
+// Expected ciphertext format matches EncryptForApp output.
 func DecryptForApp(appID string, appPrivateKey types.G1Point, ciphertext []byte) ([]byte, error) {
 
 	// Validate appID
@@ -478,22 +689,13 @@ func DecryptForApp(appID string, appPrivateKey types.G1Point, ciphertext []byte)
 		return nil, err
 	}
 
-	// Check for version header
-	// Expected format: magic(3) || version(1) || C1(96) || nonce(12) || encrypted_data
-	if len(ciphertext) < minCiphertextSize {
-		return nil, errors.New("ciphertext too short")
+	// Validate ciphertext format
+	if err := ValidateCiphertextFormat(ciphertext); err != nil {
+		return nil, err
 	}
 
-	// Verify magic number
-	if !bytes.Equal(ciphertext[:magicSize], []byte(ibeMagic)) {
-		return nil, errors.New("invalid ciphertext format: missing or incorrect magic number")
-	}
-
-	// Check version
+	// Extract version for downstream use
 	version := ciphertext[magicSize]
-	if version != ibeVersion {
-		return nil, fmt.Errorf("unsupported ciphertext version: %d", version)
-	}
 
 	// Extract C1 from ciphertext (after header)
 	c1Start := headerSize
