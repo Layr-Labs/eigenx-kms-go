@@ -1197,8 +1197,9 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	// Use validShares (only verified shares) for finalization
 	keyVersion := n.dkg.FinalizeKeyShare(validShares, allCommitments, participantIDs)
 	keyVersion.Version = session.SessionTimestamp // Use session timestamp as version
-	// Save the pre-computed MPK (combinedCommitments[0]) before overwriting Commitments,
-	// so operators can serve it for threshold agreement by clients
+	// Commitments[0] is the constant term of the combined commitment polynomial,
+	// which equals the master public key: MPK = sum_i(C_i[0]) where C_i is dealer i's commitment.
+	// Cache it before overwriting Commitments so operators can serve it for client threshold agreement.
 	if len(keyVersion.Commitments) > 0 {
 		mpk := keyVersion.Commitments[0]
 		keyVersion.MasterPublicKey = &mpk
