@@ -652,18 +652,6 @@ func EncryptForApp(appID string, masterPublicKey types.G2Point, plaintext []byte
 	return finalCiphertext, nil
 }
 
-// DecryptForApp decrypts data using the recovered application private key with AES-GCM
-//
-// This implements the Boneh-Franklin IBE decryption:
-//   - Validates ciphertext format (magic, version)
-//   - Extracts C1 from ciphertext
-//   - Computes g_ID = e(appPrivateKey, C1) using pairing
-//   - Since appPrivateKey = [s]Q_ID and C1 = [r]P:
-//     g_ID = e([s]Q_ID, [r]P) = e(Q_ID, P)^(r*s) = e(Q_ID, masterPublicKey)^r
-//   - This matches the encryption key, allowing successful decryption
-//   - Derives AES key from g_ID using HKDF with version-aware domain separation
-//   - Decrypts with AES-GCM and verifies authentication using AAD
-//
 // ValidateCiphertextFormat checks that the ciphertext has a valid IBE format
 // (magic number, version, minimum length) without attempting decryption.
 // Use this to fail fast on malformed input before attempting key recovery retries.
@@ -681,7 +669,19 @@ func ValidateCiphertextFormat(ciphertext []byte) error {
 	return nil
 }
 
-// Expected ciphertext format matches EncryptForApp output
+// DecryptForApp decrypts data using the recovered application private key with AES-GCM.
+//
+// This implements the Boneh-Franklin IBE decryption:
+//   - Validates ciphertext format (magic, version)
+//   - Extracts C1 from ciphertext
+//   - Computes g_ID = e(appPrivateKey, C1) using pairing
+//   - Since appPrivateKey = [s]Q_ID and C1 = [r]P:
+//     g_ID = e([s]Q_ID, [r]P) = e(Q_ID, P)^(r*s) = e(Q_ID, masterPublicKey)^r
+//   - This matches the encryption key, allowing successful decryption
+//   - Derives AES key from g_ID using HKDF with version-aware domain separation
+//   - Decrypts with AES-GCM and verifies authentication using AAD
+//
+// Expected ciphertext format matches EncryptForApp output.
 func DecryptForApp(appID string, appPrivateKey types.G1Point, ciphertext []byte) ([]byte, error) {
 
 	// Validate appID

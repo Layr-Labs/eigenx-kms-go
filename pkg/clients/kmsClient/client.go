@@ -398,6 +398,8 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 	partialSigs := make(map[int64]types.G1Point)
 	// TODO(security): only count cryptographically verified partial signatures.
 	// Current code counts non-zero shares and relies on later interpolation failure.
+	// With KMS-012 retry logic, a single malicious operator can now trigger up to
+	// DefaultMaxRecoveryAttempts (1000) Lagrange interpolation + pairing calls.
 	for res := range resultChan {
 		partialSigs[res.nodeID] = res.signature
 	}
@@ -890,8 +892,10 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 	// Collect all available results (not just threshold) to enable retry with
 	// alternative subsets if some operators provided invalid signatures (KMS-012)
 	partialSigs := make(map[int64]types.G1Point)
-	// TODO(security): DOS vector. only count cryptographically verified partial signatures.
+	// TODO(security): DOS vector — only count cryptographically verified partial signatures.
 	// Current code counts non-zero shares and relies on later interpolation failure.
+	// With KMS-012 retry logic, a single malicious operator can now trigger up to
+	// DefaultMaxRecoveryAttempts (1000) Lagrange interpolation + pairing calls.
 	for res := range resultChan {
 		partialSigs[res.nodeID] = res.signature
 	}
