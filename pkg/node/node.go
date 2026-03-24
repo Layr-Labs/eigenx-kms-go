@@ -1216,6 +1216,10 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 		}
 	}
 
+	if len(participantIDs) < threshold {
+		return fmt.Errorf("insufficient trusted dealers for DKG finalize: got %d, need %d", len(participantIDs), threshold)
+	}
+
 	// Use finalShares (polynomial-verified AND merkle-verified, with matching commitments) for finalization
 	keyVersion := n.dkg.FinalizeKeyShare(finalShares, allCommitments, participantIDs)
 	keyVersion.Version = session.SessionTimestamp // Use session timestamp as version
@@ -1568,10 +1572,12 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		"trusted_dealers", len(trustedShares))
 
 	participantIDsForFinalize := make([]int64, 0, len(trustedShares))
+	finalShares := make(map[int64]*fr.Element, len(trustedShares))
 	for _, op := range operators {
 		opNodeID := addressToNodeID(op.OperatorAddress)
-		if _, ok := trustedShares[opNodeID]; ok {
+		if share, ok := trustedShares[opNodeID]; ok {
 			participantIDsForFinalize = append(participantIDsForFinalize, opNodeID)
+			finalShares[opNodeID] = share
 		}
 	}
 	if len(participantIDsForFinalize) < newThreshold {
@@ -1579,7 +1585,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	}
 
 	// Compute refreshed share using the same Lagrange reconstruction as the new-operator path.
-	newKeyVersion, err := n.resharer.ComputeNewKeyShare(participantIDsForFinalize, trustedShares, nil)
+	newKeyVersion, err := n.resharer.ComputeNewKeyShare(participantIDsForFinalize, finalShares, nil)
 	if err != nil {
 		return fmt.Errorf("failed to compute refreshed key share: %w", err)
 	}
