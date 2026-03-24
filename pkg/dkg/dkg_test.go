@@ -259,6 +259,37 @@ func testCreateAcknowledgement(t *testing.T) {
 	}
 }
 
+// Test_FinalizeKeyShare_MismatchedCommitmentLengths verifies that mismatched
+// commitment array lengths do not cause a panic (H-02 audit finding).
+func Test_FinalizeKeyShare_MismatchedCommitmentLengths(t *testing.T) {
+	operators := createTestOperators(t, 3)
+	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
+	threshold := CalculateThreshold(len(operators))
+	dkg := NewDKG(nodeID, threshold, operators)
+
+	shares, commitments, err := dkg.GenerateShares()
+	require.NoError(t, err)
+
+	participantIDs := make([]int64, len(operators))
+	for i, op := range operators {
+		participantIDs[i] = util.AddressToNodeID(op.OperatorAddress)
+	}
+
+	// Create a shorter commitment array (simulating a malicious dealer)
+	shortCommitments := commitments[:1]
+	// Create a longer commitment array
+	longCommitments := append(commitments, commitments...)
+
+	allCommitments := [][]types.G2Point{commitments, shortCommitments, longCommitments}
+
+	// Should not panic, and should only include the correctly-sized commitments
+	require.NotPanics(t, func() {
+		keyVersion := dkg.FinalizeKeyShare(shares, allCommitments, participantIDs)
+		require.NotNil(t, keyVersion)
+		require.Equal(t, threshold, len(keyVersion.Commitments))
+	})
+}
+
 // Test_BuildAcknowledgementMerkleTree tests merkle tree building (Phase 4)
 func Test_BuildAcknowledgementMerkleTree(t *testing.T) {
 	// Create test acknowledgements

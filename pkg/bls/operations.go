@@ -25,15 +25,14 @@ func init() {
 // ScalarMulG1 performs scalar multiplication on G1
 // Warning: This does not check if the point is at infinity or generator. The caller should validate these conditions first if needed.
 func ScalarMulG1(point *G1Point, scalar *fr.Element) (*G1Point, error) {
+	if point == nil || point.point == nil || scalar == nil {
+		return nil, fmt.Errorf("invalid point or scalar")
+	}
 
 	// check if the point is in subgroup and on curve else return an error
 	// even though the function is called IsInSubGroup, it checks if the point is on curve and in subgroup
 	if !point.point.IsInSubGroup() {
 		return nil, fmt.Errorf("point is not in subgroup or curve")
-	}
-
-	if point == nil || point.point == nil || scalar == nil {
-		return nil, fmt.Errorf("invalid point or scalar")
 	}
 
 	scalarBig := new(big.Int)
@@ -46,15 +45,14 @@ func ScalarMulG1(point *G1Point, scalar *fr.Element) (*G1Point, error) {
 // ScalarMulG2 performs scalar multiplication on G2
 // Warning: This does not check if the point is at infinity or generator. The caller should validate these conditions first if needed.
 func ScalarMulG2(point *G2Point, scalar *fr.Element) (*G2Point, error) {
-	// audit: point should be checked if it's on curve and in subgroup and not generator or infinity
-	//        and make sure they are valid cases
-
-	if !point.point.IsInSubGroup() {
-		return nil, fmt.Errorf("point is not in subgroup or curve")
-	}
-
 	if point == nil || point.point == nil || scalar == nil {
 		return nil, fmt.Errorf("invalid point or scalar")
+	}
+
+	// audit: point should be checked if it's on curve and in subgroup and not generator or infinity
+	//        and make sure they are valid cases
+	if !point.point.IsInSubGroup() {
+		return nil, fmt.Errorf("point is not in subgroup or curve")
 	}
 
 	scalarBig := new(big.Int)
@@ -237,8 +235,12 @@ func AggregateG1(sigs []*SignatureG1) *SignatureG1 {
 
 	result := NewG1Point(new(bls12381.G1Affine).SetInfinity())
 	for _, sig := range sigs {
-		if sig != nil {
-			result, _ = AddG1(result, NewG1Point(sig.point))
+		if sig != nil && sig.point != nil {
+			sum, err := AddG1(result, NewG1Point(sig.point))
+			if err != nil {
+				continue
+			}
+			result = sum
 		}
 	}
 
@@ -253,8 +255,12 @@ func AggregateG2(sigs []*SignatureG2) *SignatureG2 {
 
 	result := NewG2Point(new(bls12381.G2Affine).SetInfinity())
 	for _, sig := range sigs {
-		if sig != nil {
-			result, _ = AddG2(result, NewG2Point(sig.point))
+		if sig != nil && sig.point != nil {
+			sum, err := AddG2(result, NewG2Point(sig.point))
+			if err != nil {
+				continue
+			}
+			result = sum
 		}
 	}
 

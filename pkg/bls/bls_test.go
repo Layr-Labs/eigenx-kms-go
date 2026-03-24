@@ -16,6 +16,72 @@ func Test_BLSOperations(t *testing.T) {
 	t.Run("LagrangeInterpolation", func(t *testing.T) { testLagrangeInterpolation(t) })
 	t.Run("BigIntConversion", func(t *testing.T) { testBigIntConversion(t) })
 	t.Run("PolynomialCommitments", func(t *testing.T) { testPolynomialCommitments(t) })
+	t.Run("AggregateG1_NilPoint", func(t *testing.T) { testAggregateG1NilPoint(t) })
+	t.Run("AggregateG2_NilPoint", func(t *testing.T) { testAggregateG2NilPoint(t) })
+}
+
+// testAggregateG1NilPoint verifies that AggregateG1 does not panic when given
+// nil elements or elements with nil inner points (H-05 audit finding).
+func testAggregateG1NilPoint(t *testing.T) {
+	scalar := new(fr.Element).SetInt64(42)
+	validSig, err := ScalarMulG1(G1Generator, scalar)
+	if err != nil {
+		t.Fatalf("Failed to create valid G1 point: %v", err)
+	}
+
+	sigs := []*SignatureG1{
+		{point: validSig.point},
+		nil,          // nil entry
+		{point: nil}, // non-nil wrapper with nil inner point
+		{point: validSig.point},
+	}
+
+	// Should not panic
+	result := AggregateG1(sigs)
+	if result == nil || result.point == nil {
+		t.Fatal("AggregateG1 should return a valid result")
+	}
+
+	// Result should equal 2 * validSig (the two valid entries)
+	doubled, err := AddG1(NewG1Point(validSig.point), NewG1Point(validSig.point))
+	if err != nil {
+		t.Fatalf("Failed to compute expected result: %v", err)
+	}
+	if !result.point.Equal(doubled.point) {
+		t.Error("AggregateG1 result should equal sum of valid points only")
+	}
+}
+
+// testAggregateG2NilPoint verifies that AggregateG2 does not panic when given
+// nil elements or elements with nil inner points (H-05 audit finding).
+func testAggregateG2NilPoint(t *testing.T) {
+	scalar := new(fr.Element).SetInt64(42)
+	validSig, err := ScalarMulG2(G2Generator, scalar)
+	if err != nil {
+		t.Fatalf("Failed to create valid G2 point: %v", err)
+	}
+
+	sigs := []*SignatureG2{
+		{point: validSig.point},
+		nil,          // nil entry
+		{point: nil}, // non-nil wrapper with nil inner point
+		{point: validSig.point},
+	}
+
+	// Should not panic
+	result := AggregateG2(sigs)
+	if result == nil || result.point == nil {
+		t.Fatal("AggregateG2 should return a valid result")
+	}
+
+	// Result should equal 2 * validSig (the two valid entries)
+	doubled, err := AddG2(NewG2Point(validSig.point), NewG2Point(validSig.point))
+	if err != nil {
+		t.Fatalf("Failed to compute expected result: %v", err)
+	}
+	if !result.point.Equal(doubled.point) {
+		t.Error("AggregateG2 result should equal sum of valid points only")
+	}
 }
 
 func testPointOperations(t *testing.T) {
