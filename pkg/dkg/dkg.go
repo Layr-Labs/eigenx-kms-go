@@ -107,11 +107,15 @@ func (d *DKG) FinalizeKeyShare(shares map[int64]*fr.Element, allCommitments [][]
 	// Combine commitments from all dealers element-wise
 	combinedCommitments := make([]types.G2Point, 0)
 	if len(allCommitments) > 0 {
-		combinedCommitments = make([]types.G2Point, len(allCommitments[0]))
+		expectedLen := d.threshold
+		combinedCommitments = make([]types.G2Point, expectedLen)
 		for i := range combinedCommitments {
 			combinedCommitments[i] = *types.ZeroG2Point()
 		}
 		for _, commitments := range allCommitments {
+			if len(commitments) != expectedLen {
+				continue // skip mismatched commitment lengths to prevent out-of-bounds panic
+			}
 			for idx, commitment := range commitments {
 				sum, err := crypto.AddG2(combinedCommitments[idx], commitment)
 				if err != nil {
