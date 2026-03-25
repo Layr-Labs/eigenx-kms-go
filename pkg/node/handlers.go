@@ -37,8 +37,8 @@ func (s *Server) validateAuthenticatedMessage(r *http.Request, expectedRecipient
 	}
 	// s.node.logger.Sugar().Infow("received authenticated message", "msg", baseMsg)
 
-	// Verify message is intended for this node (unless broadcast)
-	if baseMsg.ToOperatorAddress != (common.Address{}) && strings.Compare(baseMsg.ToOperatorAddress.String(), expectedRecipient.String()) != 0 {
+	// Verify message is intended for this node
+	if baseMsg.ToOperatorAddress != expectedRecipient {
 		return nil, nil, nil, fmt.Errorf("message not intended for this operator - to: '%s' expected: '%s'", baseMsg.ToOperatorAddress, expectedRecipient)
 	}
 
@@ -356,6 +356,12 @@ func (s *Server) handleDKGShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Validate share is present
+	if shareMsg.Share == nil {
+		http.Error(w, "share is required", http.StatusBadRequest)
+		return
+	}
+
 	// Convert addresses to node IDs
 	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
 	share := types.DeserializeFr(shareMsg.Share)
@@ -522,6 +528,12 @@ func (s *Server) handleReshareShare(w http.ResponseWriter, r *http.Request) {
 			"session_timestamp", shareMsg.SessionTimestamp,
 			"from", senderPeer.OperatorAddress.Hex())
 		http.Error(w, "Session timeout", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Validate share is present
+	if shareMsg.Share == nil {
+		http.Error(w, "share is required", http.StatusBadRequest)
 		return
 	}
 
@@ -728,15 +740,23 @@ func (s *Server) handleGetCommitments(w http.ResponseWriter, r *http.Request) {
 	s.node.logger.Sugar().Debugw("Served public key commitments", "operator_address", s.node.OperatorAddress.Hex())
 }
 
-// handleCommitmentBroadcast handles commitment broadcasts with merkle proofs (Phase 5)
+// handleCommitmentBroadcast handles authenticated commitment broadcasts with merkle proofs (Phase 5)
 func (s *Server) handleCommitmentBroadcast(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
+	// Validate authentication
+	authMsg, senderPeer, _, err := s.validateAuthenticatedMessage(r, s.node.OperatorAddress)
+	if err != nil {
+		s.node.logger.Sugar().Warnw("Authentication failed for commitment broadcast", "error", err)
+		http.Error(w, fmt.Sprintf("Authentication failed: %v", err), http.StatusUnauthorized)
+		return
+	}
+
 	var msg types.CommitmentBroadcastMessage
-	if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
+	if err := json.Unmarshal(authMsg.Payload, &msg); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
 		return
 	}
@@ -748,8 +768,8 @@ func (s *Server) handleCommitmentBroadcast(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	s.node.logger.Sugar().Debugw("Received commitment broadcast",
-		"from", msg.FromOperatorID,
+	s.node.logger.Sugar().Debugw("Received authenticated commitment broadcast",
+		"from", senderPeer.OperatorAddress.Hex(),
 		"session_timestamp", msg.Broadcast.SessionTimestamp,
 		"num_acks", len(msg.Broadcast.Acknowledgements),
 		"num_commitments", len(msg.Broadcast.Commitments),
@@ -760,7 +780,7 @@ func (s *Server) handleCommitmentBroadcast(w http.ResponseWriter, r *http.Reques
 	contractRegistryAddr := s.node.commitmentRegistryAddress
 	if err := s.node.VerifyOperatorBroadcast(msg.SessionTimestamp, msg.Broadcast, contractRegistryAddr); err != nil {
 		s.node.logger.Sugar().Errorw("Failed to verify operator broadcast",
-			"from_operator", msg.FromOperatorID,
+			"from_operator", senderPeer.OperatorAddress.Hex(),
 			"session", msg.SessionTimestamp,
 			"error", err,
 		)

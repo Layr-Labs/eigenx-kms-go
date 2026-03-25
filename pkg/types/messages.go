@@ -48,6 +48,9 @@ func SerializeFr(elem *fr.Element) *SerializedFrElement {
 
 // DeserializeFr deserializes a field element
 func DeserializeFr(s *SerializedFrElement) *fr.Element {
+	if s == nil {
+		return nil
+	}
 	elem := new(fr.Element)
 	_, _ = elem.SetString(s.Data)
 	return elem
