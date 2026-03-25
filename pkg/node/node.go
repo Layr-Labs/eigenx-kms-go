@@ -83,6 +83,9 @@ type Node struct {
 	// Base chain integration (for commitment registry)
 	baseContractCaller        contractCaller.IContractCaller
 	commitmentRegistryAddress common.Address
+
+	// Access control
+	appAllowlist map[string]bool // nil means all apps allowed
 }
 
 // ProtocolSession tracks state for a DKG or reshare session
@@ -266,6 +269,7 @@ type Config struct {
 	ChainID         config.ChainId // Ethereum chain ID
 	AVSAddress      string         // AVS contract address (hex string)
 	OperatorSetId   uint32         // Operator set ID
+	AppAllowlist    []string       // Optional: restrict /app/sign and /secrets to these app IDs (empty = allow all)
 }
 
 // NewNode creates a new node instance with dependency injection
@@ -320,6 +324,14 @@ func NewNode(
 		baseContractCaller:        baseContractCaller,
 		commitmentRegistryAddress: commitmentRegistryAddress,
 		persistence:               p,
+	}
+
+	// Build app allowlist if configured
+	if len(cfg.AppAllowlist) > 0 {
+		n.appAllowlist = make(map[string]bool, len(cfg.AppAllowlist))
+		for _, appID := range cfg.AppAllowlist {
+			n.appAllowlist[appID] = true
+		}
 	}
 
 	// Set node reference in server

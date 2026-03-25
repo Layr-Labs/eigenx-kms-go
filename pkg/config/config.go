@@ -355,6 +355,9 @@ type KMSServerConfig struct {
 	Debug   bool `json:"debug"`
 	Verbose bool `json:"verbose"`
 
+	// Access control
+	AppAllowlist []string `json:"app_allowlist"` // Optional: restrict /app/sign and /secrets to these app IDs
+
 	// Persistence configuration
 	PersistenceConfig PersistenceConfig `json:"persistence_config"`
 

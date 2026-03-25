@@ -95,6 +95,10 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "app_id is required", http.StatusBadRequest)
 		return
 	}
+	if s.node.appAllowlist != nil && !s.node.appAllowlist[req.AppID] {
+		http.Error(w, "app not allowed", http.StatusForbidden)
+		return
+	}
 	if len(req.RSAPubKeyTmp) == 0 {
 		http.Error(w, "rsa_pubkey_tmp is required", http.StatusBadRequest)
 		return
@@ -653,6 +657,10 @@ func (s *Server) handleAppSign(w http.ResponseWriter, r *http.Request) {
 
 	if req.AppID == "" {
 		http.Error(w, "app_id is required", http.StatusBadRequest)
+		return
+	}
+	if s.node.appAllowlist != nil && !s.node.appAllowlist[req.AppID] {
+		http.Error(w, "app not allowed", http.StatusForbidden)
 		return
 	}
 

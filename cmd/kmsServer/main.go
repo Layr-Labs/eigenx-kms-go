@@ -213,6 +213,11 @@ This server implements:
 				Value:   false,
 				EnvVars: []string{config.EnvKMSEnableECDSAAttestation},
 			},
+			&cli.StringSliceFlag{
+				Name:    "app-allowlist",
+				Usage:   "Restrict /app/sign and /secrets to these app IDs (empty = allow all). Can be specified multiple times.",
+				EnvVars: []string{"KMS_APP_ALLOWLIST"},
+			},
 		},
 		Action: runKMSServer,
 	}
@@ -253,6 +258,7 @@ func runKMSServer(c *cli.Context) error {
 		ChainID:         kmsConfig.ChainID,
 		AVSAddress:      kmsConfig.AVSAddress,
 		OperatorSetId:   kmsConfig.OperatorSetId,
+		AppAllowlist:    kmsConfig.AppAllowlist,
 	}
 
 	// Create Ethereum client
@@ -614,5 +620,6 @@ func parseKMSConfig(c *cli.Context) (*config.KMSServerConfig, error) {
 		CommitmentRegistryAddress: c.String("commitment-registry-address"),
 		OperatorConfig:            operatorConfig,
 		PersistenceConfig:         persistenceConfig,
+		AppAllowlist:              c.StringSlice("app-allowlist"),
 	}, nil
 }
