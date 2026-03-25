@@ -13,7 +13,7 @@ import (
 // Protocol represents the DKG protocol interface
 type Protocol interface {
 	GenerateShares() (map[int]*fr.Element, []types.G2Point, error)
-	VerifyShare(fromID int, share *fr.Element, commitments []types.G2Point) bool
+	VerifyShare(share *fr.Element, commitments []types.G2Point) bool
 	FinalizeKeyShare(shares map[int]*fr.Element, allCommitments [][]types.G2Point, participantIDs []int) *types.KeyShareVersion
 }
 
@@ -67,7 +67,7 @@ func (d *DKG) GenerateShares() (map[int64]*fr.Element, []types.G2Point, error) {
 }
 
 // VerifyShare verifies a share against commitments using polynomial commitment verification
-func (d *DKG) VerifyShare(fromID int64, share *fr.Element, commitments []types.G2Point) bool {
+func (d *DKG) VerifyShare(share *fr.Element, commitments []types.G2Point) bool {
 	if len(commitments) == 0 || share == nil {
 		return false
 	}

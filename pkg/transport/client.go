@@ -311,41 +311,6 @@ func (c *Client) SendReshareAcknowledgement(ack *types.Acknowledgement, toOperat
 	return nil
 }
 
-// BroadcastCompletionSignature broadcasts an authenticated completion signature
-func (c *Client) BroadcastCompletionSignature(operators []*peering.OperatorSetPeer, completion *types.CompletionSignature, sessionTimestamp int64) error {
-
-	for _, op := range operators {
-		if op.OperatorAddress == c.operatorAddr {
-			continue // Skip self
-		}
-		msg := types.CompletionMessage{
-			FromOperatorAddress: c.operatorAddr,
-			ToOperatorAddress:   op.OperatorAddress, // Zero address for broadcast
-			SessionTimestamp:    sessionTimestamp,
-			Completion:          completion,
-		}
-
-		msgBytes, err := json.Marshal(msg)
-		if err != nil {
-			return fmt.Errorf("failed to marshal payload: %w", err)
-		}
-
-		// Create authenticated message
-		authMsg, err := c.signer.CreateAuthenticatedMessage(msgBytes)
-		if err != nil {
-			return fmt.Errorf("failed to create authenticated message: %w", err)
-		}
-
-		data, err := json.Marshal(authMsg)
-		if err != nil {
-			return fmt.Errorf("failed to marshal authenticated message: %w", err)
-		}
-		url := buildRequestURL(op.SocketAddress, "/reshare/complete")
-		_, _ = http.Post(url, "application/json", bytes.NewReader(data))
-	}
-	return nil
-}
-
 // BroadcastCommitmentsWithProofs broadcasts commitments and acknowledgements with operator-specific merkle proofs (Phase 5)
 // Each operator receives a broadcast containing all acks and a merkle proof for their specific ack
 func (c *Client) BroadcastCommitmentsWithProofs(

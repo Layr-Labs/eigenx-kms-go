@@ -598,17 +598,6 @@ func (s *Server) handleReshareAck(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (s *Server) handleReshareComplete(w http.ResponseWriter, r *http.Request) {
-	var msg types.CompletionMessage
-	if err := json.NewDecoder(r.Body).Decode(&msg); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-
-	s.node.logger.Sugar().Infow("Received reshare completion", "node_id", s.node.OperatorAddress.Hex(), "from_node", msg.Completion.NodeID)
-	w.WriteHeader(http.StatusOK)
-}
-
 // validateContainerPolicy checks that the container execution fields in the JWT claims
 // match the on-chain policy registered by the app developer. Fields with zero/empty
 // values in the policy are not enforced, allowing developers to restrict only the

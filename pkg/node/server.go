@@ -161,7 +161,6 @@ func NewServer(node *Node, port int) *Server {
 	mux.HandleFunc("/reshare/share", maxBodySize(64<<10, s.handleReshareShare))
 	mux.HandleFunc("/reshare/commitment", maxBodySize(256<<10, s.handleReshareCommitment))
 	mux.HandleFunc("/reshare/ack", maxBodySize(64<<10, s.handleReshareAck))
-	mux.HandleFunc("/reshare/complete", maxBodySize(64<<10, s.handleReshareComplete))
 
 	// App signing endpoint
 	mux.HandleFunc("/app/sign", rateLimited(50, 100, concurrencyLimit(20, maxBodySize(16<<10, s.handleAppSign))))

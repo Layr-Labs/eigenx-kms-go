@@ -165,7 +165,7 @@ func testVerifyNewShare(t *testing.T) {
 	// Test valid share verification
 	targetNodeID := util.AddressToNodeID(operators[1].OperatorAddress)
 	verifierReshare := NewReshare(targetNodeID, operators)
-	valid := verifierReshare.VerifyNewShare(nodeID, shares[targetNodeID], commitments)
+	valid := verifierReshare.VerifyNewShare(shares[targetNodeID], commitments)
 	if !valid {
 		t.Error("Valid share should verify successfully")
 	}
@@ -173,7 +173,7 @@ func testVerifyNewShare(t *testing.T) {
 	// Test invalid share
 	invalidShare := new(fr.Element)
 	_, _ = invalidShare.SetRandom()
-	valid = verifierReshare.VerifyNewShare(nodeID, invalidShare, commitments)
+	valid = verifierReshare.VerifyNewShare(invalidShare, commitments)
 	if valid {
 		t.Error("Invalid share should fail verification")
 	}

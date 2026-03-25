@@ -1043,7 +1043,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	validShares := make(map[int64]*fr.Element)
 	for dealerID, share := range receivedShares {
 		commitments := receivedCommitments[dealerID]
-		if n.dkg.VerifyShare(dealerID, share, commitments) {
+		if n.dkg.VerifyShare(share, commitments) {
 			validShares[dealerID] = share
 
 			// Skip sending ack to self — a dealer does not need to ack its own share.
@@ -1424,7 +1424,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	invalidDealers := make([]int64, 0)
 	for dealerID, share := range receivedShares {
 		commitments := receivedCommitments[dealerID]
-		if n.resharer.VerifyNewShare(dealerID, share, commitments) {
+		if n.resharer.VerifyNewShare(share, commitments) {
 			validShares[dealerID] = share
 
 			// Skip sending ack to self — a dealer does not need to ack its own share.
@@ -1764,7 +1764,7 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		if !hasShare || share == nil || !hasCommitments || len(commitments) == 0 {
 			continue
 		}
-		if n.resharer.VerifyNewShare(dealerID, share, commitments) {
+		if n.resharer.VerifyNewShare(share, commitments) {
 			validShares[dealerID] = share
 
 			// Create acknowledgement for verified share using operator addresses
