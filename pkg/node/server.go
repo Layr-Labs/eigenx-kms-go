@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"sync"
 	"time"
+
+	"golang.org/x/time/rate"
 )
 
 /*
@@ -103,6 +105,42 @@ type Server struct {
 	stopOnce       sync.Once
 }
 
+// maxBodySize wraps a handler with http.MaxBytesReader to limit request body size.
+func maxBodySize(maxBytes int64, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+		next(w, r)
+	}
+}
+
+// concurrencyLimit wraps a handler with a buffered channel semaphore.
+// Returns 503 Service Unavailable when the concurrency limit is reached.
+func concurrencyLimit(maxConcurrent int, next http.HandlerFunc) http.HandlerFunc {
+	sem := make(chan struct{}, maxConcurrent)
+	return func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case sem <- struct{}{}:
+			defer func() { <-sem }()
+			next(w, r)
+		default:
+			http.Error(w, "service unavailable", http.StatusServiceUnavailable)
+		}
+	}
+}
+
+// rateLimited wraps a handler with a token bucket rate limiter.
+// Returns 429 Too Many Requests when the rate limit is exceeded.
+func rateLimited(rps float64, burst int, next http.HandlerFunc) http.HandlerFunc {
+	limiter := rate.NewLimiter(rate.Limit(rps), burst)
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !limiter.Allow() {
+			http.Error(w, "too many requests", http.StatusTooManyRequests)
+			return
+		}
+		next(w, r)
+	}
+}
+
 // NewServer creates a new server instance
 func NewServer(node *Node, port int) *Server {
 	s := &Server{
@@ -114,29 +152,34 @@ func NewServer(node *Node, port int) *Server {
 	mux := http.NewServeMux()
 
 	// DKG endpoints
-	mux.HandleFunc("/dkg/share", s.handleDKGShare)
-	mux.HandleFunc("/dkg/commitment", s.handleDKGCommitment)
-	mux.HandleFunc("/dkg/ack", s.handleDKGAck)
-	mux.HandleFunc("/dkg/broadcast", s.handleCommitmentBroadcast) // Phase 5
+	mux.HandleFunc("/dkg/share", maxBodySize(64<<10, s.handleDKGShare))
+	mux.HandleFunc("/dkg/commitment", maxBodySize(256<<10, s.handleDKGCommitment))
+	mux.HandleFunc("/dkg/ack", maxBodySize(64<<10, s.handleDKGAck))
+	mux.HandleFunc("/dkg/broadcast", maxBodySize(1<<20, s.handleCommitmentBroadcast))
 
 	// Reshare endpoints
-	mux.HandleFunc("/reshare/share", s.handleReshareShare)
-	mux.HandleFunc("/reshare/commitment", s.handleReshareCommitment)
-	mux.HandleFunc("/reshare/ack", s.handleReshareAck)
-	mux.HandleFunc("/reshare/complete", s.handleReshareComplete)
+	mux.HandleFunc("/reshare/share", maxBodySize(64<<10, s.handleReshareShare))
+	mux.HandleFunc("/reshare/commitment", maxBodySize(256<<10, s.handleReshareCommitment))
+	mux.HandleFunc("/reshare/ack", maxBodySize(64<<10, s.handleReshareAck))
+	mux.HandleFunc("/reshare/complete", maxBodySize(64<<10, s.handleReshareComplete))
 
 	// App signing endpoint
-	mux.HandleFunc("/app/sign", s.handleAppSign)
+	mux.HandleFunc("/app/sign", rateLimited(50, 100, concurrencyLimit(20, maxBodySize(16<<10, s.handleAppSign))))
 
 	// Secrets endpoint for TEE applications
-	mux.HandleFunc("/secrets", s.handleSecretsRequest)
+	mux.HandleFunc("/secrets", rateLimited(10, 20, concurrencyLimit(10, maxBodySize(64<<10, s.handleSecretsRequest))))
 
 	// Public key endpoint for clients
 	mux.HandleFunc("/pubkey", s.handleGetCommitments)
 
 	s.httpServer = &http.Server{
-		Addr:    fmt.Sprintf(":%d", port),
-		Handler: mux,
+		Addr:              fmt.Sprintf(":%d", port),
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      60 * time.Second,
+		IdleTimeout:       120 * time.Second,
+		MaxHeaderBytes:    1 << 20, // 1 MB
 	}
 
 	return s
