@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 )
 
@@ -40,54 +39,43 @@ func TestMaxBodySize(t *testing.T) {
 }
 
 func TestConcurrencyLimit(t *testing.T) {
-	var active atomic.Int32
 	blocker := make(chan struct{})
+	// entered signals that a handler goroutine is inside the handler.
+	entered := make(chan struct{}, 3)
 
 	handler := concurrencyLimit(2, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		active.Add(1)
-		defer active.Add(-1)
+		entered <- struct{}{}
 		<-blocker
 		w.WriteHeader(http.StatusOK)
 	}))
 
+	// Launch 2 requests that will block inside the handler.
 	var wg sync.WaitGroup
-	results := make([]int, 3)
-
-	// Launch 3 concurrent requests with limit of 2
-	for i := 0; i < 3; i++ {
+	for i := 0; i < 2; i++ {
 		wg.Add(1)
-		go func(idx int) {
+		go func() {
 			defer wg.Done()
 			req := httptest.NewRequest(http.MethodPost, "/", nil)
 			rec := httptest.NewRecorder()
 			handler(rec, req)
-			results[idx] = rec.Code
-		}(i)
+		}()
 	}
 
-	// Wait for 2 requests to be active, then the 3rd should get 503
-	// Give a brief moment for goroutines to start
-	for active.Load() < 2 {
+	// Wait until both are inside the handler (semaphore full).
+	<-entered
+	<-entered
+
+	// Third request should be rejected immediately with 503.
+	req := httptest.NewRequest(http.MethodPost, "/", nil)
+	rec := httptest.NewRecorder()
+	handler(rec, req)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("expected 503, got %d", rec.Code)
 	}
 
-	// Unblock all
+	// Unblock the two held requests.
 	close(blocker)
 	wg.Wait()
-
-	got503 := 0
-	got200 := 0
-	for _, code := range results {
-		switch code {
-		case http.StatusOK:
-			got200++
-		case http.StatusServiceUnavailable:
-			got503++
-		}
-	}
-
-	if got200 != 2 || got503 != 1 {
-		t.Fatalf("expected 2x200 and 1x503, got 200s=%d 503s=%d", got200, got503)
-	}
 }
 
 func TestRateLimited(t *testing.T) {

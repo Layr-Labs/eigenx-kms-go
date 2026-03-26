@@ -1,6 +1,6 @@
 module github.com/Layr-Labs/eigenx-kms-go
 
-go 1.25.0
+go 1.24.2
 
 require (
 	github.com/Layr-Labs/chain-indexer v0.1.1-0.20251208022649-63718013830e
@@ -23,6 +23,7 @@ require (
 	github.com/wealdtech/go-merkletree/v2 v2.6.1
 	go.uber.org/zap v1.27.1
 	golang.org/x/crypto v0.45.0
+	golang.org/x/time v0.9.0
 	k8s.io/apimachinery v0.34.2
 )
 
@@ -87,7 +88,6 @@ require (
 	golang.org/x/net v0.47.0 // indirect
 	golang.org/x/sync v0.16.0 // indirect
 	golang.org/x/sys v0.38.0 // indirect
-	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/protobuf v1.36.5 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
