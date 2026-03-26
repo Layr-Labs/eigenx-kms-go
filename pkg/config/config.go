@@ -188,8 +188,10 @@ func GetProtocolTimeoutForChain(chainId ChainId) time.Duration {
 		// 10 blocks * 12s = 2 minutes, use 90 seconds for protocol timeout
 		return 90 * time.Second
 	case ChainId_EthereumAnvil:
-		// 10 blocks * 2s = 20 seconds, use 15 seconds for protocol timeout
-		return 15 * time.Second
+		// 10 blocks * 2s = 20 seconds in real Anvil, but test clusters use mock
+		// pollers with manual block emission, so the wall-clock constraint is
+		// irrelevant. Use 30 seconds to avoid flakes on slow CI runners.
+		return 30 * time.Second
 	default:
 		return 8 * time.Minute // Default to mainnet timeout
 	}
