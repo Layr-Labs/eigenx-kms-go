@@ -6,9 +6,11 @@ import (
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/merkle"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -99,9 +101,18 @@ func TestSendCommitmentBroadcast(t *testing.T) {
 // TestBroadcastCommitmentsWithProofs_SkipsSelf tests that broadcast skips self
 func TestBroadcastCommitmentsWithProofs_SkipsSelf(t *testing.T) {
 	myAddr := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	mockSigner := transportSigner.NewMockITransportSigner(t)
+	mockSigner.EXPECT().CreateAuthenticatedMessage(mock.Anything).Return(
+		&transportSigner.SignedMessage{
+			Payload:   []byte("test"),
+			Signature: []byte("sig"),
+			Hash:      [32]byte{},
+		}, nil,
+	).Maybe()
 	client := &Client{
 		nodeID:       util.AddressToNodeID(myAddr),
 		operatorAddr: myAddr,
+		signer:       mockSigner,
 	}
 
 	// Create operators including self
@@ -145,9 +156,18 @@ func TestBroadcastCommitmentsWithProofs_SkipsSelf(t *testing.T) {
 // TestBroadcastCommitmentsWithProofs_NoAckForOperator tests handling of missing acks
 func TestBroadcastCommitmentsWithProofs_NoAckForOperator(t *testing.T) {
 	myAddr := common.HexToAddress("0x1111111111111111111111111111111111111111")
+	mockSigner := transportSigner.NewMockITransportSigner(t)
+	mockSigner.EXPECT().CreateAuthenticatedMessage(mock.Anything).Return(
+		&transportSigner.SignedMessage{
+			Payload:   []byte("test"),
+			Signature: []byte("sig"),
+			Hash:      [32]byte{},
+		}, nil,
+	).Maybe()
 	client := &Client{
 		nodeID:       util.AddressToNodeID(myAddr),
 		operatorAddr: myAddr,
+		signer:       mockSigner,
 	}
 
 	operators := []*peering.OperatorSetPeer{
