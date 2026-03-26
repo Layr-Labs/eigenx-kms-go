@@ -985,6 +985,14 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 		return err
 	}
 
+	// Store own share and commitment BEFORE broadcasting to other nodes.
+	// This prevents a race where a fast peer receives our commitment, verifies,
+	// and sends an ack back before we've stored our own commitment in the
+	// session — causing verifyAcknowledgement to reject the ack with
+	// "dealer commitments unavailable".
+	_ = session.HandleReceivedShare(thisNodeID, shares[thisNodeID])
+	_ = session.HandleReceivedCommitment(thisNodeID, commitments)
+
 	// Broadcast commitments
 	if err := n.transport.BroadcastDKGCommitments(operators, commitments, session.SessionTimestamp); err != nil {
 		n.logger.Sugar().Errorw("Failed to broadcast commitments", "operator_address", n.OperatorAddress.Hex(), "error", err)
@@ -994,15 +1002,12 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	// Send shares to each participant
 	for _, op := range operators {
 		opNodeID := addressToNodeID(op.OperatorAddress)
+		if opNodeID == thisNodeID {
+			continue // Already stored above
+		}
 		n.logger.Sugar().Debugw("Sending share to operator",
 			"operator_address", n.OperatorAddress.Hex(),
 			"target", op.OperatorAddress.Hex())
-		if opNodeID == thisNodeID {
-			// Store own share and commitment in session
-			_ = session.HandleReceivedShare(thisNodeID, shares[thisNodeID])
-			_ = session.HandleReceivedCommitment(thisNodeID, commitments)
-			continue
-		}
 		if err := n.transport.SendDKGShare(op, shares[opNodeID], session.SessionTimestamp); err != nil {
 			n.logger.Sugar().Warnw("Failed to send share to operator",
 				"operator_address", n.OperatorAddress.Hex(),
@@ -1354,6 +1359,14 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 			"error", err)
 	}
 
+	// Store own share and commitment BEFORE broadcasting to other nodes.
+	// This prevents a race where a fast peer receives our commitment, verifies,
+	// and sends an ack back before we've stored our own commitment in the
+	// session — causing verifyAcknowledgement to reject the ack with
+	// "dealer commitments unavailable".
+	_ = session.HandleReceivedShare(thisNodeID, shares[thisNodeID])
+	_ = session.HandleReceivedCommitment(thisNodeID, commitments)
+
 	// Broadcast commitments
 	if err := n.transport.BroadcastReshareCommitments(operators, commitments, session.SessionTimestamp); err != nil {
 		n.logger.Sugar().Errorw("Failed to broadcast reshare commitments", "operator_address", n.OperatorAddress.Hex(), "error", err)
@@ -1364,10 +1377,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	for _, op := range operators {
 		opNodeID := addressToNodeID(op.OperatorAddress)
 		if opNodeID == thisNodeID {
-			// Store own share and commitment in session
-			_ = session.HandleReceivedShare(thisNodeID, shares[opNodeID])
-			_ = session.HandleReceivedCommitment(thisNodeID, commitments)
-			continue
+			continue // Already stored above
 		}
 		if err := n.transport.SendReshareShare(op, shares[opNodeID], session.SessionTimestamp); err != nil {
 			n.logger.Sugar().Warnw("Failed to send reshare share to operator",
