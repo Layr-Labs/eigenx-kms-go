@@ -216,7 +216,7 @@ This server implements:
 			&cli.StringSliceFlag{
 				Name:    "app-allowlist",
 				Usage:   "Restrict /app/sign and /secrets to these app IDs (empty = allow all). Can be specified multiple times.",
-				EnvVars: []string{"KMS_APP_ALLOWLIST"},
+				EnvVars: []string{config.EnvKMSAppAllowlist},
 			},
 		},
 		Action: runKMSServer,

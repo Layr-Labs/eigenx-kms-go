@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -113,6 +114,9 @@ func Test_SecretsEndpoint(t *testing.T) {
 	t.Run("ContainerPolicyEnvOverrideSuccess", func(t *testing.T) { testSecretsEndpointEnvOverrideSuccess(t) })
 	t.Run("ContainerPolicySuccess", func(t *testing.T) { testSecretsEndpointContainerPolicySuccess(t) })
 	t.Run("TwoPhaseUpgrade", func(t *testing.T) { testSecretsEndpointTwoPhaseUpgrade(t) })
+	t.Run("AllowlistBlocked", func(t *testing.T) { testSecretsEndpointAllowlistBlocked(t) })
+	t.Run("AllowlistAllowed", func(t *testing.T) { testSecretsEndpointAllowlistAllowed(t) })
+	t.Run("AllowlistNilAllowsAll", func(t *testing.T) { testSecretsEndpointAllowlistNilAllowsAll(t) })
 }
 
 // createTestPeeringDataFetcher creates a test peering data fetcher using ChainConfig data
@@ -883,5 +887,59 @@ func testSecretsEndpointTwoPhaseUpgrade(t *testing.T) {
 	}
 	if code := makeRequest(oldDigest); code != http.StatusForbidden {
 		t.Fatalf("Phase 3: expected 403 for old digest after confirmation, got %d", code)
+	}
+}
+
+// makeSecretsAllowlistRequest posts a SecretsRequestV1 and returns the recorder.
+func makeSecretsAllowlistRequest(t *testing.T, server *Server, appID string) *httptest.ResponseRecorder {
+	t.Helper()
+	req := kmsTypes.SecretsRequestV1{
+		AppID:             appID,
+		AttestationMethod: "gcp",
+		Attestation:       []byte("{}"),
+		RSAPubKeyTmp:      []byte("test-key"),
+	}
+	body, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(body))
+	w := httptest.NewRecorder()
+	server.handleSecretsRequest(w, httpReq)
+	return w
+}
+
+// testSecretsEndpointAllowlistBlocked verifies that an app not in the allowlist gets 403
+// with the specific allowlist rejection message.
+func testSecretsEndpointAllowlistBlocked(t *testing.T) {
+	f := newTestSecretsFixture(t)
+	f.node.appAllowlist = map[string]bool{"permitted-app": true}
+
+	w := makeSecretsAllowlistRequest(t, f.server, "blocked-app")
+	if w.Code != http.StatusForbidden {
+		t.Errorf("Expected 403 for blocked app, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "app not allowed") {
+		t.Errorf("Expected allowlist rejection message, got: %s", w.Body.String())
+	}
+}
+
+// testSecretsEndpointAllowlistAllowed verifies that an allowed app passes the allowlist gate.
+// The request may fail later (e.g. attestation), but must not be rejected by the allowlist.
+func testSecretsEndpointAllowlistAllowed(t *testing.T) {
+	f := newTestSecretsFixture(t)
+	f.node.appAllowlist = map[string]bool{"test-app": true}
+
+	w := makeSecretsAllowlistRequest(t, f.server, "test-app")
+	if strings.Contains(w.Body.String(), "app not allowed") {
+		t.Errorf("Allowed app should not be rejected by allowlist, got: %s", w.Body.String())
+	}
+}
+
+// testSecretsEndpointAllowlistNilAllowsAll verifies that nil allowlist permits any app.
+func testSecretsEndpointAllowlistNilAllowsAll(t *testing.T) {
+	f := newTestSecretsFixture(t)
+	f.node.appAllowlist = nil
+
+	w := makeSecretsAllowlistRequest(t, f.server, "any-random-app")
+	if strings.Contains(w.Body.String(), "app not allowed") {
+		t.Errorf("Nil allowlist should not reject any app, got: %s", w.Body.String())
 	}
 }

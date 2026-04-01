@@ -96,6 +96,9 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.node.appAllowlist != nil && !s.node.appAllowlist[req.AppID] {
+		s.node.logger.Sugar().Warnw("Secrets request rejected: app not in allowlist",
+			"node_id", s.node.OperatorAddress.Hex(),
+			"app_id", req.AppID)
 		http.Error(w, "app not allowed", http.StatusForbidden)
 		return
 	}
@@ -660,6 +663,9 @@ func (s *Server) handleAppSign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if s.node.appAllowlist != nil && !s.node.appAllowlist[req.AppID] {
+		s.node.logger.Sugar().Warnw("App sign request rejected: app not in allowlist",
+			"node_id", s.node.OperatorAddress.Hex(),
+			"app_id", req.AppID)
 		http.Error(w, "app not allowed", http.StatusForbidden)
 		return
 	}
