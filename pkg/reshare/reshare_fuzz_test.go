@@ -80,7 +80,7 @@ func FuzzGenerateVerifyAndComputeNewKeyShare(f *testing.F) {
 			verifier := NewReshare(opID, operators)
 			share, ok := shares[opID]
 			require.True(t, ok, "missing share for operator")
-			require.True(t, verifier.VerifyNewShare(dealerID, share, commitments), "share failed verification")
+			require.True(t, verifier.VerifyNewShare(share, commitments), "share failed verification")
 		}
 
 		// Compute new key share using all collected shares/commitments.
@@ -144,11 +144,11 @@ func FuzzVerifyShareRejectsTamperedShare(f *testing.F) {
 
 		// Verification should fail for the tampered share.
 		verifier := NewReshare(targetID, operators)
-		require.False(t, verifier.VerifyNewShare(dealerID, tamperedShare, commitments),
+		require.False(t, verifier.VerifyNewShare(tamperedShare, commitments),
 			"tampered share should fail verification")
 
 		// Original share should still pass.
-		require.True(t, verifier.VerifyNewShare(dealerID, originalShare, commitments),
+		require.True(t, verifier.VerifyNewShare(originalShare, commitments),
 			"original share should pass verification")
 	})
 }
@@ -191,11 +191,11 @@ func FuzzVerifyShareRejectsMismatchedCommitments(f *testing.F) {
 		verifier := NewReshare(targetID, operators)
 
 		// share1 + commitments1 should verify.
-		require.True(t, verifier.VerifyNewShare(dealerID, shares1[targetID], commitments1),
+		require.True(t, verifier.VerifyNewShare(shares1[targetID], commitments1),
 			"share should verify against correct commitments")
 
 		// share1 + commitments2 should NOT verify (mismatched).
-		require.False(t, verifier.VerifyNewShare(dealerID, shares1[targetID], commitments2),
+		require.False(t, verifier.VerifyNewShare(shares1[targetID], commitments2),
 			"share should fail verification against mismatched commitments")
 	})
 }

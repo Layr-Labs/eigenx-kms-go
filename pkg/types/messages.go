@@ -41,14 +41,6 @@ type AcknowledgementMessage struct {
 	Ack                 *Acknowledgement `json:"ack"`
 }
 
-// CompletionMessage signals completion of reshare
-type CompletionMessage struct {
-	FromOperatorAddress common.Address       `json:"fromOperatorAddress"`
-	ToOperatorAddress   common.Address       `json:"toOperatorAddress"`
-	SessionTimestamp    int64                `json:"sessionTimestamp"`
-	Completion          *CompletionSignature `json:"completion"`
-}
-
 // SerializeFr serializes a field element
 func SerializeFr(elem *fr.Element) *SerializedFrElement {
 	return &SerializedFrElement{Data: elem.String()}

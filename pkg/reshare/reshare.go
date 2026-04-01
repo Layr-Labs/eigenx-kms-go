@@ -16,7 +16,7 @@ import (
 // Protocol represents the reshare protocol interface
 type Protocol interface {
 	GenerateNewShares(currentShare *fr.Element, newThreshold int) (map[int64]*fr.Element, []types.G2Point, error)
-	VerifyNewShare(fromID int64, share *fr.Element, commitments []types.G2Point) bool
+	VerifyNewShare(share *fr.Element, commitments []types.G2Point) bool
 	ComputeNewKeyShare(dealerIDs []int64, shares map[int64]*fr.Element, allCommitments [][]types.G2Point) (*types.KeyShareVersion, error)
 }
 
@@ -74,7 +74,7 @@ func (r *Reshare) GenerateNewShares(currentShare *fr.Element, newThreshold int) 
 }
 
 // VerifyNewShare verifies a reshared share against commitments
-func (r *Reshare) VerifyNewShare(fromID int64, share *fr.Element, commitments []types.G2Point) bool {
+func (r *Reshare) VerifyNewShare(share *fr.Element, commitments []types.G2Point) bool {
 	// Same verification as DKG
 	leftSide, err := crypto.ScalarMulG2(crypto.G2Generator, share)
 	if err != nil {

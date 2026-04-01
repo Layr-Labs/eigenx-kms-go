@@ -156,7 +156,7 @@ func testVerifyShare(t *testing.T) {
 	// Test verification with valid share - create verifier DKG instance
 	targetNodeID := util.AddressToNodeID(operators[1].OperatorAddress)
 	verifierDKG := NewDKG(targetNodeID, threshold, operators)
-	valid := verifierDKG.VerifyShare(nodeID, shares[targetNodeID], commitments)
+	valid := verifierDKG.VerifyShare(shares[targetNodeID], commitments)
 	if !valid {
 		t.Error("Valid share should verify successfully")
 	}
@@ -164,7 +164,7 @@ func testVerifyShare(t *testing.T) {
 	// Test verification with invalid share
 	invalidShare := new(fr.Element)
 	_, _ = invalidShare.SetRandom()
-	valid = verifierDKG.VerifyShare(nodeID, invalidShare, commitments)
+	valid = verifierDKG.VerifyShare(invalidShare, commitments)
 	if valid {
 		t.Error("Invalid share should fail verification")
 	}

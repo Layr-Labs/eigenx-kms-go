@@ -188,16 +188,16 @@ func (_c *MockProtocol_GenerateNewShares_Call) RunAndReturn(run func(currentShar
 }
 
 // VerifyNewShare provides a mock function for the type MockProtocol
-func (_mock *MockProtocol) VerifyNewShare(fromID int64, share *fr.Element, commitments []types.G2Point) bool {
-	ret := _mock.Called(fromID, share, commitments)
+func (_mock *MockProtocol) VerifyNewShare(share *fr.Element, commitments []types.G2Point) bool {
+	ret := _mock.Called(share, commitments)
 
 	if len(ret) == 0 {
 		panic("no return value specified for VerifyNewShare")
 	}
 
 	var r0 bool
-	if returnFunc, ok := ret.Get(0).(func(int64, *fr.Element, []types.G2Point) bool); ok {
-		r0 = returnFunc(fromID, share, commitments)
+	if returnFunc, ok := ret.Get(0).(func(*fr.Element, []types.G2Point) bool); ok {
+		r0 = returnFunc(share, commitments)
 	} else {
 		r0 = ret.Get(0).(bool)
 	}
@@ -210,31 +210,25 @@ type MockProtocol_VerifyNewShare_Call struct {
 }
 
 // VerifyNewShare is a helper method to define mock.On call
-//   - fromID int64
 //   - share *fr.Element
 //   - commitments []types.G2Point
-func (_e *MockProtocol_Expecter) VerifyNewShare(fromID interface{}, share interface{}, commitments interface{}) *MockProtocol_VerifyNewShare_Call {
-	return &MockProtocol_VerifyNewShare_Call{Call: _e.mock.On("VerifyNewShare", fromID, share, commitments)}
+func (_e *MockProtocol_Expecter) VerifyNewShare(share interface{}, commitments interface{}) *MockProtocol_VerifyNewShare_Call {
+	return &MockProtocol_VerifyNewShare_Call{Call: _e.mock.On("VerifyNewShare", share, commitments)}
 }
 
-func (_c *MockProtocol_VerifyNewShare_Call) Run(run func(fromID int64, share *fr.Element, commitments []types.G2Point)) *MockProtocol_VerifyNewShare_Call {
+func (_c *MockProtocol_VerifyNewShare_Call) Run(run func(share *fr.Element, commitments []types.G2Point)) *MockProtocol_VerifyNewShare_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 int64
+		var arg0 *fr.Element
 		if args[0] != nil {
-			arg0 = args[0].(int64)
+			arg0 = args[0].(*fr.Element)
 		}
-		var arg1 *fr.Element
+		var arg1 []types.G2Point
 		if args[1] != nil {
-			arg1 = args[1].(*fr.Element)
-		}
-		var arg2 []types.G2Point
-		if args[2] != nil {
-			arg2 = args[2].([]types.G2Point)
+			arg1 = args[1].([]types.G2Point)
 		}
 		run(
 			arg0,
 			arg1,
-			arg2,
 		)
 	})
 	return _c
@@ -245,7 +239,7 @@ func (_c *MockProtocol_VerifyNewShare_Call) Return(b bool) *MockProtocol_VerifyN
 	return _c
 }
 
-func (_c *MockProtocol_VerifyNewShare_Call) RunAndReturn(run func(fromID int64, share *fr.Element, commitments []types.G2Point) bool) *MockProtocol_VerifyNewShare_Call {
+func (_c *MockProtocol_VerifyNewShare_Call) RunAndReturn(run func(share *fr.Element, commitments []types.G2Point) bool) *MockProtocol_VerifyNewShare_Call {
 	_c.Call.Return(run)
 	return _c
 }

@@ -71,7 +71,7 @@ func FuzzGenerateVerifyAndFinalize(f *testing.F) {
 			verifier := NewDKG(opID, threshold, operators)
 			share, ok := shares[opID]
 			require.True(t, ok, "missing share for operator")
-			require.True(t, verifier.VerifyShare(opID, share, commitments), "share failed verification")
+			require.True(t, verifier.VerifyShare(share, commitments), "share failed verification")
 		}
 
 		// Finalize and ensure the private share matches the aggregation model used in FinalizeKeyShare.
@@ -130,11 +130,11 @@ func FuzzVerifyShareRejectsTamperedShare(f *testing.F) {
 
 		// Verification should fail for the tampered share.
 		verifier := NewDKG(targetID, threshold, operators)
-		require.False(t, verifier.VerifyShare(dealerID, tamperedShare, commitments),
+		require.False(t, verifier.VerifyShare(tamperedShare, commitments),
 			"tampered share should fail verification")
 
 		// Original share should still pass.
-		require.True(t, verifier.VerifyShare(dealerID, originalShare, commitments),
+		require.True(t, verifier.VerifyShare(originalShare, commitments),
 			"original share should pass verification")
 	})
 }
@@ -182,11 +182,11 @@ func FuzzVerifyShareRejectsCorruptedCommitments(f *testing.F) {
 		targetID := util.AddressToNodeID(targetOp.OperatorAddress)
 		verifier := NewDKG(targetID, threshold, operators)
 
-		require.False(t, verifier.VerifyShare(dealerID, shares[targetID], corruptedCommitments),
+		require.False(t, verifier.VerifyShare(shares[targetID], corruptedCommitments),
 			"share should fail verification against corrupted commitments")
 
 		// Original commitments should still verify.
-		require.True(t, verifier.VerifyShare(dealerID, shares[targetID], commitments),
+		require.True(t, verifier.VerifyShare(shares[targetID], commitments),
 			"share should pass verification against original commitments")
 	})
 }
@@ -224,15 +224,15 @@ func FuzzVerifyShareRejectsMismatchedDealerCommitments(f *testing.F) {
 		targetID := util.AddressToNodeID(targetOp.OperatorAddress)
 		verifier := NewDKG(targetID, threshold, operators)
 
-		require.True(t, verifier.VerifyShare(dealer1ID, shares1[targetID], commitments1),
+		require.True(t, verifier.VerifyShare(shares1[targetID], commitments1),
 			"share1 should verify against commitments1")
-		require.True(t, verifier.VerifyShare(dealer2ID, shares2[targetID], commitments2),
+		require.True(t, verifier.VerifyShare(shares2[targetID], commitments2),
 			"share2 should verify against commitments2")
 
 		// Cross-verification should fail (Byzantine detection).
-		require.False(t, verifier.VerifyShare(dealer1ID, shares1[targetID], commitments2),
+		require.False(t, verifier.VerifyShare(shares1[targetID], commitments2),
 			"share1 should NOT verify against commitments2")
-		require.False(t, verifier.VerifyShare(dealer2ID, shares2[targetID], commitments1),
+		require.False(t, verifier.VerifyShare(shares2[targetID], commitments1),
 			"share2 should NOT verify against commitments1")
 	})
 }
@@ -275,7 +275,7 @@ func FuzzThresholdBoundaryConditions(f *testing.F) {
 		for _, op := range operators {
 			opID := util.AddressToNodeID(op.OperatorAddress)
 			verifier := NewDKG(opID, threshold, operators)
-			require.True(t, verifier.VerifyShare(dealerID, shares[opID], commitments))
+			require.True(t, verifier.VerifyShare(shares[opID], commitments))
 		}
 	})
 }
@@ -311,7 +311,7 @@ func FuzzVerifyShareWithZeroShare(f *testing.F) {
 
 		// A zero share is mathematically valid only if the polynomial evaluates to 0 at that point.
 		// For random polynomials, this is astronomically unlikely, so verification should fail.
-		result := verifier.VerifyShare(dealerID, zeroShare, commitments)
+		result := verifier.VerifyShare(zeroShare, commitments)
 		// We don't assert here because the polynomial COULD evaluate to zero (very unlikely).
 		// Instead, we just ensure no panic occurs.
 		_ = result
@@ -355,7 +355,7 @@ func FuzzVerifyShareWithEmptyCommitments(f *testing.F) {
 					t.Logf("VerifyShare panicked with empty commitments (expected): %v", r)
 				}
 			}()
-			result := verifier.VerifyShare(dealerID, shares[targetID], emptyCommitments)
+			result := verifier.VerifyShare(shares[targetID], emptyCommitments)
 			// If it doesn't panic, it should return false.
 			require.False(t, result, "empty commitments should fail verification")
 		}()
