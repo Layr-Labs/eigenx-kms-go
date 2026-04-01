@@ -23,6 +23,7 @@ require (
 	github.com/wealdtech/go-merkletree/v2 v2.6.1
 	go.uber.org/zap v1.27.1
 	golang.org/x/crypto v0.45.0
+	golang.org/x/time v0.9.0
 	k8s.io/apimachinery v0.34.2
 )
 
