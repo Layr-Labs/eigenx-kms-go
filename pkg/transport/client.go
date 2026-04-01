@@ -180,7 +180,7 @@ func (c *Client) BroadcastDKGCommitments(operators []*peering.OperatorSetPeer, c
 		}
 		msg := types.CommitmentMessage{
 			FromOperatorAddress: c.operatorAddr,
-			ToOperatorAddress:   op.OperatorAddress, // Zero address for broadcast
+			ToOperatorAddress:   op.OperatorAddress,
 			SessionTimestamp:    sessionTimestamp,
 			Commitments:         commitments,
 		}
@@ -374,7 +374,7 @@ func (c *Client) BroadcastCommitmentsWithProofs(
 	return nil
 }
 
-// sendCommitmentBroadcast sends a commitment broadcast to a specific operator (Phase 5)
+// sendCommitmentBroadcast sends an authenticated commitment broadcast to a specific operator (Phase 5)
 func (c *Client) sendCommitmentBroadcast(
 	toOperator *peering.OperatorSetPeer,
 	broadcast *types.CommitmentBroadcast,
@@ -382,18 +382,31 @@ func (c *Client) sendCommitmentBroadcast(
 ) error {
 	toNodeID := util.AddressToNodeID(toOperator.OperatorAddress)
 
-	// Create message wrapper
+	// Create message wrapper with address fields for authentication
 	msg := types.CommitmentBroadcastMessage{
-		FromOperatorID:   c.nodeID,
-		ToOperatorID:     toNodeID,
-		SessionTimestamp: sessionTimestamp,
-		Broadcast:        broadcast,
+		FromOperatorAddress: c.operatorAddr,
+		ToOperatorAddress:   toOperator.OperatorAddress,
+		FromOperatorID:      c.nodeID,
+		ToOperatorID:        toNodeID,
+		SessionTimestamp:    sessionTimestamp,
+		Broadcast:           broadcast,
 	}
 
 	// Serialize message
-	data, err := json.Marshal(msg)
+	msgBytes, err := json.Marshal(msg)
 	if err != nil {
 		return fmt.Errorf("failed to marshal broadcast message: %w", err)
+	}
+
+	// Create authenticated message
+	authMsg, err := c.signer.CreateAuthenticatedMessage(msgBytes)
+	if err != nil {
+		return fmt.Errorf("failed to create authenticated message: %w", err)
+	}
+
+	data, err := json.Marshal(authMsg)
+	if err != nil {
+		return fmt.Errorf("failed to marshal authenticated message: %w", err)
 	}
 
 	// Send to operator

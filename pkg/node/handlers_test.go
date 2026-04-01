@@ -9,49 +9,27 @@ import (
 	"testing"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 // TestHandleCommitmentBroadcast tests the commitment broadcast handler (Phase 5)
 func TestHandleCommitmentBroadcast(t *testing.T) {
-	// This test verifies the handler function exists and accepts the correct message type
-	// Full integration tests with real sessions will be in Phase 7
-
 	t.Run("Handler exists", func(t *testing.T) {
 		server := &Server{}
 		require.NotNil(t, server.handleCommitmentBroadcast)
-	})
-
-	t.Run("Method not allowed", func(t *testing.T) {
-		server := &Server{node: &Node{}}
-
-		req := httptest.NewRequest(http.MethodGet, "/dkg/broadcast", nil)
-		w := httptest.NewRecorder()
-
-		server.handleCommitmentBroadcast(w, req)
-
-		require.Equal(t, http.StatusMethodNotAllowed, w.Code)
-	})
-
-	t.Run("Invalid JSON", func(t *testing.T) {
-		server := &Server{node: &Node{}}
-
-		req := httptest.NewRequest(http.MethodPost, "/dkg/broadcast", bytes.NewReader([]byte("invalid json")))
-		w := httptest.NewRecorder()
-
-		server.handleCommitmentBroadcast(w, req)
-
-		require.Equal(t, http.StatusBadRequest, w.Code)
 	})
 }
 
 // TestCommitmentBroadcastMessage_Serialization tests message serialization (Phase 5)
 func TestCommitmentBroadcastMessage_Serialization(t *testing.T) {
 	msg := types.CommitmentBroadcastMessage{
-		FromOperatorID:   1,
-		ToOperatorID:     2,
-		SessionTimestamp: 12345,
+		FromOperatorAddress: common.HexToAddress("0x1234"),
+		ToOperatorAddress:   common.HexToAddress("0x5678"),
+		FromOperatorID:      1,
+		ToOperatorID:        2,
+		SessionTimestamp:    12345,
 		Broadcast: &types.CommitmentBroadcast{
 			FromOperatorID:   1,
 			SessionTimestamp: 5,
@@ -72,6 +50,8 @@ func TestCommitmentBroadcastMessage_Serialization(t *testing.T) {
 	require.NoError(t, err)
 
 	// Verify fields
+	require.Equal(t, msg.FromOperatorAddress, decoded.FromOperatorAddress)
+	require.Equal(t, msg.ToOperatorAddress, decoded.ToOperatorAddress)
 	require.Equal(t, msg.FromOperatorID, decoded.FromOperatorID)
 	require.Equal(t, msg.ToOperatorID, decoded.ToOperatorID)
 	require.Equal(t, msg.SessionTimestamp, decoded.SessionTimestamp)

@@ -164,10 +164,12 @@ type CommitmentBroadcast struct {
 	MerkleProof      [][32]byte         // Merkle proof for specific recipient
 }
 
-// CommitmentBroadcastMessage wraps CommitmentBroadcast for authenticated transport (Phase 3)
+// CommitmentBroadcastMessage wraps CommitmentBroadcast for authenticated transport (Phase 5)
 type CommitmentBroadcastMessage struct {
-	FromOperatorID   int64
-	ToOperatorID     int64
-	SessionTimestamp int64 // Block timestamp of the protocol session (same as Broadcast.SessionTimestamp)
-	Broadcast        *CommitmentBroadcast
+	FromOperatorAddress common.Address       `json:"fromOperatorAddress"`
+	ToOperatorAddress   common.Address       `json:"toOperatorAddress"`
+	FromOperatorID      int64                `json:"fromOperatorID"`
+	ToOperatorID        int64                `json:"toOperatorID"`
+	SessionTimestamp    int64                `json:"sessionTimestamp"`
+	Broadcast           *CommitmentBroadcast `json:"broadcast"`
 }
