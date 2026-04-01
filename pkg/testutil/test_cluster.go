@@ -168,9 +168,11 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 	}
 
 	// Wait for automatic DKG to complete
-	// Generous timeout for CI environments (GitHub Actions can be slower)
+	// The protocol timeout for Anvil is 30s; use 60s here to give ample headroom
+	// for slow CI runners (GitHub Actions) where HTTP round trips between nodes
+	// and crypto operations can be sluggish.
 	t.Logf("Waiting for automatic DKG to complete...")
-	if !WaitForDKGCompletion(cluster, 45*time.Second) {
+	if !WaitForDKGCompletion(cluster, 60*time.Second) {
 		t.Fatalf("DKG did not complete within timeout")
 	}
 
