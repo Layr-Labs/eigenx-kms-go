@@ -1,6 +1,6 @@
 module github.com/Layr-Labs/eigenx-kms-go
 
-go 1.24.2
+go 1.24.13
 
 require (
 	github.com/Layr-Labs/chain-indexer v0.1.1-0.20251208022649-63718013830e
