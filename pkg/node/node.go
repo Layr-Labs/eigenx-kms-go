@@ -330,7 +330,7 @@ func NewNode(
 	if len(cfg.AppAllowlist) > 0 {
 		n.appAllowlist = make(map[string]bool, len(cfg.AppAllowlist))
 		for _, appID := range cfg.AppAllowlist {
-			n.appAllowlist[appID] = true
+			n.appAllowlist[strings.TrimSpace(appID)] = true
 		}
 	}
 

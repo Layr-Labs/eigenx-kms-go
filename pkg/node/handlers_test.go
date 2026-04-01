@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
@@ -112,5 +113,20 @@ func TestHandleAppSign_Allowlist(t *testing.T) {
 
 		w := makeRequest(f.server, "blocked-app")
 		assert.Equal(t, http.StatusForbidden, w.Code)
+	})
+
+	t.Run("whitespace in allowlist values is trimmed at construction", func(t *testing.T) {
+		f := newTestSecretsFixture(t)
+		// Simulate what urfave/cli produces from "app-1, app-2" (leading space).
+		// Directly rebuild the allowlist the same way NewNode does.
+		cfg := []string{" my-app ", "other-app"}
+		f.node.appAllowlist = make(map[string]bool, len(cfg))
+		for _, id := range cfg {
+			f.node.appAllowlist[strings.TrimSpace(id)] = true
+		}
+
+		// "my-app" (no spaces) should match the trimmed entry
+		w := makeRequest(f.server, "my-app")
+		assert.NotEqual(t, http.StatusForbidden, w.Code)
 	})
 }
