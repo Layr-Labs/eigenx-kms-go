@@ -42,6 +42,7 @@ const (
 	EnvKMSAttestationDebugMode   = "KMS_ATTESTATION_DEBUG_MODE"
 	EnvKMSEnableGCPAttestation   = "KMS_ENABLE_GCP_ATTESTATION"
 	EnvKMSEnableECDSAAttestation = "KMS_ENABLE_ECDSA_ATTESTATION"
+	EnvKMSAppAllowlist           = "KMS_APP_ALLOWLIST"
 )
 
 type CurveType string
@@ -354,6 +355,9 @@ type KMSServerConfig struct {
 	// Operational settings
 	Debug   bool `json:"debug"`
 	Verbose bool `json:"verbose"`
+
+	// Access control
+	AppAllowlist []string `json:"app_allowlist"` // Optional: restrict /app/sign and /secrets to these app IDs
 
 	// Persistence configuration
 	PersistenceConfig PersistenceConfig `json:"persistence_config"`
