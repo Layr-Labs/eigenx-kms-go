@@ -171,5 +171,5 @@ type CommitmentBroadcastMessage struct {
 	FromOperatorID      int64          `json:"fromOperatorID"`
 	ToOperatorID        int64          `json:"toOperatorID"`
 	SessionTimestamp    int64          `json:"sessionTimestamp"`
-	Broadcast           *CommitmentBroadcast
+	Broadcast           *CommitmentBroadcast `json:"broadcast"`
 }

@@ -751,13 +751,18 @@ func (s *Server) handleCommitmentBroadcast(w http.ResponseWriter, r *http.Reques
 	authMsg, senderPeer, _, err := s.validateAuthenticatedMessage(r, s.node.OperatorAddress)
 	if err != nil {
 		s.node.logger.Sugar().Warnw("Authentication failed for commitment broadcast", "error", err)
-		http.Error(w, fmt.Sprintf("Authentication failed: %v", err), http.StatusUnauthorized)
+		http.Error(w, "Authentication failed", http.StatusUnauthorized)
 		return
 	}
 
 	var msg types.CommitmentBroadcastMessage
 	if err := json.Unmarshal(authMsg.Payload, &msg); err != nil {
 		http.Error(w, fmt.Sprintf("Invalid request: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	if msg.Broadcast == nil {
+		http.Error(w, "broadcast is required", http.StatusBadRequest)
 		return
 	}
 
