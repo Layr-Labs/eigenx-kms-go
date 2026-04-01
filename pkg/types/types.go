@@ -166,10 +166,10 @@ type CommitmentBroadcast struct {
 
 // CommitmentBroadcastMessage wraps CommitmentBroadcast for authenticated transport (Phase 5)
 type CommitmentBroadcastMessage struct {
-	FromOperatorAddress common.Address `json:"fromOperatorAddress"`
-	ToOperatorAddress   common.Address `json:"toOperatorAddress"`
-	FromOperatorID      int64          `json:"fromOperatorID"`
-	ToOperatorID        int64          `json:"toOperatorID"`
-	SessionTimestamp    int64          `json:"sessionTimestamp"`
+	FromOperatorAddress common.Address       `json:"fromOperatorAddress"`
+	ToOperatorAddress   common.Address       `json:"toOperatorAddress"`
+	FromOperatorID      int64                `json:"fromOperatorID"`
+	ToOperatorID        int64                `json:"toOperatorID"`
+	SessionTimestamp    int64                `json:"sessionTimestamp"`
 	Broadcast           *CommitmentBroadcast `json:"broadcast"`
 }
