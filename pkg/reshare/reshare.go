@@ -75,6 +75,10 @@ func (r *Reshare) GenerateNewShares(currentShare *fr.Element, newThreshold int) 
 
 // VerifyNewShare verifies a reshared share against commitments
 func (r *Reshare) VerifyNewShare(share *fr.Element, commitments []types.G2Point) bool {
+	if len(commitments) == 0 || share == nil {
+		return false
+	}
+
 	// Same verification as DKG
 	leftSide, err := crypto.ScalarMulG2(crypto.G2Generator, share)
 	if err != nil {
