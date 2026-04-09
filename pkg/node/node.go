@@ -1405,17 +1405,47 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		}
 	}
 
+	// Build set of existing operator IDs from active key version.
+	// Only existing operators hold valid key shares to redistribute;
+	// new operators could maliciously send shares and commitments.
+	existingOpIDs := make(map[int64]bool)
+	if activeVersion := n.keyStore.GetActiveVersion(); activeVersion != nil {
+		for _, id := range activeVersion.ParticipantIDs {
+			existingOpIDs[id] = true
+		}
+	}
+
 	// Wait for shares and commitments. New operators (running RunReshareAsNewOperator) do not
 	// contribute shares, so only existing operators can contribute. We require a threshold of
 	// those existing operators rather than all of them, so resharing can proceed even if some
 	// existing operators are offline (per KMS-010 recommendation).
+	// Count functions filter to existing operators only so that shares/commitments from new
+	// operators do not inflate the count toward the threshold.
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
 	existingOperators := len(operators) - numNewOperators
 	requiredContributions := dkg.CalculateThreshold(existingOperators)
-	if err := waitForNShares(session, requiredContributions, protocolTimeout); err != nil {
+	countExistingShares := func() int {
+		count := 0
+		for id := range session.shares {
+			if existingOpIDs[id] {
+				count++
+			}
+		}
+		return count
+	}
+	countExistingCommitments := func() int {
+		count := 0
+		for id := range session.commitments {
+			if existingOpIDs[id] {
+				count++
+			}
+		}
+		return count
+	}
+	if err := waitForN(session, requiredContributions, protocolTimeout, countExistingShares, "shares"); err != nil {
 		return err
 	}
-	if err := waitForNCommitments(session, requiredContributions, protocolTimeout); err != nil {
+	if err := waitForN(session, requiredContributions, protocolTimeout, countExistingCommitments, "commitments"); err != nil {
 		return err
 	}
 
@@ -1433,16 +1463,6 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	n.logger.Sugar().Infow("Reshare Phase 1b: Verifying shares and sending acknowledgements",
 		"operator_address", n.OperatorAddress.Hex(),
 		"node_id", thisNodeID)
-
-	// Build set of existing operator IDs from active key version.
-	// Only existing operators hold valid key shares to redistribute;
-	// new operators could maliciously send shares and commitments.
-	existingOpIDs := make(map[int64]bool)
-	if activeVersion := n.keyStore.GetActiveVersion(); activeVersion != nil {
-		for _, id := range activeVersion.ParticipantIDs {
-			existingOpIDs[id] = true
-		}
-	}
 
 	// Copy shares and commitments from session under lock, filtering to existing operators only.
 	// After threshold fallback, late-arriving shares may still be written concurrently.
@@ -1527,15 +1547,11 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	}
 
 	// Wait for acknowledgements (as a dealer).
-	// We require a threshold (t) of *other* operators to ack, so that there exist t non-dealer holders
-	// of this dealer's contribution (robust even if the dealer goes offline later).
-	// Both existing and new operators send acks, so the reachable ack count is
-	// len(operators)-1 (everyone except this dealer). However, new operators may lag behind
-	// existing ones, so we use the existing-operator count as the contributor set to avoid
-	// blocking on stragglers. Apply CalculateThreshold to that contributor set so the
-	// threshold is never higher than the number of operators that can actually respond.
+	// We require newThreshold acks so that at least t operators in the new committee have
+	// confirmed receipt of this dealer's contribution. Both existing and new operators send
+	// acks, so the reachable ack count is len(operators)-1 (everyone except this dealer).
 	myNodeID := addressToNodeID(n.OperatorAddress)
-	requiredAcks := dkg.CalculateThreshold(len(operators) - numNewOperators)
+	requiredAcks := newThreshold
 	if requiredAcks < 0 {
 		requiredAcks = 0
 	}
@@ -1796,11 +1812,31 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		"existing_operators", existingOperators,
 		"expected_shares", requiredContributions)
 
+	// Count functions filter to existing operators only so that shares/commitments from new
+	// operators do not inflate the count toward the threshold.
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
-	if err := waitForNShares(session, requiredContributions, protocolTimeout); err != nil {
+	countExistingShares := func() int {
+		count := 0
+		for id := range session.shares {
+			if existingOpIDs[id] {
+				count++
+			}
+		}
+		return count
+	}
+	countExistingCommitments := func() int {
+		count := 0
+		for id := range session.commitments {
+			if existingOpIDs[id] {
+				count++
+			}
+		}
+		return count
+	}
+	if err := waitForN(session, requiredContributions, protocolTimeout, countExistingShares, "shares"); err != nil {
 		return fmt.Errorf("failed to receive shares: %w", err)
 	}
-	if err := waitForNCommitments(session, requiredContributions, protocolTimeout); err != nil {
+	if err := waitForN(session, requiredContributions, protocolTimeout, countExistingCommitments, "commitments"); err != nil {
 		return fmt.Errorf("failed to receive commitments: %w", err)
 	}
 
