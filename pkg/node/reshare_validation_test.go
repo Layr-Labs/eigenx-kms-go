@@ -14,8 +14,8 @@ import (
 
 // makeNodeForValidation returns a minimal *Node with a stub peering fetcher that
 // returns numOps operators and no active key version. Suitable for new-operator
-// scenarios (no existing shares) and for exercising the nil-transport fallback in
-// countNewOperatorsInSet.
+// scenarios (no existing shares) and for exercising the nil-transport fallback
+// when determining existing operators.
 func makeNodeForValidation(t *testing.T, numOps int) *Node {
 	t.Helper()
 	logger, err := zap.NewDevelopment()
