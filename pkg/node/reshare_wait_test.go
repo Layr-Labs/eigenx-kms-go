@@ -19,6 +19,27 @@ func makeTestOps(n int) []*peering.OperatorSetPeer {
 	return ops
 }
 
+// --- HandleReceivedCommitment ---
+
+func TestHandleReceivedCommitment_EmptyCommitmentsRejected(t *testing.T) {
+	session := &ProtocolSession{
+		commitments:             make(map[int64][]types.G2Point),
+		commitmentsCompleteChan: make(chan bool, 1),
+		Operators:               makeTestOps(3),
+	}
+
+	err := session.HandleReceivedCommitment(1, nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "empty commitments")
+
+	err = session.HandleReceivedCommitment(1, []types.G2Point{})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "empty commitments")
+
+	// Verify nothing was stored
+	require.Empty(t, session.commitments)
+}
+
 // --- waitForNShares ---
 
 func TestWaitForNShares_SucceedsWithRequiredCount(t *testing.T) {

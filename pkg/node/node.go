@@ -155,6 +155,11 @@ func (s *ProtocolSession) HandleReceivedCommitment(senderNodeID int64, commitmen
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	// Reject empty commitments
+	if len(commitments) == 0 {
+		return fmt.Errorf("empty commitments from node %d", senderNodeID)
+	}
+
 	// Reject duplicates
 	if _, exists := s.commitments[senderNodeID]; exists {
 		return fmt.Errorf("duplicate commitment from node %d", senderNodeID)
@@ -1400,17 +1405,47 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		}
 	}
 
+	// Build set of existing operator IDs from active key version.
+	// Only existing operators hold valid key shares to redistribute;
+	// new operators could maliciously send shares and commitments.
+	existingOpIDs := make(map[int64]bool)
+	if activeVersion := n.keyStore.GetActiveVersion(); activeVersion != nil {
+		for _, id := range activeVersion.ParticipantIDs {
+			existingOpIDs[id] = true
+		}
+	}
+
 	// Wait for shares and commitments. New operators (running RunReshareAsNewOperator) do not
 	// contribute shares, so only existing operators can contribute. We require a threshold of
 	// those existing operators rather than all of them, so resharing can proceed even if some
 	// existing operators are offline (per KMS-010 recommendation).
+	// Count functions filter to existing operators only so that shares/commitments from new
+	// operators do not inflate the count toward the threshold.
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
 	existingOperators := len(operators) - numNewOperators
 	requiredContributions := dkg.CalculateThreshold(existingOperators)
-	if err := waitForNShares(session, requiredContributions, protocolTimeout); err != nil {
+	countExistingShares := func() int {
+		count := 0
+		for id := range session.shares {
+			if existingOpIDs[id] {
+				count++
+			}
+		}
+		return count
+	}
+	countExistingCommitments := func() int {
+		count := 0
+		for id := range session.commitments {
+			if existingOpIDs[id] {
+				count++
+			}
+		}
+		return count
+	}
+	if err := waitForN(session, requiredContributions, protocolTimeout, countExistingShares, "shares"); err != nil {
 		return err
 	}
-	if err := waitForNCommitments(session, requiredContributions, protocolTimeout); err != nil {
+	if err := waitForN(session, requiredContributions, protocolTimeout, countExistingCommitments, "commitments"); err != nil {
 		return err
 	}
 
@@ -1429,16 +1464,20 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		"operator_address", n.OperatorAddress.Hex(),
 		"node_id", thisNodeID)
 
-	// Copy shares and commitments from session under lock to avoid data races.
+	// Copy shares and commitments from session under lock, filtering to existing operators only.
 	// After threshold fallback, late-arriving shares may still be written concurrently.
 	session.mu.RLock()
-	receivedShares := make(map[int64]*fr.Element, len(session.shares))
+	receivedShares := make(map[int64]*fr.Element)
 	for id, s := range session.shares {
-		receivedShares[id] = s
+		if existingOpIDs[id] {
+			receivedShares[id] = s
+		}
 	}
-	receivedCommitments := make(map[int64][]types.G2Point, len(session.commitments))
+	receivedCommitments := make(map[int64][]types.G2Point)
 	for id, c := range session.commitments {
-		receivedCommitments[id] = c
+		if existingOpIDs[id] {
+			receivedCommitments[id] = c
+		}
 	}
 	session.mu.RUnlock()
 
@@ -1508,15 +1547,11 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	}
 
 	// Wait for acknowledgements (as a dealer).
-	// We require a threshold (t) of *other* operators to ack, so that there exist t non-dealer holders
-	// of this dealer's contribution (robust even if the dealer goes offline later).
-	// Both existing and new operators send acks, so the reachable ack count is
-	// len(operators)-1 (everyone except this dealer). However, new operators may lag behind
-	// existing ones, so we use the existing-operator count as the contributor set to avoid
-	// blocking on stragglers. Apply CalculateThreshold to that contributor set so the
-	// threshold is never higher than the number of operators that can actually respond.
+	// We require newThreshold acks so that at least t operators in the new committee have
+	// confirmed receipt of this dealer's contribution. Both existing and new operators send
+	// acks, so the reachable ack count is len(operators)-1 (everyone except this dealer).
 	myNodeID := addressToNodeID(n.OperatorAddress)
-	requiredAcks := dkg.CalculateThreshold(len(operators) - numNewOperators)
+	requiredAcks := newThreshold
 	if requiredAcks < 0 {
 		requiredAcks = 0
 	}
@@ -1718,11 +1753,32 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		return fmt.Errorf("failed to fetch operators: %w", err)
 	}
 
-	// Compute numNewOperators from the same operators snapshot to avoid TOCTOU.
+	// Build set of existing operator IDs by querying /pubkey endpoints.
+	// Only existing operators hold valid key shares to redistribute;
+	// new operators could maliciously send shares and commitments.
+	existingOpIDs := make(map[int64]bool)
+	if n.transport != nil {
+		for _, op := range operators {
+			commitments, err := n.transport.QueryOperatorPubkey(op)
+			if err != nil {
+				n.logger.Sugar().Warnw("Could not query operator pubkey; treating as new operator",
+					"operator_address", n.OperatorAddress.Hex(),
+					"peer", op.OperatorAddress.Hex(),
+					"error", err)
+			} else if len(commitments) > 0 {
+				existingOpIDs[addressToNodeID(op.OperatorAddress)] = true
+			}
+		}
+	} else {
+		n.logger.Sugar().Warnw("No transport available; treating all operators as new",
+			"operator_address", n.OperatorAddress.Hex(),
+			"count", len(operators))
+	}
+
 	// The caller (self) is always one of the new operators, so the minimum valid
 	// value is 1; 0 would require all N operators to contribute which deadlocks
 	// since this node never sends shares.
-	numNewOperators := n.countNewOperatorsInSet(operators)
+	numNewOperators := len(operators) - len(existingOpIDs)
 	if numNewOperators < 1 || numNewOperators >= len(operators) {
 		return fmt.Errorf("numNewOperators %d out of range [1, %d)", numNewOperators, len(operators))
 	}
@@ -1756,24 +1812,48 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		"existing_operators", existingOperators,
 		"expected_shares", requiredContributions)
 
+	// Count functions filter to existing operators only so that shares/commitments from new
+	// operators do not inflate the count toward the threshold.
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
-	if err := waitForNShares(session, requiredContributions, protocolTimeout); err != nil {
+	countExistingShares := func() int {
+		count := 0
+		for id := range session.shares {
+			if existingOpIDs[id] {
+				count++
+			}
+		}
+		return count
+	}
+	countExistingCommitments := func() int {
+		count := 0
+		for id := range session.commitments {
+			if existingOpIDs[id] {
+				count++
+			}
+		}
+		return count
+	}
+	if err := waitForN(session, requiredContributions, protocolTimeout, countExistingShares, "shares"); err != nil {
 		return fmt.Errorf("failed to receive shares: %w", err)
 	}
-	if err := waitForNCommitments(session, requiredContributions, protocolTimeout); err != nil {
+	if err := waitForN(session, requiredContributions, protocolTimeout, countExistingCommitments, "commitments"); err != nil {
 		return fmt.Errorf("failed to receive commitments: %w", err)
 	}
 
-	// Copy shares and commitments from session under lock to avoid data races.
+	// Copy shares and commitments from session under lock, filtering to existing operators only.
 	// After threshold fallback, late-arriving shares may still be written concurrently.
 	session.mu.RLock()
-	receivedShares := make(map[int64]*fr.Element, len(session.shares))
+	receivedShares := make(map[int64]*fr.Element)
 	for id, s := range session.shares {
-		receivedShares[id] = s
+		if existingOpIDs[id] {
+			receivedShares[id] = s
+		}
 	}
-	receivedCommitments := make(map[int64][]types.G2Point, len(session.commitments))
+	receivedCommitments := make(map[int64][]types.G2Point)
 	for id, c := range session.commitments {
-		receivedCommitments[id] = c
+		if existingOpIDs[id] {
+			receivedCommitments[id] = c
+		}
 	}
 	session.mu.RUnlock()
 
@@ -1828,14 +1908,12 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	}
 
 	// Build trusted dealer set: intersection of polynomial-verified shares and merkle-verified operators.
-	// Self is always trusted (a node doesn't verify its own broadcast).
 	session.mu.RLock()
 	verifiedOps := make(map[int64]bool, len(session.verifiedOperators))
 	for k, v := range session.verifiedOperators {
 		verifiedOps[k] = v
 	}
 	session.mu.RUnlock()
-	verifiedOps[thisNodeID] = true
 
 	trustedShares := trustedDealerIDs(validShares, verifiedOps)
 

@@ -80,7 +80,8 @@ func TestTrustedDealerIDs(t *testing.T) {
 func TestSelfDealerAlwaysTrusted(t *testing.T) {
 	// Simulate: self (nodeID=1) is in validShares but NOT in verifiedOperators
 	// because nodes don't verify their own broadcasts.
-	// The fix adds verifiedOps[thisNodeID] = true before calling trustedDealerIDs.
+	// In dealer paths (DKG and RunReshareAsExistingOperator), the caller adds
+	// verifiedOps[thisNodeID] = true before calling trustedDealerIDs.
 	selfNodeID := int64(1)
 	selfShare := new(fr.Element).SetInt64(42)
 
