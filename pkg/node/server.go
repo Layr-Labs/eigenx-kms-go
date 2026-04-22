@@ -60,18 +60,19 @@ Client Request Flow:
     - Client collects ⌈2n/3⌉ signatures to recover app private key
 
   POST /secrets:
-    - Request: { appID, attestationMethod, attestation, rsaPubKey, attestTime, challenge?, publicKey? }
-    - attestationMethod: "gcp" (default), "intel", or "ecdsa"
-    - For GCP/Intel: attestation contains JWT token
-    - For ECDSA: attestation contains signature, challenge and publicKey required
-    - Validates attestation and image digest
-    - Returns encrypted environment + RSA-encrypted partial signature
+    - Request: { appID, attestationMethod, attestation, rsaPubKey, attestTime, challenge?, publicKey?, extraData? }
+    - attestationMethod: "gcp" (default), "intel", "ecdsa", or any registered method
+    - Each method's Verify() handles its own binding verification (nonce, PCR, etc.)
+    - extraData: optional caller-supplied data (max 1 MB) bound into attestation by supporting methods
+    - JTI replay protection applies automatically to any method that sets claims.JTI
+    - Returns encrypted environment + RSA-encrypted partial signature + echoed extraData
     - Used by TEE applications for secret retrieval
 
     Examples:
-      GCP attestation:
+      GCP attestation with extra_data:
         { "app_id": "my-app", "attestation_method": "gcp",
-          "attestation": "<jwt-token>", "rsa_pubkey_tmp": "<pubkey>" }
+          "attestation": "<jwt-token>", "rsa_pubkey_tmp": "<pubkey>",
+          "extra_data": "<base64-encoded-payload>" }
 
       ECDSA attestation:
         { "app_id": "my-app", "attestation_method": "ecdsa",
