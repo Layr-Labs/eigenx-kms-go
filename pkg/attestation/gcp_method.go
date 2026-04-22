@@ -58,7 +58,7 @@ func (g *GCPAttestationMethod) Verify(request *AttestationRequest) (*types.Attes
 
 	// Nonce binding: verify that the attestation nonce matches the ephemeral RSA key
 	// (and extra_data if present). Skipped when RSAPubKeyTmp is not provided (e.g. legacy requests).
-	if len(request.RSAPubKeyTmp) > 0 {
+	if len(request.RSAPubKeyTmp) > 0 || len(request.ExtraData) > 0 {
 		var nonceInput []byte
 		nonceInput = append(nonceInput, request.RSAPubKeyTmp...)
 		if len(request.ExtraData) > 0 {
