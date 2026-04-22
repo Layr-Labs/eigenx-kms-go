@@ -113,6 +113,7 @@ type SecretsRequestV1 struct {
 	// ECDSA-specific fields (only used when attestation_method is "ecdsa")
 	Challenge []byte `json:"challenge,omitempty"`  // Challenge for ECDSA attestation
 	PublicKey []byte `json:"public_key,omitempty"` // Public key for ECDSA attestation
+	ExtraData []byte `json:"extra_data,omitempty"` // optional caller-supplied data bound into attestation nonce (max 1 MB)
 }
 
 // SecretsResponseV1 represents the response with encrypted secrets
@@ -120,6 +121,7 @@ type SecretsResponseV1 struct {
 	EncryptedEnv        string `json:"encrypted_env"`         // AES encrypted env vars
 	PublicEnv           string `json:"public_env"`            // Plain text env
 	EncryptedPartialSig []byte `json:"encrypted_partial_sig"` // RSA encrypted partial sig
+	ExtraData           []byte `json:"extra_data,omitempty"`  // echoed from request when present
 }
 
 // ContainerPolicy defines the expected container execution parameters for an app release.
@@ -144,6 +146,7 @@ type AttestationClaims struct {
 	ExpiresAt       int64 // Unix timestamp; used to expire JTI cache entries
 	PublicKey       []byte
 	ContainerPolicy ContainerPolicy
+	ExtraData       []byte // caller-supplied data bound into attestation
 }
 
 // Release represents application release data from on-chain registry
