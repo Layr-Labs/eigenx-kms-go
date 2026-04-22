@@ -6,3 +6,4 @@
 /cloned-copies
 .idea
 pkg/crypto/testdata/
+.worktrees/
