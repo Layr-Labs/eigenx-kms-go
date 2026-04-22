@@ -644,7 +644,7 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 		PartialSigs:     partialSigs,
 		ResponseCount:   len(responses),
 		ThresholdNeeded: threshold,
-		ExtraData:       responses[0].ExtraData,
+		ExtraData:       opts.ExtraData,
 	}, nil
 }
 
