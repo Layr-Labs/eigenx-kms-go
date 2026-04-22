@@ -147,6 +147,29 @@ func TestGCPVerify_NonceBindingMismatch(t *testing.T) {
 	assert.Contains(t, err.Error(), "nonce mismatch")
 }
 
+func TestIntelVerify_NonceBindingMismatch(t *testing.T) {
+	rsaKey := []byte("test-rsa-public-key-pem")
+	legitimateNonce := sha256.Sum256(rsaKey)
+
+	mockVerifier := NewMockAttestationVerifierInterface(t)
+	mockVerifier.EXPECT().
+		VerifyAttestation(context.Background(), "jwt-token", IntelTrustAuthority).
+		Return(&kmsTypes.AttestationClaims{
+			AppID: "test-app", ImageDigest: "sha256:abc",
+			Nonce: hex.EncodeToString(legitimateNonce[:]),
+		}, nil)
+
+	method := &GCPAttestationMethod{verifier: mockVerifier, provider: IntelTrustAuthority}
+	_, err := method.Verify(&AttestationRequest{
+		Attestation:  []byte("jwt-token"),
+		AppID:        "test-app",
+		RSAPubKeyTmp: []byte("attacker-rsa-key"),
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "nonce mismatch")
+}
+
 func TestGCPVerify_EmptyExtraDataSameAsNil(t *testing.T) {
 	rsaKey := []byte("test-rsa-public-key-pem")
 	h := sha256.Sum256(rsaKey)
