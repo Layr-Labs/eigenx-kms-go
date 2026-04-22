@@ -71,5 +71,10 @@ func (g *GCPAttestationMethod) Verify(request *AttestationRequest) (*types.Attes
 		}
 	}
 
+	// GCP/Intel JWTs must carry a jti claim for replay protection.
+	if claims.JTI == "" {
+		return nil, fmt.Errorf("attestation token missing jti claim")
+	}
+
 	return claims, nil
 }

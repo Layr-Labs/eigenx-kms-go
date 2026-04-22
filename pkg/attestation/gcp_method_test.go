@@ -65,6 +65,7 @@ func TestGCPAttestationMethodVerifyNoncePropagation(t *testing.T) {
 			AppID:       "my-app",
 			ImageDigest: "sha256:abc",
 			Nonce:       "deadbeef",
+			JTI:         "test-jti-propagation",
 		}, nil)
 
 	method := &GCPAttestationMethod{verifier: mockVerifier, provider: GoogleConfidentialSpace}
@@ -86,7 +87,7 @@ func TestGCPVerify_NonceBindingWithoutExtraData(t *testing.T) {
 	mockVerifier.EXPECT().
 		VerifyAttestation(context.Background(), "jwt-token", GoogleConfidentialSpace).
 		Return(&kmsTypes.AttestationClaims{
-			AppID: "test-app", ImageDigest: "sha256:abc", Nonce: expectedNonce,
+			AppID: "test-app", ImageDigest: "sha256:abc", Nonce: expectedNonce, JTI: "jti-no-extra",
 		}, nil)
 
 	method := &GCPAttestationMethod{verifier: mockVerifier, provider: GoogleConfidentialSpace}
@@ -111,7 +112,7 @@ func TestGCPVerify_NonceBindingWithExtraData(t *testing.T) {
 	mockVerifier.EXPECT().
 		VerifyAttestation(context.Background(), "jwt-token", GoogleConfidentialSpace).
 		Return(&kmsTypes.AttestationClaims{
-			AppID: "test-app", ImageDigest: "sha256:abc", Nonce: expectedNonce,
+			AppID: "test-app", ImageDigest: "sha256:abc", Nonce: expectedNonce, JTI: "jti-with-extra",
 		}, nil)
 
 	method := &GCPAttestationMethod{verifier: mockVerifier, provider: GoogleConfidentialSpace}
@@ -155,7 +156,7 @@ func TestGCPVerify_EmptyExtraDataSameAsNil(t *testing.T) {
 	mockVerifier.EXPECT().
 		VerifyAttestation(context.Background(), "jwt-token", GoogleConfidentialSpace).
 		Return(&kmsTypes.AttestationClaims{
-			AppID: "test-app", ImageDigest: "sha256:abc", Nonce: expectedNonce,
+			AppID: "test-app", ImageDigest: "sha256:abc", Nonce: expectedNonce, JTI: "jti-empty-extra",
 		}, nil)
 
 	method := &GCPAttestationMethod{verifier: mockVerifier, provider: GoogleConfidentialSpace}
@@ -166,6 +167,28 @@ func TestGCPVerify_EmptyExtraDataSameAsNil(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.NotNil(t, claims)
+}
+
+func TestGCPVerify_MissingJTIRejected(t *testing.T) {
+	rsaKey := []byte("test-rsa-key-jti")
+	h := sha256.Sum256(rsaKey)
+	expectedNonce := hex.EncodeToString(h[:])
+
+	mockVerifier := NewMockAttestationVerifierInterface(t)
+	mockVerifier.EXPECT().
+		VerifyAttestation(context.Background(), "jwt-token", GoogleConfidentialSpace).
+		Return(&kmsTypes.AttestationClaims{
+			AppID: "test-app", ImageDigest: "sha256:abc", Nonce: expectedNonce,
+			// JTI intentionally empty
+		}, nil)
+
+	method := &GCPAttestationMethod{verifier: mockVerifier, provider: GoogleConfidentialSpace}
+	_, err := method.Verify(&AttestationRequest{
+		Attestation: []byte("jwt-token"), AppID: "test-app", RSAPubKeyTmp: rsaKey,
+	})
+
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "missing jti")
 }
 
 // Note: Full integration tests with real AttestationVerifier are in attestation_test.go
