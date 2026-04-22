@@ -78,140 +78,106 @@ func TestGCPAttestationMethodVerifyNoncePropagation(t *testing.T) {
 	assert.Equal(t, "deadbeef", claims.Nonce)
 }
 
-func TestGCPVerify_NonceBindingWithoutExtraData(t *testing.T) {
+func TestVerify_NonceBindingAndJTI(t *testing.T) {
 	rsaKey := []byte("test-rsa-public-key-pem")
-	h := sha256.Sum256(rsaKey)
-	expectedNonce := hex.EncodeToString(h[:])
 
-	mockVerifier := NewMockAttestationVerifierInterface(t)
-	mockVerifier.EXPECT().
-		VerifyAttestation(context.Background(), "jwt-token", GoogleConfidentialSpace).
-		Return(&kmsTypes.AttestationClaims{
-			AppID: "test-app", ImageDigest: "sha256:abc", Nonce: expectedNonce, JTI: "jti-no-extra",
-		}, nil)
+	nonceFrom := func(parts ...[]byte) string {
+		var input []byte
+		for _, p := range parts {
+			input = append(input, p...)
+		}
+		h := sha256.Sum256(input)
+		return hex.EncodeToString(h[:])
+	}
 
-	method := &GCPAttestationMethod{verifier: mockVerifier, provider: GoogleConfidentialSpace}
-	claims, err := method.Verify(&AttestationRequest{
-		Attestation: []byte("jwt-token"), AppID: "test-app", RSAPubKeyTmp: rsaKey,
-	})
+	tests := []struct {
+		name        string
+		provider    AttestationProvider
+		rsaPubKey   []byte
+		extraData   []byte
+		claimNonce  string
+		claimJTI    string
+		expectErr   bool
+		errContains string
+	}{
+		{
+			name:       "GCP: nonce matches rsaKey only",
+			provider:   GoogleConfidentialSpace,
+			rsaPubKey:  rsaKey,
+			claimNonce: nonceFrom(rsaKey),
+			claimJTI:   "jti-1",
+		},
+		{
+			name:       "GCP: nonce matches rsaKey + extraData",
+			provider:   GoogleConfidentialSpace,
+			rsaPubKey:  rsaKey,
+			extraData:  []byte("binding-payload"),
+			claimNonce: nonceFrom(rsaKey, []byte("binding-payload")),
+			claimJTI:   "jti-2",
+		},
+		{
+			name:        "GCP: tampered extraData causes nonce mismatch",
+			provider:    GoogleConfidentialSpace,
+			rsaPubKey:   rsaKey,
+			extraData:   []byte("tampered"),
+			claimNonce:  nonceFrom(rsaKey),
+			expectErr:   true,
+			errContains: "nonce mismatch",
+		},
+		{
+			name:        "Intel: MITM key substitution causes nonce mismatch",
+			provider:    IntelTrustAuthority,
+			rsaPubKey:   []byte("attacker-rsa-key"),
+			claimNonce:  nonceFrom(rsaKey),
+			expectErr:   true,
+			errContains: "nonce mismatch",
+		},
+		{
+			name:       "GCP: empty extraData same as nil (backward compat)",
+			provider:   GoogleConfidentialSpace,
+			rsaPubKey:  rsaKey,
+			extraData:  []byte{},
+			claimNonce: nonceFrom(rsaKey),
+			claimJTI:   "jti-3",
+		},
+		{
+			name:        "GCP: missing JTI rejected",
+			provider:    GoogleConfidentialSpace,
+			rsaPubKey:   rsaKey,
+			claimNonce:  nonceFrom(rsaKey),
+			claimJTI:    "", // intentionally empty
+			expectErr:   true,
+			errContains: "missing jti",
+		},
+	}
 
-	require.NoError(t, err)
-	assert.Equal(t, "test-app", claims.AppID)
-}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mockVerifier := NewMockAttestationVerifierInterface(t)
+			mockVerifier.EXPECT().
+				VerifyAttestation(context.Background(), "jwt-token", tt.provider).
+				Return(&kmsTypes.AttestationClaims{
+					AppID: "test-app", ImageDigest: "sha256:abc",
+					Nonce: tt.claimNonce, JTI: tt.claimJTI,
+				}, nil)
 
-func TestGCPVerify_NonceBindingWithExtraData(t *testing.T) {
-	rsaKey := []byte("test-rsa-public-key-pem")
-	extraData := []byte("binding-payload")
-	var nonceInput []byte
-	nonceInput = append(nonceInput, rsaKey...)
-	nonceInput = append(nonceInput, extraData...)
-	h := sha256.Sum256(nonceInput)
-	expectedNonce := hex.EncodeToString(h[:])
+			method := &GCPAttestationMethod{verifier: mockVerifier, provider: tt.provider}
+			claims, err := method.Verify(&AttestationRequest{
+				Attestation:  []byte("jwt-token"),
+				AppID:        "test-app",
+				RSAPubKeyTmp: tt.rsaPubKey,
+				ExtraData:    tt.extraData,
+			})
 
-	mockVerifier := NewMockAttestationVerifierInterface(t)
-	mockVerifier.EXPECT().
-		VerifyAttestation(context.Background(), "jwt-token", GoogleConfidentialSpace).
-		Return(&kmsTypes.AttestationClaims{
-			AppID: "test-app", ImageDigest: "sha256:abc", Nonce: expectedNonce, JTI: "jti-with-extra",
-		}, nil)
-
-	method := &GCPAttestationMethod{verifier: mockVerifier, provider: GoogleConfidentialSpace}
-	claims, err := method.Verify(&AttestationRequest{
-		Attestation: []byte("jwt-token"), AppID: "test-app",
-		RSAPubKeyTmp: rsaKey, ExtraData: extraData,
-	})
-
-	require.NoError(t, err)
-	assert.Equal(t, "test-app", claims.AppID)
-}
-
-func TestGCPVerify_NonceBindingMismatch(t *testing.T) {
-	rsaKey := []byte("test-rsa-public-key-pem")
-	h := sha256.Sum256(rsaKey) // nonce computed WITHOUT extra_data
-	nonce := hex.EncodeToString(h[:])
-
-	mockVerifier := NewMockAttestationVerifierInterface(t)
-	mockVerifier.EXPECT().
-		VerifyAttestation(context.Background(), "jwt-token", GoogleConfidentialSpace).
-		Return(&kmsTypes.AttestationClaims{
-			AppID: "test-app", ImageDigest: "sha256:abc", Nonce: nonce,
-		}, nil)
-
-	method := &GCPAttestationMethod{verifier: mockVerifier, provider: GoogleConfidentialSpace}
-	_, err := method.Verify(&AttestationRequest{
-		Attestation: []byte("jwt-token"), AppID: "test-app",
-		RSAPubKeyTmp: rsaKey, ExtraData: []byte("tampered"),
-	})
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "nonce mismatch")
-}
-
-func TestIntelVerify_NonceBindingMismatch(t *testing.T) {
-	rsaKey := []byte("test-rsa-public-key-pem")
-	legitimateNonce := sha256.Sum256(rsaKey)
-
-	mockVerifier := NewMockAttestationVerifierInterface(t)
-	mockVerifier.EXPECT().
-		VerifyAttestation(context.Background(), "jwt-token", IntelTrustAuthority).
-		Return(&kmsTypes.AttestationClaims{
-			AppID: "test-app", ImageDigest: "sha256:abc",
-			Nonce: hex.EncodeToString(legitimateNonce[:]),
-		}, nil)
-
-	method := &GCPAttestationMethod{verifier: mockVerifier, provider: IntelTrustAuthority}
-	_, err := method.Verify(&AttestationRequest{
-		Attestation:  []byte("jwt-token"),
-		AppID:        "test-app",
-		RSAPubKeyTmp: []byte("attacker-rsa-key"),
-	})
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "nonce mismatch")
-}
-
-func TestGCPVerify_EmptyExtraDataSameAsNil(t *testing.T) {
-	rsaKey := []byte("test-rsa-public-key-pem")
-	h := sha256.Sum256(rsaKey)
-	expectedNonce := hex.EncodeToString(h[:])
-
-	mockVerifier := NewMockAttestationVerifierInterface(t)
-	mockVerifier.EXPECT().
-		VerifyAttestation(context.Background(), "jwt-token", GoogleConfidentialSpace).
-		Return(&kmsTypes.AttestationClaims{
-			AppID: "test-app", ImageDigest: "sha256:abc", Nonce: expectedNonce, JTI: "jti-empty-extra",
-		}, nil)
-
-	method := &GCPAttestationMethod{verifier: mockVerifier, provider: GoogleConfidentialSpace}
-	claims, err := method.Verify(&AttestationRequest{
-		Attestation: []byte("jwt-token"), AppID: "test-app",
-		RSAPubKeyTmp: rsaKey, ExtraData: []byte{},
-	})
-
-	require.NoError(t, err)
-	assert.NotNil(t, claims)
-}
-
-func TestGCPVerify_MissingJTIRejected(t *testing.T) {
-	rsaKey := []byte("test-rsa-key-jti")
-	h := sha256.Sum256(rsaKey)
-	expectedNonce := hex.EncodeToString(h[:])
-
-	mockVerifier := NewMockAttestationVerifierInterface(t)
-	mockVerifier.EXPECT().
-		VerifyAttestation(context.Background(), "jwt-token", GoogleConfidentialSpace).
-		Return(&kmsTypes.AttestationClaims{
-			AppID: "test-app", ImageDigest: "sha256:abc", Nonce: expectedNonce,
-			// JTI intentionally empty
-		}, nil)
-
-	method := &GCPAttestationMethod{verifier: mockVerifier, provider: GoogleConfidentialSpace}
-	_, err := method.Verify(&AttestationRequest{
-		Attestation: []byte("jwt-token"), AppID: "test-app", RSAPubKeyTmp: rsaKey,
-	})
-
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "missing jti")
+			if tt.expectErr {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.errContains)
+			} else {
+				require.NoError(t, err)
+				assert.NotNil(t, claims)
+			}
+		})
+	}
 }
 
 // Note: Full integration tests with real AttestationVerifier are in attestation_test.go
