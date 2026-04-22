@@ -204,6 +204,113 @@ func TestSecretsEndpoint_ECDSAAttestation(t *testing.T) {
 	assert.False(t, isZero, "Partial signature should not be zero")
 }
 
+func TestSecretsEndpoint_ECDSAWithExtraData(t *testing.T) {
+	slogger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	manager := attestation.NewAttestationManager(slogger)
+	require.NoError(t, manager.RegisterMethod(attestation.NewECDSAAttestationMethodDefault()))
+
+	n, mockCC := createTestNodeWithManager(t, manager)
+
+	testRelease := &kmsTypes.Release{
+		ImageDigest:  "ecdsa:unverified",
+		EncryptedEnv: "encrypted-env-data",
+		PublicEnv:    "PUBLIC_VAR=test-value",
+		Timestamp:    time.Now().Unix(),
+	}
+	mockCC.AddTestRelease("extra-data-app", testRelease)
+
+	appPrivateKey, err := crypto.GenerateKey()
+	require.NoError(t, err)
+	appPublicKey := crypto.FromECDSAPub(&appPrivateKey.PublicKey)
+
+	nonce := make([]byte, attestation.NonceLength)
+	_, err = rand.Read(nonce)
+	require.NoError(t, err)
+	challenge, err := attestation.GenerateChallenge(nonce)
+	require.NoError(t, err)
+	signature, err := attestation.SignChallenge(appPrivateKey, "extra-data-app", challenge)
+	require.NoError(t, err)
+
+	rsaEncrypt := encryption.NewRSAEncryption()
+	privKeyPEM, pubKeyPEM, err := encryption.GenerateKeyPair(2048)
+	require.NoError(t, err)
+
+	extraData := []byte(`{"action":"transfer","amount":"100","to":"0xdead"}`)
+
+	req := kmsTypes.SecretsRequestV1{
+		AppID:             "extra-data-app",
+		AttestationMethod: "ecdsa",
+		Attestation:       signature,
+		Challenge:         []byte(challenge),
+		PublicKey:         appPublicKey,
+		RSAPubKeyTmp:      pubKeyPEM,
+		ExtraData:         extraData,
+	}
+
+	reqBody, err := json.Marshal(req)
+	require.NoError(t, err)
+
+	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
+	httpReq.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	server := node.NewServer(n, 0)
+	server.GetHandler().ServeHTTP(w, httpReq)
+
+	require.Equal(t, http.StatusOK, w.Code, "Response body: %s", w.Body.String())
+
+	var resp kmsTypes.SecretsResponseV1
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
+
+	// extra_data must be echoed back identically
+	assert.Equal(t, extraData, resp.ExtraData, "extra_data should be echoed in response")
+	assert.Equal(t, testRelease.EncryptedEnv, resp.EncryptedEnv)
+	assert.NotEmpty(t, resp.EncryptedPartialSig)
+
+	// Partial signature must still be valid and decryptable
+	decryptedSigBytes, err := rsaEncrypt.Decrypt(resp.EncryptedPartialSig, privKeyPEM)
+	require.NoError(t, err)
+	var partialSig kmsTypes.G1Point
+	require.NoError(t, json.Unmarshal(decryptedSigBytes, &partialSig))
+	isZero, err := partialSig.IsZero()
+	require.NoError(t, err)
+	assert.False(t, isZero, "Partial signature should not be zero")
+}
+
+func TestSecretsEndpoint_ExtraDataSizeRejected(t *testing.T) {
+	// The /secrets endpoint has a maxBodySize middleware (64KB). A request with >1MB
+	// extra_data exceeds this limit and is rejected at the middleware level before
+	// reaching the handler's ExtraData validation. This test verifies the request
+	// is rejected (either by middleware or handler).
+	slogger := slog.New(slog.NewTextHandler(os.Stdout, nil))
+	manager := attestation.NewAttestationManager(slogger)
+	require.NoError(t, manager.RegisterMethod(attestation.NewECDSAAttestationMethodDefault()))
+
+	n, _ := createTestNodeWithManager(t, manager)
+
+	req := kmsTypes.SecretsRequestV1{
+		AppID:             "size-test-app",
+		AttestationMethod: "ecdsa",
+		Attestation:       []byte("sig"),
+		RSAPubKeyTmp:      []byte("key"),
+		ExtraData:         make([]byte, 1_048_577),
+	}
+	reqBody, _ := json.Marshal(req)
+
+	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
+	w := httptest.NewRecorder()
+
+	server := node.NewServer(n, 0)
+	server.GetHandler().ServeHTTP(w, httpReq)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+}
+
+// GCP nonce binding with extra_data is tested in pkg/attestation/gcp_method_test.go
+// (TestGCPVerify_NonceBindingWithExtraData, TestGCPVerify_NonceBindingMismatch).
+// Integration-level GCP nonce tests can't use stubAttestationMethod because stubs
+// bypass GCPAttestationMethod.Verify() where the nonce check lives.
+
 func TestSecretsEndpoint_MethodNotEnabled(t *testing.T) {
 	// Create manager with only GCP enabled (ECDSA disabled)
 	slogger := slog.New(slog.NewTextHandler(os.Stdout, nil))
