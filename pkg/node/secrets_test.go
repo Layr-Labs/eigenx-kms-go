@@ -104,9 +104,8 @@ func Test_SecretsEndpoint(t *testing.T) {
 	t.Run("Validation", func(t *testing.T) { testSecretsEndpointValidation(t) })
 	t.Run("ImageDigestMismatch", func(t *testing.T) { testSecretsEndpointImageDigestMismatch(t) })
 	t.Run("AppIDMismatch", func(t *testing.T) { testSecretsEndpointAppIDMismatch(t) })
-	t.Run("NonceMismatch", func(t *testing.T) { testSecretsEndpointNonceMismatch(t) })
-	t.Run("IntelNonceMismatch", func(t *testing.T) { testSecretsEndpointIntelNonceMismatch(t) })
-	t.Run("EmptyNonce", func(t *testing.T) { testSecretsEndpointEmptyNonce(t) })
+	// NonceMismatch, IntelNonceMismatch, EmptyNonce tests removed — nonce binding
+	// now lives inside GCPAttestationMethod.Verify() and is tested in pkg/attestation.
 	t.Run("JTIReplay", func(t *testing.T) { testSecretsEndpointJTIReplay(t) })
 	t.Run("ContainerPolicyMismatch", func(t *testing.T) { testSecretsEndpointContainerPolicyMismatch(t) })
 	t.Run("ContainerPolicyCmdOverrideMismatch", func(t *testing.T) { testSecretsEndpointCmdOverrideMismatch(t) })
@@ -352,130 +351,6 @@ func testSecretsEndpointAppIDMismatch(t *testing.T) {
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("Expected status 403 for app ID mismatch, got %d", w.Code)
-	}
-}
-
-// testSecretsEndpointNonceMismatch tests that GCP/Intel attestation fails when
-// the rsa_pubkey_tmp is not bound to the attestation token nonce (KMS-004).
-func testSecretsEndpointNonceMismatch(t *testing.T) {
-	f := newTestSecretsFixture(t)
-
-	f.contractCallerStub.AddTestRelease("test-app", &kmsTypes.Release{
-		ImageDigest:  "sha256:test123",
-		EncryptedEnv: "env-data",
-		PublicEnv:    "PUBLIC=value",
-		Timestamp:    time.Now().Unix(),
-	})
-
-	legitimateRSAKey := []byte("legitimate-rsa-key")
-	attackerRSAKey := []byte("attacker-rsa-key")
-
-	// Attestation nonce is bound to the legitimate key, but request sends attacker's key
-	h := sha256.Sum256(legitimateRSAKey)
-	testClaims := kmsTypes.AttestationClaims{
-		AppID:       "test-app",
-		ImageDigest: "sha256:test123",
-		IssuedAt:    time.Now().Unix(),
-		Nonce:       hex.EncodeToString(h[:]),
-	}
-	attestationBytes, _ := json.Marshal(testClaims)
-
-	req := kmsTypes.SecretsRequestV1{
-		AppID:             "test-app",
-		AttestationMethod: "gcp",
-		Attestation:       attestationBytes,
-		RSAPubKeyTmp:      attackerRSAKey, // substituted key
-	}
-	reqBody, _ := json.Marshal(req)
-	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
-	w := httptest.NewRecorder()
-
-	f.server.handleSecretsRequest(w, httpReq)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("Expected status 401 for nonce mismatch, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-// testSecretsEndpointIntelNonceMismatch tests the same KMS-004 attack scenario
-// via the "intel" attestation method.
-func testSecretsEndpointIntelNonceMismatch(t *testing.T) {
-	f := newTestSecretsFixture(t)
-
-	f.contractCallerStub.AddTestRelease("test-app", &kmsTypes.Release{
-		ImageDigest:  "sha256:test123",
-		EncryptedEnv: "env-data",
-		PublicEnv:    "PUBLIC=value",
-		Timestamp:    time.Now().Unix(),
-	})
-
-	legitimateRSAKey := []byte("legitimate-rsa-key")
-	attackerRSAKey := []byte("attacker-rsa-key")
-
-	h := sha256.Sum256(legitimateRSAKey)
-	testClaims := kmsTypes.AttestationClaims{
-		AppID:       "test-app",
-		ImageDigest: "sha256:test123",
-		IssuedAt:    time.Now().Unix(),
-		Nonce:       hex.EncodeToString(h[:]),
-	}
-	attestationBytes, _ := json.Marshal(testClaims)
-
-	req := kmsTypes.SecretsRequestV1{
-		AppID:             "test-app",
-		AttestationMethod: "intel",
-		Attestation:       attestationBytes,
-		RSAPubKeyTmp:      attackerRSAKey,
-	}
-	reqBody, _ := json.Marshal(req)
-	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
-	w := httptest.NewRecorder()
-
-	f.server.handleSecretsRequest(w, httpReq)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("Expected status 401 for intel nonce mismatch, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-// testSecretsEndpointEmptyNonce tests that GCP/Intel attestation fails when the
-// JWT was issued without an eat_nonce claim (claims.Nonce == ""), which is the
-// migration scenario from older TEE deployments that predate KMS-004 hardening.
-func testSecretsEndpointEmptyNonce(t *testing.T) {
-	f := newTestSecretsFixture(t)
-
-	f.contractCallerStub.AddTestRelease("test-app", &kmsTypes.Release{
-		ImageDigest:  "sha256:test123",
-		EncryptedEnv: "env-data",
-		PublicEnv:    "PUBLIC=value",
-		Timestamp:    time.Now().Unix(),
-	})
-
-	rsaKey := []byte("test-rsa-key")
-
-	// Simulate a JWT issued without eat_nonce: Nonce is empty string
-	testClaims := kmsTypes.AttestationClaims{
-		AppID:       "test-app",
-		ImageDigest: "sha256:test123",
-		IssuedAt:    time.Now().Unix(),
-		Nonce:       "", // no eat_nonce in token
-	}
-	attestationBytes, _ := json.Marshal(testClaims)
-
-	req := kmsTypes.SecretsRequestV1{
-		AppID:             "test-app",
-		AttestationMethod: "gcp",
-		Attestation:       attestationBytes,
-		RSAPubKeyTmp:      rsaKey,
-	}
-	reqBody, _ := json.Marshal(req)
-	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
-	w := httptest.NewRecorder()
-
-	f.server.handleSecretsRequest(w, httpReq)
-
-	if w.Code != http.StatusUnauthorized {
-		t.Errorf("Expected status 401 for missing eat_nonce, got %d: %s", w.Code, w.Body.String())
 	}
 }
 
