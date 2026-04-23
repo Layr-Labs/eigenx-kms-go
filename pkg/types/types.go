@@ -2,6 +2,8 @@ package types
 
 import (
 	"bytes"
+	"encoding/json"
+	"fmt"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
@@ -19,6 +21,24 @@ type KeyShareVersion struct {
 	MasterPublicKey *G2Point    // Pre-computed master public key for threshold agreement
 	IsActive        bool        // Whether this version is the active one
 	ParticipantIDs  []int64     // Which participants were in the operator set for this version
+}
+
+// MarshalJSON implements the json.Marshaler interface.
+func (ksv *KeyShareVersion) MarshalJSON() ([]byte, error) {
+	if ksv == nil {
+		return nil, fmt.Errorf("cannot marshal nil KeyShareVersion")
+	}
+	type Alias KeyShareVersion
+	return json.Marshal((*Alias)(ksv))
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface.
+func (ksv *KeyShareVersion) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || string(data) == "null" {
+		return fmt.Errorf("cannot unmarshal empty data")
+	}
+	type Alias KeyShareVersion
+	return json.Unmarshal(data, (*Alias)(ksv))
 }
 
 // G1Point represents a point on BLS12-381 G1 (used for signatures)

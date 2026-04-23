@@ -3,6 +3,7 @@ package redis
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"sync"
@@ -147,7 +148,7 @@ func (r *RedisPersistence) SaveKeyShareVersion(version *types.KeyShareVersion) e
 	ctx := context.Background()
 
 	// Serialize to JSON
-	data, err := persistence.MarshalKeyShareVersion(version)
+	data, err := json.Marshal(version)
 	if err != nil {
 		return fmt.Errorf("failed to marshal KeyShareVersion: %w", err)
 	}
@@ -188,7 +189,8 @@ func (r *RedisPersistence) LoadKeyShareVersion(timestamp int64) (*types.KeyShare
 	}
 
 	// Deserialize from JSON
-	version, err := persistence.UnmarshalKeyShareVersion(data)
+	var version *types.KeyShareVersion
+	err = json.Unmarshal(data, &version)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal KeyShareVersion: %w", err)
 	}
@@ -245,7 +247,8 @@ func (r *RedisPersistence) ListKeyShareVersions() ([]*types.KeyShareVersion, err
 			continue
 		}
 
-		version, err := persistence.UnmarshalKeyShareVersion([]byte(data))
+		var version *types.KeyShareVersion
+		err = json.Unmarshal([]byte(data), &version)
 		if err != nil {
 			r.logger.Sugar().Warnw("Failed to unmarshal KeyShareVersion, skipping",
 				"key", keys[i], "error", err)
@@ -349,7 +352,7 @@ func (r *RedisPersistence) SaveNodeState(state *persistence.NodeState) error {
 	key := r.prefixKey(keyPrefixNodeState)
 
 	// Serialize to JSON
-	data, err := persistence.MarshalNodeState(state)
+	data, err := json.Marshal(state)
 	if err != nil {
 		return fmt.Errorf("failed to marshal NodeState: %w", err)
 	}
@@ -378,7 +381,8 @@ func (r *RedisPersistence) LoadNodeState() (*persistence.NodeState, error) {
 	}
 
 	// Deserialize from JSON
-	state, err := persistence.UnmarshalNodeState(data)
+	var state *persistence.NodeState
+	err = json.Unmarshal(data, &state)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal NodeState: %w", err)
 	}
@@ -402,7 +406,7 @@ func (r *RedisPersistence) SaveProtocolSession(session *persistence.ProtocolSess
 	ctx := context.Background()
 
 	// Serialize to JSON
-	data, err := persistence.MarshalProtocolSessionState(session)
+	data, err := json.Marshal(session)
 	if err != nil {
 		return fmt.Errorf("failed to marshal ProtocolSessionState: %w", err)
 	}
@@ -444,7 +448,8 @@ func (r *RedisPersistence) LoadProtocolSession(sessionTimestamp int64) (*persist
 	}
 
 	// Deserialize from JSON
-	session, err := persistence.UnmarshalProtocolSessionState(data)
+	var session *persistence.ProtocolSessionState
+	err = json.Unmarshal(data, &session)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal ProtocolSessionState: %w", err)
 	}
@@ -523,7 +528,8 @@ func (r *RedisPersistence) ListProtocolSessions() ([]*persistence.ProtocolSessio
 			continue
 		}
 
-		session, err := persistence.UnmarshalProtocolSessionState([]byte(data))
+		var session *persistence.ProtocolSessionState
+		err = json.Unmarshal([]byte(data), &session)
 		if err != nil {
 			r.logger.Sugar().Warnw("Failed to unmarshal ProtocolSessionState, skipping",
 				"key", keys[i], "error", err)

@@ -1,6 +1,8 @@
 package persistence
 
 import (
+	"encoding/json"
+	"fmt"
 	"time"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
@@ -20,6 +22,24 @@ type NodeState struct {
 	// OperatorAddress is the Ethereum address of this operator.
 	// Stored for verification that persistence data matches the operator.
 	OperatorAddress string `json:"operatorAddress"`
+}
+
+// MarshalJSON serializes NodeState to JSON bytes.
+func (ns *NodeState) MarshalJSON() ([]byte, error) {
+	if ns == nil {
+		return nil, fmt.Errorf("cannot marshal nil NodeState")
+	}
+	type Alias NodeState
+	return json.Marshal((*Alias)(ns))
+}
+
+// UnmarshalJSON deserializes NodeState from JSON bytes.
+func (ns *NodeState) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || string(data) == "null" {
+		return fmt.Errorf("cannot unmarshal empty data")
+	}
+	type Alias NodeState
+	return json.Unmarshal(data, (*Alias)(ns))
 }
 
 // ProtocolSessionState captures ephemeral state of a DKG or reshare session.
@@ -59,6 +79,24 @@ type ProtocolSessionState struct {
 	// This tracks which operators have acknowledged which shares.
 	// Nested map structure: dealerID -> map[receiverID]Acknowledgement
 	Acknowledgements map[int64]map[int64]*types.Acknowledgement `json:"acknowledgements"`
+}
+
+// MarshalJSON serializes ProtocolSessionState to JSON bytes.
+func (pss *ProtocolSessionState) MarshalJSON() ([]byte, error) {
+	if pss == nil {
+		return nil, fmt.Errorf("cannot marshal nil ProtocolSessionState")
+	}
+	type Alias ProtocolSessionState
+	return json.Marshal((*Alias)(pss))
+}
+
+// UnmarshalJSON implements the json.Unmarshaler interface.
+func (pss *ProtocolSessionState) UnmarshalJSON(data []byte) error {
+	if len(data) == 0 || string(data) == "null" {
+		return fmt.Errorf("cannot unmarshal empty data")
+	}
+	type Alias ProtocolSessionState
+	return json.Unmarshal(data, (*Alias)(pss))
 }
 
 // IsExpired checks if a protocol session has exceeded its timeout duration.
