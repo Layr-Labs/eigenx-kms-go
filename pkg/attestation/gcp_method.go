@@ -56,10 +56,9 @@ func (g *GCPAttestationMethod) Verify(request *AttestationRequest) (*types.Attes
 		return nil, fmt.Errorf("attestation verification failed: %w", err)
 	}
 
-	// Nonce binding: verify that the attestation nonce matches the ephemeral RSA key
-	// (and extra_data if present). Skipped when RSAPubKeyTmp is not provided (e.g. legacy requests).
+	// Nonce formula: hex(SHA256(rsaPubKey || extraData))
 	if len(request.RSAPubKeyTmp) > 0 || len(request.ExtraData) > 0 {
-		var nonceInput []byte
+		nonceInput := make([]byte, 0, len(request.RSAPubKeyTmp)+len(request.ExtraData))
 		nonceInput = append(nonceInput, request.RSAPubKeyTmp...)
 		if len(request.ExtraData) > 0 {
 			nonceInput = append(nonceInput, request.ExtraData...)
@@ -71,7 +70,6 @@ func (g *GCPAttestationMethod) Verify(request *AttestationRequest) (*types.Attes
 		}
 	}
 
-	// GCP/Intel JWTs must carry a jti claim for replay protection.
 	if claims.JTI == "" {
 		return nil, fmt.Errorf("attestation token missing jti claim")
 	}

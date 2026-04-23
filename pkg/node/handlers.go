@@ -107,7 +107,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "rsa_pubkey_tmp too large", http.StatusBadRequest)
 		return
 	}
-	if len(req.ExtraData) > 1_048_576 {
+	if len(req.ExtraData) > types.MaxExtraDataSize {
 		http.Error(w, fmt.Sprintf("extra_data exceeds 1MB limit (%d bytes)", len(req.ExtraData)), http.StatusBadRequest)
 		return
 	}
