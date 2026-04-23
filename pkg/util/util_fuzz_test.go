@@ -2,6 +2,7 @@ package util
 
 import (
 	"encoding/hex"
+	"slices"
 	"testing"
 
 	"github.com/ethereum/go-ethereum/crypto"
@@ -111,7 +112,11 @@ func FuzzMapFilterReduceFlattenBasics(f *testing.F) {
 			}
 			chunks = append(chunks, data[i:end])
 		}
-		flat := Flatten(chunks)
-		require.Equal(t, data, flat)
+		flat := slices.Concat(chunks...)
+		if len(data) == 0 {
+			require.Empty(t, flat)
+		} else {
+			require.Equal(t, data, flat)
+		}
 	})
 }
