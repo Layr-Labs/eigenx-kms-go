@@ -130,9 +130,10 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	// TPM attestation needs the RSA key to compute the hardware-bound challenge
 	if req.AttestationMethod == "tpm" {
-		attestReq.Metadata = map[string]interface{}{
-			"rsa_pubkey": req.RSAPubKeyTmp,
+		if attestReq.Metadata == nil {
+			attestReq.Metadata = make(map[string]interface{})
 		}
+		attestReq.Metadata["rsa_pubkey"] = req.RSAPubKeyTmp
 	}
 
 	claims, err := s.node.attestationManager.VerifyWithMethod(req.AttestationMethod, attestReq)
