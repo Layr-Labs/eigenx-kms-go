@@ -53,27 +53,6 @@ func Filter[A any](coll []A, criteria func(i A) bool) []A {
 	return out
 }
 
-// Find returns the first element in a slice that satisfies the provided criteria function.
-// If no element satisfies the criteria, nil is returned.
-//
-// Type Parameters:
-//   - A: The type of elements in the slice
-//
-// Parameters:
-//   - coll: The input slice to search
-//   - criteria: Function that determines whether an element matches
-//
-// Returns:
-//   - *A: Pointer to the first matching element, or nil if no match is found
-func Find[A any](coll []*A, criteria func(i *A) bool) *A {
-	for _, item := range coll {
-		if criteria(item) {
-			return item
-		}
-	}
-	return nil
-}
-
 // Reduce applies a function against an accumulator and each element in the slice
 // to reduce it to a single value.
 //
