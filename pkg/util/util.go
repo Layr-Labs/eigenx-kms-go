@@ -96,24 +96,6 @@ func Reduce[A any, B any](coll []A, processor func(accum B, next A) B, initialSt
 	return val
 }
 
-// Flatten combines multiple slices into a single slice.
-//
-// Type Parameters:
-//   - A: The type of elements in the slices
-//
-// Parameters:
-//   - coll: A slice of slices to flatten
-//
-// Returns:
-//   - []A: A new slice containing all elements from all input slices
-func Flatten[A any](coll [][]A) []A {
-	out := []A{}
-	for _, arr := range coll {
-		out = append(out, arr...)
-	}
-	return out
-}
-
 func StringToECDSAPrivateKey(pk string) (*ecdsa.PrivateKey, error) {
 	if len(pk) == 0 {
 		return nil, fmt.Errorf("private key is empty")
