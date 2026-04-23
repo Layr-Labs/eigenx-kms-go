@@ -45,7 +45,7 @@ type Client struct {
 	avsAddress     string
 	operatorSetID  uint32
 	contractCaller ContractCaller
-	httpClient     *http.Client
+	httpClient     *http.Client // TODO(security): VULN-002 SSRF — validate op.SocketAddress before requests (reject private/loopback IPs, enforce https in prod)
 	logger         *zap.Logger
 }
 
@@ -541,7 +541,7 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 	if len(opts.RSAPrivateKeyPEM) == 0 || len(opts.RSAPublicKeyPEM) == 0 {
 		return nil, fmt.Errorf("RSA key pair is required in options")
 	}
-	if len(opts.ExtraData) > 1_048_576 {
+	if len(opts.ExtraData) > types.MaxExtraDataSize {
 		return nil, fmt.Errorf("extra_data exceeds 1MB limit (%d bytes)", len(opts.ExtraData))
 	}
 

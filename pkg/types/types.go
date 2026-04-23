@@ -11,6 +11,8 @@ import (
 
 const KMSJWTAudience = "EigenX KMS"
 
+const MaxExtraDataSize = 1_048_576 // 1 MB
+
 // KeyShareVersion represents a versioned set of key shares
 type KeyShareVersion struct {
 	Version         int64       // Unix timestamp (seconds) of the block that triggered this key version
