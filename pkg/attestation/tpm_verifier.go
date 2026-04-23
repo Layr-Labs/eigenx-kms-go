@@ -23,7 +23,6 @@ var machineTypeSuffixToPlatform = map[byte]attest.Platform{
 
 // VerifiedAttestation holds the claims extracted from a verified raw TPM attestation.
 // TEEClaims is nil for GCP Shielded VM (no TEE binding on that platform).
-// Container is nil when the attestation has no canonical event log.
 type VerifiedAttestation struct {
 	TPMClaims *attest.TPMClaims
 	TEEClaims *attest.TEEClaims
