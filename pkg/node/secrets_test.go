@@ -116,9 +116,8 @@ func Test_SecretsEndpoint(t *testing.T) {
 	t.Run("AllowlistBlocked", func(t *testing.T) { testSecretsEndpointAllowlistBlocked(t) })
 	t.Run("AllowlistAllowed", func(t *testing.T) { testSecretsEndpointAllowlistAllowed(t) })
 	t.Run("AllowlistNilAllowsAll", func(t *testing.T) { testSecretsEndpointAllowlistNilAllowsAll(t) })
-	t.Run("ExtraDataEchoed", func(t *testing.T) { testSecretsEndpointExtraDataEchoed(t) })
+	t.Run("ExtraDataEchoBehavior", func(t *testing.T) { testSecretsEndpointExtraDataEchoBehavior(t) })
 	t.Run("ExtraDataTooLarge", func(t *testing.T) { testSecretsEndpointExtraDataTooLarge(t) })
-	t.Run("NoExtraDataBackwardCompat", func(t *testing.T) { testSecretsEndpointNoExtraDataBackwardCompat(t) })
 }
 
 // createTestPeeringDataFetcher creates a test peering data fetcher using ChainConfig data
@@ -822,59 +821,68 @@ func testSecretsEndpointAllowlistNilAllowsAll(t *testing.T) {
 	}
 }
 
-// testSecretsEndpointExtraDataEchoed verifies that extra_data is echoed in the response.
-func testSecretsEndpointExtraDataEchoed(t *testing.T) {
-	f := newTestSecretsFixture(t)
-
-	testRelease := &kmsTypes.Release{
-		ImageDigest:  "sha256:test-extra",
-		EncryptedEnv: "encrypted-env",
-		PublicEnv:    "PUBLIC=value",
-		Timestamp:    time.Now().Unix(),
-	}
-	f.contractCallerStub.AddTestRelease("test-app", testRelease)
-
-	_, pubKeyPEM, err := encryption.GenerateKeyPair(2048)
-	if err != nil {
-		t.Fatalf("Failed to generate RSA key pair: %v", err)
+// testSecretsEndpointExtraDataEchoBehavior verifies that extra_data is echoed
+// back in the response when present, and remains nil when omitted (backward compat).
+func testSecretsEndpointExtraDataEchoBehavior(t *testing.T) {
+	tests := []struct {
+		name      string
+		extraData []byte
+	}{
+		{name: "echoed when present", extraData: []byte("test-extra-data-payload")},
+		{name: "nil when omitted (backward compat)", extraData: nil},
 	}
 
-	extraData := []byte("test-extra-data-payload")
-	h := sha256.Sum256(pubKeyPEM)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newTestSecretsFixture(t)
 
-	testClaims := kmsTypes.AttestationClaims{
-		AppID:       "test-app",
-		ImageDigest: "sha256:test-extra",
-		IssuedAt:    time.Now().Unix(),
-		Nonce:       hex.EncodeToString(h[:]),
-		JTI:         "extra-data-echo-jti",
-		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
-	}
-	attestationBytes, _ := json.Marshal(testClaims)
+			const imageDigest = "sha256:echo-test"
+			f.contractCallerStub.AddTestRelease("test-app", &kmsTypes.Release{
+				ImageDigest:  imageDigest,
+				EncryptedEnv: "encrypted-env",
+				PublicEnv:    "PUBLIC=value",
+				Timestamp:    time.Now().Unix(),
+			})
 
-	req := kmsTypes.SecretsRequestV1{
-		AppID:             "test-app",
-		AttestationMethod: "gcp",
-		Attestation:       attestationBytes,
-		RSAPubKeyTmp:      pubKeyPEM,
-		ExtraData:         extraData,
-	}
-	reqBody, _ := json.Marshal(req)
-	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
-	w := httptest.NewRecorder()
+			_, pubKeyPEM, err := encryption.GenerateKeyPair(2048)
+			if err != nil {
+				t.Fatalf("Failed to generate RSA key pair: %v", err)
+			}
 
-	f.server.handleSecretsRequest(w, httpReq)
+			h := sha256.Sum256(pubKeyPEM)
+			attestationBytes, _ := json.Marshal(kmsTypes.AttestationClaims{
+				AppID:       "test-app",
+				ImageDigest: imageDigest,
+				IssuedAt:    time.Now().Unix(),
+				Nonce:       hex.EncodeToString(h[:]),
+				JTI:         "echo-" + tt.name,
+				ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+			})
 
-	if w.Code != http.StatusOK {
-		t.Fatalf("Expected status 200, got %d. Body: %s", w.Code, w.Body.String())
-	}
+			reqBody, _ := json.Marshal(kmsTypes.SecretsRequestV1{
+				AppID:             "test-app",
+				AttestationMethod: "gcp",
+				Attestation:       attestationBytes,
+				RSAPubKeyTmp:      pubKeyPEM,
+				ExtraData:         tt.extraData,
+			})
+			httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
+			w := httptest.NewRecorder()
 
-	var resp kmsTypes.SecretsResponseV1
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("Failed to parse response: %v", err)
-	}
-	if !bytes.Equal(extraData, resp.ExtraData) {
-		t.Errorf("Expected extra_data %s, got %s", string(extraData), string(resp.ExtraData))
+			f.server.handleSecretsRequest(w, httpReq)
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("Expected status 200, got %d. Body: %s", w.Code, w.Body.String())
+			}
+
+			var resp kmsTypes.SecretsResponseV1
+			if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+				t.Fatalf("Failed to parse response: %v", err)
+			}
+			if !bytes.Equal(tt.extraData, resp.ExtraData) {
+				t.Errorf("Expected extra_data %q, got %q", tt.extraData, resp.ExtraData)
+			}
+		})
 	}
 }
 
@@ -903,57 +911,3 @@ func testSecretsEndpointExtraDataTooLarge(t *testing.T) {
 	}
 }
 
-// testSecretsEndpointNoExtraDataBackwardCompat verifies backward compatibility when extra_data is omitted.
-func testSecretsEndpointNoExtraDataBackwardCompat(t *testing.T) {
-	f := newTestSecretsFixture(t)
-
-	testRelease := &kmsTypes.Release{
-		ImageDigest:  "sha256:compat-test",
-		EncryptedEnv: "encrypted-env",
-		PublicEnv:    "PUBLIC=value",
-		Timestamp:    time.Now().Unix(),
-	}
-	f.contractCallerStub.AddTestRelease("test-app", testRelease)
-
-	_, pubKeyPEM, err := encryption.GenerateKeyPair(2048)
-	if err != nil {
-		t.Fatalf("Failed to generate RSA key pair: %v", err)
-	}
-
-	h := sha256.Sum256(pubKeyPEM)
-
-	testClaims := kmsTypes.AttestationClaims{
-		AppID:       "test-app",
-		ImageDigest: "sha256:compat-test",
-		IssuedAt:    time.Now().Unix(),
-		Nonce:       hex.EncodeToString(h[:]),
-		JTI:         "compat-jti",
-		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
-	}
-	attestationBytes, _ := json.Marshal(testClaims)
-
-	req := kmsTypes.SecretsRequestV1{
-		AppID:             "test-app",
-		AttestationMethod: "gcp",
-		Attestation:       attestationBytes,
-		RSAPubKeyTmp:      pubKeyPEM,
-		// ExtraData intentionally omitted
-	}
-	reqBody, _ := json.Marshal(req)
-	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
-	w := httptest.NewRecorder()
-
-	f.server.handleSecretsRequest(w, httpReq)
-
-	if w.Code != http.StatusOK {
-		t.Fatalf("Expected status 200, got %d. Body: %s", w.Code, w.Body.String())
-	}
-
-	var resp kmsTypes.SecretsResponseV1
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("Failed to parse response: %v", err)
-	}
-	if resp.ExtraData != nil {
-		t.Errorf("Expected nil extra_data for backward compatibility, got %v", resp.ExtraData)
-	}
-}
