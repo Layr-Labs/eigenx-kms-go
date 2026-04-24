@@ -458,7 +458,7 @@ func ComputeMasterPublicKey(allCommitments [][]types.G2Point) (*types.G2Point, e
 }
 
 // VerifyShareWithCommitments verifies a share against polynomial commitments
-func VerifyShareWithCommitments(nodeID int, share *fr.Element, commitments []types.G2Point) bool {
+func VerifyShareWithCommitments(nodeID int64, share *fr.Element, commitments []types.G2Point) bool {
 	// Convert commitments to BLS module points
 	blsCommitments := make([]*bls.G2Point, len(commitments))
 	for i, c := range commitments {

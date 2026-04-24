@@ -89,11 +89,11 @@ func GeneratePolynomial(secret *fr.Element, degree int) (polynomial.Polynomial, 
 
 // GenerateShares generates shares for participants using polynomial secret sharing
 // audit: should the shares be generated with a random scalar's generated for the participants?
-func GenerateShares(poly polynomial.Polynomial, participantIDs []int) map[int]*fr.Element {
-	shares := make(map[int]*fr.Element)
+func GenerateShares(poly polynomial.Polynomial, participantIDs []int64) map[int64]*fr.Element {
+	shares := make(map[int64]*fr.Element)
 
 	for _, id := range participantIDs {
-		shares[id] = EvaluatePolynomial(poly, int64(id))
+		shares[id] = EvaluatePolynomial(poly, id)
 	}
 
 	return shares
@@ -117,7 +117,7 @@ func CreateCommitments(poly polynomial.Polynomial) ([]*G2Point, error) {
 
 // VerifyShare verifies a share against polynomial commitments using MultiExp optimization
 // audit: nodeId should be uint64
-func VerifyShare(nodeID int, share *fr.Element, commitments []*G2Point) (bool, error) {
+func VerifyShare(nodeID int64, share *fr.Element, commitments []*G2Point) (bool, error) {
 	if len(commitments) == 0 {
 		return false, errors.New("no commitments provided")
 	}
@@ -134,7 +134,7 @@ func VerifyShare(nodeID int, share *fr.Element, commitments []*G2Point) (bool, e
 
 	// Compute powers of nodeID: [1, nodeID, nodeID^2, ..., nodeID^(n-1)]
 	powers := make([]fr.Element, len(commitments))
-	nodeFr := new(fr.Element).SetInt64(int64(nodeID))
+	nodeFr := new(fr.Element).SetInt64(nodeID)
 	powers[0].SetOne() // nodeID^0 = 1
 
 	for i := 1; i < len(commitments); i++ {

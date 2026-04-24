@@ -85,7 +85,7 @@ type Acknowledgement struct {
 
 // CompletionSignature signals reshare completion
 type CompletionSignature struct {
-	NodeID           int
+	NodeID           int64
 	SessionTimestamp int64
 	CommitmentHash   [32]byte
 	Signature        []byte // Sign(p2p_privkey, session_timestamp || commitment_hash)
