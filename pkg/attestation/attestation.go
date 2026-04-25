@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"slices"
 	"strings"
 	"time"
@@ -90,21 +91,37 @@ type AttestationVerifier struct {
 	intelJwksCache  jwk.Set
 	projectID       string
 	debugMode       bool
+	cancel          context.CancelFunc
+	httpTransport   *http.Transport
 }
 
 func NewAttestationVerifier(ctx context.Context, logger *slog.Logger, projectID string, refreshInterval time.Duration, debugMode bool) (*AttestationVerifier, error) {
 	avLogger := logger.With("component", "attestation_verifier")
 	avLogger.Debug("Initializing attestation verifier", "project_id", projectID, "refresh_interval", refreshInterval)
 
+	// Derive a cancellable context owned by the verifier so JWK cache workers
+	// (httprc/v3) can be shut down via Close() in addition to parent cancellation.
+	cacheCtx, cancel := context.WithCancel(ctx)
+
+	// Own the HTTP transport so Close() can tear down idle connections and the
+	// associated read/write loop goroutines. Using DefaultClient (httprc's default)
+	// leaks persistent HTTP/2 read loops past context cancellation.
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	httpClient := &http.Client{Transport: transport}
+
 	avLogger.Debug("Creating Google Confidential Space JWK cache", "jwk_url", confidentialSpaceJWKURL)
-	googleJwksCache, err := NewJWKCache(ctx, confidentialSpaceJWKURL, refreshInterval)
+	googleJwksCache, err := newJWKCacheWithClient(cacheCtx, confidentialSpaceJWKURL, refreshInterval, httpClient)
 	if err != nil {
+		cancel()
+		transport.CloseIdleConnections()
 		return nil, fmt.Errorf("failed to create Google JWK cache: %w", err)
 	}
 
 	avLogger.Debug("Creating Intel Trust Authority JWK cache", "jwk_url", intelTrustAuthorityJWKURL)
-	intelJwksCache, err := NewJWKCache(ctx, intelTrustAuthorityJWKURL, refreshInterval)
+	intelJwksCache, err := newJWKCacheWithClient(cacheCtx, intelTrustAuthorityJWKURL, refreshInterval, httpClient)
 	if err != nil {
+		cancel()
+		transport.CloseIdleConnections()
 		return nil, fmt.Errorf("failed to create Intel JWK cache: %w", err)
 	}
 
@@ -116,7 +133,22 @@ func NewAttestationVerifier(ctx context.Context, logger *slog.Logger, projectID 
 		googleJwksCache: googleJwksCache,
 		intelJwksCache:  intelJwksCache,
 		debugMode:       debugMode,
+		cancel:          cancel,
+		httpTransport:   transport,
 	}, nil
+}
+
+// Close stops the background JWK cache workers spawned by the verifier and
+// releases pooled HTTP connections. Safe to call multiple times.
+func (av *AttestationVerifier) Close() {
+	if av.cancel != nil {
+		av.cancel()
+		av.cancel = nil
+	}
+	if av.httpTransport != nil {
+		av.httpTransport.CloseIdleConnections()
+		av.httpTransport = nil
+	}
 }
 
 func (av *AttestationVerifier) VerifyAttestation(ctx context.Context, tokenString string, provider AttestationProvider) (*types.AttestationClaims, error) {
@@ -365,13 +397,25 @@ func extractAppIDFromInstanceName(instanceName string) (string, error) {
 }
 
 func NewJWKCache(ctx context.Context, jwkUrl string, refreshInterval time.Duration) (jwk.Set, error) {
+	return newJWKCacheWithClient(ctx, jwkUrl, refreshInterval, nil)
+}
+
+// newJWKCacheWithClient is like NewJWKCache but lets the caller supply the HTTP
+// client used to fetch the JWK set. Passing a non-nil client lets the caller
+// own its transport and close idle connections when the cache is no longer
+// needed, preventing leaked HTTP read/write loop goroutines.
+func newJWKCacheWithClient(ctx context.Context, jwkUrl string, refreshInterval time.Duration, httpClient *http.Client) (jwk.Set, error) {
 	cache, err := jwk.NewCache(ctx, httprc.NewClient())
 	if err != nil {
 		return nil, fmt.Errorf("failed to create jwk cache: %w", err)
 	}
 
 	// register a constant refresh interval for this URL.
-	err = cache.Register(ctx, jwkUrl, jwk.WithConstantInterval(refreshInterval))
+	registerOpts := []jwk.RegisterOption{jwk.WithConstantInterval(refreshInterval)}
+	if httpClient != nil {
+		registerOpts = append(registerOpts, jwk.WithHTTPClient(httpClient))
+	}
+	err = cache.Register(ctx, jwkUrl, registerOpts...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to register jwk location: %w", err)
 	}
