@@ -11,6 +11,8 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestNewClient(t *testing.T) {
@@ -410,9 +412,73 @@ func TestTLSClientCreation(t *testing.T) {
 				InsecureSkipVerify: true, // For testing - skip cert validation
 			},
 		}
-		client, err := NewClient(config, l)
+		// Use a nop logger here — InsecureSkipVerify=true emits a Warn by design;
+		// the "insecure skip verify emits warning" subtest below asserts that
+		// contract. Letting the warning bleed into the shared logger `l` would
+		// add noise that could mask real warnings in CI output.
+		client, err := NewClient(config, zap.NewNop())
 		require.NoError(t, err)
 		assert.NotNil(t, client)
+	})
+
+	t.Run("insecure skip verify emits warning", func(t *testing.T) {
+		core, observed := observer.New(zap.WarnLevel)
+		obsLogger := zap.New(core)
+
+		config := &Config{
+			BaseURL: "https://web3signer.example.com:9000",
+			Timeout: 30 * time.Second,
+			TLS: &TLSConfig{
+				InsecureSkipVerify: true,
+			},
+		}
+		client, err := NewClient(config, obsLogger)
+		require.NoError(t, err)
+		assert.NotNil(t, client)
+
+		warnEntries := observed.FilterLevelExact(zap.WarnLevel).All()
+		require.Len(t, warnEntries, 1)
+		assert.Contains(t, warnEntries[0].Message, "TLS certificate verification is DISABLED")
+
+		ctx := warnEntries[0].ContextMap()
+		assert.Equal(t, "https://web3signer.example.com:9000", ctx["baseURL"])
+		assert.Equal(t, "unset InsecureSkipVerify in production configs", ctx["hint"])
+	})
+
+	t.Run("insecure skip verify off does not warn", func(t *testing.T) {
+		core, observed := observer.New(zap.WarnLevel)
+		obsLogger := zap.New(core)
+
+		config := &Config{
+			BaseURL: "https://web3signer.example.com:9000",
+			Timeout: 30 * time.Second,
+			TLS: &TLSConfig{
+				InsecureSkipVerify: false,
+			},
+		}
+		_, err := NewClient(config, obsLogger)
+		require.NoError(t, err)
+		require.Empty(t, observed.FilterLevelExact(zap.WarnLevel).All())
+	})
+
+	t.Run("insecure skip verify on http url does not warn", func(t *testing.T) {
+		// Documents an intentional no-op: on plain HTTP there is no TLS handshake
+		// to skip, so the flag has no effect and no warning is emitted. If this
+		// ever changes (e.g., we start rejecting the config outright), this test
+		// will fail and force us to make the decision explicit.
+		core, observed := observer.New(zap.WarnLevel)
+		obsLogger := zap.New(core)
+
+		config := &Config{
+			BaseURL: "http://web3signer.example.com:9000",
+			Timeout: 30 * time.Second,
+			TLS: &TLSConfig{
+				InsecureSkipVerify: true,
+			},
+		}
+		_, err := NewClient(config, obsLogger)
+		require.NoError(t, err)
+		require.Empty(t, observed.FilterLevelExact(zap.WarnLevel).All())
 	})
 
 	t.Run("invalid client certificate", func(t *testing.T) {
