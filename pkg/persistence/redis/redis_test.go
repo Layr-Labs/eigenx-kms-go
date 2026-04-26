@@ -1,11 +1,15 @@
 package redis
 
 import (
+	"context"
 	"fmt"
+	"log"
 	"math/big"
+	"net/url"
 	"os"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/persistence"
@@ -14,24 +18,85 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
 )
 
-// getTestRedisAddress returns the Redis address for testing.
-// Uses REDIS_TEST_ADDRESS env var if set, otherwise defaults to localhost:6379.
-func getTestRedisAddress() string {
-	if addr := os.Getenv("REDIS_TEST_ADDRESS"); addr != "" {
-		return addr
-	}
-	return "localhost:6379"
+// testRedisAddress holds the host:port of the Redis instance used by tests.
+// It is set once by TestMain, either from a user-provided REDIS_TEST_ADDRESS
+// env var (useful in CI environments that already run Redis) or from a
+// testcontainers-managed Redis container started for the duration of the
+// package's tests.
+var testRedisAddress string
+
+func TestMain(m *testing.M) {
+	os.Exit(runTests(m))
 }
 
-// requireRedis fails the test if Redis is not available
+// runTests is split out from TestMain so defers execute even when a test
+// panics or calls os.Exit indirectly.
+func runTests(m *testing.M) int {
+	if addr := os.Getenv("REDIS_TEST_ADDRESS"); addr != "" {
+		testRedisAddress = addr
+		return m.Run()
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	container, err := tcredis.Run(ctx, "redis:7-alpine")
+	if err != nil {
+		log.Printf("skipping redis tests: failed to start redis container (is Docker running?): %v", err)
+		return 0
+	}
+	defer func() {
+		// Use a fresh context because ctx may already be done.
+		termCtx, termCancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer termCancel()
+		if err := container.Terminate(termCtx); err != nil {
+			log.Printf("failed to terminate redis container: %v", err)
+		}
+	}()
+
+	connStr, err := container.ConnectionString(ctx)
+	if err != nil {
+		log.Printf("skipping redis tests: failed to get redis connection string: %v", err)
+		return 0
+	}
+	addr, err := hostPortFromRedisURL(connStr)
+	if err != nil {
+		log.Printf("skipping redis tests: %v", err)
+		return 0
+	}
+	testRedisAddress = addr
+	return m.Run()
+}
+
+// hostPortFromRedisURL extracts the host:port from a redis://host:port URL.
+func hostPortFromRedisURL(redisURL string) (string, error) {
+	u, err := url.Parse(redisURL)
+	if err != nil {
+		return "", fmt.Errorf("parse redis url %q: %w", redisURL, err)
+	}
+	if u.Host == "" {
+		return "", fmt.Errorf("redis url %q has no host", redisURL)
+	}
+	return u.Host, nil
+}
+
+// requireRedis returns a fresh RedisPersistence connected to the shared test
+// Redis instance. Tests that call this must ensure TestMain has succeeded in
+// provisioning Redis; if it hasn't, testRedisAddress is empty and the test
+// is skipped rather than failing spuriously.
 func requireRedis(t *testing.T) *RedisPersistence {
 	t.Helper()
 
+	if testRedisAddress == "" {
+		t.Skip("redis not available for tests (Docker required; or set REDIS_TEST_ADDRESS)")
+	}
+
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 	cfg := &RedisConfig{
-		Address: getTestRedisAddress(),
+		Address: testRedisAddress,
 		DB:      15, // Use DB 15 for tests to avoid conflicts
 	}
 
@@ -44,18 +109,9 @@ func requireRedis(t *testing.T) *RedisPersistence {
 	return rp
 }
 
-// cleanupRedis clears all test keys from Redis
-func cleanupRedis(t *testing.T, rp *RedisPersistence) {
-	t.Helper()
-	// Note: We're using DB 15 which is dedicated for tests
-	// In a real scenario, you might want to FLUSHDB but that's risky
-	// For now, we rely on test isolation by using unique epochs
-}
-
 func TestRedisPersistence_SaveAndLoadKeyShare(t *testing.T) {
 	rp := requireRedis(t)
 	defer func() { _ = rp.Close() }()
-	defer cleanupRedis(t, rp)
 
 	// Create a sample key share version
 	privateShare := fr.NewElement(uint64(12345))
