@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/Layr-Labs/chain-indexer/pkg/clients/ethereum"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -185,10 +186,14 @@ func encryptCommand(c *cli.Context) error {
 	// Output result
 	encryptedHex := hexutil.Encode(encryptedData)
 	if outputFile != "" {
-		if err := os.WriteFile(outputFile, []byte(encryptedHex), 0644); err != nil {
+		cleanPath, pathErr := prepareOutputPath(outputFile)
+		if pathErr != nil {
+			return fmt.Errorf("invalid --output path: %w", pathErr)
+		}
+		if err := os.WriteFile(cleanPath, []byte(encryptedHex), 0600); err != nil {
 			return fmt.Errorf("failed to write to file: %w", err)
 		}
-		fmt.Printf("✅ Encrypted data written to: %s\n", outputFile)
+		fmt.Printf("✅ Encrypted data written to: %s\n", cleanPath)
 	} else {
 		fmt.Printf("✅ Encrypted data: %s\n", encryptedHex)
 	}
@@ -248,10 +253,15 @@ func decryptCommand(c *cli.Context) error {
 
 	// Output result
 	if outputFile != "" {
-		if err := os.WriteFile(outputFile, decryptedData, 0644); err != nil {
+		cleanPath, pathErr := prepareOutputPath(outputFile)
+		if pathErr != nil {
+			return fmt.Errorf("invalid --output path: %w", pathErr)
+		}
+		if err := os.WriteFile(cleanPath, decryptedData, 0600); err != nil {
 			return fmt.Errorf("failed to write to file: %w", err)
 		}
-		fmt.Printf("✅ Decrypted data written to: %s\n", outputFile)
+		fmt.Printf("✅ Decrypted data written to: %s\n", cleanPath)
+		fmt.Fprintf(os.Stderr, "note: output file written with mode 0600 (owner read/write only); verify perms if you chmod it wider\n")
 	} else {
 		fmt.Printf("✅ Decrypted data: %s\n", string(decryptedData))
 	}
@@ -287,4 +297,33 @@ func getPubkeyCommand(c *cli.Context) error {
 	fmt.Printf("  %s\n", hex.EncodeToString(masterPubKey.CompressedBytes))
 
 	return nil
+}
+
+// prepareOutputPath cleans and absolutizes a user-supplied output path. It
+// rejects empty paths and paths that resolve to a directory (no file name).
+// The path root is intentionally not restricted: this is a CLI, the user
+// chooses where to write. Callers should write with mode 0600 since this
+// helper does not set permissions.
+func prepareOutputPath(p string) (string, error) {
+	if p == "" {
+		return "", fmt.Errorf("output path is empty")
+	}
+	// Reject trailing separator before Clean strips it — a trailing slash is
+	// an explicit "this is a directory" signal from the user.
+	if os.IsPathSeparator(p[len(p)-1]) {
+		return "", fmt.Errorf("output path %q is a directory, not a file", p)
+	}
+	cleaned := filepath.Clean(p)
+	if !filepath.IsAbs(cleaned) {
+		abs, err := filepath.Abs(cleaned)
+		if err != nil {
+			return "", fmt.Errorf("resolve absolute path: %w", err)
+		}
+		cleaned = abs
+	}
+	base := filepath.Base(cleaned)
+	if base == "." || base == string(filepath.Separator) || base == "" {
+		return "", fmt.Errorf("output path %q has no file name", p)
+	}
+	return cleaned, nil
 }
