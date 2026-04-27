@@ -226,7 +226,7 @@ func testPolynomialSecretSharing(t *testing.T) {
 	}
 
 	// Generate shares for 5 participants
-	participantIDs := []int{1, 2, 3, 4, 5}
+	participantIDs := []int64{1, 2, 3, 4, 5}
 	shares := GenerateShares(poly, participantIDs)
 
 	if len(shares) != len(participantIDs) {
@@ -277,7 +277,7 @@ func testShareVerification(t *testing.T) {
 	}
 
 	// Generate shares
-	shares := GenerateShares(poly, []int{1, 2, 3, 4, 5})
+	shares := GenerateShares(poly, []int64{1, 2, 3, 4, 5})
 
 	// Verify all shares
 	for nodeID, share := range shares {
