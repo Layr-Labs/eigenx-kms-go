@@ -106,15 +106,9 @@ func testNewDKG(t *testing.T) {
 	dkg := NewDKG(nodeID, threshold, operators)
 
 	require.NotNil(t, dkg, "Expected non-nil DKG instance")
-	if dkg.nodeID != nodeID {
-		t.Errorf("Expected nodeID %d, got %d", nodeID, dkg.nodeID)
-	}
-	if dkg.threshold != threshold {
-		t.Errorf("Expected threshold %d, got %d", threshold, dkg.threshold)
-	}
-	if len(dkg.operators) != len(operators) {
-		t.Errorf("Expected %d operators, got %d", len(operators), len(dkg.operators))
-	}
+	require.Equal(t, nodeID, dkg.nodeID)
+	require.Equal(t, threshold, dkg.threshold)
+	require.Equal(t, len(operators), len(dkg.operators))
 }
 
 // testGenerateShares tests share generation
@@ -127,19 +121,13 @@ func testGenerateShares(t *testing.T) {
 	shares, commitments, err := dkg.GenerateShares()
 	require.NoError(t, err, "GenerateShares failed")
 
-	if len(shares) != len(operators) {
-		t.Errorf("Expected %d shares, got %d", len(operators), len(shares))
-	}
-	if len(commitments) != threshold {
-		t.Errorf("Expected %d commitments, got %d", threshold, len(commitments))
-	}
+	require.Equal(t, len(operators), len(shares))
+	require.Equal(t, threshold, len(commitments))
 
 	// Verify all operators have shares
 	for _, op := range operators {
 		opNodeID := util.AddressToNodeID(op.OperatorAddress)
-		if shares[opNodeID] == nil {
-			t.Errorf("Missing share for operator %s (ID: %d)", op.OperatorAddress.Hex(), opNodeID)
-		}
+		require.NotNil(t, shares[opNodeID], "Missing share for operator %s (ID: %d)", op.OperatorAddress.Hex(), opNodeID)
 	}
 }
 
@@ -157,17 +145,13 @@ func testVerifyShare(t *testing.T) {
 	targetNodeID := util.AddressToNodeID(operators[1].OperatorAddress)
 	verifierDKG := NewDKG(targetNodeID, threshold, operators)
 	valid := verifierDKG.VerifyShare(shares[targetNodeID], commitments)
-	if !valid {
-		t.Error("Valid share should verify successfully")
-	}
+	require.True(t, valid, "Valid share should verify successfully")
 
 	// Test verification with invalid share
 	invalidShare := new(fr.Element)
 	_, _ = invalidShare.SetRandom()
 	valid = verifierDKG.VerifyShare(invalidShare, commitments)
-	if valid {
-		t.Error("Invalid share should fail verification")
-	}
+	require.False(t, valid, "Invalid share should fail verification")
 }
 
 // testFinalizeKeyShare tests key finalization
@@ -189,12 +173,8 @@ func testFinalizeKeyShare(t *testing.T) {
 
 	keyVersion := dkg.FinalizeKeyShare(shares, allCommitments, participantIDs)
 	require.NotNil(t, keyVersion, "Expected non-nil key version")
-	if keyVersion.PrivateShare == nil {
-		t.Error("Expected non-nil private share")
-	}
-	if len(keyVersion.Commitments) != threshold {
-		t.Errorf("Expected %d commitments, got %d", threshold, len(keyVersion.Commitments))
-	}
+	require.NotNil(t, keyVersion.PrivateShare, "Expected non-nil private share")
+	require.Equal(t, threshold, len(keyVersion.Commitments))
 }
 
 // testCreateAcknowledgement tests acknowledgement creation
@@ -229,34 +209,21 @@ func testCreateAcknowledgement(t *testing.T) {
 	ack := crypto.CreateAcknowledgement(playerAddr, dealerAddr, epoch, &share, commitments, signer)
 
 	require.NotNil(t, ack, "Expected non-nil acknowledgement")
-	if ack.PlayerAddress != playerAddr {
-		t.Errorf("Expected PlayerAddress %s, got %s", playerAddr.Hex(), ack.PlayerAddress.Hex())
-	}
-	if ack.DealerAddress != dealerAddr {
-		t.Errorf("Expected DealerAddress %s, got %s", dealerAddr.Hex(), ack.DealerAddress.Hex())
-	}
+	require.Equal(t, playerAddr, ack.PlayerAddress)
+	require.Equal(t, dealerAddr, ack.DealerAddress)
+
 	// Phase 4: Verify new fields
-	if ack.SessionTimestamp != epoch {
-		t.Errorf("Expected Epoch %d, got %d", epoch, ack.SessionTimestamp)
-	}
-	if ack.ShareHash == [32]byte{} {
-		t.Error("ShareHash should not be empty")
-	}
-	if len(ack.Signature) == 0 {
-		t.Error("Signature should not be empty")
-	}
+	require.Equal(t, epoch, ack.SessionTimestamp)
+	require.NotEqual(t, [32]byte{}, ack.ShareHash, "ShareHash should not be empty")
+	require.NotEmpty(t, ack.Signature, "Signature should not be empty")
 
 	// Verify commitment hash is consistent
 	expectedHash := crypto.HashCommitment(commitments)
-	if ack.CommitmentHash != expectedHash {
-		t.Error("Commitment hash mismatch")
-	}
+	require.Equal(t, expectedHash, ack.CommitmentHash, "Commitment hash mismatch")
 
 	// Verify shareHash is properly computed
 	expectedShareHash := crypto.HashShareForAck(&share)
-	if ack.ShareHash != expectedShareHash {
-		t.Error("ShareHash mismatch")
-	}
+	require.Equal(t, expectedShareHash, ack.ShareHash, "ShareHash mismatch")
 }
 
 // Test_FinalizeKeyShare_MismatchedCommitmentLengths verifies that mismatched
@@ -315,21 +282,15 @@ func Test_BuildAcknowledgementMerkleTree(t *testing.T) {
 	require.NotNil(t, tree, "Expected non-nil merkle tree")
 
 	// Verify root is not zero
-	if tree.Root == [32]byte{} {
-		t.Error("Merkle root should not be zero")
-	}
+	require.NotEqual(t, [32]byte{}, tree.Root, "Merkle root should not be zero")
 
 	// Verify tree has correct number of leaves
-	if len(tree.Leaves) != 4 {
-		t.Errorf("Expected 4 leaves, got %d", len(tree.Leaves))
-	}
+	require.Equal(t, 4, len(tree.Leaves))
 }
 
 // Test_BuildAcknowledgementMerkleTree_Empty tests empty acks (Phase 4)
 func Test_BuildAcknowledgementMerkleTree_Empty(t *testing.T) {
 	tree, err := BuildAcknowledgementMerkleTree([]*types.Acknowledgement{})
 	require.NoError(t, err, "Should handle empty acks")
-	if tree != nil {
-		t.Error("Expected nil tree for empty acks")
-	}
+	require.Nil(t, tree, "Expected nil tree for empty acks")
 }
