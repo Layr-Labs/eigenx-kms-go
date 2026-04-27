@@ -116,7 +116,6 @@ func CreateCommitments(poly polynomial.Polynomial) ([]*G2Point, error) {
 }
 
 // VerifyShare verifies a share against polynomial commitments using MultiExp optimization
-// audit: nodeId should be uint64
 func VerifyShare(nodeID int64, share *fr.Element, commitments []*G2Point) (bool, error) {
 	if len(commitments) == 0 {
 		return false, errors.New("no commitments provided")

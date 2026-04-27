@@ -12,10 +12,14 @@ import (
 
 // Protocol represents the DKG protocol interface
 type Protocol interface {
-	GenerateShares() (map[int]*fr.Element, []types.G2Point, error)
+	GenerateShares() (map[int64]*fr.Element, []types.G2Point, error)
 	VerifyShare(share *fr.Element, commitments []types.G2Point) bool
-	FinalizeKeyShare(shares map[int]*fr.Element, allCommitments [][]types.G2Point, participantIDs []int) *types.KeyShareVersion
+	FinalizeKeyShare(shares map[int64]*fr.Element, allCommitments [][]types.G2Point, participantIDs []int64) *types.KeyShareVersion
 }
+
+// Compile-time check that *DKG satisfies Protocol. Prevents the interface
+// and implementation from drifting out of sync silently.
+var _ Protocol = (*DKG)(nil)
 
 // DKG implements the distributed key generation protocol
 type DKG struct {
