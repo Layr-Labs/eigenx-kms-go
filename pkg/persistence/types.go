@@ -2,7 +2,6 @@ package persistence
 
 import (
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
@@ -24,20 +23,20 @@ type NodeState struct {
 	OperatorAddress string `json:"operatorAddress"`
 }
 
-// MarshalJSON serializes NodeState to JSON bytes.
+// MarshalJSON implements the json.Marshaler interface.
+// The type Alias trick avoids infinite recursion by stripping the
+// MarshalJSON method from the aliased type so the default tag-driven
+// encoding is used.
 func (ns *NodeState) MarshalJSON() ([]byte, error) {
-	if ns == nil {
-		return nil, fmt.Errorf("cannot marshal nil NodeState")
-	}
 	type Alias NodeState
 	return json.Marshal((*Alias)(ns))
 }
 
-// UnmarshalJSON deserializes NodeState from JSON bytes.
+// UnmarshalJSON implements the json.Unmarshaler interface.
+// The type Alias trick avoids infinite recursion by stripping the
+// UnmarshalJSON method from the aliased type so the default tag-driven
+// decoding is used.
 func (ns *NodeState) UnmarshalJSON(data []byte) error {
-	if len(data) == 0 || string(data) == "null" {
-		return fmt.Errorf("cannot unmarshal empty data")
-	}
 	type Alias NodeState
 	return json.Unmarshal(data, (*Alias)(ns))
 }
@@ -81,20 +80,20 @@ type ProtocolSessionState struct {
 	Acknowledgements map[int64]map[int64]*types.Acknowledgement `json:"acknowledgements"`
 }
 
-// MarshalJSON serializes ProtocolSessionState to JSON bytes.
+// MarshalJSON implements the json.Marshaler interface.
+// The type Alias trick avoids infinite recursion by stripping the
+// MarshalJSON method from the aliased type so the default tag-driven
+// encoding is used.
 func (pss *ProtocolSessionState) MarshalJSON() ([]byte, error) {
-	if pss == nil {
-		return nil, fmt.Errorf("cannot marshal nil ProtocolSessionState")
-	}
 	type Alias ProtocolSessionState
 	return json.Marshal((*Alias)(pss))
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface.
+// The type Alias trick avoids infinite recursion by stripping the
+// UnmarshalJSON method from the aliased type so the default tag-driven
+// decoding is used.
 func (pss *ProtocolSessionState) UnmarshalJSON(data []byte) error {
-	if len(data) == 0 || string(data) == "null" {
-		return fmt.Errorf("cannot unmarshal empty data")
-	}
 	type Alias ProtocolSessionState
 	return json.Unmarshal(data, (*Alias)(pss))
 }

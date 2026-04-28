@@ -3,7 +3,6 @@ package types
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
@@ -24,19 +23,19 @@ type KeyShareVersion struct {
 }
 
 // MarshalJSON implements the json.Marshaler interface.
+// The type Alias trick avoids infinite recursion by stripping the
+// MarshalJSON method from the aliased type so the default tag-driven
+// encoding is used.
 func (ksv *KeyShareVersion) MarshalJSON() ([]byte, error) {
-	if ksv == nil {
-		return nil, fmt.Errorf("cannot marshal nil KeyShareVersion")
-	}
 	type Alias KeyShareVersion
 	return json.Marshal((*Alias)(ksv))
 }
 
 // UnmarshalJSON implements the json.Unmarshaler interface.
+// The type Alias trick avoids infinite recursion by stripping the
+// UnmarshalJSON method from the aliased type so the default tag-driven
+// decoding is used.
 func (ksv *KeyShareVersion) UnmarshalJSON(data []byte) error {
-	if len(data) == 0 || string(data) == "null" {
-		return fmt.Errorf("cannot unmarshal empty data")
-	}
 	type Alias KeyShareVersion
 	return json.Unmarshal(data, (*Alias)(ksv))
 }
