@@ -9,6 +9,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
 
+	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/kmsClient"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
@@ -36,7 +37,7 @@ func Test_IBEIntegration(t *testing.T) {
 	// Create KMS client with mock contract caller for testing.
 	// Provide an owned HTTP transport so idle persistConn goroutines created
 	// for calls to the test cluster can be torn down at test end.
-	kmsHttpTransport := http.DefaultTransport.(*http.Transport).Clone()
+	kmsHttpTransport := tests.CloneDefaultTransport()
 	t.Cleanup(kmsHttpTransport.CloseIdleConnections)
 
 	client, err := kmsClient.NewClient(&kmsClient.ClientConfig{

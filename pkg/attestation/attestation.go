@@ -407,6 +407,14 @@ func extractAppIDFromInstanceName(instanceName string) (string, error) {
 	return instanceNameParts[len(instanceNameParts)-1], nil
 }
 
+// NewJWKCache creates a JWK set backed by a periodic refresh worker.
+//
+// The background worker goroutines and their HTTP idle connections are tied
+// to ctx — cancel it to stop them. Callers that need deterministic teardown
+// of pooled HTTP connections (e.g. short-lived tests or a short-lived verifier
+// lifecycle separate from process shutdown) should not use this function
+// directly; instead they should manage the HTTP transport themselves and use
+// AttestationVerifier, which closes idle connections on Close().
 func NewJWKCache(ctx context.Context, jwkUrl string, refreshInterval time.Duration) (jwk.Set, error) {
 	return newJWKCacheWithClient(ctx, jwkUrl, refreshInterval, nil)
 }

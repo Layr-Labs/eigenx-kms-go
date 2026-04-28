@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
 	"github.com/lestrrat-go/jwx/v3/jwa"
 	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/lestrrat-go/jwx/v3/jwt"
@@ -587,7 +588,7 @@ func TestFilterIntelJWKS(t *testing.T) {
 
 	// Own the HTTP transport so goroutines started by the JWK fetch can be
 	// fully torn down via CloseIdleConnections after the test.
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport := tests.CloneDefaultTransport()
 	httpClient := &http.Client{Transport: transport}
 	t.Cleanup(transport.CloseIdleConnections)
 

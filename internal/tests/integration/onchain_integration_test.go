@@ -88,7 +88,7 @@ func Test_OnChainIntegration(t *testing.T) {
 	// Install an owned HTTP transport so CloseIdleConnections can tear down
 	// the persistConn read/write loop goroutines that the RPC polling loop
 	// creates (otherwise goleak flags them when the test exits).
-	l1RpcTransport := http.DefaultTransport.(*http.Transport).Clone()
+	l1RpcTransport := tests.CloneDefaultTransport()
 	l1Client.SetHttpClient(&http.Client{Transport: l1RpcTransport, Timeout: 10 * time.Second})
 	t.Cleanup(l1RpcTransport.CloseIdleConnections)
 
@@ -133,7 +133,7 @@ func Test_OnChainIntegration(t *testing.T) {
 		BlockType: ethereum.BlockType_Latest,
 	}, l)
 
-	l2RpcTransport := http.DefaultTransport.(*http.Transport).Clone()
+	l2RpcTransport := tests.CloneDefaultTransport()
 	l2Client.SetHttpClient(&http.Client{Transport: l2RpcTransport, Timeout: 10 * time.Second})
 	t.Cleanup(l2RpcTransport.CloseIdleConnections)
 
@@ -196,7 +196,7 @@ func Test_OnChainIntegration(t *testing.T) {
 			BlockType: ethereum.BlockType_Latest,
 		}, l)
 
-		nodeL2RpcTransport := http.DefaultTransport.(*http.Transport).Clone()
+		nodeL2RpcTransport := tests.CloneDefaultTransport()
 		nodeL2Client.SetHttpClient(&http.Client{Transport: nodeL2RpcTransport, Timeout: 10 * time.Second})
 		t.Cleanup(nodeL2RpcTransport.CloseIdleConnections)
 
@@ -241,7 +241,7 @@ func Test_OnChainIntegration(t *testing.T) {
 				l.Sugar().Fatalw("Failed to create Web3Signer client", "error", err)
 			}
 
-			w3sTransport := http.DefaultTransport.(*http.Transport).Clone()
+			w3sTransport := tests.CloneDefaultTransport()
 			web3SignerClient.SetHttpClient(&http.Client{Transport: w3sTransport, Timeout: 10 * time.Second})
 			t.Cleanup(w3sTransport.CloseIdleConnections)
 
@@ -357,7 +357,7 @@ func Test_OnChainIntegration(t *testing.T) {
 	// Provide an owned HTTP transport so idle persistConn goroutines created
 	// for the node-facing /pubkey and /app/sign calls can be torn down at
 	// test end (goleak would otherwise flag them).
-	kmsHttpTransport := http.DefaultTransport.(*http.Transport).Clone()
+	kmsHttpTransport := tests.CloneDefaultTransport()
 	t.Cleanup(kmsHttpTransport.CloseIdleConnections)
 
 	client, err := kmsClient.NewClient(&kmsClient.ClientConfig{
