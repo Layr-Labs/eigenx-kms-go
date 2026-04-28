@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
@@ -93,6 +94,7 @@ type AttestationVerifier struct {
 	debugMode       bool
 	cancel          context.CancelFunc
 	httpTransport   *http.Transport
+	closeOnce       sync.Once
 }
 
 func NewAttestationVerifier(ctx context.Context, logger *slog.Logger, projectID string, refreshInterval time.Duration, debugMode bool) (*AttestationVerifier, error) {
@@ -106,7 +108,15 @@ func NewAttestationVerifier(ctx context.Context, logger *slog.Logger, projectID 
 	// Own the HTTP transport so Close() can tear down idle connections and the
 	// associated read/write loop goroutines. Using DefaultClient (httprc's default)
 	// leaks persistent HTTP/2 read loops past context cancellation.
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Guard the type assertion: an application can install a custom
+	// http.DefaultTransport (e.g. an instrumented transport) that is not a
+	// *http.Transport, and blind assertion would panic.
+	var transport *http.Transport
+	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
+		transport = dt.Clone()
+	} else {
+		transport = &http.Transport{}
+	}
 	httpClient := &http.Client{Transport: transport}
 
 	avLogger.Debug("Creating Google Confidential Space JWK cache", "jwk_url", confidentialSpaceJWKURL)
@@ -139,16 +149,17 @@ func NewAttestationVerifier(ctx context.Context, logger *slog.Logger, projectID 
 }
 
 // Close stops the background JWK cache workers spawned by the verifier and
-// releases pooled HTTP connections. Safe to call multiple times.
+// releases pooled HTTP connections. Safe to call multiple times and safe to
+// call concurrently from multiple goroutines.
 func (av *AttestationVerifier) Close() {
-	if av.cancel != nil {
-		av.cancel()
-		av.cancel = nil
-	}
-	if av.httpTransport != nil {
-		av.httpTransport.CloseIdleConnections()
-		av.httpTransport = nil
-	}
+	av.closeOnce.Do(func() {
+		if av.cancel != nil {
+			av.cancel()
+		}
+		if av.httpTransport != nil {
+			av.httpTransport.CloseIdleConnections()
+		}
+	})
 }
 
 func (av *AttestationVerifier) VerifyAttestation(ctx context.Context, tokenString string, provider AttestationProvider) (*types.AttestationClaims, error) {
