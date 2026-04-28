@@ -3,6 +3,7 @@ package transactionSigner
 import (
 	"context"
 	"math/big"
+	"net/http"
 	"testing"
 	"time"
 
@@ -58,6 +59,12 @@ func Test_Web3TransactionSigner_SendTransaction(t *testing.T) {
 		BlockType: ethereum.BlockType_Latest,
 	}, l)
 
+	// Install an owned HTTP transport so CloseIdleConnections can tear down
+	// the persistConn read/write loop goroutines created for RPC calls.
+	rpcTransport := http.DefaultTransport.(*http.Transport).Clone()
+	l2Client.SetHttpClient(&http.Client{Transport: rpcTransport, Timeout: 10 * time.Second})
+	t.Cleanup(rpcTransport.CloseIdleConnections)
+
 	time.Sleep(3 * time.Second) // Give anvil time to start
 
 	// Verify anvil is running
@@ -67,6 +74,7 @@ func Test_Web3TransactionSigner_SendTransaction(t *testing.T) {
 
 	l2EthClient, err := l2Client.GetEthereumContractCaller()
 	require.NoError(t, err)
+	t.Cleanup(l2EthClient.Close)
 
 	// Create web3signer client for operator 1
 	web3SignerClient, err := web3signer.NewWeb3SignerClientFromRemoteSignerConfig(
@@ -78,6 +86,12 @@ func Test_Web3TransactionSigner_SendTransaction(t *testing.T) {
 		l,
 	)
 	require.NoError(t, err)
+
+	// Install an owned HTTP transport on the web3signer so idle connections
+	// can be torn down at test end.
+	w3sTransport := http.DefaultTransport.(*http.Transport).Clone()
+	web3SignerClient.SetHttpClient(&http.Client{Transport: w3sTransport, Timeout: 10 * time.Second})
+	t.Cleanup(w3sTransport.CloseIdleConnections)
 
 	// Create transaction signer
 	fromAddress := common.HexToAddress(chainConfig.OperatorAccountAddress1)
