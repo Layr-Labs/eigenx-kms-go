@@ -4,6 +4,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/web3signer"
@@ -12,6 +13,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner/inMemoryTransportSigner"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"go.uber.org/zap"
 
 	"net/http"
 	"net/http/httptest"
@@ -23,12 +25,28 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// newTrackedWeb3SignerClient wraps web3signer.NewClient but swaps in an owned
+// http.Transport whose idle connections we tear down at test end. Without this
+// the persistConn read/write loop goroutines created during httptest requests
+// outlive the test and goleak's TestMain flags them.
+func newTrackedWeb3SignerClient(t *testing.T, cfg *web3signer.Config, l *zap.Logger) (*web3signer.Client, error) {
+	t.Helper()
+	client, err := web3signer.NewClient(cfg, l)
+	if err != nil {
+		return nil, err
+	}
+	transport := tests.CloneDefaultTransport()
+	client.SetHttpClient(&http.Client{Transport: transport, Timeout: 10 * time.Second})
+	t.Cleanup(transport.CloseIdleConnections)
+	return client, nil
+}
+
 func TestNewWeb3Signer(t *testing.T) {
 	l, err := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 	require.NoError(t, err)
 
 	cfg := web3signer.DefaultConfig()
-	client, err := web3signer.NewClient(cfg, l)
+	client, err := newTrackedWeb3SignerClient(t, cfg, l)
 	require.NoError(t, err)
 
 	fromAddress := common.HexToAddress("0x1234567890abcdef1234567890abcdef12345678")
@@ -107,7 +125,7 @@ func TestWeb3Signer_SignMessage(t *testing.T) {
 
 		cfg := web3signer.DefaultConfig()
 		cfg.BaseURL = server.URL
-		client, err := web3signer.NewClient(cfg, l)
+		client, err := newTrackedWeb3SignerClient(t, cfg, l)
 		require.NoError(t, err)
 
 		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
@@ -123,7 +141,7 @@ func TestWeb3Signer_SignMessage(t *testing.T) {
 
 	t.Run("fails with BN254 curve type", func(t *testing.T) {
 		cfg := web3signer.DefaultConfig()
-		client, err := web3signer.NewClient(cfg, l)
+		client, err := newTrackedWeb3SignerClient(t, cfg, l)
 		require.NoError(t, err)
 
 		// Create signer with BN254 (bypassing constructor validation for test)
@@ -150,7 +168,7 @@ func TestWeb3Signer_SignMessage(t *testing.T) {
 
 		cfg := web3signer.DefaultConfig()
 		cfg.BaseURL = server.URL
-		client, err := web3signer.NewClient(cfg, l)
+		client, err := newTrackedWeb3SignerClient(t, cfg, l)
 		require.NoError(t, err)
 
 		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
@@ -176,7 +194,7 @@ func TestWeb3Signer_SignMessage(t *testing.T) {
 
 		cfg := web3signer.DefaultConfig()
 		cfg.BaseURL = server.URL
-		client, err := web3signer.NewClient(cfg, l)
+		client, err := newTrackedWeb3SignerClient(t, cfg, l)
 		require.NoError(t, err)
 
 		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
@@ -218,7 +236,7 @@ func TestWeb3Signer_SignMessageForSolidity(t *testing.T) {
 
 		cfg := web3signer.DefaultConfig()
 		cfg.BaseURL = server.URL
-		client, err := web3signer.NewClient(cfg, l)
+		client, err := newTrackedWeb3SignerClient(t, cfg, l)
 		require.NoError(t, err)
 
 		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
@@ -234,7 +252,7 @@ func TestWeb3Signer_SignMessageForSolidity(t *testing.T) {
 
 	t.Run("fails with BN254 curve type", func(t *testing.T) {
 		cfg := web3signer.DefaultConfig()
-		client, err := web3signer.NewClient(cfg, l)
+		client, err := newTrackedWeb3SignerClient(t, cfg, l)
 		require.NoError(t, err)
 
 		// Create signer with BN254 (bypassing constructor validation for test)
@@ -258,7 +276,7 @@ func TestWeb3Signer_GetFromAddress(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := web3signer.DefaultConfig()
-	client, err := web3signer.NewClient(cfg, l)
+	client, err := newTrackedWeb3SignerClient(t, cfg, l)
 	require.NoError(t, err)
 
 	fromAddress := common.HexToAddress("0x1234567890abcdef1234567890abcdef12345678")
@@ -274,7 +292,7 @@ func TestWeb3Signer_GetCurveType(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := web3signer.DefaultConfig()
-	client, err := web3signer.NewClient(cfg, l)
+	client, err := newTrackedWeb3SignerClient(t, cfg, l)
 	require.NoError(t, err)
 
 	fromAddress := common.HexToAddress("0x1234567890abcdef1234567890abcdef12345678")
@@ -290,7 +308,7 @@ func TestWeb3Signer_SupportsRemoteSigning(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := web3signer.DefaultConfig()
-	client, err := web3signer.NewClient(cfg, l)
+	client, err := newTrackedWeb3SignerClient(t, cfg, l)
 	require.NoError(t, err)
 
 	fromAddress := common.HexToAddress("0x1234567890abcdef1234567890abcdef12345678")
@@ -334,7 +352,7 @@ func TestWeb3Signer_Validate(t *testing.T) {
 
 		cfg := web3signer.DefaultConfig()
 		cfg.BaseURL = server.URL
-		client, err := web3signer.NewClient(cfg, l)
+		client, err := newTrackedWeb3SignerClient(t, cfg, l)
 		require.NoError(t, err)
 
 		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
@@ -370,7 +388,7 @@ func TestWeb3Signer_Validate(t *testing.T) {
 
 		cfg := web3signer.DefaultConfig()
 		cfg.BaseURL = server.URL
-		client, err := web3signer.NewClient(cfg, l)
+		client, err := newTrackedWeb3SignerClient(t, cfg, l)
 		require.NoError(t, err)
 
 		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
@@ -404,7 +422,7 @@ func TestWeb3Signer_Validate(t *testing.T) {
 
 		cfg := web3signer.DefaultConfig()
 		cfg.BaseURL = server.URL
-		client, err := web3signer.NewClient(cfg, l)
+		client, err := newTrackedWeb3SignerClient(t, cfg, l)
 		require.NoError(t, err)
 
 		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
@@ -442,7 +460,7 @@ func TestWeb3Signer_Validate(t *testing.T) {
 
 		cfg := web3signer.DefaultConfig()
 		cfg.BaseURL = server.URL
-		client, err := web3signer.NewClient(cfg, l)
+		client, err := newTrackedWeb3SignerClient(t, cfg, l)
 		require.NoError(t, err)
 
 		web3Signer, err := NewWeb3TransportSigner(client, fromAddress, "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef12", config.CurveTypeECDSA, l)
@@ -458,7 +476,7 @@ func TestWeb3Signer_InterfaceCompliance(t *testing.T) {
 	require.NoError(t, err)
 
 	cfg := web3signer.DefaultConfig()
-	client, err := web3signer.NewClient(cfg, l)
+	client, err := newTrackedWeb3SignerClient(t, cfg, l)
 	require.NoError(t, err)
 
 	fromAddress := common.HexToAddress("0x1234567890abcdef1234567890abcdef12345678")
@@ -489,7 +507,7 @@ func TestWeb3Signer_Integration(t *testing.T) {
 	// Configure web3signer client to connect to test server
 	cfg := web3signer.DefaultConfig()
 	cfg.BaseURL = tests.L1Web3SignerUrl // http://localhost:9100
-	client, err := web3signer.NewClient(cfg, l)
+	client, err := newTrackedWeb3SignerClient(t, cfg, l)
 	require.NoError(t, err)
 
 	// Use the operator account address from test config
@@ -583,7 +601,7 @@ func Test_CompareWeb3SignerToInMemorySigner(t *testing.T) {
 
 	cfg := web3signer.DefaultConfig()
 	cfg.BaseURL = tests.L1Web3SignerUrl // http://localhost:9100
-	client, err := web3signer.NewClient(cfg, l)
+	client, err := newTrackedWeb3SignerClient(t, cfg, l)
 	require.NoError(t, err)
 
 	web3Signer, err := NewWeb3TransportSigner(client, common.HexToAddress(chainConfig.OperatorAccountAddress1), chainConfig.OperatorAccountPublicKey1, config.CurveTypeECDSA, l)

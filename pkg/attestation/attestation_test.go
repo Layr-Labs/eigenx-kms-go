@@ -6,10 +6,12 @@ import (
 	"crypto/rsa"
 	"encoding/json"
 	"log/slog"
+	"net/http"
 	"os"
 	"testing"
 	"time"
 
+	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
 	"github.com/lestrrat-go/jwx/v3/jwa"
 	"github.com/lestrrat-go/jwx/v3/jwk"
 	"github.com/lestrrat-go/jwx/v3/jwt"
@@ -244,6 +246,7 @@ func TestNewAttestationVerifier(t *testing.T) {
 		verifier, err := NewAttestationVerifier(ctx, logger, "test-project", time.Minute, false)
 		require.NoError(t, err)
 		require.NotNil(t, verifier)
+		t.Cleanup(verifier.Close)
 		require.Equal(t, "test-project", verifier.projectID)
 		require.False(t, verifier.debugMode)
 	})
@@ -253,6 +256,7 @@ func TestNewAttestationVerifier(t *testing.T) {
 		verifier, err := NewAttestationVerifier(ctx, logger, "test-project", time.Minute, true)
 		require.NoError(t, err)
 		require.NotNil(t, verifier)
+		t.Cleanup(verifier.Close)
 		require.Equal(t, "test-project", verifier.projectID)
 		require.True(t, verifier.debugMode)
 	})
@@ -578,15 +582,22 @@ func TestInstanceNameParsing(t *testing.T) {
 }
 
 func TestFilterIntelJWKS(t *testing.T) {
-	ctx := context.Background()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
 	logger := setupLogger()
+
+	// Own the HTTP transport so goroutines started by the JWK fetch can be
+	// fully torn down via CloseIdleConnections after the test.
+	transport := tests.CloneDefaultTransport()
+	httpClient := &http.Client{Transport: transport}
+	t.Cleanup(transport.CloseIdleConnections)
 
 	// Real Intel token with RS256 algorithm
 	realToken := "eyJhbGciOiJSUzI1NiIsImprdSI6Imh0dHBzOi8vcG9ydGFsLnRydXN0YXV0aG9yaXR5LmludGVsLmNvbS9jZXJ0cyIsImtpZCI6ImQxNTU0ZTBhYTJlOWViODZlNzdmNDFlMjQ3NTllNzcxMmVkNDI0YjM2NWZmMjBhMjJhZDFjMmUzYzdjNjA0NTVhYzY3YWU2YzJlN2IyNTZmN2I3NjgwMDlhYjg4MDgxYiIsInR5cCI6IkpXVCJ9.eyJhdWQiOiJFaWdlblggS01TIiwiZGJnc3RhdCI6ImRpc2FibGVkLXNpbmNlLWJvb3QiLCJlYXRfbm9uY2UiOlsiOWNjYjY1MmIzOTYzOWVkODE2Yzg4NjBiMzNlNDVmMmFiZjc4ODBlZWUyNWRiN2ZkMGUzYjZiZTc4ZGU1M2NiMyJdLCJlYXRfcHJvZmlsZSI6Imh0dHBzOi8vcG9ydGFsLnRydXN0YXV0aG9yaXR5LmludGVsLmNvbS9lYXRfcHJvZmlsZS5odG1sIiwiZ29vZ2xlX3NlcnZpY2VfYWNjb3VudHMiOlsidGVlLWluc3RhbmNlLXYyLXNlcG9saWEtZGV2QHRlZS1jb21wdXRlLXNlcG9saWEtZGV2LmlhbS5nc2VydmljZWFjY291bnQuY29tIl0sImh3bW9kZWwiOiJJTlRFTF9URFgiLCJvZW1pZCI6MTExMjksInNlY2Jvb3QiOnRydWUsInN1YiI6Imh0dHBzOi8vd3d3Lmdvb2dsZWFwaXMuY29tL2NvbXB1dGUvdjEvcHJvamVjdHMvdGVlLWNvbXB1dGUtc2Vwb2xpYS1kZXYvem9uZXMvdXMtZWFzdDEtYy9pbnN0YW5jZXMvdGVlLTB4ZTU3NzBiNmRlMmVjZTYxMDBmYzcxZTk0YmMzMzExMjY0NWY5MmVjYSIsInN1Ym1vZHMiOnsiY29uZmlkZW50aWFsX3NwYWNlIjp7Im1vbml0b3JpbmdfZW5hYmxlZCI6eyJtZW1vcnkiOmZhbHNlfSwic3VwcG9ydF9hdHRyaWJ1dGVzIjpbIkVYUEVSSU1FTlRBTCJdfSwiY29udGFpbmVyIjp7ImFyZ3MiOlsiL3Vzci9sb2NhbC9iaW4vY29tcHV0ZS1zb3VyY2UtZW52LnNoIiwibnBtIiwic3RhcnQiXSwiZW52Ijp7IkhPU1ROQU1FIjoidGVlLTB4ZTU3NzBiNmRlMmVjZTYxMDBmYzcxZTk0YmMzMzExMjY0NWY5MmVjYSIsIk5PREVfVkVSU0lPTiI6IjE4LjIwLjgiLCJQQVRIIjoiL3Vzci9sb2NhbC9zYmluOi91c3IvbG9jYWwvYmluOi91c3Ivc2JpbjovdXNyL2Jpbjovc2JpbjovYmluIiwiWUFSTl9WRVJTSU9OIjoiMS4yMi4yMiJ9LCJpbWFnZV9kaWdlc3QiOiJzaGEyNTY6MTg5MzBkMDU5YzI2YjRmNDkyOTBiYzA2ZjVjMzExZmQzMjNhMTExMzA0MjUxNDk2ZTE4MTcyYjMyOTA3ZjYyYSIsImltYWdlX2lkIjoic2hhMjU2OjJmYThmZWI1ODAxMGVlMmE4ZWIxN2RlNjBjZjhhMGE4Zjg0MjY0YzNiZmU0ZTQ1YjI4ZDNkNzlmZGNhZWY2NTgiLCJpbWFnZV9yZWZlcmVuY2UiOiJpbmRleC5kb2NrZXIuaW8vc2F1Y2Vsb3JkL215LXRzLWFwcEBzaGEyNTY6MTg5MzBkMDU5YzI2YjRmNDkyOTBiYzA2ZjVjMzExZmQzMjNhMTExMzA0MjUxNDk2ZTE4MTcyYjMyOTA3ZjYyYSIsInJlc3RhcnRfcG9saWN5IjoiTmV2ZXIifSwiZ2NlIjp7Imluc3RhbmNlX2lkIjoiNzAxNTIzMTk4MTgzNjcxNzIwNiIsImluc3RhbmNlX25hbWUiOiJ0ZWUtMHhlNTc3MGI2ZGUyZWNlNjEwMGZjNzFlOTRiYzMzMTEyNjQ1ZjkyZWNhIiwicHJvamVjdF9pZCI6InRlZS1jb21wdXRlLXNlcG9saWEtZGV2IiwicHJvamVjdF9udW1iZXIiOiI2MTcyMjc5MDM2NjgiLCJ6b25lIjoidXMtZWFzdDEtYyJ9fSwic3duYW1lIjoiQ09ORklERU5USUFMX1NQQUNFIiwic3d2ZXJzaW9uIjpbIjI1MDUwMSJdLCJ0ZHgiOnsiYXR0ZXN0ZXJfdGNiX2RhdGUiOiIyMDI1LTA1LTE0VDAwOjAwOjAwWiIsImF0dGVzdGVyX3RjYl9zdGF0dXMiOiJPdXRPZkRhdGUiLCJnY3BfYXR0ZXN0ZXJfdGNiX2RhdGUiOiIyMDI0LTAzLTEzVDAwOjAwOjAwWiIsImdjcF9hdHRlc3Rlcl90Y2Jfc3RhdHVzIjoiVXBUb0RhdGUifSwidmVyaWZpZXJfaW5zdGFuY2VfaWRzIjpbIjM2Nzc5ZjAyLWY4MDYtNDY2MS04ZmU5LTI2MDU4NjA4NWI3NiIsIjVjM2I5OTYzLTIzYmYtNGI1NS05YjEwLTJjMjNhZWU2OWVmMyIsIjAzNzY3ZWNkLTliNTMtNDEyNC05MGQ3LTkyMzg0MGRkOWNhNyIsIjE1OTVmNzhiLTBiYTgtNDc1Yi1iMWZlLTg1ZmNiOGYyZjkyZSIsIjRhZWMyNmVkLTQ0M2ItNDAyYS04YWY4LWFlYjlmYzYwYmE3ZiIsImMzY2I5MzM4LThkZTQtNDUwNS1iM2M4LWNjMTNkNGQyZDAwYSIsIjE2MmMxNzE0LTY3Y2YtNDU3Yi05M2RmLWJiNWY4NTcxNjBlMCJdLCJleHAiOjE3NjEzNDI0MzAsImp0aSI6IjY0YWVhYmQ3LTlmOTctNGFjZS05MGZmLTBmMTU1OWI4OGNjZCIsImlhdCI6MTc2MTM0MjEzMCwiaXNzIjoiaHR0cHM6Ly9wb3J0YWwudHJ1c3RhdXRob3JpdHkuaW50ZWwuY29tIiwibmJmIjoxNzYxMzQyMTMwfQ.WwPSo7PkiKCNB5QeeQVP3c09b6054JLnXKCB4OpNKWqd-MJ_hwFHMQDRQcnD8urY6rlpNx9lAPjEJL66qGQY7GiSmPUWQ-xYKeX8wQYPVzhTxbC-2ckHeHaYOBPneI3ct1ryWvd_GTRJenM1CeDDAfhDz9xFNfqJYQZ2bY55Nf853TUjXFATKONutRRTVvxgx0b75wDz-PQcMSFAy73-AxnHJVEFqxqh1v3no5jsvAES7nxaFguHdxwB9Kuprs9UMklMsM8xXE3Gww_lYoPxjDYwG5aAmui9bOROGnUmPDPIazMWX5L2HDdXOyvt9iS9DXKk-R1DlsytG_SmpwpU3A6Abfjj7-fyOnYeXeDRebO9iNKzcBZN_w084XxtdFKyoPXynvJMCWMh0pcgByVHtyOXBd1BQ0yMRJ91cqmNLYcvlt-Qr9NzXxVzA3qHtDBTswbbwelnx6vETyzSTOhjfXuf7oCJqgfRVKdRYfTS9pFbaQo2Tjg_1Xdi15tDFbOf"
 
 	// Fetch the real Intel JWKS
 	t.Logf("Fetching Intel JWKS from: %s", intelTrustAuthorityJWKURL)
-	intelKeySet, err := NewJWKCache(ctx, intelTrustAuthorityJWKURL, time.Minute)
+	intelKeySet, err := newJWKCacheWithClient(ctx, intelTrustAuthorityJWKURL, time.Minute, httpClient)
 	require.NoError(t, err, "Failed to create Intel JWKS cache")
 
 	originalCount := intelKeySet.Len()
