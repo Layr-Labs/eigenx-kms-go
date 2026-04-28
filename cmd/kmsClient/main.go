@@ -190,7 +190,7 @@ func encryptCommand(c *cli.Context) error {
 		if pathErr != nil {
 			return fmt.Errorf("invalid --output path: %w", pathErr)
 		}
-		if err := os.WriteFile(cleanPath, []byte(encryptedHex), 0600); err != nil {
+		if err := writeSecretFile(cleanPath, []byte(encryptedHex)); err != nil {
 			return fmt.Errorf("failed to write to file: %w", err)
 		}
 		fmt.Printf("✅ Encrypted data written to: %s\n", cleanPath)
@@ -257,7 +257,7 @@ func decryptCommand(c *cli.Context) error {
 		if pathErr != nil {
 			return fmt.Errorf("invalid --output path: %w", pathErr)
 		}
-		if err := os.WriteFile(cleanPath, decryptedData, 0600); err != nil {
+		if err := writeSecretFile(cleanPath, decryptedData); err != nil {
 			return fmt.Errorf("failed to write to file: %w", err)
 		}
 		fmt.Printf("✅ Decrypted data written to: %s\n", cleanPath)
@@ -299,11 +299,35 @@ func getPubkeyCommand(c *cli.Context) error {
 	return nil
 }
 
+// writeSecretFile writes sensitive data to path with mode 0600, enforcing
+// the permission even if the file already exists with broader permissions.
+//
+// os.WriteFile only applies the permission mask on file creation; if the
+// target already exists (e.g. a prior 0644 file, or an attacker-planted
+// file), the content would otherwise be written under the existing mode.
+// We open-then-chmod-then-write so the secret is never on disk under the
+// wrong mode: after OpenFile the file is opened for writing but still
+// zero-byte, so the window between OpenFile and Chmod exposes nothing.
+func writeSecretFile(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	if err := f.Chmod(0600); err != nil {
+		return fmt.Errorf("secure file permissions: %w", err)
+	}
+	if _, err := f.Write(data); err != nil {
+		return err
+	}
+	return f.Close()
+}
+
 // prepareOutputPath cleans and absolutizes a user-supplied output path. It
 // rejects empty paths and paths that resolve to a directory (no file name).
 // The path root is intentionally not restricted: this is a CLI, the user
-// chooses where to write. Callers should write with mode 0600 since this
-// helper does not set permissions.
+// chooses where to write. Callers should write via writeSecretFile to get
+// the 0600 enforcement; this helper does not touch permissions.
 func prepareOutputPath(p string) (string, error) {
 	if p == "" {
 		return "", fmt.Errorf("output path is empty")
