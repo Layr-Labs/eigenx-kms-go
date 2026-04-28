@@ -166,8 +166,18 @@ func NewServer(node *Node, port int) *Server {
 	// App signing endpoint
 	mux.HandleFunc("/app/sign", rateLimited(50, 100, concurrencyLimit(20, maxBodySize(16<<10, s.handleAppSign))))
 
-	// Secrets endpoint for TEE applications
-	mux.HandleFunc("/secrets", rateLimited(10, 20, concurrencyLimit(10, maxBodySize(64<<10, s.handleSecretsRequest))))
+	// Secrets endpoint for TEE applications.
+	//
+	// Body limit budget: extra_data can be up to types.MaxExtraDataSize (1 MB).
+	// It's a []byte field, so json.Marshal base64-encodes it, inflating the
+	// on-wire size by ~37% to ~1.37 MB. Plus JSON field overhead (object
+	// wrappers, other fields, base64-encoded Attestation, RSAPubKeyTmp, etc.)
+	// we need headroom above 1.37 MB. 2 MB gives a safe ceiling without
+	// opening a DoS surface noticeably wider than 1 MB. The authoritative
+	// size check against types.MaxExtraDataSize still happens in the
+	// handler on the decoded bytes — this middleware limit is just
+	// "the JSON body must physically fit."
+	mux.HandleFunc("/secrets", rateLimited(10, 20, concurrencyLimit(10, maxBodySize(2<<20, s.handleSecretsRequest))))
 
 	// Public key endpoint for clients
 	mux.HandleFunc("/pubkey", s.handleGetCommitments)

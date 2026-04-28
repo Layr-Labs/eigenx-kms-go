@@ -56,18 +56,26 @@ func (g *GCPAttestationMethod) Verify(request *AttestationRequest) (*types.Attes
 		return nil, fmt.Errorf("attestation verification failed: %w", err)
 	}
 
-	// Nonce formula: hex(SHA256(rsaPubKey || extraData))
-	if len(request.RSAPubKeyTmp) > 0 || len(request.ExtraData) > 0 {
-		nonceInput := make([]byte, 0, len(request.RSAPubKeyTmp)+len(request.ExtraData))
-		nonceInput = append(nonceInput, request.RSAPubKeyTmp...)
-		if len(request.ExtraData) > 0 {
-			nonceInput = append(nonceInput, request.ExtraData...)
-		}
-		h := sha256.Sum256(nonceInput)
-		expectedNonce := hex.EncodeToString(h[:])
-		if strings.ToLower(claims.Nonce) != expectedNonce {
-			return nil, fmt.Errorf("nonce mismatch: ephemeral RSA key (and extra_data if present) not bound to attestation token")
-		}
+	// Nonce binding: hex(SHA256(rsaPubKey || extraData)). RSAPubKeyTmp is
+	// mandatory — it's the ephemeral key the caller expects the KMS to
+	// encrypt the response to, and the nonce is how we prove the
+	// attestation token is bound to that exact key. Skipping the check
+	// when RSAPubKeyTmp is empty would let any caller that forgot to
+	// populate it (a future transport, a misconfigured client) bypass
+	// nonce binding silently. The handler also guards against this at
+	// the HTTP layer, but Verify() is a public API so it must enforce
+	// the invariant itself. Empty ExtraData is fine — appending a nil
+	// slice is a no-op, so the nonce just becomes hex(SHA256(rsaPubKey)).
+	if len(request.RSAPubKeyTmp) == 0 {
+		return nil, fmt.Errorf("RSAPubKeyTmp is required for nonce binding")
+	}
+	nonceInput := make([]byte, 0, len(request.RSAPubKeyTmp)+len(request.ExtraData))
+	nonceInput = append(nonceInput, request.RSAPubKeyTmp...)
+	nonceInput = append(nonceInput, request.ExtraData...)
+	h := sha256.Sum256(nonceInput)
+	expectedNonce := hex.EncodeToString(h[:])
+	if strings.ToLower(claims.Nonce) != expectedNonce {
+		return nil, fmt.Errorf("nonce mismatch: ephemeral RSA key (and extra_data if present) not bound to attestation token")
 	}
 
 	if claims.JTI == "" {

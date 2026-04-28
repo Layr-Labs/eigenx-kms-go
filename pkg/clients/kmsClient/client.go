@@ -637,6 +637,15 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 
 	c.logger.Sugar().Info("Successfully recovered application private key")
 
+	// SecretsResult.ExtraData returns the caller's input, not responses[0].ExtraData.
+	// Reasoning: for GCP/Intel attestations, extra_data is cryptographically bound
+	// into the attestation nonce on the server side (see GCPAttestationMethod.Verify),
+	// so any in-flight tampering is detected and the request is rejected before
+	// reaching this code path. For ECDSA attestations, extra_data is pass-through
+	// metadata — the server echoes it back unmodified and there's no cryptographic
+	// binding to verify against, so an echo comparison would provide no additional
+	// guarantee beyond what the caller already has. Returning opts.ExtraData keeps
+	// the contract explicit: callers get back exactly what they sent.
 	return &SecretsResult{
 		AppPrivateKey:   *appPrivateKey,
 		EncryptedEnv:    responses[0].EncryptedEnv,

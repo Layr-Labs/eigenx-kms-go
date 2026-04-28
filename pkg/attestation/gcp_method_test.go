@@ -58,24 +58,34 @@ func TestGCPAttestationMethodVerifyEmptyAttestation(t *testing.T) {
 }
 
 func TestGCPAttestationMethodVerifyNoncePropagation(t *testing.T) {
+	// RSAPubKeyTmp is required for nonce binding (see Verify docs); compute
+	// the matching nonce so the binding check passes and we can observe
+	// claim propagation unaffected by the binding guard.
+	rsaKey := []byte("test-rsa-public-key-pem-propagation")
+	expectedNonce := func() string {
+		h := sha256.Sum256(rsaKey)
+		return hex.EncodeToString(h[:])
+	}()
+
 	mockVerifier := NewMockAttestationVerifierInterface(t)
 	mockVerifier.EXPECT().
 		VerifyAttestation(context.Background(), "test-token", GoogleConfidentialSpace).
 		Return(&kmsTypes.AttestationClaims{
 			AppID:       "my-app",
 			ImageDigest: "sha256:abc",
-			Nonce:       "deadbeef",
+			Nonce:       expectedNonce,
 			JTI:         "test-jti-propagation",
 		}, nil)
 
 	method := &GCPAttestationMethod{verifier: mockVerifier, provider: GoogleConfidentialSpace}
 	claims, err := method.Verify(&AttestationRequest{
-		AppID:       "my-app",
-		Attestation: []byte("test-token"),
+		AppID:        "my-app",
+		Attestation:  []byte("test-token"),
+		RSAPubKeyTmp: rsaKey,
 	})
 
 	require.NoError(t, err)
-	assert.Equal(t, "deadbeef", claims.Nonce)
+	assert.Equal(t, expectedNonce, claims.Nonce)
 }
 
 func TestVerify_NonceBindingAndJTI(t *testing.T) {
@@ -148,6 +158,30 @@ func TestVerify_NonceBindingAndJTI(t *testing.T) {
 			claimJTI:    "", // intentionally empty
 			expectErr:   true,
 			errContains: "missing jti",
+		},
+		{
+			// Verify() is a public API — callers that forget to populate
+			// RSAPubKeyTmp must not silently bypass nonce binding. The
+			// handler separately guards at the HTTP layer, but this test
+			// locks the invariant at the method boundary so any future
+			// transport or test harness is covered too.
+			name:        "GCP: empty RSAPubKeyTmp rejected (nonce binding bypass guard)",
+			provider:    GoogleConfidentialSpace,
+			rsaPubKey:   nil,
+			claimNonce:  "anything-should-not-be-reached",
+			claimJTI:    "jti-x",
+			expectErr:   true,
+			errContains: "RSAPubKeyTmp is required",
+		},
+		{
+			// Same as above with Intel provider — the guard is provider-independent.
+			name:        "Intel: empty RSAPubKeyTmp rejected",
+			provider:    IntelTrustAuthority,
+			rsaPubKey:   []byte{},
+			claimNonce:  "anything",
+			claimJTI:    "jti-y",
+			expectErr:   true,
+			errContains: "RSAPubKeyTmp is required",
 		},
 	}
 
