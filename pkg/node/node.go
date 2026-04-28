@@ -532,11 +532,10 @@ func (n *Node) RestoreState() error {
 	}
 
 	if nodeState != nil {
-		// Verify operator address matches
+		// Verify operator address matches — refuse to start with mismatched state
 		if nodeState.OperatorAddress != "" && nodeState.OperatorAddress != n.OperatorAddress.Hex() {
-			n.logger.Sugar().Warnw("Operator address mismatch in persisted state",
-				"expected", n.OperatorAddress.Hex(),
-				"persisted", nodeState.OperatorAddress)
+			return fmt.Errorf("operator address mismatch: persisted state has %s but node is configured as %s — use a separate data directory or correct the operator address",
+				nodeState.OperatorAddress, n.OperatorAddress.Hex())
 		}
 
 		if nodeState.LastProcessedBoundary > 0 {

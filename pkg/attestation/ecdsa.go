@@ -155,11 +155,12 @@ func (e *ECDSAAttestationMethod) Verify(request *AttestationRequest) (*types.Att
 	message := fmt.Sprintf("%s-%s-%s", request.AppID, string(request.Challenge), publicKeyHex)
 	messageHash := crypto.Keccak256([]byte(message))
 
-	// Verify signature
-	signature := request.Attestation
-	if len(signature) != 65 {
-		return nil, fmt.Errorf("invalid signature length: expected 65 bytes, got %d", len(signature))
+	// Verify signature — copy to avoid mutating the caller's slice
+	if len(request.Attestation) != 65 {
+		return nil, fmt.Errorf("invalid signature length: expected 65 bytes, got %d", len(request.Attestation))
 	}
+	signature := make([]byte, 65)
+	copy(signature, request.Attestation)
 
 	// Ethereum signatures have recovery byte at the end, need to remove it for verification
 	if signature[64] >= 27 {
