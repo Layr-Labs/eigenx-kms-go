@@ -194,6 +194,11 @@ func (r *RedisPersistence) LoadKeyShareVersion(timestamp int64) (*types.KeyShare
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal KeyShareVersion: %w", err)
 	}
+	if version == nil {
+		// A JSON null literal unmarshals into a nil pointer; reject it so
+		// callers can distinguish corrupt storage from "not found".
+		return nil, fmt.Errorf("stored KeyShareVersion at key %q is a JSON null", key)
+	}
 
 	return version, nil
 }
@@ -252,6 +257,11 @@ func (r *RedisPersistence) ListKeyShareVersions() ([]*types.KeyShareVersion, err
 		if err != nil {
 			r.logger.Sugar().Warnw("Failed to unmarshal KeyShareVersion, skipping",
 				"key", keys[i], "error", err)
+			continue
+		}
+		if version == nil {
+			r.logger.Sugar().Warnw("KeyShareVersion stored as JSON null, skipping",
+				"key", keys[i])
 			continue
 		}
 
@@ -386,6 +396,9 @@ func (r *RedisPersistence) LoadNodeState() (*persistence.NodeState, error) {
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal NodeState: %w", err)
 	}
+	if state == nil {
+		return nil, fmt.Errorf("stored NodeState is a JSON null")
+	}
 
 	return state, nil
 }
@@ -452,6 +465,9 @@ func (r *RedisPersistence) LoadProtocolSession(sessionTimestamp int64) (*persist
 	err = json.Unmarshal(data, &session)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal ProtocolSessionState: %w", err)
+	}
+	if session == nil {
+		return nil, fmt.Errorf("stored ProtocolSessionState at key %q is a JSON null", key)
 	}
 
 	return session, nil
@@ -533,6 +549,11 @@ func (r *RedisPersistence) ListProtocolSessions() ([]*persistence.ProtocolSessio
 		if err != nil {
 			r.logger.Sugar().Warnw("Failed to unmarshal ProtocolSessionState, skipping",
 				"key", keys[i], "error", err)
+			continue
+		}
+		if session == nil {
+			r.logger.Sugar().Warnw("ProtocolSessionState stored as JSON null, skipping",
+				"key", keys[i])
 			continue
 		}
 

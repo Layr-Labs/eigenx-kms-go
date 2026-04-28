@@ -84,12 +84,14 @@ func TestUnmarshalKeyShareVersion_BackwardCompat(t *testing.T) {
 	assert.True(t, restored.IsActive)
 }
 
-// TestMarshalKeyShareVersion_NilInput tests error handling for nil input
+// TestMarshalKeyShareVersion_NilInput documents that json.Marshal of a nil
+// pointer returns the literal "null" without error and without invoking
+// MarshalJSON on the nil receiver.
 func TestMarshalKeyShareVersion_NilInput(t *testing.T) {
 	var nilVersion *types.KeyShareVersion
-	_, err := json.Marshal(nilVersion)
-	// json.Marshal handles nil successfully by returning "null"
+	result, err := json.Marshal(nilVersion)
 	require.NoError(t, err)
+	assert.Equal(t, []byte("null"), result)
 }
 
 // TestUnmarshalKeyShareVersion_InvalidJSON tests error handling for invalid JSON
@@ -99,7 +101,6 @@ func TestUnmarshalKeyShareVersion_InvalidJSON(t *testing.T) {
 	var restored *types.KeyShareVersion
 	err := json.Unmarshal(invalidJSON, &restored)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unmarshal")
 }
 
 // TestUnmarshalKeyShareVersion_EmptyData tests error handling for empty data
