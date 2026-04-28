@@ -2,13 +2,10 @@ package node
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"slices"
-	"strings"
 	"time"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
@@ -110,6 +107,10 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "rsa_pubkey_tmp too large", http.StatusBadRequest)
 		return
 	}
+	if len(req.ExtraData) > types.MaxExtraDataSize {
+		http.Error(w, fmt.Sprintf("extra_data exceeds 1MB limit (%d bytes)", len(req.ExtraData)), http.StatusBadRequest)
+		return
+	}
 
 	s.node.logger.Sugar().Infow("Processing secrets request", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "attestation_method", req.AttestationMethod)
 
@@ -122,11 +123,13 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Step 2: Verify attestation using AttestationManager
 	attestReq := &attestation.AttestationRequest{
-		Method:      req.AttestationMethod,
-		AppID:       req.AppID,
-		Attestation: req.Attestation,
-		Challenge:   req.Challenge,
-		PublicKey:   req.PublicKey,
+		Method:       req.AttestationMethod,
+		AppID:        req.AppID,
+		Attestation:  req.Attestation,
+		Challenge:    req.Challenge,
+		PublicKey:    req.PublicKey,
+		RSAPubKeyTmp: req.RSAPubKeyTmp,
+		ExtraData:    req.ExtraData,
 	}
 
 	claims, err := s.node.attestationManager.VerifyWithMethod(req.AttestationMethod, attestReq)
@@ -149,28 +152,9 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 2c: For GCP/Intel attestation, verify the nonce binds rsa_pubkey_tmp to the attestation
-	// token, preventing a MITM from substituting a different ephemeral RSA key (KMS-004).
-	if req.AttestationMethod == "gcp" || req.AttestationMethod == "intel" {
-		h := sha256.Sum256(req.RSAPubKeyTmp)
-		expectedNonce := hex.EncodeToString(h[:])
-		if strings.ToLower(claims.Nonce) != expectedNonce {
-			s.node.logger.Sugar().Warnw("Attestation nonce mismatch: rsa_pubkey_tmp not bound to attestation token",
-				"node_id", s.node.OperatorAddress.Hex(),
-				"app_id", req.AppID)
-			http.Error(w, "attestation nonce mismatch", http.StatusUnauthorized)
-			return
-		}
-
-		// Step 2d: Reject replayed attestation JWTs by tracking the jti claim.
-		// This prevents DoS/replay attacks where a valid JWT is submitted multiple times.
-		if claims.JTI == "" {
-			s.node.logger.Sugar().Warnw("Attestation token missing jti claim",
-				"node_id", s.node.OperatorAddress.Hex(),
-				"app_id", req.AppID)
-			http.Error(w, "attestation token missing jti", http.StatusUnauthorized)
-			return
-		}
+	// Reject replayed attestation tokens by tracking JTI claim.
+	// Any method that sets JTI (GCP, Intel, future providers) gets replay protection automatically.
+	if claims.JTI != "" {
 		if !s.checkAndStoreJTI(claims.JTI, claims.ExpiresAt) {
 			s.node.logger.Sugar().Warnw("Replayed attestation token rejected",
 				"node_id", s.node.OperatorAddress.Hex(),
@@ -257,6 +241,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		EncryptedEnv:        release.EncryptedEnv,
 		PublicEnv:           release.PublicEnv,
 		EncryptedPartialSig: encryptedPartialSig,
+		ExtraData:           req.ExtraData,
 	}
 
 	// Return JSON response

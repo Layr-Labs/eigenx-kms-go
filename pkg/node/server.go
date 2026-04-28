@@ -60,18 +60,19 @@ Client Request Flow:
     - Client collects ⌈2n/3⌉ signatures to recover app private key
 
   POST /secrets:
-    - Request: { appID, attestationMethod, attestation, rsaPubKey, attestTime, challenge?, publicKey? }
-    - attestationMethod: "gcp" (default), "intel", or "ecdsa"
-    - For GCP/Intel: attestation contains JWT token
-    - For ECDSA: attestation contains signature, challenge and publicKey required
-    - Validates attestation and image digest
-    - Returns encrypted environment + RSA-encrypted partial signature
+    - Request: { appID, attestationMethod, attestation, rsaPubKey, attestTime, challenge?, publicKey?, extraData? }
+    - attestationMethod: "gcp" (default), "intel", "ecdsa", or any registered method
+    - Each method's Verify() handles its own binding verification (nonce, PCR, etc.)
+    - extraData: optional caller-supplied data (max 1 MB) bound into attestation by supporting methods
+    - JTI replay protection applies automatically to any method that sets claims.JTI
+    - Returns encrypted environment + RSA-encrypted partial signature + echoed extraData
     - Used by TEE applications for secret retrieval
 
     Examples:
-      GCP attestation:
+      GCP attestation with extra_data:
         { "app_id": "my-app", "attestation_method": "gcp",
-          "attestation": "<jwt-token>", "rsa_pubkey_tmp": "<pubkey>" }
+          "attestation": "<jwt-token>", "rsa_pubkey_tmp": "<pubkey>",
+          "extra_data": "<base64-encoded-payload>" }
 
       ECDSA attestation:
         { "app_id": "my-app", "attestation_method": "ecdsa",
@@ -165,8 +166,18 @@ func NewServer(node *Node, port int) *Server {
 	// App signing endpoint
 	mux.HandleFunc("/app/sign", rateLimited(50, 100, concurrencyLimit(20, maxBodySize(16<<10, s.handleAppSign))))
 
-	// Secrets endpoint for TEE applications
-	mux.HandleFunc("/secrets", rateLimited(10, 20, concurrencyLimit(10, maxBodySize(64<<10, s.handleSecretsRequest))))
+	// Secrets endpoint for TEE applications.
+	//
+	// Body limit budget: extra_data can be up to types.MaxExtraDataSize (1 MB).
+	// It's a []byte field, so json.Marshal base64-encodes it, inflating the
+	// on-wire size by ~37% to ~1.37 MB. Plus JSON field overhead (object
+	// wrappers, other fields, base64-encoded Attestation, RSAPubKeyTmp, etc.)
+	// we need headroom above 1.37 MB. 2 MB gives a safe ceiling without
+	// opening a DoS surface noticeably wider than 1 MB. The authoritative
+	// size check against types.MaxExtraDataSize still happens in the
+	// handler on the decoded bytes — this middleware limit is just
+	// "the JSON body must physically fit."
+	mux.HandleFunc("/secrets", rateLimited(10, 20, concurrencyLimit(10, maxBodySize(2<<20, s.handleSecretsRequest))))
 
 	// Public key endpoint for clients
 	mux.HandleFunc("/pubkey", s.handleGetCommitments)
