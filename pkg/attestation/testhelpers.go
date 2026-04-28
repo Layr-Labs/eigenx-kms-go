@@ -22,6 +22,9 @@ func NewStubManager() *AttestationManager {
 	// Register stub Intel method
 	_ = manager.RegisterMethod(&StubMethod{methodName: "intel"})
 
+	// Register stub TPM method
+	_ = manager.RegisterMethod(&StubTPMMethod{})
+
 	return manager
 }
 
@@ -65,5 +68,27 @@ func (s *StubECDSAMethod) Verify(request *AttestationRequest) (*types.Attestatio
 		ImageDigest: "ecdsa:unverified",
 		IssuedAt:    0,
 		PublicKey:   request.PublicKey,
+	}, nil
+}
+
+// StubTPMMethod is a stub TPM attestation method for testing
+type StubTPMMethod struct{}
+
+func (s *StubTPMMethod) Name() string {
+	return "tpm"
+}
+
+func (s *StubTPMMethod) Verify(request *AttestationRequest) (*types.AttestationClaims, error) {
+	// Parse the attestation to extract claims if it's JSON
+	var claims types.AttestationClaims
+	if err := json.Unmarshal(request.Attestation, &claims); err == nil {
+		return &claims, nil
+	}
+
+	// Fallback to default test claims
+	return &types.AttestationClaims{
+		AppID:       request.AppID,
+		ImageDigest: "tpm:unverified",
+		IssuedAt:    0,
 	}, nil
 }
