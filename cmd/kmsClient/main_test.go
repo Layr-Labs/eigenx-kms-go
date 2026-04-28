@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -43,4 +44,61 @@ func TestWriteSecretFile(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, []byte("fresh"), got)
 	})
+}
+
+func TestPrepareOutputPath(t *testing.T) {
+	cwd, err := os.Getwd()
+	require.NoError(t, err)
+
+	tests := []struct {
+		name        string
+		input       string
+		wantErr     string // substring; empty means no error expected
+		wantCleaned string // only checked when wantErr == ""
+	}{
+		{
+			name:    "empty path is rejected",
+			input:   "",
+			wantErr: "output path is empty",
+		},
+		{
+			name:    "trailing slash rejected as directory",
+			input:   "output/",
+			wantErr: "is a directory",
+		},
+		{
+			name:    "root path rejected",
+			input:   "/",
+			wantErr: "is a directory",
+		},
+		{
+			name:        "relative path is resolved to absolute",
+			input:       "relative/path.bin",
+			wantCleaned: filepath.Join(cwd, "relative", "path.bin"),
+		},
+		{
+			name:        "valid absolute path returned as-is",
+			input:       "/valid/abs/path.bin",
+			wantCleaned: "/valid/abs/path.bin",
+		},
+		{
+			name:        "absolute path is cleaned of redundant separators",
+			input:       "/valid//abs/./path.bin",
+			wantCleaned: "/valid/abs/path.bin",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := prepareOutputPath(tc.input)
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				require.True(t, strings.Contains(err.Error(), tc.wantErr),
+					"error %q should contain %q", err.Error(), tc.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.wantCleaned, got)
+		})
+	}
 }

@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/Layr-Labs/chain-indexer/pkg/clients/ethereum"
 	"github.com/ethereum/go-ethereum/common/hexutil"
@@ -194,6 +195,7 @@ func encryptCommand(c *cli.Context) error {
 			return fmt.Errorf("failed to write to file: %w", err)
 		}
 		fmt.Printf("✅ Encrypted data written to: %s\n", cleanPath)
+		fmt.Fprintf(os.Stderr, "note: output file written with mode 0600 (owner read/write only); verify perms if you chmod it wider\n")
 	} else {
 		fmt.Printf("✅ Encrypted data: %s\n", encryptedHex)
 	}
@@ -230,8 +232,11 @@ func decryptCommand(c *cli.Context) error {
 		if readErr != nil {
 			return fmt.Errorf("failed to read encrypted data file: %w", readErr)
 		}
+		// Use hexutil.Decode so we accept the 0x-prefixed output that
+		// `encrypt --output` writes; TrimSpace handles trailing newlines
+		// from editors or `echo`.
 		var decodeErr error
-		encryptedData, decodeErr = hex.DecodeString(string(fileData))
+		encryptedData, decodeErr = hexutil.Decode(strings.TrimSpace(string(fileData)))
 		if decodeErr != nil {
 			return fmt.Errorf("failed to decode hex data from file: %w", decodeErr)
 		}
@@ -308,19 +313,26 @@ func getPubkeyCommand(c *cli.Context) error {
 // We open-then-chmod-then-write so the secret is never on disk under the
 // wrong mode: after OpenFile the file is opened for writing but still
 // zero-byte, so the window between OpenFile and Chmod exposes nothing.
-func writeSecretFile(path string, data []byte) error {
+//
+// Uses a named return so the deferred Close can surface flush/close errors
+// (e.g. EIO on some filesystems) without a double-close.
+func writeSecretFile(path string, data []byte) (err error) {
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0600)
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() {
+		if cerr := f.Close(); err == nil && cerr != nil {
+			err = cerr
+		}
+	}()
 	if err := f.Chmod(0600); err != nil {
 		return fmt.Errorf("secure file permissions: %w", err)
 	}
 	if _, err := f.Write(data); err != nil {
 		return err
 	}
-	return f.Close()
+	return nil
 }
 
 // prepareOutputPath cleans and absolutizes a user-supplied output path. It
