@@ -2,6 +2,7 @@ package types
 
 import (
 	"bytes"
+	"encoding/json"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
@@ -21,6 +22,21 @@ type KeyShareVersion struct {
 	MasterPublicKey *G2Point    // Pre-computed master public key for threshold agreement
 	IsActive        bool        // Whether this version is the active one
 	ParticipantIDs  []int64     // Which participants were in the operator set for this version
+}
+
+// MarshalJSON implements json.Marshaler. The Alias type strips the method
+// set so default encoding is used, avoiding infinite recursion.
+// TODO: wrap PrivateShare with an encrypted field before persisting.
+func (ksv *KeyShareVersion) MarshalJSON() ([]byte, error) {
+	type Alias KeyShareVersion
+	return json.Marshal((*Alias)(ksv))
+}
+
+// UnmarshalJSON implements json.Unmarshaler. The Alias type strips the method
+// set so default decoding is used, avoiding infinite recursion.
+func (ksv *KeyShareVersion) UnmarshalJSON(data []byte) error {
+	type Alias KeyShareVersion
+	return json.Unmarshal(data, (*Alias)(ksv))
 }
 
 // G1Point represents a point on BLS12-381 G1 (used for signatures)
