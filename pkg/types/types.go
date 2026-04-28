@@ -2,6 +2,7 @@ package types
 
 import (
 	"bytes"
+	"encoding/json"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
@@ -11,6 +12,8 @@ import (
 
 const KMSJWTAudience = "EigenX KMS"
 
+const MaxExtraDataSize = 1_048_576 // 1 MB
+
 // KeyShareVersion represents a versioned set of key shares
 type KeyShareVersion struct {
 	Version         int64       // Unix timestamp (seconds) of the block that triggered this key version
@@ -19,6 +22,21 @@ type KeyShareVersion struct {
 	MasterPublicKey *G2Point    // Pre-computed master public key for threshold agreement
 	IsActive        bool        // Whether this version is the active one
 	ParticipantIDs  []int64     // Which participants were in the operator set for this version
+}
+
+// MarshalJSON implements json.Marshaler. The Alias type strips the method
+// set so default encoding is used, avoiding infinite recursion.
+// TODO: wrap PrivateShare with an encrypted field before persisting.
+func (ksv *KeyShareVersion) MarshalJSON() ([]byte, error) {
+	type Alias KeyShareVersion
+	return json.Marshal((*Alias)(ksv))
+}
+
+// UnmarshalJSON implements json.Unmarshaler. The Alias type strips the method
+// set so default decoding is used, avoiding infinite recursion.
+func (ksv *KeyShareVersion) UnmarshalJSON(data []byte) error {
+	type Alias KeyShareVersion
+	return json.Unmarshal(data, (*Alias)(ksv))
 }
 
 // G1Point represents a point on BLS12-381 G1 (used for signatures)
@@ -113,6 +131,7 @@ type SecretsRequestV1 struct {
 	// ECDSA-specific fields (only used when attestation_method is "ecdsa")
 	Challenge []byte `json:"challenge,omitempty"`  // Challenge for ECDSA attestation
 	PublicKey []byte `json:"public_key,omitempty"` // Public key for ECDSA attestation
+	ExtraData []byte `json:"extra_data,omitempty"` // optional caller-supplied data bound into attestation nonce (max 1 MB)
 }
 
 // SecretsResponseV1 represents the response with encrypted secrets
@@ -120,6 +139,7 @@ type SecretsResponseV1 struct {
 	EncryptedEnv        string `json:"encrypted_env"`         // AES encrypted env vars
 	PublicEnv           string `json:"public_env"`            // Plain text env
 	EncryptedPartialSig []byte `json:"encrypted_partial_sig"` // RSA encrypted partial sig
+	ExtraData           []byte `json:"extra_data,omitempty"`  // echoed from request when present
 }
 
 // ContainerPolicy defines the expected container execution parameters for an app release.
@@ -144,6 +164,7 @@ type AttestationClaims struct {
 	ExpiresAt       int64 // Unix timestamp; used to expire JTI cache entries
 	PublicKey       []byte
 	ContainerPolicy ContainerPolicy
+	ExtraData       []byte // caller-supplied data bound into attestation
 }
 
 // Release represents application release data from on-chain registry
