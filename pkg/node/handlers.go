@@ -22,7 +22,7 @@ func (s *Server) validateAuthenticatedMessage(r *http.Request, expectedRecipient
 	if err := json.NewDecoder(r.Body).Decode(&authMsg); err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to parse authenticated message: %w", err)
 	}
-	s.node.logger.Sugar().Infow("Received authenticated message wrapper", "msg", string(authMsg.Payload))
+	s.node.logger.Sugar().Debugw("Received authenticated message wrapper", "payload_len", len(authMsg.Payload))
 	// First decode payload to get sender address and session timestamp
 	var baseMsg struct {
 		FromOperatorAddress common.Address `json:"fromOperatorAddress"`
