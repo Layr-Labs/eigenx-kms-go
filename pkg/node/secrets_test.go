@@ -910,4 +910,3 @@ func testSecretsEndpointExtraDataTooLarge(t *testing.T) {
 		t.Errorf("Expected error message about 1MB limit, got: %s", w.Body.String())
 	}
 }
-
