@@ -22,19 +22,16 @@ type KeyShareVersion struct {
 	ParticipantIDs  []int64     // Which participants were in the operator set for this version
 }
 
-// MarshalJSON implements the json.Marshaler interface.
-// The type Alias trick avoids infinite recursion by stripping the
-// MarshalJSON method from the aliased type so the default tag-driven
-// encoding is used.
+// MarshalJSON implements json.Marshaler. The Alias type strips the method
+// set so default encoding is used, avoiding infinite recursion.
+// TODO: wrap PrivateShare with an encrypted field before persisting.
 func (ksv *KeyShareVersion) MarshalJSON() ([]byte, error) {
 	type Alias KeyShareVersion
 	return json.Marshal((*Alias)(ksv))
 }
 
-// UnmarshalJSON implements the json.Unmarshaler interface.
-// The type Alias trick avoids infinite recursion by stripping the
-// UnmarshalJSON method from the aliased type so the default tag-driven
-// decoding is used.
+// UnmarshalJSON implements json.Unmarshaler. The Alias type strips the method
+// set so default decoding is used, avoiding infinite recursion.
 func (ksv *KeyShareVersion) UnmarshalJSON(data []byte) error {
 	type Alias KeyShareVersion
 	return json.Unmarshal(data, (*Alias)(ksv))

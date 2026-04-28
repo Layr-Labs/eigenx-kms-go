@@ -397,7 +397,7 @@ func (r *RedisPersistence) LoadNodeState() (*persistence.NodeState, error) {
 		return nil, fmt.Errorf("failed to unmarshal NodeState: %w", err)
 	}
 	if state == nil {
-		return nil, fmt.Errorf("stored NodeState is a JSON null")
+		return nil, fmt.Errorf("stored NodeState at key %q is a JSON null", key)
 	}
 
 	return state, nil

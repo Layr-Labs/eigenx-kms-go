@@ -23,19 +23,15 @@ type NodeState struct {
 	OperatorAddress string `json:"operatorAddress"`
 }
 
-// MarshalJSON implements the json.Marshaler interface.
-// The type Alias trick avoids infinite recursion by stripping the
-// MarshalJSON method from the aliased type so the default tag-driven
-// encoding is used.
+// MarshalJSON implements json.Marshaler. The Alias type strips the method
+// set so default encoding is used, avoiding infinite recursion.
 func (ns *NodeState) MarshalJSON() ([]byte, error) {
 	type Alias NodeState
 	return json.Marshal((*Alias)(ns))
 }
 
-// UnmarshalJSON implements the json.Unmarshaler interface.
-// The type Alias trick avoids infinite recursion by stripping the
-// UnmarshalJSON method from the aliased type so the default tag-driven
-// decoding is used.
+// UnmarshalJSON implements json.Unmarshaler. The Alias type strips the method
+// set so default decoding is used, avoiding infinite recursion.
 func (ns *NodeState) UnmarshalJSON(data []byte) error {
 	type Alias NodeState
 	return json.Unmarshal(data, (*Alias)(ns))
@@ -80,19 +76,15 @@ type ProtocolSessionState struct {
 	Acknowledgements map[int64]map[int64]*types.Acknowledgement `json:"acknowledgements"`
 }
 
-// MarshalJSON implements the json.Marshaler interface.
-// The type Alias trick avoids infinite recursion by stripping the
-// MarshalJSON method from the aliased type so the default tag-driven
-// encoding is used.
+// MarshalJSON implements json.Marshaler. The Alias type strips the method
+// set so default encoding is used, avoiding infinite recursion.
 func (pss *ProtocolSessionState) MarshalJSON() ([]byte, error) {
 	type Alias ProtocolSessionState
 	return json.Marshal((*Alias)(pss))
 }
 
-// UnmarshalJSON implements the json.Unmarshaler interface.
-// The type Alias trick avoids infinite recursion by stripping the
-// UnmarshalJSON method from the aliased type so the default tag-driven
-// decoding is used.
+// UnmarshalJSON implements json.Unmarshaler. The Alias type strips the method
+// set so default decoding is used, avoiding infinite recursion.
 func (pss *ProtocolSessionState) UnmarshalJSON(data []byte) error {
 	type Alias ProtocolSessionState
 	return json.Unmarshal(data, (*Alias)(pss))

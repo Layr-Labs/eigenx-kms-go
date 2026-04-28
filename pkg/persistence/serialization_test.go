@@ -94,8 +94,9 @@ func TestMarshalKeyShareVersion_NilInput(t *testing.T) {
 	assert.Equal(t, []byte("null"), result)
 }
 
-// TestUnmarshalKeyShareVersion_InvalidJSON tests error handling for invalid JSON
-func TestUnmarshalKeyShareVersion_InvalidJSON(t *testing.T) {
+// TestUnmarshalKeyShareVersion_TypeMismatch verifies that syntactically
+// valid JSON with a mismatched field type produces an error.
+func TestUnmarshalKeyShareVersion_TypeMismatch(t *testing.T) {
 	invalidJSON := []byte(`{"version": "not a number"}`)
 
 	var restored *types.KeyShareVersion
