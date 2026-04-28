@@ -35,7 +35,7 @@ func newTrackedWeb3SignerClient(t *testing.T, cfg *web3signer.Config, l *zap.Log
 	if err != nil {
 		return nil, err
 	}
-	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport := tests.CloneDefaultTransport()
 	client.SetHttpClient(&http.Client{Transport: transport, Timeout: 10 * time.Second})
 	t.Cleanup(transport.CloseIdleConnections)
 	return client, nil

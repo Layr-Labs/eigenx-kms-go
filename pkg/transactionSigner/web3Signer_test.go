@@ -61,7 +61,7 @@ func Test_Web3TransactionSigner_SendTransaction(t *testing.T) {
 
 	// Install an owned HTTP transport so CloseIdleConnections can tear down
 	// the persistConn read/write loop goroutines created for RPC calls.
-	rpcTransport := http.DefaultTransport.(*http.Transport).Clone()
+	rpcTransport := tests.CloneDefaultTransport()
 	l2Client.SetHttpClient(&http.Client{Transport: rpcTransport, Timeout: 10 * time.Second})
 	t.Cleanup(rpcTransport.CloseIdleConnections)
 
@@ -89,7 +89,7 @@ func Test_Web3TransactionSigner_SendTransaction(t *testing.T) {
 
 	// Install an owned HTTP transport on the web3signer so idle connections
 	// can be torn down at test end.
-	w3sTransport := http.DefaultTransport.(*http.Transport).Clone()
+	w3sTransport := tests.CloneDefaultTransport()
 	web3SignerClient.SetHttpClient(&http.Client{Transport: w3sTransport, Timeout: 10 * time.Second})
 	t.Cleanup(w3sTransport.CloseIdleConnections)
 

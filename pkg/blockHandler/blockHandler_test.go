@@ -462,7 +462,7 @@ func Test_BlockHandler(t *testing.T) {
 
 		// Install an owned HTTP transport so CloseIdleConnections can tear down
 		// the persistConn read/write loop goroutines created while polling.
-		rpcTransport := http.DefaultTransport.(*http.Transport).Clone()
+		rpcTransport := tests.CloneDefaultTransport()
 		l1EthereumClient.SetHttpClient(&http.Client{Transport: rpcTransport, Timeout: 10 * time.Second})
 		t.Cleanup(rpcTransport.CloseIdleConnections)
 
