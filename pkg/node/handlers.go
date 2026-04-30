@@ -32,7 +32,6 @@ func (s *Server) validateAuthenticatedMessage(r *http.Request, expectedRecipient
 	if err := json.Unmarshal(authMsg.Payload, &baseMsg); err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to parse message addresses: %w", err)
 	}
-	// s.node.logger.Sugar().Infow("received authenticated message", "msg", baseMsg)
 
 	// Verify message is intended for this node
 	if baseMsg.ToOperatorAddress != expectedRecipient {

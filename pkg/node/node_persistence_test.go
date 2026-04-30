@@ -18,6 +18,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/keystore"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering/localPeeringDataFetcher"
@@ -1046,4 +1047,42 @@ func testSessionPersistence_CleanupOnCompletion(t *testing.T) {
 	assert.Nil(t, loaded, "Deleted session should not be loadable")
 
 	t.Logf("✓ Session successfully deleted on completion")
+}
+
+// TestRestoreState_OperatorAddressMismatch verifies that RestoreState returns
+// a hard error when the persisted operator address doesn't match the configured one.
+// This prevents a node from accidentally using key shares belonging to a different operator.
+func TestRestoreState_OperatorAddressMismatch(t *testing.T) {
+	tmpDir := t.TempDir()
+	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
+
+	persistenceLayer, err := persistenceBadger.NewBadgerPersistence(tmpDir, testLogger)
+	require.NoError(t, err)
+	defer func() { _ = persistenceLayer.Close() }()
+
+	// Persist state with operator address "A"
+	err = persistenceLayer.SaveNodeState(&persistence.NodeState{
+		OperatorAddress:       "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		LastProcessedBoundary: 100,
+		NodeStartTime:         time.Now().Unix(),
+	})
+	require.NoError(t, err)
+
+	// Construct a minimal node configured as operator address "B"
+	node := &Node{
+		OperatorAddress: common.HexToAddress("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
+		logger:          testLogger,
+		keyStore:        keystore.NewKeyStore(),
+		persistence:     persistenceLayer,
+		ChainID:         config.ChainId_EthereumAnvil,
+	}
+
+	// RestoreState should return a hard error, not just warn
+	err = node.RestoreState()
+	require.Error(t, err, "RestoreState must fail when operator address mismatches persisted state")
+	assert.Contains(t, err.Error(), "operator address mismatch")
+	assert.Contains(t, err.Error(), "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA") // persisted address (raw string)
+	assert.Contains(t, err.Error(), "0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB") // configured address (EIP-55 checksummed)
+
+	t.Logf("✓ RestoreState correctly refuses to start with mismatched operator address")
 }

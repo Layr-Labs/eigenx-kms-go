@@ -54,8 +54,11 @@ func NewClient(nodeID int64, operatorAddr common.Address, signer transportSigner
 }
 
 // WithLogger sets the logger on the transport client.
+// A nil logger is ignored (the existing no-op logger is retained).
 func (c *Client) WithLogger(logger *zap.Logger) *Client {
-	c.logger = logger
+	if logger != nil {
+		c.logger = logger
+	}
 	return c
 }
 
@@ -224,6 +227,9 @@ func (c *Client) BroadcastDKGCommitments(operators []*peering.OperatorSetPeer, c
 			c.log().Sugar().Warnw("Failed to send DKG commitment", "peer", op.OperatorAddress.Hex(), "error", err)
 			continue
 		}
+		if resp.StatusCode != http.StatusOK {
+			c.log().Sugar().Warnw("DKG commitment rejected", "peer", op.OperatorAddress.Hex(), "status", resp.StatusCode)
+		}
 		_ = resp.Body.Close()
 	}
 	return nil
@@ -264,6 +270,9 @@ func (c *Client) BroadcastReshareCommitments(operators []*peering.OperatorSetPee
 		if err != nil {
 			c.log().Sugar().Warnw("Failed to send reshare commitment", "peer", op.OperatorAddress.Hex(), "error", err)
 			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			c.log().Sugar().Warnw("Reshare commitment rejected", "peer", op.OperatorAddress.Hex(), "status", resp.StatusCode)
 		}
 		_ = resp.Body.Close()
 	}
