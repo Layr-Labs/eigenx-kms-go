@@ -1,6 +1,7 @@
 package persistence
 
 import (
+	"encoding/json"
 	"math/big"
 	"testing"
 
@@ -25,14 +26,11 @@ func TestMarshalUnmarshalKeyShareVersion_RoundTrip(t *testing.T) {
 		IsActive:       false,
 		ParticipantIDs: []int64{10, 20, 30},
 	}
-
-	// Marshal to JSON
-	data, err := MarshalKeyShareVersion(original)
+	data, err := json.Marshal(original)
 	require.NoError(t, err)
 	require.NotEmpty(t, data)
-
-	// Unmarshal from JSON
-	restored, err := UnmarshalKeyShareVersion(data)
+	var restored *types.KeyShareVersion
+	err = json.Unmarshal(data, &restored)
 	require.NoError(t, err)
 	require.NotNil(t, restored)
 
@@ -60,10 +58,11 @@ func TestMarshalUnmarshalKeyShareVersion_WithMasterPublicKey(t *testing.T) {
 		ParticipantIDs:  []int64{1, 2, 3},
 	}
 
-	data, err := MarshalKeyShareVersion(original)
+	data, err := json.Marshal(original)
 	require.NoError(t, err)
 
-	restored, err := UnmarshalKeyShareVersion(data)
+	var restored *types.KeyShareVersion
+	err = json.Unmarshal(data, &restored)
 	require.NoError(t, err)
 	require.NotNil(t, restored)
 
@@ -76,7 +75,8 @@ func TestUnmarshalKeyShareVersion_BackwardCompat(t *testing.T) {
 	// JSON without MasterPublicKey field (simulating data from old version)
 	oldJSON := []byte(`{"Version":1234567890,"PrivateShare":null,"Commitments":[{"CompressedBytes":"CgoeHg=="}],"IsActive":true,"ParticipantIDs":[1,2,3]}`)
 
-	restored, err := UnmarshalKeyShareVersion(oldJSON)
+	var restored *types.KeyShareVersion
+	err := json.Unmarshal(oldJSON, &restored)
 	require.NoError(t, err)
 	require.NotNil(t, restored)
 	assert.Nil(t, restored.MasterPublicKey, "MasterPublicKey should be nil for old data without the field")
@@ -84,27 +84,32 @@ func TestUnmarshalKeyShareVersion_BackwardCompat(t *testing.T) {
 	assert.True(t, restored.IsActive)
 }
 
-// TestMarshalKeyShareVersion_NilInput tests error handling for nil input
+// TestMarshalKeyShareVersion_NilInput documents that json.Marshal of a nil
+// pointer returns the literal "null" without error and without invoking
+// MarshalJSON on the nil receiver.
 func TestMarshalKeyShareVersion_NilInput(t *testing.T) {
-	_, err := MarshalKeyShareVersion(nil)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "nil KeyShareVersion")
+	var nilVersion *types.KeyShareVersion
+	result, err := json.Marshal(nilVersion)
+	require.NoError(t, err)
+	assert.Equal(t, []byte("null"), result)
 }
 
-// TestUnmarshalKeyShareVersion_InvalidJSON tests error handling for invalid JSON
-func TestUnmarshalKeyShareVersion_InvalidJSON(t *testing.T) {
+// TestUnmarshalKeyShareVersion_TypeMismatch verifies that syntactically
+// valid JSON with a mismatched field type produces an error.
+func TestUnmarshalKeyShareVersion_TypeMismatch(t *testing.T) {
 	invalidJSON := []byte(`{"version": "not a number"}`)
 
-	_, err := UnmarshalKeyShareVersion(invalidJSON)
+	var restored *types.KeyShareVersion
+	err := json.Unmarshal(invalidJSON, &restored)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "unmarshal")
 }
 
 // TestUnmarshalKeyShareVersion_EmptyData tests error handling for empty data
 func TestUnmarshalKeyShareVersion_EmptyData(t *testing.T) {
-	_, err := UnmarshalKeyShareVersion([]byte{})
+	var restored *types.KeyShareVersion
+	err := json.Unmarshal([]byte{}, &restored)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "empty data")
+	assert.Contains(t, err.Error(), "unexpected end of JSON input")
 }
 
 // TestMarshalUnmarshalNodeState_RoundTrip tests NodeState serialization
@@ -114,18 +119,13 @@ func TestMarshalUnmarshalNodeState_RoundTrip(t *testing.T) {
 		NodeStartTime:         9876543210,
 		OperatorAddress:       "0x1234567890abcdef",
 	}
-
-	// Marshal
-	data, err := MarshalNodeState(original)
+	data, err := json.Marshal(original)
 	require.NoError(t, err)
 	require.NotEmpty(t, data)
-
-	// Unmarshal
-	restored, err := UnmarshalNodeState(data)
+	var restored *NodeState
+	err = json.Unmarshal(data, &restored)
 	require.NoError(t, err)
 	require.NotNil(t, restored)
-
-	// Verify
 	assert.Equal(t, original.LastProcessedBoundary, restored.LastProcessedBoundary)
 	assert.Equal(t, original.NodeStartTime, restored.NodeStartTime)
 	assert.Equal(t, original.OperatorAddress, restored.OperatorAddress)
@@ -153,18 +153,13 @@ func TestMarshalUnmarshalProtocolSessionState_RoundTrip(t *testing.T) {
 			},
 		},
 	}
-
-	// Marshal
-	data, err := MarshalProtocolSessionState(original)
+	data, err := json.Marshal(original)
 	require.NoError(t, err)
 	require.NotEmpty(t, data)
-
-	// Unmarshal
-	restored, err := UnmarshalProtocolSessionState(data)
+	var restored *ProtocolSessionState
+	err = json.Unmarshal(data, &restored)
 	require.NoError(t, err)
 	require.NotNil(t, restored)
-
-	// Verify
 	assert.Equal(t, original.SessionTimestamp, restored.SessionTimestamp)
 	assert.Equal(t, original.Type, restored.Type)
 	assert.Equal(t, original.Phase, restored.Phase)

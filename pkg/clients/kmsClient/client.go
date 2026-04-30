@@ -45,7 +45,7 @@ type Client struct {
 	avsAddress     string
 	operatorSetID  uint32
 	contractCaller ContractCaller
-	httpClient     *http.Client
+	httpClient     *http.Client // TODO(security): VULN-002 SSRF — validate op.SocketAddress before requests (reject private/loopback IPs, enforce https in prod)
 	logger         *zap.Logger
 }
 
@@ -57,6 +57,7 @@ type SecretsResult struct {
 	PartialSigs     map[int64]types.G1Point
 	ResponseCount   int
 	ThresholdNeeded int
+	ExtraData       []byte // echoed from KMS response
 }
 
 // SecretsOptions configures secret retrieval behavior
@@ -74,6 +75,7 @@ type SecretsOptions struct {
 	// RSA key pair for encrypting partial signatures in transit
 	RSAPrivateKeyPEM []byte // Required: RSA private key in PEM format
 	RSAPublicKeyPEM  []byte // Required: RSA public key in PEM format
+	ExtraData        []byte // optional caller-supplied data bound into attestation (max 1 MB)
 }
 
 // NewClient creates a new KMS client instance with dependency injection
@@ -539,6 +541,9 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 	if len(opts.RSAPrivateKeyPEM) == 0 || len(opts.RSAPublicKeyPEM) == 0 {
 		return nil, fmt.Errorf("RSA key pair is required in options")
 	}
+	if len(opts.ExtraData) > types.MaxExtraDataSize {
+		return nil, fmt.Errorf("extra_data exceeds 1MB limit (%d bytes)", len(opts.ExtraData))
+	}
 
 	c.logger.Sugar().Infow("Starting secret retrieval",
 		"app_id", appID,
@@ -562,6 +567,7 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 		if err != nil {
 			return nil, fmt.Errorf("failed to create ECDSA attestation: %w", err)
 		}
+		req.ExtraData = opts.ExtraData
 
 	case "gcp", "intel":
 		attestationClaims := types.AttestationClaims{
@@ -581,6 +587,7 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 			Attestation:       attestationBytes,
 			RSAPubKeyTmp:      opts.RSAPublicKeyPEM,
 			AttestationTime:   time.Now().Unix(),
+			ExtraData:         opts.ExtraData,
 		}
 
 	default:
@@ -630,6 +637,15 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 
 	c.logger.Sugar().Info("Successfully recovered application private key")
 
+	// SecretsResult.ExtraData returns the caller's input, not responses[0].ExtraData.
+	// Reasoning: for GCP/Intel attestations, extra_data is cryptographically bound
+	// into the attestation nonce on the server side (see GCPAttestationMethod.Verify),
+	// so any in-flight tampering is detected and the request is rejected before
+	// reaching this code path. For ECDSA attestations, extra_data is pass-through
+	// metadata — the server echoes it back unmodified and there's no cryptographic
+	// binding to verify against, so an echo comparison would provide no additional
+	// guarantee beyond what the caller already has. Returning opts.ExtraData keeps
+	// the contract explicit: callers get back exactly what they sent.
 	return &SecretsResult{
 		AppPrivateKey:   *appPrivateKey,
 		EncryptedEnv:    responses[0].EncryptedEnv,
@@ -637,6 +653,7 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 		PartialSigs:     partialSigs,
 		ResponseCount:   len(responses),
 		ThresholdNeeded: threshold,
+		ExtraData:       opts.ExtraData,
 	}, nil
 }
 

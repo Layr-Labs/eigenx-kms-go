@@ -416,7 +416,7 @@ func testZeroConstantDealerPolynomialsDoNotBootstrapSecret(t *testing.T) {
 
 // testCreateCompletionSignature tests completion signature creation
 func testCreateCompletionSignature(t *testing.T) {
-	nodeID := 1
+	nodeID := int64(1)
 	epoch := int64(54321)
 	commitmentHash := [32]byte{1, 2, 3, 4}
 

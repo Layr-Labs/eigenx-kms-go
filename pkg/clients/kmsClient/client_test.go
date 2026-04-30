@@ -581,3 +581,23 @@ func TestGetMasterPublicKey_RollingUpgrade_PartialMPK(t *testing.T) {
 	require.NoError(t, err, "Should fall back to aggregation during rolling upgrade with partial MPK responses")
 	require.NotNil(t, mpk)
 }
+
+func TestRetrieveSecretsWithOptions_ExtraDataTooLarge(t *testing.T) {
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	// Just test the validation — doesn't need full client setup
+	c := &Client{
+		logger: logger,
+	}
+	opts := &SecretsOptions{
+		AttestationMethod: "ecdsa",
+		RSAPrivateKeyPEM:  []byte("key"),
+		RSAPublicKeyPEM:   []byte("pub"),
+		ExtraData:         make([]byte, 1_048_577),
+	}
+
+	_, err = c.RetrieveSecretsWithOptions("app-id", opts)
+	assert.Error(t, err)
+	assert.Contains(t, err.Error(), "extra_data exceeds 1MB limit")
+}

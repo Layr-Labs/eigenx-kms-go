@@ -1,6 +1,7 @@
 package badger
 
 import (
+	"fmt"
 	"math/big"
 	"sync"
 	"testing"
@@ -9,10 +10,21 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/persistence"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	badgerdb "github.com/dgraph-io/badger/v3"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// writeRawBytes bypasses the typed Save* methods and writes raw bytes to a
+// badger key. Used to simulate corrupt storage for null-rejection tests.
+func writeRawBytes(t *testing.T, bp *BadgerPersistence, key string, value []byte) {
+	t.Helper()
+	err := bp.db.Update(func(txn *badgerdb.Txn) error {
+		return txn.Set([]byte(key), value)
+	})
+	require.NoError(t, err)
+}
 
 func TestBadgerPersistence_SaveAndLoadKeyShare(t *testing.T) {
 	tmpDir := t.TempDir()
@@ -565,4 +577,111 @@ func TestBadgerPersistence_Persistence_AcrossRestarts(t *testing.T) {
 	require.NotNil(t, loadedState)
 	assert.Equal(t, nodeState.LastProcessedBoundary, loadedState.LastProcessedBoundary)
 	assert.Equal(t, nodeState.OperatorAddress, loadedState.OperatorAddress)
+}
+
+// TestBadgerPersistence_LoadKeyShareVersion_NullJSON verifies that a stored
+// JSON null literal is rejected with an explicit error rather than silently
+// returning (nil, nil) — which would be indistinguishable from "not found".
+func TestBadgerPersistence_LoadKeyShareVersion_NullJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
+
+	bp, err := NewBadgerPersistence(tmpDir, testLogger)
+	require.NoError(t, err)
+	defer func() { _ = bp.Close() }()
+
+	const timestamp int64 = 1234567890
+	writeRawBytes(t, bp, fmt.Sprintf("%s%d", keyPrefixKeyShare, timestamp), []byte("null"))
+
+	loaded, err := bp.LoadKeyShareVersion(timestamp)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "JSON null")
+	assert.Nil(t, loaded)
+}
+
+// TestBadgerPersistence_LoadNodeState_NullJSON verifies the same guard for
+// the NodeState singleton.
+func TestBadgerPersistence_LoadNodeState_NullJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
+
+	bp, err := NewBadgerPersistence(tmpDir, testLogger)
+	require.NoError(t, err)
+	defer func() { _ = bp.Close() }()
+
+	writeRawBytes(t, bp, keyPrefixNodeState, []byte("null"))
+
+	loaded, err := bp.LoadNodeState()
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "JSON null")
+	assert.Nil(t, loaded)
+}
+
+// TestBadgerPersistence_LoadProtocolSession_NullJSON verifies the same guard
+// for protocol session state.
+func TestBadgerPersistence_LoadProtocolSession_NullJSON(t *testing.T) {
+	tmpDir := t.TempDir()
+	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
+
+	bp, err := NewBadgerPersistence(tmpDir, testLogger)
+	require.NoError(t, err)
+	defer func() { _ = bp.Close() }()
+
+	const sessionTimestamp int64 = 1234567890
+	writeRawBytes(t, bp, fmt.Sprintf("%s%d", keyPrefixSession, sessionTimestamp), []byte("null"))
+
+	loaded, err := bp.LoadProtocolSession(sessionTimestamp)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "JSON null")
+	assert.Nil(t, loaded)
+}
+
+// TestBadgerPersistence_ListKeyShareVersions_SkipsNull verifies that null
+// entries are skipped with a warning rather than surfacing as nil *types.
+func TestBadgerPersistence_ListKeyShareVersions_SkipsNull(t *testing.T) {
+	tmpDir := t.TempDir()
+	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
+
+	bp, err := NewBadgerPersistence(tmpDir, testLogger)
+	require.NoError(t, err)
+	defer func() { _ = bp.Close() }()
+
+	// Store one valid version and one null entry.
+	privateShare := fr.NewElement(uint64(42))
+	valid := &types.KeyShareVersion{
+		Version:      1000,
+		PrivateShare: &privateShare,
+		Commitments:  []types.G2Point{{CompressedBytes: []byte{1, 2, 3}}},
+	}
+	require.NoError(t, bp.SaveKeyShareVersion(valid))
+	writeRawBytes(t, bp, fmt.Sprintf("%s%d", keyPrefixKeyShare, 2000), []byte("null"))
+
+	versions, err := bp.ListKeyShareVersions()
+	require.NoError(t, err)
+	require.Len(t, versions, 1)
+	assert.Equal(t, int64(1000), versions[0].Version)
+}
+
+// TestBadgerPersistence_ListProtocolSessions_SkipsNull verifies the same
+// skip-with-warning behavior for protocol sessions.
+func TestBadgerPersistence_ListProtocolSessions_SkipsNull(t *testing.T) {
+	tmpDir := t.TempDir()
+	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
+
+	bp, err := NewBadgerPersistence(tmpDir, testLogger)
+	require.NoError(t, err)
+	defer func() { _ = bp.Close() }()
+
+	valid := &persistence.ProtocolSessionState{
+		SessionTimestamp: 1000,
+		Type:             "dkg",
+		Phase:            1,
+	}
+	require.NoError(t, bp.SaveProtocolSession(valid))
+	writeRawBytes(t, bp, fmt.Sprintf("%s%d", keyPrefixSession, 2000), []byte("null"))
+
+	sessions, err := bp.ListProtocolSessions()
+	require.NoError(t, err)
+	require.Len(t, sessions, 1)
+	assert.Equal(t, int64(1000), sessions[0].SessionTimestamp)
 }

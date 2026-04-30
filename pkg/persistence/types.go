@@ -1,6 +1,7 @@
 package persistence
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
@@ -20,6 +21,20 @@ type NodeState struct {
 	// OperatorAddress is the Ethereum address of this operator.
 	// Stored for verification that persistence data matches the operator.
 	OperatorAddress string `json:"operatorAddress"`
+}
+
+// MarshalJSON implements json.Marshaler. The Alias type strips the method
+// set so default encoding is used, avoiding infinite recursion.
+func (ns *NodeState) MarshalJSON() ([]byte, error) {
+	type Alias NodeState
+	return json.Marshal((*Alias)(ns))
+}
+
+// UnmarshalJSON implements json.Unmarshaler. The Alias type strips the method
+// set so default decoding is used, avoiding infinite recursion.
+func (ns *NodeState) UnmarshalJSON(data []byte) error {
+	type Alias NodeState
+	return json.Unmarshal(data, (*Alias)(ns))
 }
 
 // ProtocolSessionState captures ephemeral state of a DKG or reshare session.
@@ -59,6 +74,20 @@ type ProtocolSessionState struct {
 	// This tracks which operators have acknowledged which shares.
 	// Nested map structure: dealerID -> map[receiverID]Acknowledgement
 	Acknowledgements map[int64]map[int64]*types.Acknowledgement `json:"acknowledgements"`
+}
+
+// MarshalJSON implements json.Marshaler. The Alias type strips the method
+// set so default encoding is used, avoiding infinite recursion.
+func (pss *ProtocolSessionState) MarshalJSON() ([]byte, error) {
+	type Alias ProtocolSessionState
+	return json.Marshal((*Alias)(pss))
+}
+
+// UnmarshalJSON implements json.Unmarshaler. The Alias type strips the method
+// set so default decoding is used, avoiding infinite recursion.
+func (pss *ProtocolSessionState) UnmarshalJSON(data []byte) error {
+	type Alias ProtocolSessionState
+	return json.Unmarshal(data, (*Alias)(pss))
 }
 
 // IsExpired checks if a protocol session has exceeded its timeout duration.

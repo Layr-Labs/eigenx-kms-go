@@ -10,14 +10,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func toInt64ShareMap(m map[int]*fr.Element) map[int64]*fr.Element {
-	out := make(map[int64]*fr.Element, len(m))
-	for id, share := range m {
-		out[int64(id)] = share
-	}
-	return out
-}
-
 // deriveScalarPoly deterministically maps bytes to a non-zero Fr element.
 func deriveScalarPoly(b []byte) *fr.Element {
 	h := sha256.Sum256(b)
@@ -58,8 +50,8 @@ func FuzzRecoverSecretRoundTrip(f *testing.F) {
 		poly, err := GeneratePolynomial(secret, degree)
 		require.NoError(t, err)
 
-		participantIDs := make([]int, 0, n)
-		for i := 1; i <= n; i++ {
+		participantIDs := make([]int64, 0, n)
+		for i := int64(1); i <= int64(n); i++ {
 			participantIDs = append(participantIDs, i)
 		}
 
@@ -72,7 +64,7 @@ func FuzzRecoverSecretRoundTrip(f *testing.F) {
 		}
 
 		shares := GenerateShares(poly, participantIDs)
-		recovered, err := RecoverSecret(toInt64ShareMap(shares))
+		recovered, err := RecoverSecret(shares)
 		require.NoError(t, err)
 		require.True(t, recovered.Equal(secret), "recovered secret mismatch")
 	})
@@ -100,21 +92,21 @@ func FuzzRecoverSecretTamperedShare(f *testing.F) {
 		poly, err := GeneratePolynomial(secret, degree)
 		require.NoError(t, err)
 
-		participantIDs := make([]int, 0, n)
-		for i := 1; i <= n; i++ {
+		participantIDs := make([]int64, 0, n)
+		for i := int64(1); i <= int64(n); i++ {
 			participantIDs = append(participantIDs, i)
 		}
 		shares := GenerateShares(poly, participantIDs)
 
 		// Tamper one share (different participant) by adding 1.
-		tamperedShares := make(map[int]*fr.Element, len(shares))
+		tamperedShares := make(map[int64]*fr.Element, len(shares))
 		for id, share := range shares {
 			tamperedShares[id] = new(fr.Element).Set(share)
 		}
 		tamperID := participantIDs[len(participantIDs)/2]
 		tamperedShares[tamperID].Add(tamperedShares[tamperID], new(fr.Element).SetUint64(1))
 
-		recovered, err := RecoverSecret(toInt64ShareMap(tamperedShares))
+		recovered, err := RecoverSecret(tamperedShares)
 		if err == nil {
 			require.False(t, recovered.Equal(secret), "tampered shares should not recover original secret")
 		}
@@ -143,20 +135,20 @@ func FuzzRecoverSecretInsufficientShares(f *testing.F) {
 		poly, err := GeneratePolynomial(secret, degree)
 		require.NoError(t, err)
 
-		participantIDs := make([]int, 0, n)
-		for i := 1; i <= n; i++ {
+		participantIDs := make([]int64, 0, n)
+		for i := int64(1); i <= int64(n); i++ {
 			participantIDs = append(participantIDs, i)
 		}
 		shares := GenerateShares(poly, participantIDs)
 
 		// Take only degree shares (insufficient; need degree+1).
-		insufficient := make(map[int]*fr.Element, degree)
+		insufficient := make(map[int64]*fr.Element, degree)
 		for i := 0; i < degree; i++ {
 			id := participantIDs[i]
 			insufficient[id] = shares[id]
 		}
 
-		recovered, err := RecoverSecret(toInt64ShareMap(insufficient))
+		recovered, err := RecoverSecret(insufficient)
 		if err == nil {
 			require.False(t, recovered.Equal(secret), "insufficient shares should not recover original secret")
 		}
@@ -186,8 +178,8 @@ func FuzzRecoverSecretDuplicateParticipants(f *testing.F) {
 		require.NoError(t, err)
 
 		// Build participant IDs with duplicates but ensure at least degree+1 unique IDs.
-		participantIDs := make([]int, 0, n)
-		for i := 1; i <= n; i++ {
+		participantIDs := make([]int64, 0, n)
+		for i := int64(1); i <= int64(n); i++ {
 			participantIDs = append(participantIDs, i)
 		}
 		if len(participantIDs) >= 2 {
@@ -195,7 +187,7 @@ func FuzzRecoverSecretDuplicateParticipants(f *testing.F) {
 		}
 
 		shares := GenerateShares(poly, participantIDs)
-		recovered, err := RecoverSecret(toInt64ShareMap(shares))
+		recovered, err := RecoverSecret(shares)
 		require.NoError(t, err)
 		require.True(t, recovered.Equal(secret), "duplicates should not break recovery when enough unique IDs remain")
 	})
@@ -225,13 +217,13 @@ func FuzzRecoverSecretBoundaryDegrees(f *testing.F) {
 		poly, err := GeneratePolynomial(secret, degree)
 		require.NoError(t, err)
 
-		participantIDs := make([]int, 0, n)
-		for i := 1; i <= n; i++ {
+		participantIDs := make([]int64, 0, n)
+		for i := int64(1); i <= int64(n); i++ {
 			participantIDs = append(participantIDs, i)
 		}
 
 		shares := GenerateShares(poly, participantIDs)
-		recovered, err := RecoverSecret(toInt64ShareMap(shares))
+		recovered, err := RecoverSecret(shares)
 		require.NoError(t, err)
 		require.True(t, recovered.Equal(secret), "boundary degree recovery mismatch")
 	})

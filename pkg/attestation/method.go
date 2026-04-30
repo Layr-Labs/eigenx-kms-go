@@ -33,5 +33,11 @@ type AttestationRequest struct {
 	PublicKey []byte
 
 	// Metadata contains method-specific additional data
-	Metadata map[string]interface{}
+	Metadata map[string]any
+
+	// RSAPubKeyTmp is the ephemeral RSA public key — used for nonce binding verification
+	RSAPubKeyTmp []byte
+
+	// ExtraData is optional caller-supplied data for binding verification
+	ExtraData []byte
 }

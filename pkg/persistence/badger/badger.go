@@ -3,6 +3,7 @@ package badger
 import (
 	"context"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -146,7 +147,7 @@ func (b *BadgerPersistence) SaveKeyShareVersion(version *types.KeyShareVersion) 
 	}
 
 	// Serialize to JSON
-	data, err := persistence.MarshalKeyShareVersion(version)
+	data, err := json.Marshal(version)
 	if err != nil {
 		return fmt.Errorf("failed to marshal KeyShareVersion: %w", err)
 	}
@@ -194,9 +195,15 @@ func (b *BadgerPersistence) LoadKeyShareVersion(timestamp int64) (*types.KeyShar
 	}
 
 	// Deserialize from JSON
-	version, err := persistence.UnmarshalKeyShareVersion(data)
+	var version *types.KeyShareVersion
+	err = json.Unmarshal(data, &version)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal KeyShareVersion: %w", err)
+	}
+	if version == nil {
+		// A JSON null literal unmarshals into a nil pointer; reject it so
+		// callers can distinguish corrupt storage from "not found".
+		return nil, fmt.Errorf("stored KeyShareVersion at key %q is a JSON null", key)
 	}
 
 	return version, nil
@@ -232,10 +239,16 @@ func (b *BadgerPersistence) ListKeyShareVersions() ([]*types.KeyShareVersion, er
 				return fmt.Errorf("failed to read value: %w", err)
 			}
 
-			version, err := persistence.UnmarshalKeyShareVersion(data)
+			var version *types.KeyShareVersion
+			err = json.Unmarshal(data, &version)
 			if err != nil {
 				b.logger.Sugar().Warnw("Failed to unmarshal KeyShareVersion, skipping",
 					"key", string(item.Key()), "error", err)
+				continue
+			}
+			if version == nil {
+				b.logger.Sugar().Warnw("KeyShareVersion stored as JSON null, skipping",
+					"key", string(item.Key()))
 				continue
 			}
 
@@ -341,7 +354,7 @@ func (b *BadgerPersistence) SaveNodeState(state *persistence.NodeState) error {
 	}
 
 	// Serialize to JSON
-	data, err := persistence.MarshalNodeState(state)
+	data, err := json.Marshal(state)
 	if err != nil {
 		return fmt.Errorf("failed to marshal NodeState: %w", err)
 	}
@@ -386,9 +399,13 @@ func (b *BadgerPersistence) LoadNodeState() (*persistence.NodeState, error) {
 	}
 
 	// Deserialize from JSON
-	state, err := persistence.UnmarshalNodeState(data)
+	var state *persistence.NodeState
+	err = json.Unmarshal(data, &state)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal NodeState: %w", err)
+	}
+	if state == nil {
+		return nil, fmt.Errorf("stored NodeState at key %q is a JSON null", keyPrefixNodeState)
 	}
 
 	return state, nil
@@ -408,7 +425,7 @@ func (b *BadgerPersistence) SaveProtocolSession(session *persistence.ProtocolSes
 	}
 
 	// Serialize to JSON
-	data, err := persistence.MarshalProtocolSessionState(session)
+	data, err := json.Marshal(session)
 	if err != nil {
 		return fmt.Errorf("failed to marshal ProtocolSessionState: %w", err)
 	}
@@ -457,9 +474,13 @@ func (b *BadgerPersistence) LoadProtocolSession(sessionTimestamp int64) (*persis
 	}
 
 	// Deserialize from JSON
-	session, err := persistence.UnmarshalProtocolSessionState(data)
+	var session *persistence.ProtocolSessionState
+	err = json.Unmarshal(data, &session)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal ProtocolSessionState: %w", err)
+	}
+	if session == nil {
+		return nil, fmt.Errorf("stored ProtocolSessionState at key %q is a JSON null", key)
 	}
 
 	return session, nil
@@ -511,10 +532,16 @@ func (b *BadgerPersistence) ListProtocolSessions() ([]*persistence.ProtocolSessi
 				return fmt.Errorf("failed to read value: %w", err)
 			}
 
-			session, err := persistence.UnmarshalProtocolSessionState(data)
+			var session *persistence.ProtocolSessionState
+			err = json.Unmarshal(data, &session)
 			if err != nil {
 				b.logger.Sugar().Warnw("Failed to unmarshal ProtocolSessionState, skipping",
 					"key", string(item.Key()), "error", err)
+				continue
+			}
+			if session == nil {
+				b.logger.Sugar().Warnw("ProtocolSessionState stored as JSON null, skipping",
+					"key", string(item.Key()))
 				continue
 			}
 

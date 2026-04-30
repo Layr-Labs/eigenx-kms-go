@@ -67,7 +67,7 @@ jobs:
 
       - name: Upload crashers
         if: failure()
-        uses: actions/upload-artifact@66b67f953a5c19c2e955af559910c17c98f19a5c # v4.4.3
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: fuzz-crashers-native
           path: |

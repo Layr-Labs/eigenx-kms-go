@@ -2,10 +2,81 @@ package encryption
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/sha256"
+	"crypto/x509"
+	"encoding/pem"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
+
+// generateWeakKeyPair generates an RSA key pair without the MinRSAKeyBits check.
+// Only for fuzz testing — production code must use GenerateKeyPair.
+func generateWeakKeyPair(bits int) (privateKeyPEM, publicKeyPEM []byte, err error) {
+	privateKey, err := rsa.GenerateKey(rand.Reader, bits)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to generate key: %w", err)
+	}
+
+	privKeyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(privateKey),
+	})
+
+	pubKeyBytes, err := x509.MarshalPKIXPublicKey(&privateKey.PublicKey)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to marshal public key: %w", err)
+	}
+	pubKeyPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "PUBLIC KEY",
+		Bytes: pubKeyBytes,
+	})
+
+	return privKeyPEM, pubKeyPEM, nil
+}
+
+// encryptNoMinKeySize encrypts without the MinRSAKeyBits check.
+// Only for fuzz testing — production code must use RSAEncryption.Encrypt.
+func encryptNoMinKeySize(plaintext, publicKeyPEM []byte) ([]byte, error) {
+	block, _ := pem.Decode(publicKeyPEM)
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM block")
+	}
+	pubkey, err := x509.ParsePKIXPublicKey(block.Bytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse public key: %w", err)
+	}
+	rsaPubKey, ok := pubkey.(*rsa.PublicKey)
+	if !ok {
+		return nil, fmt.Errorf("not an RSA public key")
+	}
+	return rsa.EncryptOAEP(sha256.New(), rand.Reader, rsaPubKey, plaintext, nil)
+}
+
+// decryptNoMinKeySize decrypts without the MinRSAKeyBits check.
+// Only for fuzz testing — production code must use RSAEncryption.Decrypt.
+func decryptNoMinKeySize(ciphertext, privateKeyPEM []byte) ([]byte, error) {
+	block, _ := pem.Decode(privateKeyPEM)
+	if block == nil {
+		return nil, fmt.Errorf("failed to decode PEM block")
+	}
+	privkey, err := x509.ParsePKCS1PrivateKey(block.Bytes)
+	if err != nil {
+		privkeyInterface, err := x509.ParsePKCS8PrivateKey(block.Bytes)
+		if err != nil {
+			return nil, fmt.Errorf("failed to parse private key: %w", err)
+		}
+		var ok bool
+		privkey, ok = privkeyInterface.(*rsa.PrivateKey)
+		if !ok {
+			return nil, fmt.Errorf("not an RSA private key")
+		}
+	}
+	return rsa.DecryptOAEP(sha256.New(), rand.Reader, privkey, ciphertext, nil)
+}
 
 var (
 	fuzzPrivKeyPEM []byte
@@ -15,7 +86,7 @@ var (
 func init() {
 	// Generate once to avoid expensive keygen in each fuzz iteration.
 	// Uses 1024-bit keys for speed in fuzzing only - production code enforces 2048+.
-	priv, pub, err := GenerateKeyPairForTesting(1024)
+	priv, pub, err := generateWeakKeyPair(1024)
 	if err == nil {
 		fuzzPrivKeyPEM = priv
 		fuzzPubKeyPEM = pub
@@ -41,13 +112,10 @@ func FuzzRSAEncryptDecrypt(f *testing.F) {
 			plaintext = plaintext[:maxOAEPMsgLen]
 		}
 
-		r := NewRSAEncryption()
-
-		// Use testing variants that skip key size validation.
-		ciphertext, err := r.EncryptForTesting(plaintext, fuzzPubKeyPEM)
+		ciphertext, err := encryptNoMinKeySize(plaintext, fuzzPubKeyPEM)
 		require.NoError(t, err)
 
-		decrypted, err := r.DecryptForTesting(ciphertext, fuzzPrivKeyPEM)
+		decrypted, err := decryptNoMinKeySize(ciphertext, fuzzPrivKeyPEM)
 		require.NoError(t, err)
 		require.Equal(t, plaintext, decrypted)
 	})

@@ -149,7 +149,7 @@ func (r *Reshare) ComputeNewKeyShare(dealerIDs []int64, shares map[int64]*fr.Ele
 }
 
 // CreateCompletionSignature creates a completion signature for reshare
-func CreateCompletionSignature(nodeID int, epoch int64, commitmentHash [32]byte, signer func(int64, [32]byte) []byte) *types.CompletionSignature {
+func CreateCompletionSignature(nodeID int64, epoch int64, commitmentHash [32]byte, signer func(int64, [32]byte) []byte) *types.CompletionSignature {
 	signature := signer(epoch, commitmentHash)
 
 	return &types.CompletionSignature{
