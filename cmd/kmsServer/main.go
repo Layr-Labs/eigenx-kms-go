@@ -213,6 +213,12 @@ This server implements:
 				Value:   false,
 				EnvVars: []string{config.EnvKMSEnableECDSAAttestation},
 			},
+			&cli.BoolFlag{
+				Name:    "enable-tpm-attestation",
+				Usage:   "Enable raw TPM attestation (self-verified hardware attestation)",
+				Value:   false,
+				EnvVars: []string{config.EnvKMSEnableTPMAttestation},
+			},
 			&cli.StringSliceFlag{
 				Name:    "app-allowlist",
 				Usage:   "Restrict /app/sign and /secrets to these app IDs (empty = allow all). Can be specified multiple times.",
@@ -364,10 +370,11 @@ func runKMSServer(c *cli.Context) error {
 	// Create attestation manager with enabled methods
 	enableGCP := c.Bool("enable-gcp-attestation")
 	enableECDSA := c.Bool("enable-ecdsa-attestation")
+	enableTPM := c.Bool("enable-tpm-attestation")
 
 	// Validate at least one method is enabled
-	if !enableGCP && !enableECDSA {
-		return fmt.Errorf("at least one attestation method must be enabled (--enable-gcp-attestation or --enable-ecdsa-attestation)")
+	if !enableGCP && !enableECDSA && !enableTPM {
+		return fmt.Errorf("at least one attestation method must be enabled (--enable-gcp-attestation, --enable-ecdsa-attestation, or --enable-tpm-attestation)")
 	}
 
 	// Create slog logger for attestation
@@ -437,6 +444,17 @@ func runKMSServer(c *cli.Context) error {
 		l.Sugar().Infow("ECDSA attestation method enabled",
 			"method_name", ecdsaMethod.Name(),
 			"challenge_window", attestation.DefaultChallengeTimeWindow)
+	}
+
+	// Register TPM attestation if enabled
+	if enableTPM {
+		tpmMethod := attestation.NewTPMAttestationMethod(slogger)
+		if err := attestationManager.RegisterMethod(tpmMethod); err != nil {
+			return fmt.Errorf("failed to register TPM attestation method: %w", err)
+		}
+
+		l.Sugar().Infow("TPM attestation method enabled",
+			"method_name", tpmMethod.Name())
 	}
 
 	// Log summary of enabled methods
