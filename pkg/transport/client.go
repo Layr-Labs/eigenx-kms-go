@@ -62,12 +62,9 @@ func (c *Client) WithLogger(logger *zap.Logger) *Client {
 	return c
 }
 
-// log returns the logger, defaulting to a no-op logger if unset.
+// log returns the client's logger.
 func (c *Client) log() *zap.Logger {
-	if c.logger != nil {
-		return c.logger
-	}
-	return zap.NewNop()
+	return c.logger
 }
 
 // buildRequestURL constructs a full URL for an operator endpoint
