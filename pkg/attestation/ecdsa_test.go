@@ -541,6 +541,42 @@ func BenchmarkECDSAVerify(b *testing.B) {
 	}
 }
 
+func TestECDSAVerifyIdempotent(t *testing.T) {
+	method := NewECDSAAttestationMethodDefault()
+
+	privateKey, err := crypto.GenerateKey()
+	require.NoError(t, err)
+
+	appID := "test-app-idempotent"
+	nonce := make([]byte, NonceLength)
+	_, err = rand.Read(nonce)
+	require.NoError(t, err)
+
+	challenge, err := GenerateChallenge(nonce)
+	require.NoError(t, err)
+
+	signature, err := SignChallenge(privateKey, appID, challenge)
+	require.NoError(t, err)
+
+	publicKey := crypto.FromECDSAPub(&privateKey.PublicKey)
+	request := &AttestationRequest{
+		AppID:       appID,
+		Challenge:   []byte(challenge),
+		PublicKey:   publicKey,
+		Attestation: signature,
+	}
+
+	claims1, err := method.Verify(request)
+	require.NoError(t, err)
+
+	claims2, err := method.Verify(request)
+	require.NoError(t, err)
+
+	assert.Equal(t, claims1.AppID, claims2.AppID)
+	assert.Equal(t, claims1.PublicKey, claims2.PublicKey)
+	assert.Equal(t, claims1.ImageDigest, claims2.ImageDigest)
+}
+
 func TestVerifyDoesNotMutateAttestation(t *testing.T) {
 	method := NewECDSAAttestationMethodDefault()
 
