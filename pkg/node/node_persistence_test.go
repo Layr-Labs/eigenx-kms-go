@@ -18,6 +18,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/keystore"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering/localPeeringDataFetcher"
@@ -1046,4 +1047,81 @@ func testSessionPersistence_CleanupOnCompletion(t *testing.T) {
 	assert.Nil(t, loaded, "Deleted session should not be loadable")
 
 	t.Logf("✓ Session successfully deleted on completion")
+}
+
+// TestRestoreState_OperatorAddressMismatch verifies that RestoreState returns
+// a hard error when the persisted operator address doesn't match the configured one.
+// This prevents a node from accidentally using key shares belonging to a different operator.
+func TestRestoreState_OperatorAddressMismatch(t *testing.T) {
+	tmpDir := t.TempDir()
+	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
+
+	persistenceLayer, err := persistenceBadger.NewBadgerPersistence(tmpDir, testLogger)
+	require.NoError(t, err)
+	defer func() { _ = persistenceLayer.Close() }()
+
+	// Persist state with operator address "A"
+	err = persistenceLayer.SaveNodeState(&persistence.NodeState{
+		OperatorAddress:       "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+		LastProcessedBoundary: 100,
+		NodeStartTime:         time.Now().Unix(),
+	})
+	require.NoError(t, err)
+
+	// Construct a minimal node configured as operator address "B"
+	node := &Node{
+		OperatorAddress: common.HexToAddress("0xBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"),
+		logger:          testLogger,
+		keyStore:        keystore.NewKeyStore(),
+		persistence:     persistenceLayer,
+		ChainID:         config.ChainId_EthereumAnvil,
+	}
+
+	// RestoreState should return a hard error, not just warn
+	err = node.RestoreState()
+	require.Error(t, err, "RestoreState must fail when operator address mismatches persisted state")
+	assert.Contains(t, err.Error(), "operator address mismatch")
+	assert.Contains(t, err.Error(), "0xaAaAaAaaAaAaAaaAaAAAAAAAAaaaAaAaAaaAaaAa") // persisted address (EIP-55 normalized)
+	assert.Contains(t, err.Error(), "0xbBbBBBBbbBBBbbbBbbBbbbbBBbBbbbbBbBbbBBbB") // configured address (EIP-55 checksummed)
+
+	t.Logf("✓ RestoreState correctly refuses to start with mismatched operator address")
+}
+
+// TestRestoreState_OperatorAddressCaseInsensitive verifies that a persisted address
+// written in all-lowercase (e.g. by older code) does not trigger a false mismatch
+// when the node is configured with the same address in EIP-55 checksummed form.
+func TestRestoreState_OperatorAddressCaseInsensitive(t *testing.T) {
+	tmpDir := t.TempDir()
+	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
+
+	persistenceLayer, err := persistenceBadger.NewBadgerPersistence(tmpDir, testLogger)
+	require.NoError(t, err)
+	defer func() { _ = persistenceLayer.Close() }()
+
+	// The same address in all-lowercase (as older code might have written)
+	lowercaseAddr := "0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+	err = persistenceLayer.SaveNodeState(&persistence.NodeState{
+		OperatorAddress:       lowercaseAddr,
+		LastProcessedBoundary: 50,
+		NodeStartTime:         time.Now().Unix(),
+	})
+	require.NoError(t, err)
+
+	// Node configured with the same address (HexToAddress normalizes internally)
+	node := &Node{
+		OperatorAddress: common.HexToAddress(lowercaseAddr),
+		logger:          testLogger,
+		keyStore:        keystore.NewKeyStore(),
+		persistence:     persistenceLayer,
+		ChainID:         config.ChainId_EthereumAnvil,
+	}
+
+	// RestoreState should succeed — same address, different casing
+	err = node.RestoreState()
+	require.NoError(t, err, "RestoreState must not fail when persisted address differs only in case")
+
+	assert.Equal(t, int64(50), node.lastProcessedBoundary)
+
+	t.Logf("✓ RestoreState correctly handles case-insensitive address comparison")
 }
