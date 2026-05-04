@@ -113,6 +113,14 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("extra_data exceeds 1MB limit (%d bytes)", len(req.ExtraData)), http.StatusBadRequest)
 		return
 	}
+	if req.AttestationTime > time.Now().Unix()+maxAttestationTimeSkew {
+		s.node.logger.Sugar().Warnw("Attestation time too far in the future",
+			"node_id", s.node.OperatorAddress.Hex(),
+			"app_id", req.AppID,
+			"attestation_time", req.AttestationTime)
+		http.Error(w, "attestation time is too far in the future", http.StatusBadRequest)
+		return
+	}
 
 	s.node.logger.Sugar().Infow("Processing secrets request", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "attestation_method", req.AttestationMethod)
 
@@ -199,15 +207,6 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	// Step 5: Get appropriate key share based on attestation time
 	var keyVersion *types.KeyShareVersion
 	if req.AttestationTime > 0 {
-		// Reject attestation times too far in the future
-		if req.AttestationTime > time.Now().Unix()+maxAttestationTimeSkew {
-			s.node.logger.Sugar().Warnw("Attestation time too far in the future",
-				"node_id", s.node.OperatorAddress.Hex(),
-				"app_id", req.AppID,
-				"attestation_time", req.AttestationTime)
-			http.Error(w, "attestation time is too far in the future", http.StatusBadRequest)
-			return
-		}
 		// Use key version from the specified time
 		keyVersion = s.node.keyStore.GetKeyVersionAtTime(req.AttestationTime)
 		if keyVersion == nil {
@@ -692,6 +691,14 @@ func (s *Server) handleAppSign(w http.ResponseWriter, r *http.Request) {
 			"node_id", s.node.OperatorAddress.Hex(),
 			"app_id", req.AppID)
 		http.Error(w, "app not allowed", http.StatusForbidden)
+		return
+	}
+	if req.AttestationTime > time.Now().Unix()+maxAttestationTimeSkew {
+		s.node.logger.Sugar().Warnw("Attestation time too far in the future",
+			"node_id", s.node.OperatorAddress.Hex(),
+			"app_id", req.AppID,
+			"attestation_time", req.AttestationTime)
+		http.Error(w, "attestation time is too far in the future", http.StatusBadRequest)
 		return
 	}
 

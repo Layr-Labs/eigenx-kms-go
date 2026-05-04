@@ -42,9 +42,6 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
 
-// maxErrorBodySize limits the size of error response bodies read from peers (1MB).
-const maxErrorBodySize = 1 << 20
-
 // Node represents a KMS node
 type Node struct {
 	// Identity
@@ -2618,7 +2615,7 @@ func (n *Node) fetchMPKFromPeers(ctx context.Context, operators []*peering.Opera
 			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, types.MaxErrorBodySize))
 				n.logger.Sugar().Warnw("Peer returned error for MPK", "peer", peer.SocketAddress, "status", resp.StatusCode, "body", string(body))
 				return
 			}

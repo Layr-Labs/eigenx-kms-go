@@ -915,26 +915,14 @@ func testSecretsEndpointExtraDataTooLarge(t *testing.T) {
 func testSecretsEndpointFutureAttestationTime(t *testing.T) {
 	f := newTestSecretsFixture(t)
 
-	testRelease := &kmsTypes.Release{
-		ImageDigest: "sha256:test123",
-		Timestamp:   time.Now().Unix(),
-	}
-	f.contractCallerStub.AddTestRelease("test-app", testRelease)
-
-	// Attestation time 10 minutes in the future (exceeds 5-minute skew limit)
+	// Attestation time 10 minutes in the future (exceeds 5-minute skew limit).
+	// Rejected during early validation, before attestation crypto or on-chain lookups.
 	futureTime := time.Now().Unix() + 600
-
-	testClaims := kmsTypes.AttestationClaims{
-		AppID:       "test-app",
-		ImageDigest: "sha256:test123",
-		IssuedAt:    time.Now().Unix(),
-	}
-	attestationBytes, _ := json.Marshal(testClaims)
 
 	req := kmsTypes.SecretsRequestV1{
 		AppID:             "test-app",
 		AttestationMethod: "gcp",
-		Attestation:       attestationBytes,
+		Attestation:       []byte(`{}`),
 		RSAPubKeyTmp:      []byte("fake-rsa-key"),
 		AttestationTime:   futureTime,
 	}

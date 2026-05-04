@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"math/big"
 
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
@@ -43,20 +44,32 @@ type AcknowledgementMessage struct {
 	Ack                 *Acknowledgement `json:"ack"`
 }
 
-// SerializeFr serializes a field element
+// SerializeFr serializes a field element. Panics if elem is nil.
 func SerializeFr(elem *fr.Element) *SerializedFrElement {
+	if elem == nil {
+		panic("SerializeFr: cannot serialize nil field element")
+	}
 	return &SerializedFrElement{Data: elem.String()}
 }
 
-// DeserializeFr deserializes a field element
+// DeserializeFr deserializes a field element.
+// Returns an error if the input is nil, malformed, or >= the BLS12-381 Fr field order
+// (gnark-crypto silently reduces mod p, which would corrupt protocol computations).
 func DeserializeFr(s *SerializedFrElement) (*fr.Element, error) {
 	if s == nil {
 		return nil, fmt.Errorf("cannot deserialize nil field element")
 	}
-	elem := new(fr.Element)
-	_, err := elem.SetString(s.Data)
-	if err != nil {
-		return nil, fmt.Errorf("failed to deserialize field element: %w", err)
+
+	// Parse the decimal string into a big.Int first to check range.
+	raw, ok := new(big.Int).SetString(s.Data, 10)
+	if !ok {
+		return nil, fmt.Errorf("failed to deserialize field element: invalid decimal string")
 	}
+	if raw.Sign() < 0 || raw.Cmp(fr.Modulus()) >= 0 {
+		return nil, fmt.Errorf("failed to deserialize field element: value out of field range")
+	}
+
+	elem := new(fr.Element)
+	elem.SetBigInt(raw)
 	return elem, nil
 }

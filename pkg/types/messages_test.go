@@ -42,6 +42,16 @@ func TestDeserializeFr(t *testing.T) {
 			input:   SerializeFr(new(fr.Element).SetInt64(1<<62 - 1)),
 			wantErr: false,
 		},
+		{
+			name:    "value at field order is rejected",
+			input:   &SerializedFrElement{Data: "52435875175126190479447740508185965837690552500527637822603658699938581184513"},
+			wantErr: true,
+		},
+		{
+			name:    "value above field order is rejected",
+			input:   &SerializedFrElement{Data: "52435875175126190479447740508185965837690552500527637822603658699938581184514"},
+			wantErr: true,
+		},
 	}
 
 	for _, tt := range tests {

@@ -26,9 +26,6 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 )
 
-// maxErrorBodySize limits the size of error response bodies read from operators (1MB).
-const maxErrorBodySize = 1 << 20
-
 // ContractCaller defines the interface for fetching operator information from the blockchain
 type ContractCaller interface {
 	GetOperatorSetMembersWithPeering(avsAddress string, operatorSetID uint32) (*peering.OperatorSetPeers, error)
@@ -177,7 +174,7 @@ func (c *Client) GetMasterPublicKey(operators *peering.OperatorSetPeers) (*types
 			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, types.MaxErrorBodySize))
 				c.logger.Sugar().Warnw("Operator returned error",
 					"operator_index", idx,
 					"status_code", resp.StatusCode,
@@ -387,7 +384,7 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, types.MaxErrorBodySize))
 				c.logger.Sugar().Warnw("Operator returned error",
 					"operator_index", idx,
 					"status_code", resp.StatusCode,
@@ -773,7 +770,7 @@ func (c *Client) requestSecretsFromKMS(serverURL string, req types.SecretsReques
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, types.MaxErrorBodySize))
 		return nil, fmt.Errorf("KMS server returned status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -910,7 +907,7 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodySize))
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, types.MaxErrorBodySize))
 				c.logger.Sugar().Warnw("Operator returned error", "operator_index", idx, "status", resp.StatusCode, "body", string(body))
 				return
 			}

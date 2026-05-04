@@ -14,6 +14,9 @@ const KMSJWTAudience = "EigenX KMS"
 
 const MaxExtraDataSize = 1_048_576 // 1 MB
 
+// MaxErrorBodySize limits the size of error response bodies read from peers/operators (1MB).
+const MaxErrorBodySize = 1 << 20
+
 // KeyShareVersion represents a versioned set of key shares
 type KeyShareVersion struct {
 	Version         int64       // Unix timestamp (seconds) of the block that triggered this key version
