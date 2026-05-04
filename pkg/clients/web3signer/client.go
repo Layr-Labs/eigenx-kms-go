@@ -498,7 +498,6 @@ func (c *Client) makeHttpRequest(
 	// nolint:errcheck
 	defer resp.Body.Close()
 
-	//nolint:staticcheck
 	responseData, err := io.ReadAll(io.LimitReader(resp.Body, maxListResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
@@ -560,8 +559,9 @@ func (c *Client) makeJSONRPCRequest(ctx context.Context, method string, params i
 	// nolint:errcheck
 	defer resp.Body.Close()
 
-	// Read response body (bounded to prevent OOM from malicious responses)
-	responseData, err := io.ReadAll(io.LimitReader(resp.Body, maxSignResponseSize))
+	// Read response body (bounded to prevent OOM from malicious responses).
+	// Uses maxListResponseSize because JSON-RPC is shared across signing and listing methods.
+	responseData, err := io.ReadAll(io.LimitReader(resp.Body, maxListResponseSize))
 	if err != nil {
 		return fmt.Errorf("failed to read response body: %w", err)
 	}

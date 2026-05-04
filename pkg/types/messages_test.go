@@ -52,6 +52,11 @@ func TestDeserializeFr(t *testing.T) {
 			wantErr: true,
 		},
 		{
+			name:    "max valid value (modulus - 1) accepted",
+			input:   &SerializedFrElement{Data: "52435875175126190479447740508185965837690552500527637822603658699938581184512"},
+			wantErr: false,
+		},
+		{
 			name:    "value at field order is rejected",
 			input:   &SerializedFrElement{Data: "52435875175126190479447740508185965837690552500527637822603658699938581184513"},
 			wantErr: true,

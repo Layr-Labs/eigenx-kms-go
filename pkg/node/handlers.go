@@ -23,6 +23,19 @@ const maxAttestationFutureOffset int64 = 300 // 5 minutes
 // Prevents targeting older (potentially weaker or revoked) key versions.
 const maxAttestationPastAge int64 = 86400 // 24 hours
 
+// validateAttestationTime checks that attestationTime is within the acceptable window.
+// Returns an error string suitable for HTTP responses, or "" if valid.
+func validateAttestationTime(attestationTime int64) string {
+	now := time.Now().Unix()
+	if attestationTime > now+maxAttestationFutureOffset {
+		return "attestation time is too far in the future"
+	}
+	if attestationTime > 0 && attestationTime < now-maxAttestationPastAge {
+		return "attestation time is too far in the past"
+	}
+	return ""
+}
+
 // validateAuthenticatedMessage validates an incoming authenticated message
 func (s *Server) validateAuthenticatedMessage(r *http.Request, expectedRecipient common.Address) (*types.AuthenticatedMessage, *peering.OperatorSetPeer, interface{}, error) {
 	// Parse authenticated message wrapper
@@ -118,21 +131,13 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("extra_data exceeds 1MB limit (%d bytes)", len(req.ExtraData)), http.StatusBadRequest)
 		return
 	}
-	now := time.Now().Unix()
-	if req.AttestationTime > now+maxAttestationFutureOffset {
-		s.node.logger.Sugar().Warnw("Attestation time too far in the future",
+	if errMsg := validateAttestationTime(req.AttestationTime); errMsg != "" {
+		s.node.logger.Sugar().Warnw("Invalid attestation time",
 			"node_id", s.node.OperatorAddress.Hex(),
 			"app_id", req.AppID,
-			"attestation_time", req.AttestationTime)
-		http.Error(w, "attestation time is too far in the future", http.StatusBadRequest)
-		return
-	}
-	if req.AttestationTime > 0 && req.AttestationTime < now-maxAttestationPastAge {
-		s.node.logger.Sugar().Warnw("Attestation time too far in the past",
-			"node_id", s.node.OperatorAddress.Hex(),
-			"app_id", req.AppID,
-			"attestation_time", req.AttestationTime)
-		http.Error(w, "attestation time is too far in the past", http.StatusBadRequest)
+			"attestation_time", req.AttestationTime,
+			"reason", errMsg)
+		http.Error(w, errMsg, http.StatusBadRequest)
 		return
 	}
 
@@ -707,21 +712,13 @@ func (s *Server) handleAppSign(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "app not allowed", http.StatusForbidden)
 		return
 	}
-	now := time.Now().Unix()
-	if req.AttestationTime > now+maxAttestationFutureOffset {
-		s.node.logger.Sugar().Warnw("Attestation time too far in the future",
+	if errMsg := validateAttestationTime(req.AttestationTime); errMsg != "" {
+		s.node.logger.Sugar().Warnw("Invalid attestation time",
 			"node_id", s.node.OperatorAddress.Hex(),
 			"app_id", req.AppID,
-			"attestation_time", req.AttestationTime)
-		http.Error(w, "attestation time is too far in the future", http.StatusBadRequest)
-		return
-	}
-	if req.AttestationTime > 0 && req.AttestationTime < now-maxAttestationPastAge {
-		s.node.logger.Sugar().Warnw("Attestation time too far in the past",
-			"node_id", s.node.OperatorAddress.Hex(),
-			"app_id", req.AppID,
-			"attestation_time", req.AttestationTime)
-		http.Error(w, "attestation time is too far in the past", http.StatusBadRequest)
+			"attestation_time", req.AttestationTime,
+			"reason", errMsg)
+		http.Error(w, errMsg, http.StatusBadRequest)
 		return
 	}
 
