@@ -43,6 +43,11 @@ func TestDeserializeFr(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name:    "negative value is rejected",
+			input:   &SerializedFrElement{Data: "-1"},
+			wantErr: true,
+		},
+		{
 			name:    "value at field order is rejected",
 			input:   &SerializedFrElement{Data: "52435875175126190479447740508185965837690552500527637822603658699938581184513"},
 			wantErr: true,

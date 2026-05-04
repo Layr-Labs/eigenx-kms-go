@@ -15,8 +15,13 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
-// maxAttestationTimeSkew is the maximum allowed clock skew (in seconds) for attestation timestamps.
-const maxAttestationTimeSkew int64 = 300
+// maxAttestationFutureOffset is the maximum amount (in seconds) an attestation timestamp
+// may exceed the current time. Prevents requests for key versions that don't exist yet.
+const maxAttestationFutureOffset int64 = 300 // 5 minutes
+
+// maxAttestationPastAge is the maximum age (in seconds) of an attestation timestamp.
+// Prevents targeting older (potentially weaker or revoked) key versions.
+const maxAttestationPastAge int64 = 86400 // 24 hours
 
 // validateAuthenticatedMessage validates an incoming authenticated message
 func (s *Server) validateAuthenticatedMessage(r *http.Request, expectedRecipient common.Address) (*types.AuthenticatedMessage, *peering.OperatorSetPeer, interface{}, error) {
@@ -113,12 +118,21 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("extra_data exceeds 1MB limit (%d bytes)", len(req.ExtraData)), http.StatusBadRequest)
 		return
 	}
-	if req.AttestationTime > time.Now().Unix()+maxAttestationTimeSkew {
+	now := time.Now().Unix()
+	if req.AttestationTime > now+maxAttestationFutureOffset {
 		s.node.logger.Sugar().Warnw("Attestation time too far in the future",
 			"node_id", s.node.OperatorAddress.Hex(),
 			"app_id", req.AppID,
 			"attestation_time", req.AttestationTime)
 		http.Error(w, "attestation time is too far in the future", http.StatusBadRequest)
+		return
+	}
+	if req.AttestationTime > 0 && req.AttestationTime < now-maxAttestationPastAge {
+		s.node.logger.Sugar().Warnw("Attestation time too far in the past",
+			"node_id", s.node.OperatorAddress.Hex(),
+			"app_id", req.AppID,
+			"attestation_time", req.AttestationTime)
+		http.Error(w, "attestation time is too far in the past", http.StatusBadRequest)
 		return
 	}
 
@@ -693,12 +707,21 @@ func (s *Server) handleAppSign(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "app not allowed", http.StatusForbidden)
 		return
 	}
-	if req.AttestationTime > time.Now().Unix()+maxAttestationTimeSkew {
+	now := time.Now().Unix()
+	if req.AttestationTime > now+maxAttestationFutureOffset {
 		s.node.logger.Sugar().Warnw("Attestation time too far in the future",
 			"node_id", s.node.OperatorAddress.Hex(),
 			"app_id", req.AppID,
 			"attestation_time", req.AttestationTime)
 		http.Error(w, "attestation time is too far in the future", http.StatusBadRequest)
+		return
+	}
+	if req.AttestationTime > 0 && req.AttestationTime < now-maxAttestationPastAge {
+		s.node.logger.Sugar().Warnw("Attestation time too far in the past",
+			"node_id", s.node.OperatorAddress.Hex(),
+			"app_id", req.AppID,
+			"attestation_time", req.AttestationTime)
+		http.Error(w, "attestation time is too far in the past", http.StatusBadRequest)
 		return
 	}
 

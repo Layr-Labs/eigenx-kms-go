@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/ethereum/go-ethereum/common"
@@ -62,7 +63,7 @@ func TestCommitmentBroadcastMessage_Serialization(t *testing.T) {
 func TestHandleAppSign_Allowlist(t *testing.T) {
 	makeRequest := func(server *Server, appID string) *httptest.ResponseRecorder {
 		t.Helper()
-		reqBody, _ := json.Marshal(types.AppSignRequest{AppID: appID, AttestationTime: 1})
+		reqBody, _ := json.Marshal(types.AppSignRequest{AppID: appID, AttestationTime: time.Now().Unix()})
 		httpReq := httptest.NewRequest(http.MethodPost, "/app/sign", bytes.NewBuffer(reqBody))
 		w := httptest.NewRecorder()
 		server.handleAppSign(w, httpReq)
@@ -108,5 +109,46 @@ func TestHandleAppSign_Allowlist(t *testing.T) {
 		// "my-app" (no spaces) should match the trimmed entry
 		w := makeRequest(f.server, "my-app")
 		assert.NotEqual(t, http.StatusForbidden, w.Code)
+	})
+}
+
+func TestHandleAppSign_AttestationTimeBounds(t *testing.T) {
+	t.Run("future attestation time rejected", func(t *testing.T) {
+		f := newTestSecretsFixture(t)
+		futureTime := time.Now().Unix() + 600 // 10 minutes ahead
+
+		reqBody, _ := json.Marshal(types.AppSignRequest{AppID: "test-app", AttestationTime: futureTime})
+		httpReq := httptest.NewRequest(http.MethodPost, "/app/sign", bytes.NewBuffer(reqBody))
+		w := httptest.NewRecorder()
+		f.server.handleAppSign(w, httpReq)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "attestation time is too far in the future")
+	})
+
+	t.Run("past attestation time rejected", func(t *testing.T) {
+		f := newTestSecretsFixture(t)
+		pastTime := time.Now().Unix() - 2*86400 // 2 days ago
+
+		reqBody, _ := json.Marshal(types.AppSignRequest{AppID: "test-app", AttestationTime: pastTime})
+		httpReq := httptest.NewRequest(http.MethodPost, "/app/sign", bytes.NewBuffer(reqBody))
+		w := httptest.NewRecorder()
+		f.server.handleAppSign(w, httpReq)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+		assert.Contains(t, w.Body.String(), "attestation time is too far in the past")
+	})
+
+	t.Run("recent attestation time accepted", func(t *testing.T) {
+		f := newTestSecretsFixture(t)
+		recentTime := time.Now().Unix() - 60 // 1 minute ago
+
+		reqBody, _ := json.Marshal(types.AppSignRequest{AppID: "test-app", AttestationTime: recentTime})
+		httpReq := httptest.NewRequest(http.MethodPost, "/app/sign", bytes.NewBuffer(reqBody))
+		w := httptest.NewRecorder()
+		f.server.handleAppSign(w, httpReq)
+
+		// Should pass the time check (may fail later due to missing key share, but not 400)
+		assert.NotEqual(t, http.StatusBadRequest, w.Code)
 	})
 }
