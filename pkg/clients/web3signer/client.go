@@ -63,6 +63,8 @@ import (
 const maxSignResponseSize = 64 * 1024
 
 // maxListResponseSize limits the size of list/query response bodies (1MB).
+// Supports ~10,000 BLS public keys in a JSON array. A truncated response will
+// produce a JSON parse error (not silent data loss) at the caller.
 const maxListResponseSize = 1 << 20
 
 // Client represents a Web3Signer JSON-RPC client that provides methods for

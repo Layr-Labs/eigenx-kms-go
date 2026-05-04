@@ -57,16 +57,16 @@ func SerializeFr(elem *fr.Element) *SerializedFrElement {
 // (gnark-crypto silently reduces mod p, which would corrupt protocol computations).
 func DeserializeFr(s *SerializedFrElement) (*fr.Element, error) {
 	if s == nil {
-		return nil, fmt.Errorf("cannot deserialize nil field element")
+		return nil, fmt.Errorf("DeserializeFr: cannot deserialize nil field element")
 	}
 
 	// Parse the decimal string into a big.Int first to check range.
 	raw, ok := new(big.Int).SetString(s.Data, 10)
 	if !ok {
-		return nil, fmt.Errorf("failed to deserialize field element: invalid decimal string")
+		return nil, fmt.Errorf("DeserializeFr: invalid decimal string")
 	}
 	if raw.Sign() < 0 || raw.Cmp(fr.Modulus()) >= 0 {
-		return nil, fmt.Errorf("failed to deserialize field element: value out of field range")
+		return nil, fmt.Errorf("DeserializeFr: value out of field range")
 	}
 
 	elem := new(fr.Element)
