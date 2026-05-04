@@ -196,6 +196,12 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	// Step 5: Get appropriate key share based on attestation time
 	var keyVersion *types.KeyShareVersion
 	if req.AttestationTime > 0 {
+		// Reject attestation times too far in the future (max 5 minutes skew)
+		const maxAttestationTimeSkew int64 = 300
+		if req.AttestationTime > time.Now().Unix()+maxAttestationTimeSkew {
+			http.Error(w, "attestation time is too far in the future", http.StatusBadRequest)
+			return
+		}
 		// Use key version from the specified time
 		keyVersion = s.node.keyStore.GetKeyVersionAtTime(req.AttestationTime)
 		if keyVersion == nil {
@@ -355,7 +361,12 @@ func (s *Server) handleDKGShare(w http.ResponseWriter, r *http.Request) {
 
 	// Convert addresses to node IDs
 	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
-	share := types.DeserializeFr(shareMsg.Share)
+	share, err := types.DeserializeFr(shareMsg.Share)
+	if err != nil {
+		s.node.logger.Sugar().Warnw("Invalid share data", "from", senderPeer.OperatorAddress.Hex(), "error", err)
+		http.Error(w, "invalid share data", http.StatusBadRequest)
+		return
+	}
 
 	// Store share in session (handles duplicate detection and completion signaling)
 	if err := session.HandleReceivedShare(senderNodeID, share); err != nil {
@@ -530,7 +541,12 @@ func (s *Server) handleReshareShare(w http.ResponseWriter, r *http.Request) {
 
 	// Convert addresses to node IDs
 	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
-	share := types.DeserializeFr(shareMsg.Share)
+	share, err := types.DeserializeFr(shareMsg.Share)
+	if err != nil {
+		s.node.logger.Sugar().Warnw("Invalid share data", "from", senderPeer.OperatorAddress.Hex(), "error", err)
+		http.Error(w, "invalid share data", http.StatusBadRequest)
+		return
+	}
 
 	// Store share in session
 	if err := session.HandleReceivedShare(senderNodeID, share); err != nil {

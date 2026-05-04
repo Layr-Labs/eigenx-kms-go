@@ -4,11 +4,14 @@ import (
 	"crypto/ecdsa"
 	"encoding/binary"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 )
+
+var validAppIDPattern = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
 
 // Map applies a transformation function to each element of a slice and returns a new slice
 // with the transformed values. This is a generic implementation of the map higher-order function.
@@ -146,14 +149,20 @@ func DeriveAddressFromECDSAPrivateKey(pk *ecdsa.PrivateKey) (common.Address, err
 	return DeriveAddress(pk.PublicKey), nil
 }
 
-// ValidateAppID validates that an application ID meets minimum requirements
-// AppID must be at least 5 characters long
+// ValidateAppID validates that an application ID meets requirements.
+// AppID must be 5-255 characters long and contain only alphanumeric, '.', '_', or '-'.
 func ValidateAppID(appID string) error {
 	if appID == "" {
 		return fmt.Errorf("appID is empty")
 	}
 	if len(appID) < 5 {
 		return fmt.Errorf("appID is too short (minimum 5 characters)")
+	}
+	if len(appID) > 255 {
+		return fmt.Errorf("appID is too long (maximum 255 characters)")
+	}
+	if !validAppIDPattern.MatchString(appID) {
+		return fmt.Errorf("appID contains invalid characters (allowed: a-z, A-Z, 0-9, '.', '_', '-')")
 	}
 	return nil
 }

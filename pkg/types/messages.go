@@ -1,6 +1,8 @@
 package types
 
 import (
+	"fmt"
+
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 )
@@ -47,11 +49,14 @@ func SerializeFr(elem *fr.Element) *SerializedFrElement {
 }
 
 // DeserializeFr deserializes a field element
-func DeserializeFr(s *SerializedFrElement) *fr.Element {
+func DeserializeFr(s *SerializedFrElement) (*fr.Element, error) {
 	if s == nil {
-		return nil
+		return nil, nil
 	}
 	elem := new(fr.Element)
-	_, _ = elem.SetString(s.Data)
-	return elem
+	_, err := elem.SetString(s.Data)
+	if err != nil {
+		return nil, fmt.Errorf("failed to deserialize field element: %w", err)
+	}
+	return elem, nil
 }
