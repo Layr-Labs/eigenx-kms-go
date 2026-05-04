@@ -51,7 +51,7 @@ func SerializeFr(elem *fr.Element) *SerializedFrElement {
 // DeserializeFr deserializes a field element
 func DeserializeFr(s *SerializedFrElement) (*fr.Element, error) {
 	if s == nil {
-		return nil, nil
+		return nil, fmt.Errorf("cannot deserialize nil field element")
 	}
 	elem := new(fr.Element)
 	_, err := elem.SetString(s.Data)

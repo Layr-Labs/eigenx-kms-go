@@ -15,6 +15,9 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
+// maxAttestationTimeSkew is the maximum allowed clock skew (in seconds) for attestation timestamps.
+const maxAttestationTimeSkew int64 = 300
+
 // validateAuthenticatedMessage validates an incoming authenticated message
 func (s *Server) validateAuthenticatedMessage(r *http.Request, expectedRecipient common.Address) (*types.AuthenticatedMessage, *peering.OperatorSetPeer, interface{}, error) {
 	// Parse authenticated message wrapper
@@ -196,9 +199,12 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	// Step 5: Get appropriate key share based on attestation time
 	var keyVersion *types.KeyShareVersion
 	if req.AttestationTime > 0 {
-		// Reject attestation times too far in the future (max 5 minutes skew)
-		const maxAttestationTimeSkew int64 = 300
+		// Reject attestation times too far in the future
 		if req.AttestationTime > time.Now().Unix()+maxAttestationTimeSkew {
+			s.node.logger.Sugar().Warnw("Attestation time too far in the future",
+				"node_id", s.node.OperatorAddress.Hex(),
+				"app_id", req.AppID,
+				"attestation_time", req.AttestationTime)
 			http.Error(w, "attestation time is too far in the future", http.StatusBadRequest)
 			return
 		}

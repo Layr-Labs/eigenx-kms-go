@@ -59,8 +59,11 @@ import (
 	"go.uber.org/zap"
 )
 
-// maxResponseSize limits the size of HTTP response bodies read from Web3Signer (64KB).
-const maxResponseSize = 64 * 1024
+// maxSignResponseSize limits the size of signing response bodies (64KB).
+const maxSignResponseSize = 64 * 1024
+
+// maxListResponseSize limits the size of list/query response bodies (1MB).
+const maxListResponseSize = 1 << 20
 
 // Client represents a Web3Signer JSON-RPC client that provides methods for
 // interacting with a Web3Signer service instance.
@@ -355,7 +358,7 @@ func (c *Client) SignRaw(ctx context.Context, identifier string, data []byte) (s
 	defer resp.Body.Close()
 
 	// Read response body (bounded to prevent OOM from malicious responses)
-	responseData, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	responseData, err := io.ReadAll(io.LimitReader(resp.Body, maxSignResponseSize))
 	if err != nil {
 		return "", fmt.Errorf("failed to read response body: %w", err)
 	}
@@ -494,7 +497,7 @@ func (c *Client) makeHttpRequest(
 	defer resp.Body.Close()
 
 	//nolint:staticcheck
-	responseData, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	responseData, err := io.ReadAll(io.LimitReader(resp.Body, maxListResponseSize))
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
@@ -556,7 +559,7 @@ func (c *Client) makeJSONRPCRequest(ctx context.Context, method string, params i
 	defer resp.Body.Close()
 
 	// Read response body (bounded to prevent OOM from malicious responses)
-	responseData, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseSize))
+	responseData, err := io.ReadAll(io.LimitReader(resp.Body, maxSignResponseSize))
 	if err != nil {
 		return fmt.Errorf("failed to read response body: %w", err)
 	}

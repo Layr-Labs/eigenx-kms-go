@@ -118,6 +118,7 @@ func Test_SecretsEndpoint(t *testing.T) {
 	t.Run("AllowlistNilAllowsAll", func(t *testing.T) { testSecretsEndpointAllowlistNilAllowsAll(t) })
 	t.Run("ExtraDataEchoBehavior", func(t *testing.T) { testSecretsEndpointExtraDataEchoBehavior(t) })
 	t.Run("ExtraDataTooLarge", func(t *testing.T) { testSecretsEndpointExtraDataTooLarge(t) })
+	t.Run("FutureAttestationTimeRejected", func(t *testing.T) { testSecretsEndpointFutureAttestationTime(t) })
 }
 
 // createTestPeeringDataFetcher creates a test peering data fetcher using ChainConfig data
@@ -908,5 +909,47 @@ func testSecretsEndpointExtraDataTooLarge(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "extra_data exceeds 1MB limit") {
 		t.Errorf("Expected error message about 1MB limit, got: %s", w.Body.String())
+	}
+}
+
+func testSecretsEndpointFutureAttestationTime(t *testing.T) {
+	f := newTestSecretsFixture(t)
+
+	testRelease := &kmsTypes.Release{
+		ImageDigest: "sha256:test123",
+		Timestamp:   time.Now().Unix(),
+	}
+	f.contractCallerStub.AddTestRelease("test-app", testRelease)
+
+	// Attestation time 10 minutes in the future (exceeds 5-minute skew limit)
+	futureTime := time.Now().Unix() + 600
+
+	testClaims := kmsTypes.AttestationClaims{
+		AppID:       "test-app",
+		ImageDigest: "sha256:test123",
+		IssuedAt:    time.Now().Unix(),
+	}
+	attestationBytes, _ := json.Marshal(testClaims)
+
+	req := kmsTypes.SecretsRequestV1{
+		AppID:             "test-app",
+		AttestationMethod: "gcp",
+		Attestation:       attestationBytes,
+		RSAPubKeyTmp:      []byte("fake-rsa-key"),
+		AttestationTime:   futureTime,
+	}
+
+	reqBody, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
+	httpReq.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	f.server.handleSecretsRequest(w, httpReq)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400 for future attestation time, got %d. Body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "attestation time is too far in the future") {
+		t.Errorf("Expected future-time error message, got: %s", w.Body.String())
 	}
 }
