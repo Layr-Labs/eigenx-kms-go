@@ -12,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 // TestBroadcastCommitmentsWithProofs tests the broadcast function (Phase 5)
@@ -27,6 +28,7 @@ func TestBroadcastCommitmentsWithProofs_NilTree(t *testing.T) {
 	client := &Client{
 		nodeID:       1,
 		operatorAddr: common.HexToAddress("0x1111"),
+		logger:       zap.NewNop(),
 	}
 
 	operators := []*peering.OperatorSetPeer{
@@ -113,6 +115,7 @@ func TestBroadcastCommitmentsWithProofs_SkipsSelf(t *testing.T) {
 		nodeID:       util.AddressToNodeID(myAddr),
 		operatorAddr: myAddr,
 		signer:       mockSigner,
+		logger:       zap.NewNop(),
 	}
 
 	// Create operators including self
@@ -168,6 +171,7 @@ func TestBroadcastCommitmentsWithProofs_NoAckForOperator(t *testing.T) {
 		nodeID:       util.AddressToNodeID(myAddr),
 		operatorAddr: myAddr,
 		signer:       mockSigner,
+		logger:       zap.NewNop(),
 	}
 
 	operators := []*peering.OperatorSetPeer{
