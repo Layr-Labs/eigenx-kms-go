@@ -11,6 +11,7 @@ func TestDeserializeFr(t *testing.T) {
 		name    string
 		input   *SerializedFrElement
 		wantErr bool
+		wantVal *fr.Element // if non-nil, verify deserialized value matches
 	}{
 		{
 			name:    "nil input returns error",
@@ -31,16 +32,19 @@ func TestDeserializeFr(t *testing.T) {
 			name:    "valid element round-trips",
 			input:   SerializeFr(new(fr.Element).SetInt64(42)),
 			wantErr: false,
+			wantVal: new(fr.Element).SetInt64(42),
 		},
 		{
 			name:    "zero element round-trips",
 			input:   SerializeFr(new(fr.Element).SetInt64(0)),
 			wantErr: false,
+			wantVal: new(fr.Element).SetInt64(0),
 		},
 		{
 			name:    "large valid element round-trips",
 			input:   SerializeFr(new(fr.Element).SetInt64(1<<62 - 1)),
 			wantErr: false,
+			wantVal: new(fr.Element).SetInt64(1<<62 - 1),
 		},
 		{
 			name:    "negative value is rejected",
@@ -73,6 +77,9 @@ func TestDeserializeFr(t *testing.T) {
 			}
 			if result == nil {
 				t.Fatal("DeserializeFr() returned nil element for valid input")
+			}
+			if tt.wantVal != nil && !result.Equal(tt.wantVal) {
+				t.Errorf("DeserializeFr() round-trip mismatch: got %s, want %s", result.String(), tt.wantVal.String())
 			}
 		})
 	}

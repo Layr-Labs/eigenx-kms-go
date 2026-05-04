@@ -95,8 +95,8 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate required fields
-	if req.AppID == "" {
-		http.Error(w, "app_id is required", http.StatusBadRequest)
+	if err := util.ValidateAppID(req.AppID); err != nil {
+		http.Error(w, fmt.Sprintf("invalid app_id: %v", err), http.StatusBadRequest)
 		return
 	}
 	if s.node.appAllowlist != nil && !s.node.appAllowlist[req.AppID] {
@@ -696,8 +696,8 @@ func (s *Server) handleAppSign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.AppID == "" {
-		http.Error(w, "app_id is required", http.StatusBadRequest)
+	if err := util.ValidateAppID(req.AppID); err != nil {
+		http.Error(w, fmt.Sprintf("invalid app_id: %v", err), http.StatusBadRequest)
 		return
 	}
 	if s.node.appAllowlist != nil && !s.node.appAllowlist[req.AppID] {

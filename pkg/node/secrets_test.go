@@ -119,6 +119,7 @@ func Test_SecretsEndpoint(t *testing.T) {
 	t.Run("ExtraDataEchoBehavior", func(t *testing.T) { testSecretsEndpointExtraDataEchoBehavior(t) })
 	t.Run("ExtraDataTooLarge", func(t *testing.T) { testSecretsEndpointExtraDataTooLarge(t) })
 	t.Run("FutureAttestationTimeRejected", func(t *testing.T) { testSecretsEndpointFutureAttestationTime(t) })
+	t.Run("PastAttestationTimeRejected", func(t *testing.T) { testSecretsEndpointPastAttestationTime(t) })
 }
 
 // createTestPeeringDataFetcher creates a test peering data fetcher using ChainConfig data
@@ -939,5 +940,34 @@ func testSecretsEndpointFutureAttestationTime(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "attestation time is too far in the future") {
 		t.Errorf("Expected future-time error message, got: %s", w.Body.String())
+	}
+}
+
+func testSecretsEndpointPastAttestationTime(t *testing.T) {
+	f := newTestSecretsFixture(t)
+
+	// Attestation time 2 days ago (exceeds 24-hour past-age limit).
+	pastTime := time.Now().Unix() - 2*86400
+
+	req := kmsTypes.SecretsRequestV1{
+		AppID:             "test-app",
+		AttestationMethod: "gcp",
+		Attestation:       []byte(`{}`),
+		RSAPubKeyTmp:      []byte("fake-rsa-key"),
+		AttestationTime:   pastTime,
+	}
+
+	reqBody, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
+	httpReq.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	f.server.handleSecretsRequest(w, httpReq)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400 for past attestation time, got %d. Body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "attestation time is too far in the past") {
+		t.Errorf("Expected past-time error message, got: %s", w.Body.String())
 	}
 }
