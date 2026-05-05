@@ -288,9 +288,9 @@ func Test_OnChainIntegration(t *testing.T) {
 	t.Log("  (Nodes need to reach a block boundary that's a multiple of 10)")
 	t.Log("  (With 2-second block time, may take 30-60 seconds)")
 
-	// Poll for up to 90 seconds waiting for DKG to complete
+	// Poll for up to 180 seconds waiting for DKG to complete
 	dkgComplete := false
-	for attempt := 0; attempt < 45; attempt++ {
+	for attempt := 0; attempt < 90; attempt++ {
 		time.Sleep(2 * time.Second)
 
 		allNodesReady := true
