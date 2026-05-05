@@ -24,16 +24,19 @@ const maxAttestationFutureOffset int64 = 300 // 5 minutes
 const maxAttestationPastAge int64 = 86400 // 24 hours
 
 // validateAttestationTime checks that attestationTime is within the acceptable window.
-// Returns an error string suitable for HTTP responses, or "" if valid.
-func validateAttestationTime(attestationTime int64) string {
+// A value of 0 means "use current key version" and bypasses time-range checks.
+func validateAttestationTime(attestationTime int64) error {
+	if attestationTime == 0 {
+		return nil // 0 means "use current key version" — skip time-range checks
+	}
 	now := time.Now().Unix()
 	if attestationTime > now+maxAttestationFutureOffset {
-		return "attestation time is too far in the future"
+		return fmt.Errorf("attestation time is too far in the future")
 	}
-	if attestationTime > 0 && attestationTime < now-maxAttestationPastAge {
-		return "attestation time is too far in the past"
+	if attestationTime < now-maxAttestationPastAge {
+		return fmt.Errorf("attestation time is too far in the past")
 	}
-	return ""
+	return nil
 }
 
 // validateAuthenticatedMessage validates an incoming authenticated message
@@ -131,13 +134,13 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("extra_data exceeds 1MB limit (%d bytes)", len(req.ExtraData)), http.StatusBadRequest)
 		return
 	}
-	if errMsg := validateAttestationTime(req.AttestationTime); errMsg != "" {
+	if err := validateAttestationTime(req.AttestationTime); err != nil {
 		s.node.logger.Sugar().Warnw("Invalid attestation time",
 			"node_id", s.node.OperatorAddress.Hex(),
 			"app_id", req.AppID,
 			"attestation_time", req.AttestationTime,
-			"reason", errMsg)
-		http.Error(w, errMsg, http.StatusBadRequest)
+			"error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -712,13 +715,13 @@ func (s *Server) handleAppSign(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "app not allowed", http.StatusForbidden)
 		return
 	}
-	if errMsg := validateAttestationTime(req.AttestationTime); errMsg != "" {
+	if err := validateAttestationTime(req.AttestationTime); err != nil {
 		s.node.logger.Sugar().Warnw("Invalid attestation time",
 			"node_id", s.node.OperatorAddress.Hex(),
 			"app_id", req.AppID,
 			"attestation_time", req.AttestationTime,
-			"reason", errMsg)
-		http.Error(w, errMsg, http.StatusBadRequest)
+			"error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 

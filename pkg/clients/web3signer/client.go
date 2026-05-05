@@ -561,6 +561,7 @@ func (c *Client) makeJSONRPCRequest(ctx context.Context, method string, params i
 
 	// Read response body (bounded to prevent OOM from malicious responses).
 	// Uses maxListResponseSize because JSON-RPC is shared across signing and listing methods.
+	// TODO: consider accepting a limit parameter to use maxSignResponseSize for sign-only calls.
 	responseData, err := io.ReadAll(io.LimitReader(resp.Body, maxListResponseSize))
 	if err != nil {
 		return fmt.Errorf("failed to read response body: %w", err)

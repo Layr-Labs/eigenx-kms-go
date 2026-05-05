@@ -148,7 +148,19 @@ func TestHandleAppSign_AttestationTimeBounds(t *testing.T) {
 		w := httptest.NewRecorder()
 		f.server.handleAppSign(w, httpReq)
 
-		// Should pass the time check (may fail later due to missing key share, but not 400)
+		// Should pass the time check (fails later with 500 due to missing key share)
+		assert.Equal(t, http.StatusInternalServerError, w.Code)
+	})
+
+	t.Run("zero attestation time bypasses time check", func(t *testing.T) {
+		f := newTestSecretsFixture(t)
+
+		reqBody, _ := json.Marshal(types.AppSignRequest{AppID: "test-app", AttestationTime: 0})
+		httpReq := httptest.NewRequest(http.MethodPost, "/app/sign", bytes.NewBuffer(reqBody))
+		w := httptest.NewRecorder()
+		f.server.handleAppSign(w, httpReq)
+
+		// Should pass the time check (0 means "use current version"); may fail later but not 400
 		assert.NotEqual(t, http.StatusBadRequest, w.Code)
 	})
 }
