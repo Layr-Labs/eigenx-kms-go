@@ -163,4 +163,56 @@ func TestHandleAppSign_AttestationTimeBounds(t *testing.T) {
 		// Should pass the time check (0 means "use current version"); may fail later but not 400
 		assert.NotEqual(t, http.StatusBadRequest, w.Code)
 	})
+
+	t.Run("exactly at future boundary accepted", func(t *testing.T) {
+		f := newTestSecretsFixture(t)
+		// Exactly at the limit (now + 300s) should pass
+		boundaryTime := time.Now().Unix() + maxAttestationFutureOffset
+
+		reqBody, _ := json.Marshal(types.AppSignRequest{AppID: "test-app", AttestationTime: boundaryTime})
+		httpReq := httptest.NewRequest(http.MethodPost, "/app/sign", bytes.NewBuffer(reqBody))
+		w := httptest.NewRecorder()
+		f.server.handleAppSign(w, httpReq)
+
+		assert.NotEqual(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("one second past future boundary rejected", func(t *testing.T) {
+		f := newTestSecretsFixture(t)
+		// One second past the limit should fail
+		boundaryTime := time.Now().Unix() + maxAttestationFutureOffset + 1
+
+		reqBody, _ := json.Marshal(types.AppSignRequest{AppID: "test-app", AttestationTime: boundaryTime})
+		httpReq := httptest.NewRequest(http.MethodPost, "/app/sign", bytes.NewBuffer(reqBody))
+		w := httptest.NewRecorder()
+		f.server.handleAppSign(w, httpReq)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("exactly at past boundary accepted", func(t *testing.T) {
+		f := newTestSecretsFixture(t)
+		// Exactly at the limit (now - 86400s) should pass
+		boundaryTime := time.Now().Unix() - maxAttestationPastAge
+
+		reqBody, _ := json.Marshal(types.AppSignRequest{AppID: "test-app", AttestationTime: boundaryTime})
+		httpReq := httptest.NewRequest(http.MethodPost, "/app/sign", bytes.NewBuffer(reqBody))
+		w := httptest.NewRecorder()
+		f.server.handleAppSign(w, httpReq)
+
+		assert.NotEqual(t, http.StatusBadRequest, w.Code)
+	})
+
+	t.Run("one second past past boundary rejected", func(t *testing.T) {
+		f := newTestSecretsFixture(t)
+		// One second past the limit should fail
+		boundaryTime := time.Now().Unix() - maxAttestationPastAge - 1
+
+		reqBody, _ := json.Marshal(types.AppSignRequest{AppID: "test-app", AttestationTime: boundaryTime})
+		httpReq := httptest.NewRequest(http.MethodPost, "/app/sign", bytes.NewBuffer(reqBody))
+		w := httptest.NewRecorder()
+		f.server.handleAppSign(w, httpReq)
+
+		assert.Equal(t, http.StatusBadRequest, w.Code)
+	})
 }

@@ -256,7 +256,7 @@ func (c *Client) SetHttpClient(client *http.Client) {
 // This corresponds to the eth_accounts JSON-RPC method.
 func (c *Client) EthAccounts(ctx context.Context) ([]string, error) {
 	var result []string
-	err := c.makeJSONRPCRequest(ctx, "eth_accounts", nil, &result)
+	err := c.makeJSONRPCRequest(ctx, "eth_accounts", nil, &result, maxListResponseSize)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get accounts: %w", err)
 	}
@@ -270,7 +270,7 @@ func (c *Client) EthSignTransaction(ctx context.Context, from string, transactio
 	transaction["from"] = from
 	params := []interface{}{transaction}
 	var result string
-	err := c.makeJSONRPCRequest(ctx, "eth_signTransaction", params, &result)
+	err := c.makeJSONRPCRequest(ctx, "eth_signTransaction", params, &result, maxSignResponseSize)
 	if err != nil {
 		return "", fmt.Errorf("failed to sign transaction: %w", err)
 	}
@@ -282,7 +282,7 @@ func (c *Client) EthSignTransaction(ctx context.Context, from string, transactio
 func (c *Client) EthSign(ctx context.Context, account string, data string) (string, error) {
 	params := []interface{}{account, data}
 	var result string
-	err := c.makeJSONRPCRequest(ctx, "eth_sign", params, &result)
+	err := c.makeJSONRPCRequest(ctx, "eth_sign", params, &result, maxSignResponseSize)
 	if err != nil {
 		return "", fmt.Errorf("failed to sign data: %w", err)
 	}
@@ -294,7 +294,7 @@ func (c *Client) EthSign(ctx context.Context, account string, data string) (stri
 func (c *Client) EthSignTypedData(ctx context.Context, account string, typedData interface{}) (string, error) {
 	params := []interface{}{account, typedData}
 	var result string
-	err := c.makeJSONRPCRequest(ctx, "eth_signTypedData", params, &result)
+	err := c.makeJSONRPCRequest(ctx, "eth_signTypedData", params, &result, maxSignResponseSize)
 	if err != nil {
 		return "", fmt.Errorf("failed to sign typed data: %w", err)
 	}
@@ -517,7 +517,8 @@ func (c *Client) makeHttpRequest(
 }
 
 // makeJSONRPCRequest performs a JSON-RPC request to the Web3Signer service.
-func (c *Client) makeJSONRPCRequest(ctx context.Context, method string, params interface{}, result interface{}) error {
+// maxBytes limits the response body size to prevent OOM from malicious responses.
+func (c *Client) makeJSONRPCRequest(ctx context.Context, method string, params interface{}, result interface{}, maxBytes int64) error {
 	// Generate unique request ID
 	id := atomic.AddInt64(&c.requestID, 1)
 
@@ -559,10 +560,8 @@ func (c *Client) makeJSONRPCRequest(ctx context.Context, method string, params i
 	// nolint:errcheck
 	defer resp.Body.Close()
 
-	// Read response body (bounded to prevent OOM from malicious responses).
-	// Uses maxListResponseSize because JSON-RPC is shared across signing and listing methods.
-	// TODO: consider accepting a limit parameter to use maxSignResponseSize for sign-only calls.
-	responseData, err := io.ReadAll(io.LimitReader(resp.Body, maxListResponseSize))
+	// Read response body (bounded to prevent OOM from malicious responses)
+	responseData, err := io.ReadAll(io.LimitReader(resp.Body, maxBytes))
 	if err != nil {
 		return fmt.Errorf("failed to read response body: %w", err)
 	}

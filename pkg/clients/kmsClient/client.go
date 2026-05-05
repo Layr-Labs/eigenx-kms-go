@@ -26,6 +26,9 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 )
 
+// maxSuccessBodySize limits the size of success response bodies from operators/KMS (1MB).
+const maxSuccessBodySize int64 = 1 << 20
+
 // ContractCaller defines the interface for fetching operator information from the blockchain
 type ContractCaller interface {
 	GetOperatorSetMembersWithPeering(avsAddress string, operatorSetID uint32) (*peering.OperatorSetPeers, error)
@@ -191,7 +194,7 @@ func (c *Client) GetMasterPublicKey(operators *peering.OperatorSetPeers) (*types
 				IsActive        bool            `json:"isActive"`
 			}
 
-			if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			if err := json.NewDecoder(io.LimitReader(resp.Body, maxSuccessBodySize)).Decode(&response); err != nil {
 				c.logger.Sugar().Warnw("Failed to decode response from operator",
 					"operator_index", idx,
 					"error", err,
@@ -394,7 +397,7 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 			}
 
 			var response types.AppSignResponse
-			if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			if err := json.NewDecoder(io.LimitReader(resp.Body, maxSuccessBodySize)).Decode(&response); err != nil {
 				c.logger.Sugar().Warnw("Failed to decode response from operator",
 					"operator_index", idx,
 					"error", err,
@@ -775,7 +778,7 @@ func (c *Client) requestSecretsFromKMS(serverURL string, req types.SecretsReques
 	}
 
 	var response types.SecretsResponseV1
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxSuccessBodySize)).Decode(&response); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
@@ -913,7 +916,7 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 			}
 
 			var response types.AppSignResponse
-			if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			if err := json.NewDecoder(io.LimitReader(resp.Body, maxSuccessBodySize)).Decode(&response); err != nil {
 				c.logger.Sugar().Warnw("Failed to decode response", "operator_index", idx, "error", err)
 				return
 			}
