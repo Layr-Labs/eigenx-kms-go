@@ -150,13 +150,10 @@ func DeriveAddressFromECDSAPrivateKey(pk *ecdsa.PrivateKey) (common.Address, err
 }
 
 // ValidateAppID validates that an application ID meets requirements.
-// AppID must be 5-255 characters long and contain only alphanumeric, '.', '_', or '-'.
+// AppID must be 1-255 characters long and contain only alphanumeric, '.', '_', or '-'.
 func ValidateAppID(appID string) error {
 	if appID == "" {
 		return fmt.Errorf("appID is empty")
-	}
-	if len(appID) < 5 {
-		return fmt.Errorf("appID is too short (minimum 5 characters)")
 	}
 	if len(appID) > 255 {
 		return fmt.Errorf("appID is too long (maximum 255 characters)")

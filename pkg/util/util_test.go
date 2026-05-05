@@ -32,13 +32,14 @@ func TestValidateAppID_Boundaries(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "empty", appID: "", wantErr: true},
-		{name: "4 chars (too short)", appID: "abcd", wantErr: true},
-		{name: "5 chars (minimum valid)", appID: "abcde", wantErr: false},
+		{name: "1 char (minimum valid)", appID: "a", wantErr: false},
+		{name: "short valid ID", appID: "kms", wantErr: false},
 		{name: "255 chars (max valid)", appID: strings.Repeat("a", 255), wantErr: false},
 		{name: "256 chars (too long)", appID: strings.Repeat("a", 256), wantErr: true},
 		{name: "contains space", appID: "hello world", wantErr: true},
 		{name: "contains newline", appID: "hello\nworld", wantErr: true},
 		{name: "contains slash", appID: "app/id", wantErr: true},
+		{name: "contains unicode", appID: "app\u4e2d", wantErr: true},
 		{name: "all valid chars", appID: "My-App_1.0", wantErr: false},
 	}
 

@@ -19,10 +19,9 @@ func FuzzValidateAppID(f *testing.F) {
 	f.Fuzz(func(t *testing.T, appID string) {
 		err := ValidateAppID(appID)
 		isEmpty := appID == ""
-		tooShort := len(appID) < 5
 		tooLong := len(appID) > 255
-		badChars := !validAppIDPattern.MatchString(appID)
-		if isEmpty || tooShort || tooLong || badChars {
+		badChars := len(appID) > 0 && !validAppIDPattern.MatchString(appID)
+		if isEmpty || tooLong || badChars {
 			require.Error(t, err)
 		} else {
 			require.NoError(t, err)

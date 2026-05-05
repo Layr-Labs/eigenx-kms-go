@@ -299,8 +299,8 @@ func (c *Client) GetMasterPublicKey(operators *peering.OperatorSetPeers) (*types
 
 // Encrypt encrypts data for an application using IBE
 func (c *Client) Encrypt(appID string, data []byte, operators *peering.OperatorSetPeers) ([]byte, error) {
-	if appID == "" {
-		return nil, fmt.Errorf("app ID is required")
+	if err := util.ValidateAppID(appID); err != nil {
+		return nil, fmt.Errorf("invalid app ID: %w", err)
 	}
 	if len(data) == 0 {
 		return nil, fmt.Errorf("data to encrypt is required")
@@ -328,8 +328,8 @@ func (c *Client) Encrypt(appID string, data []byte, operators *peering.OperatorS
 
 // CollectPartialSignatures collects partial signatures from threshold number of operators concurrently
 func (c *Client) CollectPartialSignatures(appID string, operators *peering.OperatorSetPeers, threshold int) (map[int64]types.G1Point, error) {
-	if appID == "" {
-		return nil, fmt.Errorf("app ID is required")
+	if err := util.ValidateAppID(appID); err != nil {
+		return nil, fmt.Errorf("invalid app ID: %w", err)
 	}
 	if operators == nil || len(operators.Peers) == 0 {
 		return nil, fmt.Errorf("no operators provided")
@@ -468,8 +468,8 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 
 // Decrypt decrypts data by collecting partial signatures from operators
 func (c *Client) Decrypt(appID string, encryptedData []byte, operators *peering.OperatorSetPeers, threshold int) ([]byte, error) {
-	if appID == "" {
-		return nil, fmt.Errorf("app ID is required")
+	if err := util.ValidateAppID(appID); err != nil {
+		return nil, fmt.Errorf("invalid app ID: %w", err)
 	}
 	if len(encryptedData) == 0 {
 		return nil, fmt.Errorf("encrypted data is required")
@@ -837,6 +837,9 @@ func (c *Client) createECDSAAttestationRequest(appID string, opts *SecretsOption
 
 // EncryptForApp encrypts data for a specific application using IBE
 func (c *Client) EncryptForApp(appID string, plaintext []byte) ([]byte, error) {
+	if err := util.ValidateAppID(appID); err != nil {
+		return nil, fmt.Errorf("invalid app ID: %w", err)
+	}
 	operators, err := c.GetOperators()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get operators: %w", err)
@@ -852,6 +855,9 @@ func (c *Client) EncryptForApp(appID string, plaintext []byte) ([]byte, error) {
 
 // DecryptForApp decrypts data by collecting partial signatures and recovering app private key
 func (c *Client) DecryptForApp(appID string, ciphertext []byte, attestationTime int64) ([]byte, error) {
+	if err := util.ValidateAppID(appID); err != nil {
+		return nil, fmt.Errorf("invalid app ID: %w", err)
+	}
 	operators, err := c.GetOperators()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get operators: %w", err)

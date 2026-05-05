@@ -148,7 +148,7 @@ func TestHandleAppSign_AttestationTimeBounds(t *testing.T) {
 		w := httptest.NewRecorder()
 		f.server.handleAppSign(w, httpReq)
 
-		// Should pass the time check (fails later with 500 due to missing key share)
+		// Passes time check; 500 because no key version matches the historical attestation time
 		assert.Equal(t, http.StatusInternalServerError, w.Code)
 	})
 

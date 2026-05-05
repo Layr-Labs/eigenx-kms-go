@@ -63,8 +63,8 @@ import (
 const maxSignResponseSize = 64 * 1024
 
 // maxListResponseSize limits the size of list/query response bodies (1MB).
-// Supports ~10,000 BLS public keys in a JSON array. A truncated response will
-// produce a JSON parse error (not silent data loss) at the caller.
+// Supports ~5,000 BLS G2 keys or ~10,000 G1 keys in a JSON array. A truncated
+// response will produce a JSON parse error (not silent data loss) at the caller.
 const maxListResponseSize = 1 << 20
 
 // Client represents a Web3Signer JSON-RPC client that provides methods for
@@ -386,7 +386,7 @@ func (c *Client) SignRaw(ctx context.Context, identifier string, data []byte) (s
 
 func (c *Client) ReloadKeys(ctx context.Context) error {
 	_, err := c.makeHttpRequest(
-		context.Background(),
+		ctx,
 		http.MethodPost,
 		"/reload",
 		nil,
@@ -396,7 +396,7 @@ func (c *Client) ReloadKeys(ctx context.Context) error {
 }
 func (c *Client) ListAllPublicKeys(ctx context.Context) ([]string, error) {
 	data, err := c.makeHttpRequest(
-		context.Background(),
+		ctx,
 		http.MethodGet,
 		"/api/v1/eth1/publicKeys",
 		nil,
