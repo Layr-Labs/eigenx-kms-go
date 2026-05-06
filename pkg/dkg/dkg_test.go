@@ -175,6 +175,18 @@ func testFinalizeKeyShare(t *testing.T) {
 	require.NotNil(t, keyVersion, "Expected non-nil key version")
 	require.NotNil(t, keyVersion.PrivateShare, "Expected non-nil private share")
 	require.Equal(t, threshold, len(keyVersion.Commitments))
+
+	// Newly finalized shares must be marked active — downstream code
+	// (keystore / signing) filters out inactive shares, so a missing or
+	// flipped IsActive flag would silently disable the share.
+	require.True(t, keyVersion.IsActive, "newly finalized key share must be IsActive=true")
+
+	// Length-only assertions can pass even when the combine loop never
+	// ran, leaving combinedCommitments as the all-zero initializer.
+	zero := types.ZeroG2Point()
+	for i, c := range keyVersion.Commitments {
+		require.NotEqual(t, zero.CompressedBytes, c.CompressedBytes, "commitment %d is the zero G2 point — combination loop never ran", i)
+	}
 }
 
 // testCreateAcknowledgement tests acknowledgement creation
