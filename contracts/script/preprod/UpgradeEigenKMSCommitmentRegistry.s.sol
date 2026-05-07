@@ -28,11 +28,10 @@ contract UpgradeEigenKMSCommitmentRegistry is Script {
         EigenKMSCommitmentRegistry newImpl = new EigenKMSCommitmentRegistry();
         console.log("New implementation deployed to:", address(newImpl));
 
-        // Upgrade proxy to new implementation (no reinitialize call)
-        ProxyAdmin(proxyAdmin).upgradeAndCall(
+        // Upgrade proxy to new implementation
+        ProxyAdmin(proxyAdmin).upgrade(
             ITransparentUpgradeableProxy(proxy),
-            address(newImpl),
-            ""
+            address(newImpl)
         );
         console.log("Proxy upgraded successfully");
 

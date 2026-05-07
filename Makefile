@@ -121,3 +121,10 @@ anvil/start/l2:
 		--fork-block-number 34610863 \
 		--block-time 2 \
 		--port 9545
+
+.PHONY: anvil/start/l2-live
+anvil/start/l2-live:
+	anvil \
+		--fork-url https://soft-alpha-grass.base-sepolia.quiknode.pro/fd5e4bf346247d9b6e586008a9f13df72ce6f5b2/ \
+		--block-time 2 \
+		--port 9545

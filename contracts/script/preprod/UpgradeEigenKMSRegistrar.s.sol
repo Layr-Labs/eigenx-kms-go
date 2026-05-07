@@ -37,11 +37,10 @@ contract UpgradeEigenKMSRegistrar is Script {
         EigenKMSRegistrar newImpl = new EigenKMSRegistrar(ALLOCATION_MANAGER, KEY_REGISTRAR, PERMISSION_CONTROLLER);
         console.log("New implementation deployed to:", address(newImpl));
 
-        // Upgrade proxy to new implementation (no reinitialize call)
-        ProxyAdmin(proxyAdmin).upgradeAndCall(
+        // Upgrade proxy to new implementation
+        ProxyAdmin(proxyAdmin).upgrade(
             ITransparentUpgradeableProxy(proxy),
-            address(newImpl),
-            ""
+            address(newImpl)
         );
         console.log("Proxy upgraded successfully");
 
