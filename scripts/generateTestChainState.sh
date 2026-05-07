@@ -246,7 +246,6 @@ function registerOperatorToAvs() {
         --avs-address $avsAccountAddress \
         --operator-address $operatorAddress \
         --operator-private-key $operatorPk \
-        --avs-private-key $avsAccountPk \
         --ecdsa-private-key $operatorPk \
         --socket $socket \
         --operator-set-id 0 \
