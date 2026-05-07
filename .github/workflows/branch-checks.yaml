@@ -1,0 +1,41 @@
+name: Branch Checks
+
+on:
+  push:
+    branches-ignore:
+      - master
+
+jobs:
+  up-to-date-with-master:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3
+        with:
+          fetch-depth: 0
+
+      - name: Check branch is up to date with master
+        run: |
+          git fetch origin master
+          if ! git merge-base --is-ancestor origin/master HEAD; then
+            echo "::error::Branch is not up to date with master. Please rebase master into your branch."
+            exit 1
+          fi
+
+  no-merge-commits:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@f43a0e5ff2bd294095638e18286ca9a3d1956744 # v3
+        with:
+          fetch-depth: 0
+
+      - name: Check for merge commits
+        run: |
+          git fetch origin master
+          merge_base=$(git merge-base origin/master HEAD)
+          merge_commits=$(git log --merges --oneline "$merge_base"..HEAD)
+          if [ -n "$merge_commits" ]; then
+            echo "::error::Branch contains merge commits. Please rebase instead of merging."
+            echo "Merge commits found:"
+            echo "$merge_commits"
+            exit 1
+          fi
