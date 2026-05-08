@@ -6,3 +6,41 @@ packages:
   github.com/Layr-Labs/eigenx-kms-go:
     config:
       all: true
+  github.com/Layr-Labs/eigenx-kms-go/pkg/dkg:
+    interfaces:
+      Protocol:
+        config:
+          disable: true
+  github.com/Layr-Labs/eigenx-kms-go/pkg/peering:
+    interfaces:
+      IPeeringDataFetcher:
+        config:
+          disable: true
+  github.com/Layr-Labs/eigenx-kms-go/pkg/persistence:
+    interfaces:
+      INodePersistence:
+        config:
+          disable: true
+  github.com/Layr-Labs/eigenx-kms-go/pkg/transactionSigner:
+    interfaces:
+      ITransactionSigner:
+        config:
+          disable: true
+  github.com/Layr-Labs/eigenx-kms-go/pkg/reshare:
+    interfaces:
+      Protocol:
+        config:
+          disable: true
+  github.com/Layr-Labs/eigenx-kms-go/internal/keyGenerator:
+    interfaces:
+      IKeyGenerator:
+        config:
+          disable: true
+  github.com/Layr-Labs/eigenx-kms-go/pkg/clients/web3signer:
+    interfaces:
+      IWeb3Signer:
+        config:
+          disable: true
+  github.com/Layr-Labs/eigenx-kms-go/pkg/testutil:
+    config:
+      all: false
