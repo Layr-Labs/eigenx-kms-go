@@ -64,9 +64,7 @@ func TestCalculateChallenge(t *testing.T) {
 }
 
 // Covers the "attestation parsing failed" wrapper and doubles as a
-// constructor smoke test — a nil or panicking verifier fails these
-// subtests first. Invalid and empty buffers both fall through Parse's
-// proto-unmarshal and platform-detection into the same branch.
+// constructor smoke test.
 func TestAttestVerifier_Verify_ParseFailures(t *testing.T) {
 	cases := []struct {
 		name             string
