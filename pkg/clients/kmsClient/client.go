@@ -415,7 +415,7 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 			}
 
 			// SECURITY: bind response identity to the operator we actually queried.
-			// Never trust response.OperatorAddress as the source of truth for nodeID.
+			// Use the operator address from our operator set, not the response.
 			expectedAddress := op.OperatorAddress.Hex()
 			if !strings.EqualFold(response.OperatorAddress, expectedAddress) {
 				c.logger.Sugar().Warnw("Operator address mismatch in partial signature response",
@@ -930,7 +930,7 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 			}
 
 			// SECURITY: bind response identity to the operator we actually queried.
-			// Never trust response.OperatorAddress as the source of truth for nodeID.
+			// Use the operator address from our operator set, not the response.
 			expectedAddress := op.OperatorAddress.Hex()
 			if !strings.EqualFold(response.OperatorAddress, expectedAddress) {
 				c.logger.Sugar().Warnw("Operator address mismatch in partial signature response",
