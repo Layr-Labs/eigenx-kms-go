@@ -39,7 +39,7 @@ func TestAddressToFr_ZeroAddress(t *testing.T) {
 	assert.True(t, elem.IsZero(), "zero address should produce zero field element")
 }
 
-func TestEvaluatePolynomialAddr(t *testing.T) {
+func TestEvaluatePolynomial(t *testing.T) {
 	t.Run("Address 0x...0001 maps to 1", func(t *testing.T) {
 		// Address 0x0000...0001 should map to fr.Element(1)
 		addr := common.HexToAddress("0x0000000000000000000000000000000000000001")
@@ -50,13 +50,14 @@ func TestEvaluatePolynomialAddr(t *testing.T) {
 		coeff1.SetInt64(2)
 		poly := polynomial.Polynomial{coeff0, coeff1}
 
-		result := EvaluatePolynomialAddr(poly, addr)
+		result := EvaluatePolynomial(poly, addr)
 		expected := new(fr.Element).SetInt64(5)
 		assert.True(t, result.Equal(expected), "P(1) should equal 5")
 	})
 
-	t.Run("Matches int64 evaluation for small addresses", func(t *testing.T) {
-		// Address 0x...0005 should give same result as evaluating at x=5
+	t.Run("Small address gives expected result via manual evaluation", func(t *testing.T) {
+		// Address 0x...0005 maps to fr.Element(5)
+		// P(x) = 1 + 2x + 3x^2 => P(5) = 1 + 10 + 75 = 86
 		addr := common.HexToAddress("0x0000000000000000000000000000000000000005")
 
 		var coeff0, coeff1, coeff2 fr.Element
@@ -65,13 +66,13 @@ func TestEvaluatePolynomialAddr(t *testing.T) {
 		coeff2.SetInt64(3)
 		poly := polynomial.Polynomial{coeff0, coeff1, coeff2}
 
-		addrResult := EvaluatePolynomialAddr(poly, addr)
-		int64Result := EvaluatePolynomial(poly, 5)
-		assert.True(t, addrResult.Equal(int64Result), "should match int64 evaluation for equivalent value")
+		addrResult := EvaluatePolynomial(poly, addr)
+		expected := new(fr.Element).SetInt64(86) // 1 + 2*5 + 3*25
+		assert.True(t, addrResult.Equal(expected), "P(5) should equal 86")
 	})
 }
 
-func TestComputeLagrangeCoefficientAddr(t *testing.T) {
+func TestComputeLagrangeCoefficient(t *testing.T) {
 	t.Run("Produces non-zero coefficient", func(t *testing.T) {
 		participants := []common.Address{
 			common.HexToAddress("0x0000000000000000000000000000000000000001"),
@@ -79,25 +80,28 @@ func TestComputeLagrangeCoefficientAddr(t *testing.T) {
 			common.HexToAddress("0x0000000000000000000000000000000000000003"),
 		}
 
-		coeff := ComputeLagrangeCoefficientAddr(participants[0], participants)
+		coeff := ComputeLagrangeCoefficient(participants[0], participants)
 		assert.False(t, coeff.IsZero(), "Lagrange coefficient should be non-zero")
 	})
 
-	t.Run("Matches int64 version for small addresses", func(t *testing.T) {
+	t.Run("Sum of Lagrange coefficients equals one", func(t *testing.T) {
 		participants := []common.Address{
 			common.HexToAddress("0x0000000000000000000000000000000000000001"),
 			common.HexToAddress("0x0000000000000000000000000000000000000002"),
 			common.HexToAddress("0x0000000000000000000000000000000000000003"),
 		}
-		participantsInt := []int64{1, 2, 3}
 
-		addrCoeff := ComputeLagrangeCoefficientAddr(participants[0], participants)
-		intCoeff := ComputeLagrangeCoefficient(1, participantsInt)
-		assert.True(t, addrCoeff.Equal(intCoeff), "should match int64 version for equivalent small values")
+		sum := new(fr.Element).SetZero()
+		for _, p := range participants {
+			lambda := ComputeLagrangeCoefficient(p, participants)
+			sum.Add(sum, lambda)
+		}
+		one := new(fr.Element).SetOne()
+		assert.True(t, sum.Equal(one), "sum of Lagrange coefficients at x=0 should equal 1")
 	})
 }
 
-func TestRecoverSecretAddr(t *testing.T) {
+func TestRecoverSecret(t *testing.T) {
 	t.Run("Recovers original secret from threshold shares", func(t *testing.T) {
 		secret := new(fr.Element).SetInt64(42)
 		degree := 2 // threshold = degree + 1 = 3
@@ -114,7 +118,7 @@ func TestRecoverSecretAddr(t *testing.T) {
 			common.HexToAddress("0x0000000000000000000000000000000000000005"),
 		}
 
-		allShares := GenerateSharesAddr(poly, participants)
+		allShares := GenerateShares(poly, participants)
 
 		// Use threshold number of shares (degree + 1 = 3)
 		thresholdShares := make(map[common.Address]*fr.Element)
@@ -122,7 +126,7 @@ func TestRecoverSecretAddr(t *testing.T) {
 			thresholdShares[participants[i]] = allShares[participants[i]]
 		}
 
-		recovered, err := RecoverSecretAddr(thresholdShares)
+		recovered, err := RecoverSecret(thresholdShares)
 		require.NoError(t, err)
 		assert.True(t, recovered.Equal(secret), "recovered secret should match original")
 	})
@@ -142,7 +146,7 @@ func TestRecoverSecretAddr(t *testing.T) {
 			common.HexToAddress("0x0000000000000000000000000000000000000005"),
 		}
 
-		allShares := GenerateSharesAddr(poly, participants)
+		allShares := GenerateShares(poly, participants)
 
 		// Subset 1: participants 0, 1, 2
 		subset1 := make(map[common.Address]*fr.Element)
@@ -156,10 +160,10 @@ func TestRecoverSecretAddr(t *testing.T) {
 		subset2[participants[3]] = allShares[participants[3]]
 		subset2[participants[4]] = allShares[participants[4]]
 
-		recovered1, err := RecoverSecretAddr(subset1)
+		recovered1, err := RecoverSecret(subset1)
 		require.NoError(t, err)
 
-		recovered2, err := RecoverSecretAddr(subset2)
+		recovered2, err := RecoverSecret(subset2)
 		require.NoError(t, err)
 
 		assert.True(t, recovered1.Equal(recovered2), "different subsets should recover same secret")
@@ -167,7 +171,7 @@ func TestRecoverSecretAddr(t *testing.T) {
 	})
 }
 
-func TestGenerateSharesAddr(t *testing.T) {
+func TestGenerateShares(t *testing.T) {
 	t.Run("Generates correct number of shares", func(t *testing.T) {
 		secret := new(fr.Element).SetInt64(100)
 		poly, err := GeneratePolynomial(secret, 3)
@@ -181,7 +185,7 @@ func TestGenerateSharesAddr(t *testing.T) {
 			common.HexToAddress("0x0000000000000000000000000000000000000005"),
 		}
 
-		shares := GenerateSharesAddr(poly, participants)
+		shares := GenerateShares(poly, participants)
 		assert.Equal(t, len(participants), len(shares), "should generate one share per participant")
 
 		// Verify each participant has a share
@@ -202,7 +206,7 @@ func TestGenerateSharesAddr(t *testing.T) {
 			common.HexToAddress("0x3333333333333333333333333333333333333333"),
 		}
 
-		shares := GenerateSharesAddr(poly, participants)
+		shares := GenerateShares(poly, participants)
 
 		// All shares should be distinct
 		for i := 0; i < len(participants); i++ {
@@ -214,7 +218,7 @@ func TestGenerateSharesAddr(t *testing.T) {
 	})
 }
 
-func TestVerifyShareAddr(t *testing.T) {
+func TestVerifyShare(t *testing.T) {
 	t.Run("Valid share passes verification", func(t *testing.T) {
 		secret := new(fr.Element).SetInt64(12345)
 		degree := 2
@@ -226,9 +230,9 @@ func TestVerifyShareAddr(t *testing.T) {
 		require.NoError(t, err)
 
 		addr := common.HexToAddress("0x0000000000000000000000000000000000000001")
-		share := EvaluatePolynomialAddr(poly, addr)
+		share := EvaluatePolynomial(poly, addr)
 
-		valid, err := VerifyShareAddr(addr, share, commitments)
+		valid, err := VerifyShare(addr, share, commitments)
 		require.NoError(t, err)
 		assert.True(t, valid, "valid share should pass verification")
 	})
@@ -247,7 +251,7 @@ func TestVerifyShareAddr(t *testing.T) {
 		// Use a wrong share value
 		wrongShare := new(fr.Element).SetInt64(99999)
 
-		valid, err := VerifyShareAddr(addr, wrongShare, commitments)
+		valid, err := VerifyShare(addr, wrongShare, commitments)
 		require.NoError(t, err)
 		assert.False(t, valid, "invalid share should fail verification")
 	})
@@ -256,7 +260,7 @@ func TestVerifyShareAddr(t *testing.T) {
 		addr := common.HexToAddress("0x0000000000000000000000000000000000000001")
 		commitments := []*G2Point{{point: nil}}
 
-		_, err := VerifyShareAddr(addr, nil, commitments)
+		_, err := VerifyShare(addr, nil, commitments)
 		assert.Error(t, err)
 	})
 
@@ -264,7 +268,7 @@ func TestVerifyShareAddr(t *testing.T) {
 		addr := common.HexToAddress("0x0000000000000000000000000000000000000001")
 		share := new(fr.Element).SetInt64(1)
 
-		_, err := VerifyShareAddr(addr, share, []*G2Point{})
+		_, err := VerifyShare(addr, share, []*G2Point{})
 		assert.Error(t, err)
 	})
 }

@@ -56,7 +56,7 @@ func (r *Reshare) GenerateNewShares(currentShare *fr.Element, newThreshold int) 
 	// Compute shares for all operators
 	newShares := make(map[common.Address]*fr.Element)
 	for _, op := range r.operators {
-		share := crypto.EvaluatePolynomialAddr(r.poly, op.OperatorAddress)
+		share := crypto.EvaluatePolynomial(r.poly, op.OperatorAddress)
 		newShares[op.OperatorAddress] = share
 	}
 
@@ -120,7 +120,7 @@ func (r *Reshare) ComputeNewKeyShare(dealers []common.Address, shares map[common
 			continue
 		}
 
-		lambda := crypto.ComputeLagrangeCoefficientAddr(dealerAddr, dealers)
+		lambda := crypto.ComputeLagrangeCoefficient(dealerAddr, dealers)
 		term := new(fr.Element).Mul(lambda, share)
 		newShare.Add(newShare, term)
 	}
@@ -132,7 +132,7 @@ func (r *Reshare) ComputeNewKeyShare(dealers []common.Address, shares map[common
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute share commitment: %w", err)
 	}
-	lambdaJ := crypto.ComputeLagrangeCoefficientAddr(r.nodeAddress, dealers)
+	lambdaJ := crypto.ComputeLagrangeCoefficient(r.nodeAddress, dealers)
 	scaledCommitment, scaleErr := crypto.ScalarMulG2(*shareCommitment, lambdaJ)
 	if scaleErr != nil {
 		return nil, fmt.Errorf("failed to scale commitment: %w", scaleErr)

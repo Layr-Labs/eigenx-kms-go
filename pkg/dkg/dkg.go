@@ -53,7 +53,7 @@ func (d *DKG) GenerateShares() (map[common.Address]*fr.Element, []types.G2Point,
 	// Compute shares for all operators
 	shares := make(map[common.Address]*fr.Element)
 	for _, op := range d.operators {
-		share := crypto.EvaluatePolynomialAddr(d.poly, op.OperatorAddress)
+		share := crypto.EvaluatePolynomial(d.poly, op.OperatorAddress)
 		shares[op.OperatorAddress] = share
 	}
 

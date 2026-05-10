@@ -106,7 +106,7 @@ func FuzzGenerateVerifyAndComputeNewKeyShare(f *testing.F) {
 		expected := new(fr.Element).SetZero()
 		for _, dealerAddr := range dealerAddrs {
 			share := shares[dealerAddr]
-			lambda := crypto.ComputeLagrangeCoefficientAddr(dealerAddr, dealerAddrs)
+			lambda := crypto.ComputeLagrangeCoefficient(dealerAddr, dealerAddrs)
 			term := new(fr.Element).Mul(lambda, share)
 			expected.Add(expected, term)
 		}
@@ -306,7 +306,7 @@ func FuzzZeroConstantDealerPolynomialsDoNotPreserveOriginalSecret(f *testing.F) 
 			addr := operators[i].OperatorAddress
 			recoveryShares[addr] = finalShares[addr]
 		}
-		recovered, err := crypto.RecoverSecretAddr(recoveryShares)
+		recovered, err := crypto.RecoverSecret(recoveryShares)
 		if err == nil {
 			require.False(t, recovered.Equal(oldSecret),
 				"zero-constant dealer polynomials should not preserve original non-zero secret")

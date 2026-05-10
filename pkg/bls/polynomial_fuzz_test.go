@@ -3,10 +3,12 @@ package bls
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"math/big"
 	"math/rand"
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,6 +20,15 @@ func deriveScalarPoly(b []byte) *fr.Element {
 		s.SetUint64(1)
 	}
 	return s
+}
+
+// makeAddrs creates n participant addresses from 1..n
+func makeAddrs(n int) []common.Address {
+	addrs := make([]common.Address, 0, n)
+	for i := 1; i <= n; i++ {
+		addrs = append(addrs, common.BigToAddress(new(big.Int).SetInt64(int64(i))))
+	}
+	return addrs
 }
 
 func FuzzRecoverSecretRoundTrip(f *testing.F) {
@@ -42,7 +53,7 @@ func FuzzRecoverSecretRoundTrip(f *testing.F) {
 			degree = 4
 		}
 		if degree >= n {
-			// Ensure we still have enough shares (degree+1) ≤ n.
+			// Ensure we still have enough shares (degree+1) <= n.
 			degree = n - 1
 		}
 
@@ -50,20 +61,17 @@ func FuzzRecoverSecretRoundTrip(f *testing.F) {
 		poly, err := GeneratePolynomial(secret, degree)
 		require.NoError(t, err)
 
-		participantIDs := make([]int64, 0, n)
-		for i := int64(1); i <= int64(n); i++ {
-			participantIDs = append(participantIDs, i)
-		}
+		participantAddrs := makeAddrs(n)
 
 		// Deterministically shuffle participants to ensure order independence.
 		seedBytes := sha256.Sum256(seed)
 		r := rand.New(rand.NewSource(int64(binary.LittleEndian.Uint64(seedBytes[:8]))))
-		for i := len(participantIDs) - 1; i > 0; i-- {
+		for i := len(participantAddrs) - 1; i > 0; i-- {
 			j := r.Intn(i + 1)
-			participantIDs[i], participantIDs[j] = participantIDs[j], participantIDs[i]
+			participantAddrs[i], participantAddrs[j] = participantAddrs[j], participantAddrs[i]
 		}
 
-		shares := GenerateShares(poly, participantIDs)
+		shares := GenerateShares(poly, participantAddrs)
 		recovered, err := RecoverSecret(shares)
 		require.NoError(t, err)
 		require.True(t, recovered.Equal(secret), "recovered secret mismatch")
@@ -92,19 +100,16 @@ func FuzzRecoverSecretTamperedShare(f *testing.F) {
 		poly, err := GeneratePolynomial(secret, degree)
 		require.NoError(t, err)
 
-		participantIDs := make([]int64, 0, n)
-		for i := int64(1); i <= int64(n); i++ {
-			participantIDs = append(participantIDs, i)
-		}
-		shares := GenerateShares(poly, participantIDs)
+		participantAddrs := makeAddrs(n)
+		shares := GenerateShares(poly, participantAddrs)
 
-		// Tamper one share (different participant) by adding 1.
-		tamperedShares := make(map[int64]*fr.Element, len(shares))
-		for id, share := range shares {
-			tamperedShares[id] = new(fr.Element).Set(share)
+		// Tamper one share (middle participant) by adding 1.
+		tamperedShares := make(map[common.Address]*fr.Element, len(shares))
+		for addr, share := range shares {
+			tamperedShares[addr] = new(fr.Element).Set(share)
 		}
-		tamperID := participantIDs[len(participantIDs)/2]
-		tamperedShares[tamperID].Add(tamperedShares[tamperID], new(fr.Element).SetUint64(1))
+		tamperAddr := participantAddrs[len(participantAddrs)/2]
+		tamperedShares[tamperAddr].Add(tamperedShares[tamperAddr], new(fr.Element).SetUint64(1))
 
 		recovered, err := RecoverSecret(tamperedShares)
 		if err == nil {
@@ -135,17 +140,14 @@ func FuzzRecoverSecretInsufficientShares(f *testing.F) {
 		poly, err := GeneratePolynomial(secret, degree)
 		require.NoError(t, err)
 
-		participantIDs := make([]int64, 0, n)
-		for i := int64(1); i <= int64(n); i++ {
-			participantIDs = append(participantIDs, i)
-		}
-		shares := GenerateShares(poly, participantIDs)
+		participantAddrs := makeAddrs(n)
+		shares := GenerateShares(poly, participantAddrs)
 
 		// Take only degree shares (insufficient; need degree+1).
-		insufficient := make(map[int64]*fr.Element, degree)
+		insufficient := make(map[common.Address]*fr.Element, degree)
 		for i := 0; i < degree; i++ {
-			id := participantIDs[i]
-			insufficient[id] = shares[id]
+			addr := participantAddrs[i]
+			insufficient[addr] = shares[addr]
 		}
 
 		recovered, err := RecoverSecret(insufficient)
@@ -177,16 +179,13 @@ func FuzzRecoverSecretDuplicateParticipants(f *testing.F) {
 		poly, err := GeneratePolynomial(secret, degree)
 		require.NoError(t, err)
 
-		// Build participant IDs with duplicates but ensure at least degree+1 unique IDs.
-		participantIDs := make([]int64, 0, n)
-		for i := int64(1); i <= int64(n); i++ {
-			participantIDs = append(participantIDs, i)
-		}
-		if len(participantIDs) >= 2 {
-			participantIDs[1] = participantIDs[0] // introduce a duplicate
+		// Build participant addresses with duplicates but ensure at least degree+1 unique addrs.
+		participantAddrs := makeAddrs(n)
+		if len(participantAddrs) >= 2 {
+			participantAddrs[1] = participantAddrs[0] // introduce a duplicate
 		}
 
-		shares := GenerateShares(poly, participantIDs)
+		shares := GenerateShares(poly, participantAddrs)
 		recovered, err := RecoverSecret(shares)
 		require.NoError(t, err)
 		require.True(t, recovered.Equal(secret), "duplicates should not break recovery when enough unique IDs remain")
@@ -217,12 +216,9 @@ func FuzzRecoverSecretBoundaryDegrees(f *testing.F) {
 		poly, err := GeneratePolynomial(secret, degree)
 		require.NoError(t, err)
 
-		participantIDs := make([]int64, 0, n)
-		for i := int64(1); i <= int64(n); i++ {
-			participantIDs = append(participantIDs, i)
-		}
+		participantAddrs := makeAddrs(n)
 
-		shares := GenerateShares(poly, participantIDs)
+		shares := GenerateShares(poly, participantAddrs)
 		recovered, err := RecoverSecret(shares)
 		require.NoError(t, err)
 		require.True(t, recovered.Equal(secret), "boundary degree recovery mismatch")

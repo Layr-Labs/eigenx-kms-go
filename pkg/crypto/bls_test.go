@@ -1,12 +1,14 @@
 package crypto
 
 import (
+	"math/big"
 	"testing"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -59,7 +61,6 @@ func testScalarMulG1(t *testing.T) {
 			require.NoError(t, err, "Failed to scalar multiply G1")
 
 			// Verify result is not zero (unless scalar is zero)
-			// Note: Y is always 0 in our encoding, X contains the marshaled point
 			resultIsZero, err := result.IsZero()
 			require.NoError(t, err, "Failed to check if G1 point is zero")
 			if !tt.scalar.IsZero() && resultIsZero {
@@ -84,7 +85,6 @@ func testScalarMulG2(t *testing.T) {
 	require.NoError(t, err, "Failed to scalar multiply G2")
 
 	// Verify result is not zero
-	// Note: Y is always 0 in our encoding, X contains the marshaled point
 	resultIsZero, err := result.IsZero()
 	require.NoError(t, err, "Failed to check if G2 point is zero")
 	if resultIsZero {
@@ -184,7 +184,7 @@ func testHashToG1(t *testing.T) {
 	}
 }
 
-// testEvaluatePolynomial tests polynomial evaluation
+// testEvaluatePolynomial tests polynomial evaluation with addresses
 func testEvaluatePolynomial(t *testing.T) {
 	// Create polynomial: f(x) = 1 + 2x + 3x^2
 	poly := make(polynomial.Polynomial, 3)
@@ -192,35 +192,35 @@ func testEvaluatePolynomial(t *testing.T) {
 	poly[1].SetInt64(2) // x coefficient
 	poly[2].SetInt64(3) // x^2 coefficient
 
-	tests := []struct {
-		x        int64
-		expected int64
-	}{
-		{0, 1},  // f(0) = 1
-		{1, 6},  // f(1) = 1 + 2 + 3 = 6
-		{2, 17}, // f(2) = 1 + 4 + 12 = 17
+	// Address 0x...0001 maps to fr(1): f(1) = 1 + 2 + 3 = 6
+	addr1 := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	result := EvaluatePolynomial(poly, addr1)
+	expected := new(fr.Element).SetInt64(6)
+	if !result.Equal(expected) {
+		t.Errorf("f(addr_1) = %v, expected %v (6)", result, expected)
 	}
 
-	for _, tt := range tests {
-		t.Run(string(rune(tt.x)), func(t *testing.T) {
-			result := EvaluatePolynomial(poly, tt.x)
-			expected := new(fr.Element).SetInt64(tt.expected)
-
-			if !result.Equal(expected) {
-				t.Errorf("f(%d) = %v, expected %v", tt.x, result, expected)
-			}
-		})
+	// Address 0x...0002 maps to fr(2): f(2) = 1 + 4 + 12 = 17
+	addr2 := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	result = EvaluatePolynomial(poly, addr2)
+	expected = new(fr.Element).SetInt64(17)
+	if !result.Equal(expected) {
+		t.Errorf("f(addr_2) = %v, expected %v (17)", result, expected)
 	}
 }
 
 // testComputeLagrangeCoefficient tests Lagrange coefficient computation
 func testComputeLagrangeCoefficient(t *testing.T) {
-	participants := []int64{1, 2, 3}
+	participants := []common.Address{
+		common.HexToAddress("0x0000000000000000000000000000000000000001"),
+		common.HexToAddress("0x0000000000000000000000000000000000000002"),
+		common.HexToAddress("0x0000000000000000000000000000000000000003"),
+	}
 
 	// Test that sum of Lagrange coefficients at x=0 equals 1
 	sum := new(fr.Element).SetZero()
-	for _, i := range participants {
-		lambda := ComputeLagrangeCoefficient(i, participants)
+	for _, p := range participants {
+		lambda := ComputeLagrangeCoefficient(p, participants)
 		sum.Add(sum, lambda)
 	}
 
@@ -244,10 +244,16 @@ func testRecoverSecret(t *testing.T) {
 		_, _ = poly[i].SetRandom()
 	}
 
-	// Generate shares
-	shares := make(map[int64]*fr.Element)
-	for i := 1; i <= 3; i++ {
-		shares[int64(i)] = EvaluatePolynomial(poly, int64(i))
+	// Generate shares using addresses
+	participants := []common.Address{
+		common.HexToAddress("0x0000000000000000000000000000000000000001"),
+		common.HexToAddress("0x0000000000000000000000000000000000000002"),
+		common.HexToAddress("0x0000000000000000000000000000000000000003"),
+	}
+
+	shares := make(map[common.Address]*fr.Element)
+	for _, addr := range participants {
+		shares[addr] = EvaluatePolynomial(poly, addr)
 	}
 
 	// Recover secret
@@ -256,18 +262,6 @@ func testRecoverSecret(t *testing.T) {
 
 	if !recovered.Equal(secret) {
 		t.Errorf("Failed to recover secret: got %v, expected %v", recovered, secret)
-	}
-
-	// Test with subset of shares (threshold)
-	subset := make(map[int64]*fr.Element)
-	subset[1] = shares[1]
-	subset[2] = shares[2]
-	subset[3] = shares[3]
-
-	recoveredSubset, err := RecoverSecret(subset)
-	require.NoError(t, err, "Failed to recover secret")
-	if !recoveredSubset.Equal(secret) {
-		t.Error("Failed to recover secret with threshold shares")
 	}
 }
 
@@ -323,22 +317,31 @@ func testRecoverAppPrivateKey(t *testing.T) {
 		_, _ = poly[i].SetRandom()
 	}
 
+	participants := []common.Address{
+		common.HexToAddress("0x0000000000000000000000000000000000000001"),
+		common.HexToAddress("0x0000000000000000000000000000000000000002"),
+		common.HexToAddress("0x0000000000000000000000000000000000000003"),
+		common.HexToAddress("0x0000000000000000000000000000000000000004"),
+		common.HexToAddress("0x0000000000000000000000000000000000000005"),
+	}
+
 	// Create shares by evaluating polynomial
-	shares := make(map[int]*fr.Element)
-	for i := 1; i <= 5; i++ {
-		shares[i] = EvaluatePolynomial(poly, int64(i))
+	shares := make(map[common.Address]*fr.Element)
+	for _, addr := range participants {
+		shares[addr] = EvaluatePolynomial(poly, addr)
 	}
 
 	// Create partial signatures using the shares
 	msgPoint, err := HashToG1(appID)
 	require.NoError(t, err, "Failed to hash to G1")
-	partialSigs := make(map[int64]types.G1Point)
+	partialSigs := make(map[common.Address]types.G1Point)
 
 	// Use first `threshold` shares
-	for i := 1; i <= threshold; i++ {
-		partialSig, err := ScalarMulG1(*msgPoint, shares[i])
+	for i := 0; i < threshold; i++ {
+		addr := participants[i]
+		partialSig, err := ScalarMulG1(*msgPoint, shares[addr])
 		require.NoError(t, err, "Failed to scalar multiply G1")
-		partialSigs[int64(i)] = *partialSig
+		partialSigs[addr] = *partialSig
 	}
 
 	// Recover the key
@@ -399,7 +402,7 @@ func testComputeMasterPublicKey(t *testing.T) {
 
 // generateTestPartialSigs creates n partial signatures for an appID using a random polynomial
 // of degree (threshold-1). Returns all partial sigs, the expected recovered key, and the master secret.
-func generateTestPartialSigs(t *testing.T, appID string, n, threshold int) (map[int64]types.G1Point, *types.G1Point, *fr.Element) {
+func generateTestPartialSigs(t *testing.T, appID string, n, threshold int) (map[common.Address]types.G1Point, *types.G1Point, *fr.Element) {
 	t.Helper()
 
 	secret := new(fr.Element).SetInt64(42)
@@ -412,12 +415,13 @@ func generateTestPartialSigs(t *testing.T, appID string, n, threshold int) (map[
 	msgPoint, err := HashToG1(appID)
 	require.NoError(t, err)
 
-	partialSigs := make(map[int64]types.G1Point)
-	for i := int64(1); i <= int64(n); i++ {
-		share := EvaluatePolynomial(poly, i)
+	partialSigs := make(map[common.Address]types.G1Point)
+	for i := 1; i <= n; i++ {
+		addr := common.HexToAddress("0x" + padHex(i))
+		share := EvaluatePolynomial(poly, addr)
 		sig, err := ScalarMulG1(*msgPoint, share)
 		require.NoError(t, err)
-		partialSigs[i] = *sig
+		partialSigs[addr] = *sig
 	}
 
 	expected, err := ScalarMulG1(*msgPoint, secret)
@@ -426,13 +430,24 @@ func generateTestPartialSigs(t *testing.T, appID string, n, threshold int) (map[
 	return partialSigs, expected, secret
 }
 
-// corruptPartialSig replaces the signature for the given nodeID with an arbitrary invalid G1 point.
-func corruptPartialSig(t *testing.T, sigs map[int64]types.G1Point, nodeID int64) {
+// padHex returns a 40-character hex string with leading zeros for the given int
+func padHex(i int) string {
+	hex := ""
+	for len(hex) < 40 {
+		hex = "0" + hex
+	}
+	// overwrite trailing chars with the actual value
+	s := common.BigToAddress(new(big.Int).SetInt64(int64(i))).Hex()[2:]
+	return s
+}
+
+// corruptPartialSig replaces the signature for the given address with an arbitrary invalid G1 point.
+func corruptPartialSig(t *testing.T, sigs map[common.Address]types.G1Point, addr common.Address) {
 	t.Helper()
-	randomScalar := new(fr.Element).SetInt64(99999 + nodeID)
+	randomScalar := new(fr.Element).SetInt64(99999)
 	randomPoint, err := ScalarMulG1(G1Generator, randomScalar)
 	require.NoError(t, err)
-	sigs[nodeID] = *randomPoint
+	sigs[addr] = *randomPoint
 }
 
 func testRecoverAppPrivateKeyWithRetry_AllValid(t *testing.T) {
@@ -454,8 +469,9 @@ func testRecoverAppPrivateKeyWithRetry_OneCorrupt(t *testing.T) {
 
 	partialSigs, expected, _ := generateTestPartialSigs(t, appID, n, threshold)
 
-	// Corrupt node 2 (which is in the initial sorted subset [1,2,3,4,5])
-	corruptPartialSig(t, partialSigs, 2)
+	// Corrupt one address (address 2)
+	addr2 := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	corruptPartialSig(t, partialSigs, addr2)
 
 	recovered, err := RecoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
 		return candidate.IsEqual(expected)
@@ -470,9 +486,11 @@ func testRecoverAppPrivateKeyWithRetry_MaxCorrupt(t *testing.T) {
 
 	partialSigs, expected, _ := generateTestPartialSigs(t, appID, n, threshold)
 
-	// Corrupt 2 nodes in the initial sorted subset
-	corruptPartialSig(t, partialSigs, 1)
-	corruptPartialSig(t, partialSigs, 3)
+	// Corrupt 2 addresses
+	addr1 := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	addr3 := common.HexToAddress("0x0000000000000000000000000000000000000003")
+	corruptPartialSig(t, partialSigs, addr1)
+	corruptPartialSig(t, partialSigs, addr3)
 
 	recovered, err := RecoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
 		return candidate.IsEqual(expected)
@@ -487,10 +505,13 @@ func testRecoverAppPrivateKeyWithRetry_TooManyCorrupt(t *testing.T) {
 
 	partialSigs, expected, _ := generateTestPartialSigs(t, appID, n, threshold)
 
-	// Corrupt 3 nodes (more than n - threshold = 2)
-	corruptPartialSig(t, partialSigs, 1)
-	corruptPartialSig(t, partialSigs, 3)
-	corruptPartialSig(t, partialSigs, 6)
+	// Corrupt 3 addresses (more than n - threshold = 2)
+	addr1 := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	addr3 := common.HexToAddress("0x0000000000000000000000000000000000000003")
+	addr6 := common.HexToAddress("0x0000000000000000000000000000000000000006")
+	corruptPartialSig(t, partialSigs, addr1)
+	corruptPartialSig(t, partialSigs, addr3)
+	corruptPartialSig(t, partialSigs, addr6)
 
 	_, err := RecoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
 		return candidate.IsEqual(expected)
@@ -505,10 +526,11 @@ func testRecoverAppPrivateKeyWithRetry_CapReached(t *testing.T) {
 
 	partialSigs, expected, _ := generateTestPartialSigs(t, appID, n, threshold)
 
-	// Corrupt nodes 1 and 2 so only subsets excluding both are valid.
-	// The valid subset {3,4,5,6,7} is combination number 21 (the last of C(7,5)=21 total).
-	corruptPartialSig(t, partialSigs, 1)
-	corruptPartialSig(t, partialSigs, 2)
+	// Corrupt addresses 1 and 2 so only subsets excluding both are valid.
+	addr1 := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	addr2 := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	corruptPartialSig(t, partialSigs, addr1)
+	corruptPartialSig(t, partialSigs, addr2)
 
 	// With a cap of 5, we won't reach the valid subset
 	_, err := recoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
@@ -560,7 +582,7 @@ func testVerifyAppPrivateKey(t *testing.T) {
 	require.False(t, valid, "Correct key with wrong appID should not verify")
 }
 
-// testDecryptWithRetry_E2E tests the full encrypt → corrupt partial sig → decrypt-with-retry flow.
+// testDecryptWithRetry_E2E tests the full encrypt -> corrupt partial sig -> decrypt-with-retry flow.
 func testDecryptWithRetry_E2E(t *testing.T) {
 	appID := "test-e2e-decrypt-retry"
 	n, threshold := 7, 5
@@ -575,8 +597,9 @@ func testDecryptWithRetry_E2E(t *testing.T) {
 	ciphertext, err := EncryptForApp(appID, *masterPubKey, plaintext)
 	require.NoError(t, err)
 
-	// Corrupt one partial sig in the initial sorted subset
-	corruptPartialSig(t, partialSigs, 2)
+	// Corrupt one partial sig
+	addr2 := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	corruptPartialSig(t, partialSigs, addr2)
 
 	// Recover with retry using trial decryption as validator
 	var decrypted []byte

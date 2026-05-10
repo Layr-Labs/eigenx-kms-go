@@ -17,6 +17,7 @@ import (
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -319,10 +320,17 @@ func testEncryptionPersistenceAcrossReshare(t *testing.T) {
 		_, _ = masterPoly[i].SetRandom()
 	}
 
-	// Generate initial key shares
-	initialShares := make([]*fr.Element, initialNodes)
-	for i := 0; i < initialNodes; i++ {
-		initialShares[i] = EvaluatePolynomial(masterPoly, int64(i+1))
+	// Generate initial key shares using addresses
+	initialAddrs := []common.Address{
+		common.HexToAddress("0x0000000000000000000000000000000000000001"),
+		common.HexToAddress("0x0000000000000000000000000000000000000002"),
+		common.HexToAddress("0x0000000000000000000000000000000000000003"),
+		common.HexToAddress("0x0000000000000000000000000000000000000004"),
+		common.HexToAddress("0x0000000000000000000000000000000000000005"),
+	}
+	initialShares := make(map[common.Address]*fr.Element)
+	for _, addr := range initialAddrs {
+		initialShares[addr] = EvaluatePolynomial(masterPoly, addr)
 	}
 
 	// Create master public key and encrypt data
@@ -336,11 +344,12 @@ func testEncryptionPersistenceAcrossReshare(t *testing.T) {
 	require.NoError(t, err, "Failed to hash to G1")
 
 	// Create partial signatures for threshold number of nodes.
-	initialPartialSigs := make(map[int64]types.G1Point)
+	initialPartialSigs := make(map[common.Address]types.G1Point)
 	for i := 0; i < initialThreshold; i++ {
-		partialSig, err := ScalarMulG1(*appHash, initialShares[i])
-		require.NoError(t, err, "Failed to scalar multiply G1 for node %d", i+1)
-		initialPartialSigs[int64(i+1)] = *partialSig
+		addr := initialAddrs[i]
+		partialSig, err := ScalarMulG1(*appHash, initialShares[addr])
+		require.NoError(t, err, "Failed to scalar multiply G1 for addr %s", addr.Hex())
+		initialPartialSigs[addr] = *partialSig
 	}
 	initialAppPrivateKey, err := RecoverAppPrivateKey(appID, initialPartialSigs, initialThreshold)
 	require.NoError(t, err, "Failed to recover app private key")
@@ -351,15 +360,21 @@ func testEncryptionPersistenceAcrossReshare(t *testing.T) {
 
 	// === Phase 3: Reshare - operator set changes (nodes 1-4 remain, 5 leaves, 6 joins) ===
 
-	newOperators := []int{1, 2, 3, 4, 6} // Node 5 leaves, 6 joins
-	newThreshold := (2*len(newOperators) + 2) / 3
+	newOperatorAddrs := []common.Address{
+		initialAddrs[0], initialAddrs[1], initialAddrs[2], initialAddrs[3],
+		common.HexToAddress("0x0000000000000000000000000000000000000006"),
+	}
+	newThreshold := (2*len(newOperatorAddrs) + 2) / 3
+
+	// Existing dealers (nodes 1-4)
+	existingDealers := initialAddrs[:4]
 
 	// Simulate reshare: existing nodes (1-4) create new shares preserving their secrets
-	newShares := make(map[int]*fr.Element)
+	newShares := make(map[common.Address]*fr.Element)
 
-	for _, existingNode := range []int64{1, 2, 3, 4} {
+	for _, dealerAddr := range existingDealers {
 		// Each existing node creates a new polynomial with their current share as constant
-		currentShare := initialShares[existingNode-1]
+		currentShare := initialShares[dealerAddr]
 		newPoly := make(polynomial.Polynomial, newThreshold)
 		newPoly[0].Set(currentShare)
 		for j := 1; j < newThreshold; j++ {
@@ -367,15 +382,15 @@ func testEncryptionPersistenceAcrossReshare(t *testing.T) {
 		}
 
 		// Generate new shares for all new operators
-		for _, newNodeID := range newOperators {
-			newShare := EvaluatePolynomial(newPoly, int64(newNodeID))
-			if newShares[newNodeID] == nil {
-				newShares[newNodeID] = new(fr.Element).SetZero()
+		for _, newAddr := range newOperatorAddrs {
+			newShare := EvaluatePolynomial(newPoly, newAddr)
+			if newShares[newAddr] == nil {
+				newShares[newAddr] = new(fr.Element).SetZero()
 			}
 			// Aggregate using Lagrange coefficients
-			lambda := ComputeLagrangeCoefficient(existingNode, []int64{1, 2, 3, 4})
+			lambda := ComputeLagrangeCoefficient(dealerAddr, existingDealers)
 			term := new(fr.Element).Mul(lambda, newShare)
-			newShares[newNodeID].Add(newShares[newNodeID], term)
+			newShares[newAddr].Add(newShares[newAddr], term)
 		}
 	}
 
@@ -383,21 +398,17 @@ func testEncryptionPersistenceAcrossReshare(t *testing.T) {
 
 	newAppHash, err := HashToG1(appID)
 	require.NoError(t, err, "Failed to hash to G1")
-	newFirstShare, err := ScalarMulG1(*newAppHash, newShares[1])
-	require.NoError(t, err, "Failed to scalar multiply G1")
-	newSecondShare, err := ScalarMulG1(*newAppHash, newShares[2])
-	require.NoError(t, err, "Failed to scalar multiply G1")
-	newThirdShare, err := ScalarMulG1(*newAppHash, newShares[3])
-	require.NoError(t, err, "Failed to scalar multiply G1")
-	newFourthShare, err := ScalarMulG1(*newAppHash, newShares[4])
-	require.NoError(t, err, "Failed to scalar multiply G1")
+
+	newPartialSigs := make(map[common.Address]types.G1Point)
+	for i := 0; i < newThreshold; i++ {
+		addr := newOperatorAddrs[i]
+		sig, err := ScalarMulG1(*newAppHash, newShares[addr])
+		require.NoError(t, err, "Failed to scalar multiply G1")
+		newPartialSigs[addr] = *sig
+	}
+
 	// Recover app private key using new shares
-	newAppPrivateKey, err := RecoverAppPrivateKey(appID, map[int64]types.G1Point{
-		1: *newFirstShare,
-		2: *newSecondShare,
-		3: *newThirdShare,
-		4: *newFourthShare,
-	}, newThreshold)
+	newAppPrivateKey, err := RecoverAppPrivateKey(appID, newPartialSigs, newThreshold)
 	require.NoError(t, err, "Failed to recover app private key")
 	// Decrypt with new key - should still work!
 	decrypted2, err := DecryptForApp(appID, *newAppPrivateKey, ciphertext)
@@ -430,27 +441,35 @@ func testThresholdSignatureRecovery(t *testing.T) {
 		_, _ = poly[i].SetRandom()
 	}
 
+	// Define participant addresses
+	addrs := []common.Address{
+		common.HexToAddress("0x0000000000000000000000000000000000000001"),
+		common.HexToAddress("0x0000000000000000000000000000000000000002"),
+		common.HexToAddress("0x0000000000000000000000000000000000000003"),
+		common.HexToAddress("0x0000000000000000000000000000000000000004"),
+		common.HexToAddress("0x0000000000000000000000000000000000000005"),
+	}
+
 	// Generate key shares
-	keyShares := make(map[int]*fr.Element)
-	for i := 1; i <= numNodes; i++ {
-		keyShares[i] = EvaluatePolynomial(poly, int64(i))
+	keyShares := make(map[common.Address]*fr.Element)
+	for _, addr := range addrs {
+		keyShares[addr] = EvaluatePolynomial(poly, addr)
 	}
 
 	// Generate partial signatures (what each KMS node would compute)
-	partialSigs := make(map[int64]types.G1Point)
-	for nodeID, share := range keyShares {
+	partialSigs := make(map[common.Address]types.G1Point)
+	for addr, share := range keyShares {
 		appHash, err := HashToG1(appID)
 		require.NoError(t, err, "Failed to hash to G1")
 		partialSig, err := ScalarMulG1(*appHash, share)
 		require.NoError(t, err, "Failed to scalar multiply G1")
-		partialSigs[int64(nodeID)] = *partialSig
+		partialSigs[addr] = *partialSig
 	}
 
 	// Test recovery with exactly threshold signatures (threshold=4 for 5 nodes)
-	thresholdSigs := make(map[int64]types.G1Point)
-	nodeIDs := []int64{1, 2, 3, 4} // Use first `threshold` nodes
-	for _, id := range nodeIDs {
-		thresholdSigs[id] = partialSigs[id]
+	thresholdSigs := make(map[common.Address]types.G1Point)
+	for i := 0; i < threshold; i++ {
+		thresholdSigs[addrs[i]] = partialSigs[addrs[i]]
 	}
 
 	recoveredKey, err := RecoverAppPrivateKey(appID, thresholdSigs, threshold)
@@ -464,10 +483,9 @@ func testThresholdSignatureRecovery(t *testing.T) {
 	}
 
 	// Test recovery with different threshold subset
-	thresholdSigs2 := make(map[int64]types.G1Point)
-	nodeIDs2 := []int64{2, 3, 4, 5} // Use different `threshold` nodes
-	for _, id := range nodeIDs2 {
-		thresholdSigs2[id] = partialSigs[id]
+	thresholdSigs2 := make(map[common.Address]types.G1Point)
+	for i := 1; i <= threshold; i++ {
+		thresholdSigs2[addrs[i]] = partialSigs[addrs[i]]
 	}
 
 	recoveredKey2, err := RecoverAppPrivateKey(appID, thresholdSigs2, threshold)
@@ -554,10 +572,19 @@ func testFullIBEDistributed(t *testing.T) {
 	poly, err := bls.GeneratePolynomial(masterSecret, threshold-1)
 	require.NoError(t, err)
 
+	// Define participant addresses
+	addrs := []common.Address{
+		common.HexToAddress("0x0000000000000000000000000000000000000001"),
+		common.HexToAddress("0x0000000000000000000000000000000000000002"),
+		common.HexToAddress("0x0000000000000000000000000000000000000003"),
+		common.HexToAddress("0x0000000000000000000000000000000000000004"),
+		common.HexToAddress("0x0000000000000000000000000000000000000005"),
+	}
+
 	// Generate shares
-	shares := make(map[int64]*fr.Element)
-	for i := 1; i <= n; i++ {
-		shares[int64(i)] = bls.EvaluatePolynomial(poly, int64(i))
+	shares := make(map[common.Address]*fr.Element)
+	for i := 0; i < n; i++ {
+		shares[addrs[i]] = bls.EvaluatePolynomial(poly, addrs[i])
 	}
 
 	// Compute master public key
@@ -576,12 +603,12 @@ func testFullIBEDistributed(t *testing.T) {
 	Q_ID, err := HashToG1(appID)
 	require.NoError(t, err)
 
-	partialKeys := make(map[int64]types.G1Point)
-	activeNodes := []int64{1, 3, 4}
-	for _, nodeID := range activeNodes {
-		partial, err := ScalarMulG1(*Q_ID, shares[nodeID])
+	activeAddrs := []common.Address{addrs[0], addrs[2], addrs[3]} // nodes 1, 3, 4
+	partialKeys := make(map[common.Address]types.G1Point)
+	for _, addr := range activeAddrs {
+		partial, err := ScalarMulG1(*Q_ID, shares[addr])
 		require.NoError(t, err)
-		partialKeys[nodeID] = *partial
+		partialKeys[addr] = *partial
 	}
 
 	// Recover full app private key

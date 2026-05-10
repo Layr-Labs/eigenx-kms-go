@@ -174,46 +174,31 @@ func HashCommitment(commitments []types.G2Point) [32]byte {
 	return [32]byte(h.Sum(nil))
 }
 
-// EvaluatePolynomial evaluates a polynomial at point x
-func EvaluatePolynomial(poly polynomial.Polynomial, x int64) *fr.Element {
-	return bls.EvaluatePolynomial(poly, x)
-}
-
-// ComputeLagrangeCoefficient computes the Lagrange coefficient for participant i
-func ComputeLagrangeCoefficient(i int64, participants []int64) *fr.Element {
-	return bls.ComputeLagrangeCoefficient(i, participants)
-}
-
-// RecoverSecret recovers secret from shares using Lagrange interpolation
-func RecoverSecret(shares map[int64]*fr.Element) (*fr.Element, error) {
-	return bls.RecoverSecret(shares)
-}
-
 // AddressToFr converts a common.Address to an fr.Element for use in polynomial math.
 func AddressToFr(addr common.Address) *fr.Element {
 	return bls.AddressToFr(addr)
 }
 
-// EvaluatePolynomialAddr evaluates a polynomial at the point derived from an Ethereum address.
-func EvaluatePolynomialAddr(poly polynomial.Polynomial, addr common.Address) *fr.Element {
-	return bls.EvaluatePolynomialAddr(poly, addr)
+// EvaluatePolynomial evaluates a polynomial at the point derived from an Ethereum address.
+func EvaluatePolynomial(poly polynomial.Polynomial, addr common.Address) *fr.Element {
+	return bls.EvaluatePolynomial(poly, addr)
 }
 
-// ComputeLagrangeCoefficientAddr computes the Lagrange coefficient for participant i at x=0
+// ComputeLagrangeCoefficient computes the Lagrange coefficient for participant i at x=0
 // using Ethereum addresses as identifiers.
-func ComputeLagrangeCoefficientAddr(i common.Address, participants []common.Address) *fr.Element {
-	return bls.ComputeLagrangeCoefficientAddr(i, participants)
+func ComputeLagrangeCoefficient(i common.Address, participants []common.Address) *fr.Element {
+	return bls.ComputeLagrangeCoefficient(i, participants)
 }
 
-// RecoverSecretAddr recovers the secret from shares using Lagrange interpolation
+// RecoverSecret recovers the secret from shares using Lagrange interpolation
 // with Ethereum addresses as participant identifiers.
-func RecoverSecretAddr(shares map[common.Address]*fr.Element) (*fr.Element, error) {
-	return bls.RecoverSecretAddr(shares)
+func RecoverSecret(shares map[common.Address]*fr.Element) (*fr.Element, error) {
+	return bls.RecoverSecret(shares)
 }
 
-// RecoverAppPrivateKeyAddr recovers app private key from partial signatures keyed by address.
+// RecoverAppPrivateKey recovers app private key from partial signatures keyed by address.
 // Returns an error if fewer than threshold signatures are provided.
-func RecoverAppPrivateKeyAddr(appID string, partialSigs map[common.Address]types.G1Point, threshold int) (*types.G1Point, error) {
+func RecoverAppPrivateKey(appID string, partialSigs map[common.Address]types.G1Point, threshold int) (*types.G1Point, error) {
 	if len(partialSigs) < threshold {
 		return nil, fmt.Errorf("insufficient partial signatures: got %d, need %d", len(partialSigs), threshold)
 	}
@@ -236,7 +221,7 @@ func RecoverAppPrivateKeyAddr(appID string, partialSigs map[common.Address]types
 	result := types.ZeroG1Point()
 
 	for _, addr := range participants {
-		lambda := ComputeLagrangeCoefficientAddr(addr, participants)
+		lambda := ComputeLagrangeCoefficient(addr, participants)
 		scaledSig, err := ScalarMulG1(partialSigs[addr], lambda)
 		if err != nil {
 			return nil, err
@@ -258,21 +243,21 @@ func RecoverAppPrivateKeyAddr(appID string, partialSigs map[common.Address]types
 	return result, nil
 }
 
-// RecoverAppPrivateKeyWithRetryAddr attempts to recover the app private key by trying
+// RecoverAppPrivateKeyWithRetry attempts to recover the app private key by trying
 // different threshold-sized subsets of partial signatures keyed by address. If the initial
 // subset produces an invalid key (as determined by the validate function), it enumerates
 // C(n, threshold) combinations until a valid subset is found or DefaultMaxRecoveryAttempts
 // is reached.
-func RecoverAppPrivateKeyWithRetryAddr(
+func RecoverAppPrivateKeyWithRetry(
 	appID string,
 	partialSigs map[common.Address]types.G1Point,
 	threshold int,
 	validate func(*types.G1Point) bool,
 ) (*types.G1Point, error) {
-	return recoverAppPrivateKeyWithRetryAddr(appID, partialSigs, threshold, validate, DefaultMaxRecoveryAttempts)
+	return recoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, validate, DefaultMaxRecoveryAttempts)
 }
 
-func recoverAppPrivateKeyWithRetryAddr(
+func recoverAppPrivateKeyWithRetry(
 	appID string,
 	partialSigs map[common.Address]types.G1Point,
 	threshold int,
@@ -298,7 +283,7 @@ func recoverAppPrivateKeyWithRetryAddr(
 		for _, addr := range subset {
 			subsetSigs[addr] = partialSigs[addr]
 		}
-		recovered, err := RecoverAppPrivateKeyAddr(appID, subsetSigs, threshold)
+		recovered, err := RecoverAppPrivateKey(appID, subsetSigs, threshold)
 		if err != nil {
 			return nil, false
 		}
@@ -359,167 +344,10 @@ func recoverAppPrivateKeyWithRetryAddr(
 		maxAttempts, attempts, totalCombinations, len(partialSigs), threshold)
 }
 
-// RecoverAppPrivateKey recovers app private key from partial signatures.
-// Returns an error if fewer than threshold signatures are provided.
-func RecoverAppPrivateKey(appID string, partialSigs map[int64]types.G1Point, threshold int) (*types.G1Point, error) {
-	if len(partialSigs) < threshold {
-		return nil, fmt.Errorf("insufficient partial signatures: got %d, need %d", len(partialSigs), threshold)
-	}
-
-	// Collect all participant IDs and sort for deterministic selection
-	participants := make([]int64, 0, len(partialSigs))
-	for id := range partialSigs {
-		participants = append(participants, id)
-	}
-
-	// Sort participants for deterministic selection (any threshold subset should work)
-	sort.Slice(participants, func(i, j int) bool {
-		return participants[i] < participants[j]
-	})
-	// We'll use the first threshold participants after sorting
-	if len(participants) > threshold {
-		participants = participants[:threshold]
-	}
-
-	// start off with zero point as an accumulator
-	result := types.ZeroG1Point()
-
-	for _, id := range participants {
-		lambda := ComputeLagrangeCoefficient(id, participants)
-		scaledSig, err := ScalarMulG1(partialSigs[id], lambda)
-		if err != nil {
-			return nil, err
-		}
-		result, err = AddG1(*result, *scaledSig)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	// check if the result is still a zero point
-	isZero, err := result.IsZero()
-	if err != nil {
-		return nil, err
-	}
-	if isZero {
-		return nil, errors.New("recovered app private key is zero")
-	}
-	return result, nil
-}
-
 // DefaultMaxRecoveryAttempts bounds the number of subset combinations tried during retry
 // to prevent excessive computation with large operator sets. C(n,t) can grow quickly
 // (e.g., C(21,14) = 116,280), so we cap attempts at a practical limit.
 const DefaultMaxRecoveryAttempts = 1000
-
-// RecoverAppPrivateKeyWithRetry attempts to recover the app private key by trying
-// different threshold-sized subsets of partial signatures. If the initial subset
-// produces an invalid key (as determined by the validate function), it enumerates
-// C(n, threshold) combinations until a valid subset is found or DefaultMaxRecoveryAttempts
-// is reached. This provides BFT: up to (n - threshold) invalid signatures can be
-// tolerated (for small enough operator sets that all combinations fit within the cap).
-//
-// When C(n, threshold) exceeds the attempt cap, only a subset of combinations is tried
-// and full BFT tolerance is not guaranteed. The returned error distinguishes between
-// "all combinations exhausted" and "attempt cap reached".
-//
-// Complexity: worst-case O(min(C(n, threshold), DefaultMaxRecoveryAttempts)) recovery
-// attempts, each involving Lagrange interpolation on G1 plus one validate call.
-func RecoverAppPrivateKeyWithRetry(
-	appID string,
-	partialSigs map[int64]types.G1Point,
-	threshold int,
-	validate func(*types.G1Point) bool,
-) (*types.G1Point, error) {
-	return recoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, validate, DefaultMaxRecoveryAttempts)
-}
-
-func recoverAppPrivateKeyWithRetry(
-	appID string,
-	partialSigs map[int64]types.G1Point,
-	threshold int,
-	validate func(*types.G1Point) bool,
-	maxAttempts int,
-) (*types.G1Point, error) {
-	if len(partialSigs) < threshold {
-		return nil, fmt.Errorf("insufficient partial signatures: got %d, need %d", len(partialSigs), threshold)
-	}
-
-	// Sort all participant IDs for deterministic ordering
-	allParticipants := make([]int64, 0, len(partialSigs))
-	for id := range partialSigs {
-		allParticipants = append(allParticipants, id)
-	}
-	sort.Slice(allParticipants, func(i, j int) bool {
-		return allParticipants[i] < allParticipants[j]
-	})
-
-	// Helper to attempt recovery with a given subset
-	trySubset := func(subset []int64) (*types.G1Point, bool) {
-		subsetSigs := make(map[int64]types.G1Point, len(subset))
-		for _, id := range subset {
-			subsetSigs[id] = partialSigs[id]
-		}
-		recovered, err := RecoverAppPrivateKey(appID, subsetSigs, threshold)
-		if err != nil {
-			return nil, false
-		}
-		if validate(recovered) {
-			return recovered, true
-		}
-		return nil, false
-	}
-
-	// Enumerate all C(n, threshold) combinations using iterative generation
-	n := len(allParticipants)
-	totalCombinations := binomial(n, threshold)
-	attempts := 0
-	exhausted := false
-
-	// indices tracks current combination positions (0-indexed into allParticipants)
-	indices := make([]int, threshold)
-	for i := range indices {
-		indices[i] = i
-	}
-
-	for {
-		// Build current subset from indices
-		subset := make([]int64, threshold)
-		for i, idx := range indices {
-			subset[i] = allParticipants[idx]
-		}
-
-		attempts++
-		if recovered, ok := trySubset(subset); ok {
-			return recovered, nil
-		}
-
-		if attempts >= maxAttempts {
-			break
-		}
-
-		// Advance to next combination
-		i := threshold - 1
-		for i >= 0 && indices[i] == n-threshold+i {
-			i--
-		}
-		if i < 0 {
-			exhausted = true
-			break
-		}
-		indices[i]++
-		for j := i + 1; j < threshold; j++ {
-			indices[j] = indices[j-1] + 1
-		}
-	}
-
-	if exhausted {
-		return nil, fmt.Errorf("failed to recover valid app private key: all %d combinations exhausted (had %d signatures, needed %d valid)",
-			attempts, len(partialSigs), threshold)
-	}
-	return nil, fmt.Errorf("failed to recover valid app private key: attempt cap (%d) reached after trying %d of %d total combinations — BFT guarantee incomplete (had %d signatures, threshold %d)",
-		maxAttempts, attempts, totalCombinations, len(partialSigs), threshold)
-}
 
 // binomial computes C(n, k) = n! / (k! * (n-k)!), capped to avoid overflow.
 func binomial(n, k int) int {
@@ -627,25 +455,6 @@ func ComputeMasterPublicKey(allCommitments [][]types.G2Point) (*types.G2Point, e
 	return masterPK, nil
 }
 
-// VerifyShareWithCommitments verifies a share against polynomial commitments
-func VerifyShareWithCommitments(nodeID int64, share *fr.Element, commitments []types.G2Point) bool {
-	// Convert commitments to BLS module points
-	blsCommitments := make([]*bls.G2Point, len(commitments))
-	for i, c := range commitments {
-		g2Point, err := bls.G2PointFromCompressedBytes(c.CompressedBytes)
-		if err != nil {
-			return false
-		}
-		blsCommitments[i] = g2Point
-	}
-
-	// Use the BLS module's verification
-	valid, err := bls.VerifyShare(nodeID, share, blsCommitments)
-	if err != nil {
-		return false
-	}
-	return valid
-}
 
 // GetAppPublicKey computes the public key for an application given the master public key
 // This implements Q_ID = H_1(app_id) for IBE encryption

@@ -11,65 +11,6 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 )
 
-// EvaluatePolynomial evaluates a polynomial at point x
-// audit: x is int64 but really should be uint64
-func EvaluatePolynomial(poly polynomial.Polynomial, x int64) *fr.Element {
-	xFr := new(fr.Element).SetInt64(x)
-	result := poly.Eval(xFr)
-	return &result
-}
-
-// ComputeLagrangeCoefficient computes the Lagrange coefficient for participant i at x=0
-// audit: should participants register a random element than using their index ?
-// TODO(anup): there is an optimized cached version that can be done here.
-func ComputeLagrangeCoefficient(i int64, participants []int64) *fr.Element {
-	numerator := new(fr.Element).SetOne()
-	denominator := new(fr.Element).SetOne()
-
-	iFr := new(fr.Element).SetInt64(int64(i))
-
-	for _, j := range participants {
-		if i != j {
-			jFr := new(fr.Element).SetInt64(int64(j))
-
-			// numerator *= (0 - j) = -j
-			negJ := new(fr.Element).Neg(jFr)
-			numerator.Mul(numerator, negJ)
-
-			// denominator *= (i - j)
-			diff := new(fr.Element).Sub(iFr, jFr)
-			denominator.Mul(denominator, diff)
-		}
-	}
-
-	// lambda = numerator / denominator
-	lambda := new(fr.Element).Inverse(denominator)
-	lambda.Mul(lambda, numerator)
-
-	return lambda
-}
-
-// RecoverSecret recovers the secret from shares using Lagrange interpolation
-func RecoverSecret(shares map[int64]*fr.Element) (*fr.Element, error) {
-	participants := make([]int64, 0, len(shares))
-	for id := range shares {
-		participants = append(participants, id)
-	}
-
-	secret := new(fr.Element).SetZero()
-
-	for id, share := range shares {
-		lambda := ComputeLagrangeCoefficient(id, participants)
-		term := new(fr.Element).Mul(lambda, share)
-		secret.Add(secret, term)
-	}
-
-	if secret.IsZero() {
-		return nil, errors.New("secret cannot be zero, this should not happen")
-	}
-	return secret, nil
-}
-
 // GeneratePolynomial generates a random polynomial with given secret and degree
 // audit: should the polynomial be generated with a random secret ?
 func GeneratePolynomial(secret *fr.Element, degree int) (polynomial.Polynomial, error) {
@@ -88,18 +29,6 @@ func GeneratePolynomial(secret *fr.Element, degree int) (polynomial.Polynomial, 
 	return poly, nil
 }
 
-// GenerateShares generates shares for participants using polynomial secret sharing
-// audit: should the shares be generated with a random scalar's generated for the participants?
-func GenerateShares(poly polynomial.Polynomial, participantIDs []int64) map[int64]*fr.Element {
-	shares := make(map[int64]*fr.Element)
-
-	for _, id := range participantIDs {
-		shares[id] = EvaluatePolynomial(poly, id)
-	}
-
-	return shares
-}
-
 // CreateCommitments creates polynomial commitments in G2
 // TODO(anupsv): parallelize this, maybe doesn't matter for 20 operators. Look into this further.
 func CreateCommitments(poly polynomial.Polynomial) ([]*G2Point, error) {
@@ -116,50 +45,6 @@ func CreateCommitments(poly polynomial.Polynomial) ([]*G2Point, error) {
 	return commitments, nil
 }
 
-// VerifyShare verifies a share against polynomial commitments using MultiExp optimization
-func VerifyShare(nodeID int64, share *fr.Element, commitments []*G2Point) (bool, error) {
-	if len(commitments) == 0 {
-		return false, errors.New("no commitments provided")
-	}
-
-	if share == nil {
-		return false, errors.New("share is nil")
-	}
-
-	// Compute share * G2
-	shareCommitment, err := ScalarMulG2(G2Generator, share)
-	if err != nil {
-		return false, fmt.Errorf("failed to compute share commitment: %w", err)
-	}
-
-	// Compute powers of nodeID: [1, nodeID, nodeID^2, ..., nodeID^(n-1)]
-	powers := make([]fr.Element, len(commitments))
-	nodeFr := new(fr.Element).SetInt64(nodeID)
-	powers[0].SetOne() // nodeID^0 = 1
-
-	for i := 1; i < len(commitments); i++ {
-		powers[i].Mul(&powers[i-1], nodeFr) // nodeID^i = nodeID^(i-1) * nodeID
-	}
-
-	// Extract G2 affine points from commitments
-	commitmentPoints := make([]bls12381.G2Affine, len(commitments))
-	for i, c := range commitments {
-		if c == nil || c.point == nil {
-			return false, fmt.Errorf("nil commitment at index %d", i)
-		}
-		commitmentPoints[i] = *c.point
-	}
-
-	// Use MultiExp to compute Σ commitments[k] * nodeID^k efficiently
-	var expectedCommitment bls12381.G2Affine
-	if _, err := expectedCommitment.MultiExp(commitmentPoints, powers, ecc.MultiExpConfig{}); err != nil {
-		return false, fmt.Errorf("failed to compute expected commitment: %w", err)
-	}
-
-	// Check if share * G2 == expected commitment
-	return shareCommitment.point.Equal(&expectedCommitment), nil
-}
-
 // AddressToFr converts a common.Address (20 bytes) to an fr.Element for use in polynomial math.
 func AddressToFr(addr common.Address) *fr.Element {
 	var buf [32]byte
@@ -169,16 +54,16 @@ func AddressToFr(addr common.Address) *fr.Element {
 	return &elem
 }
 
-// EvaluatePolynomialAddr evaluates a polynomial at the point derived from an Ethereum address.
-func EvaluatePolynomialAddr(poly polynomial.Polynomial, addr common.Address) *fr.Element {
+// EvaluatePolynomial evaluates a polynomial at the point derived from an Ethereum address.
+func EvaluatePolynomial(poly polynomial.Polynomial, addr common.Address) *fr.Element {
 	xFr := AddressToFr(addr)
 	result := poly.Eval(xFr)
 	return &result
 }
 
-// ComputeLagrangeCoefficientAddr computes the Lagrange coefficient for participant i at x=0
+// ComputeLagrangeCoefficient computes the Lagrange coefficient for participant i at x=0
 // using Ethereum addresses as identifiers.
-func ComputeLagrangeCoefficientAddr(i common.Address, participants []common.Address) *fr.Element {
+func ComputeLagrangeCoefficient(i common.Address, participants []common.Address) *fr.Element {
 	numerator := new(fr.Element).SetOne()
 	denominator := new(fr.Element).SetOne()
 
@@ -205,9 +90,9 @@ func ComputeLagrangeCoefficientAddr(i common.Address, participants []common.Addr
 	return lambda
 }
 
-// RecoverSecretAddr recovers the secret from shares using Lagrange interpolation
+// RecoverSecret recovers the secret from shares using Lagrange interpolation
 // with Ethereum addresses as participant identifiers.
-func RecoverSecretAddr(shares map[common.Address]*fr.Element) (*fr.Element, error) {
+func RecoverSecret(shares map[common.Address]*fr.Element) (*fr.Element, error) {
 	participants := make([]common.Address, 0, len(shares))
 	for addr := range shares {
 		participants = append(participants, addr)
@@ -216,7 +101,7 @@ func RecoverSecretAddr(shares map[common.Address]*fr.Element) (*fr.Element, erro
 	secret := new(fr.Element).SetZero()
 
 	for addr, share := range shares {
-		lambda := ComputeLagrangeCoefficientAddr(addr, participants)
+		lambda := ComputeLagrangeCoefficient(addr, participants)
 		term := new(fr.Element).Mul(lambda, share)
 		secret.Add(secret, term)
 	}
@@ -227,21 +112,21 @@ func RecoverSecretAddr(shares map[common.Address]*fr.Element) (*fr.Element, erro
 	return secret, nil
 }
 
-// GenerateSharesAddr generates shares for participants using polynomial secret sharing
+// GenerateShares generates shares for participants using polynomial secret sharing
 // with Ethereum addresses as participant identifiers.
-func GenerateSharesAddr(poly polynomial.Polynomial, participants []common.Address) map[common.Address]*fr.Element {
+func GenerateShares(poly polynomial.Polynomial, participants []common.Address) map[common.Address]*fr.Element {
 	shares := make(map[common.Address]*fr.Element)
 
 	for _, addr := range participants {
-		shares[addr] = EvaluatePolynomialAddr(poly, addr)
+		shares[addr] = EvaluatePolynomial(poly, addr)
 	}
 
 	return shares
 }
 
-// VerifyShareAddr verifies a share against polynomial commitments using MultiExp optimization
+// VerifyShare verifies a share against polynomial commitments using MultiExp optimization
 // with an Ethereum address as the participant identifier.
-func VerifyShareAddr(addr common.Address, share *fr.Element, commitments []*G2Point) (bool, error) {
+func VerifyShare(addr common.Address, share *fr.Element, commitments []*G2Point) (bool, error) {
 	if len(commitments) == 0 {
 		return false, errors.New("no commitments provided")
 	}

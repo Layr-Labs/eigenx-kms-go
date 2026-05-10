@@ -5,6 +5,7 @@ import (
 
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
+	"github.com/ethereum/go-ethereum/common"
 )
 
 func Test_BLSOperations(t *testing.T) {
@@ -226,18 +227,24 @@ func testPolynomialSecretSharing(t *testing.T) {
 	}
 
 	// Generate shares for 5 participants
-	participantIDs := []int64{1, 2, 3, 4, 5}
-	shares := GenerateShares(poly, participantIDs)
+	participantAddrs := []common.Address{
+		common.HexToAddress("0x0000000000000000000000000000000000000001"),
+		common.HexToAddress("0x0000000000000000000000000000000000000002"),
+		common.HexToAddress("0x0000000000000000000000000000000000000003"),
+		common.HexToAddress("0x0000000000000000000000000000000000000004"),
+		common.HexToAddress("0x0000000000000000000000000000000000000005"),
+	}
+	shares := GenerateShares(poly, participantAddrs)
 
-	if len(shares) != len(participantIDs) {
-		t.Errorf("Expected %d shares, got %d", len(participantIDs), len(shares))
+	if len(shares) != len(participantAddrs) {
+		t.Errorf("Expected %d shares, got %d", len(participantAddrs), len(shares))
 	}
 
 	// Recover secret using threshold shares (any 3 shares)
-	thresholdShares := make(map[int64]*fr.Element)
-	thresholdShares[1] = shares[1]
-	thresholdShares[3] = shares[3]
-	thresholdShares[5] = shares[5]
+	thresholdShares := make(map[common.Address]*fr.Element)
+	thresholdShares[participantAddrs[0]] = shares[participantAddrs[0]]
+	thresholdShares[participantAddrs[2]] = shares[participantAddrs[2]]
+	thresholdShares[participantAddrs[4]] = shares[participantAddrs[4]]
 
 	recoveredSecret, err := RecoverSecret(thresholdShares)
 	if err != nil {
@@ -248,10 +255,10 @@ func testPolynomialSecretSharing(t *testing.T) {
 	}
 
 	// Try with different subset
-	thresholdShares2 := make(map[int64]*fr.Element)
-	thresholdShares2[2] = shares[2]
-	thresholdShares2[4] = shares[4]
-	thresholdShares2[5] = shares[5]
+	thresholdShares2 := make(map[common.Address]*fr.Element)
+	thresholdShares2[participantAddrs[1]] = shares[participantAddrs[1]]
+	thresholdShares2[participantAddrs[3]] = shares[participantAddrs[3]]
+	thresholdShares2[participantAddrs[4]] = shares[participantAddrs[4]]
 
 	recoveredSecret2, err := RecoverSecret(thresholdShares2)
 	if err != nil {
@@ -277,22 +284,29 @@ func testShareVerification(t *testing.T) {
 	}
 
 	// Generate shares
-	shares := GenerateShares(poly, []int64{1, 2, 3, 4, 5})
+	participantAddrs := []common.Address{
+		common.HexToAddress("0x0000000000000000000000000000000000000001"),
+		common.HexToAddress("0x0000000000000000000000000000000000000002"),
+		common.HexToAddress("0x0000000000000000000000000000000000000003"),
+		common.HexToAddress("0x0000000000000000000000000000000000000004"),
+		common.HexToAddress("0x0000000000000000000000000000000000000005"),
+	}
+	shares := GenerateShares(poly, participantAddrs)
 
 	// Verify all shares
-	for nodeID, share := range shares {
-		valid, err := VerifyShare(nodeID, share, commitments)
+	for addr, share := range shares {
+		valid, err := VerifyShare(addr, share, commitments)
 		if err != nil {
 			t.Fatalf("Failed to verify share: %v", err)
 		}
 		if !valid {
-			t.Errorf("Valid share for node %d should verify", nodeID)
+			t.Errorf("Valid share for addr %s should verify", addr.Hex())
 		}
 	}
 
 	// Test with invalid share
 	invalidShare := new(fr.Element).SetInt64(999999)
-	valid, err := VerifyShare(1, invalidShare, commitments)
+	valid, err := VerifyShare(participantAddrs[0], invalidShare, commitments)
 	if err != nil {
 		t.Fatalf("Failed to verify share: %v", err)
 	}
@@ -302,12 +316,16 @@ func testShareVerification(t *testing.T) {
 }
 
 func testLagrangeInterpolation(t *testing.T) {
-	participants := []int64{1, 3, 5}
+	participants := []common.Address{
+		common.HexToAddress("0x0000000000000000000000000000000000000001"),
+		common.HexToAddress("0x0000000000000000000000000000000000000003"),
+		common.HexToAddress("0x0000000000000000000000000000000000000005"),
+	}
 
 	// Test that Lagrange coefficients sum to 1 at x=0
 	sum := new(fr.Element).SetZero()
-	for _, i := range participants {
-		lambda := ComputeLagrangeCoefficient(i, participants)
+	for _, addr := range participants {
+		lambda := ComputeLagrangeCoefficient(addr, participants)
 		sum.Add(sum, lambda)
 	}
 

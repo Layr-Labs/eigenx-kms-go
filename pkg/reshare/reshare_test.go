@@ -252,7 +252,7 @@ func testComputeNewKeyShareScaledCommitmentForNewOperator(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Failed to compute expected share commitment: %v", err)
 	}
-	lambda := crypto.ComputeLagrangeCoefficientAddr(nodeAddr, dealerAddrs)
+	lambda := crypto.ComputeLagrangeCoefficient(nodeAddr, dealerAddrs)
 	expectedScaled, err := crypto.ScalarMulG2(*expectedShareCommitment, lambda)
 	if err != nil {
 		t.Fatalf("Failed to compute expected scaled commitment: %v", err)
@@ -281,7 +281,7 @@ func testDealerAnchoredResharePreservesSecretForNewRecipient(t *testing.T) {
 
 	dealerCurrentShares := make(map[common.Address]*fr.Element)
 	for _, dealerAddr := range dealerAddrs {
-		dealerCurrentShares[dealerAddr] = crypto.EvaluatePolynomialAddr(oldPoly, dealerAddr)
+		dealerCurrentShares[dealerAddr] = crypto.EvaluatePolynomial(oldPoly, dealerAddr)
 	}
 
 	sharesByDealer := make(map[common.Address]map[common.Address]*fr.Element)
@@ -316,7 +316,7 @@ func testDealerAnchoredResharePreservesSecretForNewRecipient(t *testing.T) {
 	for i := 0; i < threshold; i++ {
 		recoveryShares[recipientAddrs[i]] = finalShares[recipientAddrs[i]]
 	}
-	recovered, err := crypto.RecoverSecretAddr(recoveryShares)
+	recovered, err := crypto.RecoverSecret(recoveryShares)
 	if err != nil {
 		t.Fatalf("Failed to recover secret from reshared final shares: %v", err)
 	}
@@ -398,7 +398,7 @@ func testZeroConstantDealerPolynomialsDoNotBootstrapSecret(t *testing.T) {
 	for i := 0; i < threshold; i++ {
 		recoveryShares[recipientAddrs[i]] = finalShares[recipientAddrs[i]]
 	}
-	recovered, err := crypto.RecoverSecretAddr(recoveryShares)
+	recovered, err := crypto.RecoverSecret(recoveryShares)
 	if err == nil {
 		if recovered.Equal(oldSecret) {
 			t.Fatal("Zero-constant dealer polynomials unexpectedly bootstrapped original secret")

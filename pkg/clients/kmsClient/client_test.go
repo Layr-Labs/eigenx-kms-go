@@ -273,7 +273,7 @@ func TestDecryptWithRetry_ValidCiphertext(t *testing.T) {
 	masterSecret := new(fr.Element).SetInt64(0)
 	// We can't easily get the master secret from partial sigs, so use the crypto package
 	// to recover the app private key and verify round-trip through decryptWithRetry
-	appPrivKey, err := crypto.RecoverAppPrivateKeyAddr(appID, partialSigs, threshold)
+	appPrivKey, err := crypto.RecoverAppPrivateKey(appID, partialSigs, threshold)
 	require.NoError(t, err)
 
 	// To encrypt, we need the master public key. Derive it from the app private key

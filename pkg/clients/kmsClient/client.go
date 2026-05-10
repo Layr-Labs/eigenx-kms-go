@@ -516,7 +516,7 @@ func decryptWithRetry(appID string, partialSigs map[common.Address]types.G1Point
 	// decrypted is populated as a side-effect of the validate closure, which
 	// RecoverAppPrivateKeyWithRetry calls synchronously on each candidate key.
 	var decrypted []byte
-	_, err := crypto.RecoverAppPrivateKeyWithRetryAddr(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
+	_, err := crypto.RecoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
 		result, decErr := crypto.DecryptForApp(appID, *candidate, ciphertext)
 		if decErr != nil {
 			return false
@@ -623,14 +623,14 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 	var appPrivateKey *types.G1Point
 	masterPubKey, masterPKErr := c.GetMasterPublicKey(operators)
 	if masterPKErr == nil {
-		appPrivateKey, err = crypto.RecoverAppPrivateKeyWithRetryAddr(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
+		appPrivateKey, err = crypto.RecoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
 			valid, verifyErr := crypto.VerifyAppPrivateKey(appID, *candidate, *masterPubKey)
 			return verifyErr == nil && valid
 		})
 	} else {
 		c.logger.Sugar().Warnw("SECURITY DEGRADED: failed to get master public key, falling back to single-attempt recovery without BFT retry — invalid partial signatures will not be tolerated",
 			"error", masterPKErr)
-		appPrivateKey, err = crypto.RecoverAppPrivateKeyAddr(appID, partialSigs, threshold)
+		appPrivateKey, err = crypto.RecoverAppPrivateKey(appID, partialSigs, threshold)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("failed to recover app private key: %w", err)
