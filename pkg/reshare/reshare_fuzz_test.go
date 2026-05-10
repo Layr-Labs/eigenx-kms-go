@@ -11,7 +11,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
+	
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
@@ -62,8 +62,8 @@ func FuzzGenerateVerifyAndComputeNewKeyShare(f *testing.F) {
 		currentShare := deriveScalar(seed)
 
 		// Use first operator as dealer for generating shares.
-		dealerID := util.AddressToNodeID(operators[0].OperatorAddress)
-		r := NewReshare(dealerID, operators)
+		dealerAddr := operators[0].OperatorAddress
+		r := NewReshare(dealerAddr, operators)
 
 		shares, commitments, err := r.GenerateNewShares(currentShare, newThreshold)
 		require.NoError(t, err)
@@ -76,37 +76,37 @@ func FuzzGenerateVerifyAndComputeNewKeyShare(f *testing.F) {
 
 		// Every participant verifies its own share against the commitments.
 		for _, op := range operators {
-			opID := util.AddressToNodeID(op.OperatorAddress)
-			verifier := NewReshare(opID, operators)
-			share, ok := shares[opID]
+			opAddr := op.OperatorAddress
+			verifier := NewReshare(opAddr, operators)
+			share, ok := shares[opAddr]
 			require.True(t, ok, "missing share for operator")
 			require.True(t, verifier.VerifyNewShare(share, commitments), "share failed verification")
 		}
 
 		// Compute new key share using all collected shares/commitments.
-		dealerIDs := make([]int64, 0, len(shares))
+		dealerAddrs := make([]common.Address, 0, len(shares))
 		for id := range shares {
-			dealerIDs = append(dealerIDs, id)
+			dealerAddrs = append(dealerAddrs, id)
 		}
 
 		// Shuffle dealer IDs to test order-independence.
 		seedBytes := sha256.Sum256(seed)
 		rng := rand.New(rand.NewSource(int64(binary.LittleEndian.Uint64(seedBytes[:8]))))
-		for i := len(dealerIDs) - 1; i > 0; i-- {
+		for i := len(dealerAddrs) - 1; i > 0; i-- {
 			j := rng.Intn(i + 1)
-			dealerIDs[i], dealerIDs[j] = dealerIDs[j], dealerIDs[i]
+			dealerAddrs[i], dealerAddrs[j] = dealerAddrs[j], dealerAddrs[i]
 		}
 
-		keyVersion, err := r.ComputeNewKeyShare(dealerIDs, shares, [][]types.G2Point{commitments})
+		keyVersion, err := r.ComputeNewKeyShare(dealerAddrs, shares, [][]types.G2Point{commitments})
 		require.NoError(t, err)
 		require.NotNil(t, keyVersion)
 		require.NotNil(t, keyVersion.PrivateShare)
 
 		// Independently recompute the expected interpolated share.
 		expected := new(fr.Element).SetZero()
-		for _, dealerID := range dealerIDs {
-			share := shares[dealerID]
-			lambda := crypto.ComputeLagrangeCoefficient(dealerID, dealerIDs)
+		for _, dealerAddr := range dealerAddrs {
+			share := shares[dealerAddr]
+			lambda := crypto.ComputeLagrangeCoefficientAddr(dealerAddr, dealerAddrs)
 			term := new(fr.Element).Mul(lambda, share)
 			expected.Add(expected, term)
 		}
@@ -130,20 +130,20 @@ func FuzzVerifyShareRejectsTamperedShare(f *testing.F) {
 		newThreshold := dkg.CalculateThreshold(len(operators))
 		currentShare := deriveScalar(seed)
 
-		dealerID := util.AddressToNodeID(operators[0].OperatorAddress)
-		r := NewReshare(dealerID, operators)
+		dealerAddr := operators[0].OperatorAddress
+		r := NewReshare(dealerAddr, operators)
 
 		shares, commitments, err := r.GenerateNewShares(currentShare, newThreshold)
 		require.NoError(t, err)
 
 		// Tamper with one share by adding 1.
 		targetOp := operators[1]
-		targetID := util.AddressToNodeID(targetOp.OperatorAddress)
-		originalShare := shares[targetID]
+		targetAddr := targetOp.OperatorAddress
+		originalShare := shares[targetAddr]
 		tamperedShare := new(fr.Element).Add(originalShare, new(fr.Element).SetUint64(1))
 
 		// Verification should fail for the tampered share.
-		verifier := NewReshare(targetID, operators)
+		verifier := NewReshare(targetAddr, operators)
 		require.False(t, verifier.VerifyNewShare(tamperedShare, commitments),
 			"tampered share should fail verification")
 
@@ -171,9 +171,9 @@ func FuzzVerifyShareRejectsMismatchedCommitments(f *testing.F) {
 		share1 := deriveScalar(seed1)
 		share2 := deriveScalar(seed2)
 
-		dealerID := util.AddressToNodeID(operators[0].OperatorAddress)
-		r1 := NewReshare(dealerID, operators)
-		r2 := NewReshare(dealerID, operators)
+		dealerAddr := operators[0].OperatorAddress
+		r1 := NewReshare(dealerAddr, operators)
+		r2 := NewReshare(dealerAddr, operators)
 
 		shares1, commitments1, err := r1.GenerateNewShares(share1, newThreshold)
 		require.NoError(t, err)
@@ -187,15 +187,15 @@ func FuzzVerifyShareRejectsMismatchedCommitments(f *testing.F) {
 
 		// Try to verify share from set1 against commitments from set2.
 		targetOp := operators[1]
-		targetID := util.AddressToNodeID(targetOp.OperatorAddress)
-		verifier := NewReshare(targetID, operators)
+		targetAddr := targetOp.OperatorAddress
+		verifier := NewReshare(targetAddr, operators)
 
 		// share1 + commitments1 should verify.
-		require.True(t, verifier.VerifyNewShare(shares1[targetID], commitments1),
+		require.True(t, verifier.VerifyNewShare(shares1[targetAddr], commitments1),
 			"share should verify against correct commitments")
 
 		// share1 + commitments2 should NOT verify (mismatched).
-		require.False(t, verifier.VerifyNewShare(shares1[targetID], commitments2),
+		require.False(t, verifier.VerifyNewShare(shares1[targetAddr], commitments2),
 			"share should fail verification against mismatched commitments")
 	})
 }
@@ -215,21 +215,21 @@ func FuzzComputeNewKeyShareThresholdSubset(f *testing.F) {
 		newThreshold := dkg.CalculateThreshold(len(operators))
 		currentShare := deriveScalar(seed)
 
-		dealerID := util.AddressToNodeID(operators[0].OperatorAddress)
-		r := NewReshare(dealerID, operators)
+		dealerAddr := operators[0].OperatorAddress
+		r := NewReshare(dealerAddr, operators)
 
 		shares, commitments, err := r.GenerateNewShares(currentShare, newThreshold)
 		require.NoError(t, err)
 
 		// Use only exactly threshold shares (a subset).
-		dealerIDs := make([]int64, 0, len(shares))
+		dealerAddrs := make([]common.Address, 0, len(shares))
 		for id := range shares {
-			dealerIDs = append(dealerIDs, id)
+			dealerAddrs = append(dealerAddrs, id)
 		}
 
 		// Take exactly threshold dealers.
-		subsetDealerIDs := dealerIDs[:newThreshold]
-		subsetShares := make(map[int64]*fr.Element, newThreshold)
+		subsetDealerIDs := dealerAddrs[:newThreshold]
+		subsetShares := make(map[common.Address]*fr.Element, newThreshold)
 		for _, id := range subsetDealerIDs {
 			subsetShares[id] = shares[id]
 		}
@@ -239,7 +239,7 @@ func FuzzComputeNewKeyShareThresholdSubset(f *testing.F) {
 		require.NotNil(t, keyVersion)
 
 		// Use all shares for comparison.
-		keyVersionAll, err := r.ComputeNewKeyShare(dealerIDs, shares, [][]types.G2Point{commitments})
+		keyVersionAll, err := r.ComputeNewKeyShare(dealerAddrs, shares, [][]types.G2Point{commitments})
 		require.NoError(t, err)
 
 		// Both should produce the same result since Lagrange interpolation is correct.
@@ -269,44 +269,44 @@ func FuzzZeroConstantDealerPolynomialsDoNotPreserveOriginalSecret(f *testing.F) 
 		oldSecret := deriveScalar(seed)
 
 		// Build dealer IDs from first n-1 operators.
-		dealerIDs := make([]int64, 0, len(operators)-1)
+		dealerAddrs := make([]common.Address, 0, len(operators)-1)
 		for i := 0; i < len(operators)-1; i++ {
-			dealerIDs = append(dealerIDs, util.AddressToNodeID(operators[i].OperatorAddress))
+			dealerAddrs = append(dealerAddrs, operators[i].OperatorAddress)
 		}
 
 		// Each dealer generates zero-constant shares (the problematic mode).
-		sharesByDealer := make(map[int64]map[int64]*fr.Element, len(dealerIDs))
-		for _, dealerID := range dealerIDs {
-			dealerResharer := NewReshare(dealerID, operators)
+		sharesByDealer := make(map[common.Address]map[common.Address]*fr.Element, len(dealerAddrs))
+		for _, dealerAddr := range dealerAddrs {
+			dealerResharer := NewReshare(dealerAddr, operators)
 			perRecipientShares, _, err := dealerResharer.GenerateNewShares(zero, newThreshold)
 			require.NoError(t, err)
-			sharesByDealer[dealerID] = perRecipientShares
+			sharesByDealer[dealerAddr] = perRecipientShares
 		}
 
 		// Reconstruct final recipient shares via Lagrange combine.
-		finalShares := make(map[int64]*fr.Element, len(operators))
+		finalShares := make(map[common.Address]*fr.Element, len(operators))
 		for _, recipient := range operators {
-			recipientID := util.AddressToNodeID(recipient.OperatorAddress)
-			received := make(map[int64]*fr.Element, len(dealerIDs))
-			for _, dealerID := range dealerIDs {
-				received[dealerID] = sharesByDealer[dealerID][recipientID]
+			recipientAddr := recipient.OperatorAddress
+			received := make(map[common.Address]*fr.Element, len(dealerAddrs))
+			for _, dealerAddr := range dealerAddrs {
+				received[dealerAddr] = sharesByDealer[dealerAddr][recipientAddr]
 			}
 
-			recipientResharer := NewReshare(recipientID, operators)
-			keyVersion, err := recipientResharer.ComputeNewKeyShare(dealerIDs, received, nil)
+			recipientResharer := NewReshare(recipientAddr, operators)
+			keyVersion, err := recipientResharer.ComputeNewKeyShare(dealerAddrs, received, nil)
 			require.NoError(t, err)
 			require.NotNil(t, keyVersion)
 			require.NotNil(t, keyVersion.PrivateShare)
-			finalShares[recipientID] = keyVersion.PrivateShare
+			finalShares[recipientAddr] = keyVersion.PrivateShare
 		}
 
 		// Recover a secret from any threshold recipients. It must not equal oldSecret.
-		recoveryShares := make(map[int64]*fr.Element, newThreshold)
+		recoveryShares := make(map[common.Address]*fr.Element, newThreshold)
 		for i := 0; i < newThreshold; i++ {
-			id := util.AddressToNodeID(operators[i].OperatorAddress)
-			recoveryShares[id] = finalShares[id]
+			addr := operators[i].OperatorAddress
+			recoveryShares[addr] = finalShares[addr]
 		}
-		recovered, err := crypto.RecoverSecret(recoveryShares)
+		recovered, err := crypto.RecoverSecretAddr(recoveryShares)
 		if err == nil {
 			require.False(t, recovered.Equal(oldSecret),
 				"zero-constant dealer polynomials should not preserve original non-zero secret")

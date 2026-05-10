@@ -16,12 +16,12 @@ const MaxExtraDataSize = 1_048_576 // 1 MB
 
 // KeyShareVersion represents a versioned set of key shares
 type KeyShareVersion struct {
-	Version         int64       // Unix timestamp (seconds) of the block that triggered this key version
-	PrivateShare    *fr.Element // This node's private key share
-	Commitments     []G2Point   // Public commitments (in G2 for master public key)
-	MasterPublicKey *G2Point    // Pre-computed master public key for threshold agreement
-	IsActive        bool        // Whether this version is the active one
-	ParticipantIDs  []int64     // Which participants were in the operator set for this version
+	Version         int64            // Unix timestamp (seconds) of the block that triggered this key version
+	PrivateShare    *fr.Element      // This node's private key share
+	Commitments     []G2Point        // Public commitments (in G2 for master public key)
+	MasterPublicKey *G2Point         // Pre-computed master public key for threshold agreement
+	IsActive        bool             // Whether this version is the active one
+	ParticipantIDs  []common.Address // Which participants were in the operator set for this version
 }
 
 // MarshalJSON implements json.Marshaler. The Alias type strips the method
@@ -103,7 +103,7 @@ type Acknowledgement struct {
 
 // CompletionSignature signals reshare completion
 type CompletionSignature struct {
-	NodeID           int64
+	NodeAddress      common.Address
 	SessionTimestamp int64
 	CommitmentHash   [32]byte
 	Signature        []byte // Sign(p2p_privkey, session_timestamp || commitment_hash)
@@ -178,19 +178,17 @@ type Release struct {
 
 // CommitmentBroadcast represents a broadcast of commitments with acknowledgements and merkle proofs (Phase 3)
 type CommitmentBroadcast struct {
-	FromOperatorID   int64              // Operator sending the broadcast
-	SessionTimestamp int64              // Block timestamp of the protocol session
-	Commitments      []G2Point          // Dealer's polynomial commitments
-	Acknowledgements []*Acknowledgement // All n-1 acks collected as dealer
-	MerkleProof      [][32]byte         // Merkle proof for specific recipient
+	FromOperatorAddress common.Address     // Operator sending the broadcast
+	SessionTimestamp    int64              // Block timestamp of the protocol session
+	Commitments         []G2Point          // Dealer's polynomial commitments
+	Acknowledgements    []*Acknowledgement // All n-1 acks collected as dealer
+	MerkleProof         [][32]byte         // Merkle proof for specific recipient
 }
 
 // CommitmentBroadcastMessage wraps CommitmentBroadcast for authenticated transport (Phase 5)
 type CommitmentBroadcastMessage struct {
 	FromOperatorAddress common.Address       `json:"fromOperatorAddress"`
 	ToOperatorAddress   common.Address       `json:"toOperatorAddress"`
-	FromOperatorID      int64                `json:"fromOperatorID"`
-	ToOperatorID        int64                `json:"toOperatorID"`
 	SessionTimestamp    int64                `json:"sessionTimestamp"`
 	Broadcast           *CommitmentBroadcast `json:"broadcast"`
 }

@@ -21,9 +21,9 @@ func TestReturningOperatorNotExcluded(t *testing.T) {
 	addrB := common.HexToAddress("0x000000000000000000000000000000000000000B")
 	addrC := common.HexToAddress("0x000000000000000000000000000000000000000C")
 
-	idA := addressToNodeID(addrA)
-	idB := addressToNodeID(addrB)
-	idC := addressToNodeID(addrC)
+	idA := addrA
+	idB := addrB
+	idC := addrC
 
 	operators := []*peering.OperatorSetPeer{
 		{OperatorAddress: addrA},
@@ -40,7 +40,7 @@ func TestReturningOperatorNotExcluded(t *testing.T) {
 	version := &types.KeyShareVersion{
 		Version:        1,
 		IsActive:       true,
-		ParticipantIDs: []int64{idB, idC},
+		ParticipantIDs: []common.Address{addrB, addrC},
 	}
 	ks.AddVersion(version)
 	ks.SetActiveVersion(version)
@@ -52,12 +52,12 @@ func TestReturningOperatorNotExcluded(t *testing.T) {
 	}
 
 	// Build existingOpIDs the same way RunReshareAsExistingOperator now does
-	existingOpIDs := make(map[int64]bool, len(operators))
+	existingOpIDs := make(map[common.Address]bool, len(operators))
 	for _, op := range operators {
-		existingOpIDs[addressToNodeID(op.OperatorAddress)] = true
+		existingOpIDs[op.OperatorAddress] = true
 	}
 
-	require.True(t, existingOpIDs[idA], "returning operator A must be in existingOpIDs")
-	require.True(t, existingOpIDs[idB], "operator B must be in existingOpIDs")
-	require.True(t, existingOpIDs[idC], "operator C must be in existingOpIDs")
+	require.True(t, existingOpIDs[addrA], "returning operator A must be in existingOpIDs")
+	require.True(t, existingOpIDs[addrB], "operator B must be in existingOpIDs")
+	require.True(t, existingOpIDs[addrC], "operator C must be in existingOpIDs")
 }

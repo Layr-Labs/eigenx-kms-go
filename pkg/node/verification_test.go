@@ -59,10 +59,10 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 
 		session := &ProtocolSession{
 			SessionTimestamp:  12345,
-			shares:            make(map[int64]*fr.Element),
-			commitments:       make(map[int64][]types.G2Point),
-			acks:              make(map[int64]map[int64]*types.Acknowledgement),
-			verifiedOperators: make(map[int64]bool),
+			shares:            make(map[common.Address]*fr.Element),
+			commitments:       make(map[common.Address][]types.G2Point),
+			acks:              make(map[common.Address]map[common.Address]*types.Acknowledgement),
+			verifiedOperators: make(map[common.Address]bool),
 		}
 
 		node := &Node{
@@ -92,10 +92,10 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 
 		session := &ProtocolSession{
 			SessionTimestamp:  12345,
-			shares:            make(map[int64]*fr.Element), // Empty shares
-			commitments:       make(map[int64][]types.G2Point),
-			acks:              make(map[int64]map[int64]*types.Acknowledgement),
-			verifiedOperators: make(map[int64]bool),
+			shares:            make(map[common.Address]*fr.Element), // Empty shares
+			commitments:       make(map[common.Address][]types.G2Point),
+			acks:              make(map[common.Address]map[common.Address]*types.Acknowledgement),
+			verifiedOperators: make(map[common.Address]bool),
 		}
 
 		node := &Node{
@@ -129,12 +129,12 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 
 		session := &ProtocolSession{
 			SessionTimestamp: 12345,
-			shares: map[int64]*fr.Element{
+			shares: map[common.Address]*fr.Element{
 				2: &realShare, // Share from operator 2
 			},
-			commitments:       make(map[int64][]types.G2Point),
-			acks:              make(map[int64]map[int64]*types.Acknowledgement),
-			verifiedOperators: make(map[int64]bool),
+			commitments:       make(map[common.Address][]types.G2Point),
+			acks:              make(map[common.Address]map[common.Address]*types.Acknowledgement),
+			verifiedOperators: make(map[common.Address]bool),
 		}
 
 		node := &Node{
@@ -176,12 +176,12 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 
 		session := &ProtocolSession{
 			SessionTimestamp: 12345,
-			shares: map[int64]*fr.Element{
+			shares: map[common.Address]*fr.Element{
 				2: &realShare,
 			},
-			commitments:       make(map[int64][]types.G2Point),
-			acks:              make(map[int64]map[int64]*types.Acknowledgement),
-			verifiedOperators: make(map[int64]bool),
+			commitments:       make(map[common.Address][]types.G2Point),
+			acks:              make(map[common.Address]map[common.Address]*types.Acknowledgement),
+			verifiedOperators: make(map[common.Address]bool),
 		}
 
 		node := &Node{
@@ -243,7 +243,7 @@ func TestWaitForVerifications(t *testing.T) {
 			Operators: []*peering.OperatorSetPeer{
 				{}, {}, {}, // 3 operators total
 			},
-			verifiedOperators: make(map[int64]bool),
+			verifiedOperators: make(map[common.Address]bool),
 		}
 
 		node := &Node{
@@ -267,7 +267,7 @@ func TestWaitForVerifications(t *testing.T) {
 			Operators: []*peering.OperatorSetPeer{
 				{}, {}, {}, // 3 operators total (need 2 verifications)
 			},
-			verifiedOperators: make(map[int64]bool),
+			verifiedOperators: make(map[common.Address]bool),
 		}
 
 		node := &Node{
@@ -291,8 +291,8 @@ func TestWaitForVerifications(t *testing.T) {
 			Operators: []*peering.OperatorSetPeer{
 				{}, {}, {}, // 3 operators, threshold=⌈2*3/3⌉=2, need min(1, receivedShares-1) verifications
 			},
-			shares:            make(map[int64]*fr.Element),
-			verifiedOperators: make(map[int64]bool),
+			shares:            make(map[common.Address]*fr.Element),
+			verifiedOperators: make(map[common.Address]bool),
 		}
 
 		// Simulate having received shares from all 3 operators (including self)
@@ -321,8 +321,8 @@ func TestWaitForVerifications(t *testing.T) {
 			Operators: []*peering.OperatorSetPeer{
 				{}, {}, {}, {}, {}, {}, // 6 operators, threshold=⌈2*6/3⌉=4, need 3 verifications
 			},
-			shares:            make(map[int64]*fr.Element),
-			verifiedOperators: make(map[int64]bool),
+			shares:            make(map[common.Address]*fr.Element),
+			verifiedOperators: make(map[common.Address]bool),
 		}
 
 		// Simulate having received shares from all 6 operators

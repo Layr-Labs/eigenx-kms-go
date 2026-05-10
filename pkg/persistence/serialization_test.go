@@ -24,7 +24,7 @@ func TestMarshalUnmarshalKeyShareVersion_RoundTrip(t *testing.T) {
 			{CompressedBytes: []byte{10, 20, 30}},
 		},
 		IsActive:       false,
-		ParticipantIDs: []int64{10, 20, 30},
+		ParticipantIDs: []common.Address{10, 20, 30},
 	}
 	data, err := json.Marshal(original)
 	require.NoError(t, err)
@@ -55,7 +55,7 @@ func TestMarshalUnmarshalKeyShareVersion_WithMasterPublicKey(t *testing.T) {
 		Commitments:     []types.G2Point{{CompressedBytes: []byte{10, 20, 30}}},
 		MasterPublicKey: mpk,
 		IsActive:        true,
-		ParticipantIDs:  []int64{1, 2, 3},
+		ParticipantIDs:  []common.Address{1, 2, 3},
 	}
 
 	data, err := json.Marshal(original)
@@ -139,15 +139,15 @@ func TestMarshalUnmarshalProtocolSessionState_RoundTrip(t *testing.T) {
 		Phase:             2,
 		StartTime:         1234567800,
 		OperatorAddresses: []string{"0x1234", "0x5678"},
-		Shares: map[int64]string{
+		Shares: map[string]string{
 			1: "share1",
 			2: "share2",
 		},
-		Commitments: map[int64][]types.G2Point{
+		Commitments: map[string][]types.G2Point{
 			1: {{CompressedBytes: []byte{1, 2, 3}}},
 			2: {{CompressedBytes: []byte{4, 5, 6}}},
 		},
-		Acknowledgements: map[int64]map[int64]*types.Acknowledgement{
+		Acknowledgements: map[string]map[string]*types.Acknowledgement{
 			1: {
 				2: {PlayerAddress: common.BigToAddress(big.NewInt(2)), DealerAddress: common.BigToAddress(big.NewInt(1)), SessionTimestamp: 1234567890},
 			},

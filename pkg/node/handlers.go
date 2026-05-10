@@ -11,7 +11,6 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -295,10 +294,10 @@ func (s *Server) handleDKGCommitment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Convert sender address to node ID and store commitments
-	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
+	senderAddr := senderPeer.OperatorAddress
 
 	// Store commitment in session (handles duplicate detection and completion signaling)
-	if err := session.HandleReceivedCommitment(senderNodeID, commitMsg.Commitments); err != nil {
+	if err := session.HandleReceivedCommitment(senderAddr, commitMsg.Commitments); err != nil {
 		s.node.logger.Sugar().Warnw("Failed to store commitment",
 			"from", senderPeer.OperatorAddress.Hex(),
 			"error", err)
@@ -309,7 +308,7 @@ func (s *Server) handleDKGCommitment(w http.ResponseWriter, r *http.Request) {
 	s.node.logger.Sugar().Debugw("Received authenticated DKG commitments",
 		"node_id", s.node.OperatorAddress.Hex(),
 		"from_address", senderPeer.OperatorAddress.Hex(),
-		"sender_node_id", senderNodeID,
+		"sender_address", senderAddr.Hex(),
 		"session_timestamp", commitMsg.SessionTimestamp,
 		"count", len(commitMsg.Commitments))
 
@@ -355,11 +354,11 @@ func (s *Server) handleDKGShare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Convert addresses to node IDs
-	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
+	senderAddr := senderPeer.OperatorAddress
 	share := types.DeserializeFr(shareMsg.Share)
 
 	// Store share in session (handles duplicate detection and completion signaling)
-	if err := session.HandleReceivedShare(senderNodeID, share); err != nil {
+	if err := session.HandleReceivedShare(senderAddr, share); err != nil {
 		s.node.logger.Sugar().Warnw("Failed to store share",
 			"from", senderPeer.OperatorAddress.Hex(),
 			"error", err)
@@ -370,7 +369,7 @@ func (s *Server) handleDKGShare(w http.ResponseWriter, r *http.Request) {
 	s.node.logger.Sugar().Debugw("Received authenticated DKG share",
 		"node_id", s.node.OperatorAddress.Hex(),
 		"from_address", senderPeer.OperatorAddress.Hex(),
-		"sender_node_id", senderNodeID,
+		"sender_address", senderAddr.Hex(),
 		"session_timestamp", shareMsg.SessionTimestamp)
 
 	w.WriteHeader(http.StatusOK)
@@ -409,10 +408,10 @@ func (s *Server) handleDKGAck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Convert sender address to node ID and store acknowledgement
-	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
-	thisNodeID := util.AddressToNodeID(s.node.OperatorAddress)
+	senderAddr := senderPeer.OperatorAddress
+	thisAddr := s.node.OperatorAddress
 
-	if err := s.node.verifyAcknowledgement(session, senderPeer, thisNodeID, ackMsg.SessionTimestamp, ackMsg.Ack); err != nil {
+	if err := s.node.verifyAcknowledgement(session, senderPeer, thisAddr, ackMsg.SessionTimestamp, ackMsg.Ack); err != nil {
 		s.node.logger.Sugar().Warnw("Invalid DKG acknowledgement",
 			"from", senderPeer.OperatorAddress.Hex(),
 			"error", err)
@@ -421,7 +420,7 @@ func (s *Server) handleDKGAck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Store ack in session (handles duplicate detection and completion signaling)
-	if err := session.HandleReceivedAck(thisNodeID, senderNodeID, ackMsg.Ack); err != nil {
+	if err := session.HandleReceivedAck(thisAddr, senderAddr, ackMsg.Ack); err != nil {
 		s.node.logger.Sugar().Warnw("Failed to store ack",
 			"from", senderPeer.OperatorAddress.Hex(),
 			"error", err)
@@ -432,8 +431,8 @@ func (s *Server) handleDKGAck(w http.ResponseWriter, r *http.Request) {
 	s.node.logger.Sugar().Debugw("Received authenticated acknowledgement",
 		"node_id", s.node.OperatorAddress.Hex(),
 		"from_address", senderPeer.OperatorAddress.Hex(),
-		"from_player", senderNodeID,
-		"for_dealer", thisNodeID,
+		"from_player", senderAddr.Hex(),
+		"for_dealer", thisAddr.Hex(),
 		"session_timestamp", ackMsg.SessionTimestamp)
 
 	w.WriteHeader(http.StatusOK)
@@ -472,10 +471,10 @@ func (s *Server) handleReshareCommitment(w http.ResponseWriter, r *http.Request)
 	}
 
 	// Convert sender address to node ID
-	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
+	senderAddr := senderPeer.OperatorAddress
 
 	// Store commitment in session
-	if err := session.HandleReceivedCommitment(senderNodeID, commitMsg.Commitments); err != nil {
+	if err := session.HandleReceivedCommitment(senderAddr, commitMsg.Commitments); err != nil {
 		s.node.logger.Sugar().Warnw("Failed to store reshare commitment",
 			"from", senderPeer.OperatorAddress.Hex(),
 			"error", err)
@@ -530,11 +529,11 @@ func (s *Server) handleReshareShare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Convert addresses to node IDs
-	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
+	senderAddr := senderPeer.OperatorAddress
 	share := types.DeserializeFr(shareMsg.Share)
 
 	// Store share in session
-	if err := session.HandleReceivedShare(senderNodeID, share); err != nil {
+	if err := session.HandleReceivedShare(senderAddr, share); err != nil {
 		s.node.logger.Sugar().Warnw("Failed to store reshare share",
 			"from", senderPeer.OperatorAddress.Hex(),
 			"error", err)
@@ -581,10 +580,10 @@ func (s *Server) handleReshareAck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Convert sender address to node ID
-	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
-	thisNodeID := util.AddressToNodeID(s.node.OperatorAddress)
+	senderAddr := senderPeer.OperatorAddress
+	thisAddr := s.node.OperatorAddress
 
-	if err := s.node.verifyAcknowledgement(session, senderPeer, thisNodeID, ackMsg.SessionTimestamp, ackMsg.Ack); err != nil {
+	if err := s.node.verifyAcknowledgement(session, senderPeer, thisAddr, ackMsg.SessionTimestamp, ackMsg.Ack); err != nil {
 		s.node.logger.Sugar().Warnw("Invalid reshare acknowledgement",
 			"from", senderPeer.OperatorAddress.Hex(),
 			"error", err)
@@ -593,7 +592,7 @@ func (s *Server) handleReshareAck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Store ack in session
-	if err := session.HandleReceivedAck(thisNodeID, senderNodeID, ackMsg.Ack); err != nil {
+	if err := session.HandleReceivedAck(thisAddr, senderAddr, ackMsg.Ack); err != nil {
 		s.node.logger.Sugar().Warnw("Failed to store reshare ack",
 			"from", senderPeer.OperatorAddress.Hex(),
 			"error", err)
@@ -603,8 +602,8 @@ func (s *Server) handleReshareAck(w http.ResponseWriter, r *http.Request) {
 
 	s.node.logger.Sugar().Debugw("Received reshare ack",
 		"node_id", s.node.OperatorAddress.Hex(),
-		"from_player", senderNodeID,
-		"for_dealer", thisNodeID)
+		"from_player", senderAddr.Hex(),
+		"for_dealer", thisAddr.Hex())
 
 	w.WriteHeader(http.StatusOK)
 }

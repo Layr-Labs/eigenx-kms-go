@@ -89,7 +89,7 @@ func newTestSecretsFixture(t *testing.T) *testSecretsFixture {
 		PrivateShare:   testShare,
 		Commitments:    []kmsTypes.G2Point{},
 		IsActive:       true,
-		ParticipantIDs: []int64{1},
+		ParticipantIDs: []common.Address{1},
 	})
 
 	return &testSecretsFixture{

@@ -27,11 +27,8 @@ func TestCommitmentBroadcastMessage_Serialization(t *testing.T) {
 	msg := types.CommitmentBroadcastMessage{
 		FromOperatorAddress: common.HexToAddress("0x1234"),
 		ToOperatorAddress:   common.HexToAddress("0x5678"),
-		FromOperatorID:      1,
-		ToOperatorID:        2,
 		SessionTimestamp:    12345,
 		Broadcast: &types.CommitmentBroadcast{
-			FromOperatorID:   1,
 			SessionTimestamp: 5,
 			Commitments:      []types.G2Point{},
 			Acknowledgements: []*types.Acknowledgement{},
@@ -52,8 +49,6 @@ func TestCommitmentBroadcastMessage_Serialization(t *testing.T) {
 	// Verify fields
 	require.Equal(t, msg.FromOperatorAddress, decoded.FromOperatorAddress)
 	require.Equal(t, msg.ToOperatorAddress, decoded.ToOperatorAddress)
-	require.Equal(t, msg.FromOperatorID, decoded.FromOperatorID)
-	require.Equal(t, msg.ToOperatorID, decoded.ToOperatorID)
 	require.Equal(t, msg.SessionTimestamp, decoded.SessionTimestamp)
 	require.NotNil(t, decoded.Broadcast)
 	require.Equal(t, msg.Broadcast.SessionTimestamp, decoded.Broadcast.SessionTimestamp)

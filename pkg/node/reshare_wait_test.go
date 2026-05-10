@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/stretchr/testify/require"
@@ -23,16 +24,16 @@ func makeTestOps(n int) []*peering.OperatorSetPeer {
 
 func TestHandleReceivedCommitment_EmptyCommitmentsRejected(t *testing.T) {
 	session := &ProtocolSession{
-		commitments:             make(map[int64][]types.G2Point),
+		commitments:             make(map[common.Address][]types.G2Point),
 		commitmentsCompleteChan: make(chan bool, 1),
 		Operators:               makeTestOps(3),
 	}
 
-	err := session.HandleReceivedCommitment(1, nil)
+	err := session.HandleReceivedCommitment(common.HexToAddress("0x01"), nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "empty commitments")
 
-	err = session.HandleReceivedCommitment(1, []types.G2Point{})
+	err = session.HandleReceivedCommitment(common.HexToAddress("0x01"), []types.G2Point{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "empty commitments")
 
@@ -46,12 +47,12 @@ func TestWaitForNShares_SucceedsWithRequiredCount(t *testing.T) {
 	const n = 5
 	session := &ProtocolSession{
 		Operators: makeTestOps(n),
-		shares:    make(map[int64]*fr.Element),
+		shares:    make(map[common.Address]*fr.Element),
 	}
 
-	for i := int64(0); i < n-1; i++ {
+	for i := 0; i < n-1; i++ {
 		elem := fr.NewElement(uint64(i + 1))
-		session.shares[i] = &elem
+		session.shares[common.HexToAddress(fmt.Sprintf("0x%040x", i+1))] = &elem
 	}
 
 	require.NoError(t, waitForNShares(session, n-1, 200*time.Millisecond))
@@ -61,13 +62,13 @@ func TestWaitForNShares_TimesOutIfInsufficient(t *testing.T) {
 	const n = 5
 	session := &ProtocolSession{
 		Operators: makeTestOps(n),
-		shares:    make(map[int64]*fr.Element),
+		shares:    make(map[common.Address]*fr.Element),
 	}
 
 	// Only n-2 shares present; require n-1 → should timeout.
-	for i := int64(0); i < n-2; i++ {
+	for i := 0; i < n-2; i++ {
 		elem := fr.NewElement(uint64(i + 1))
-		session.shares[i] = &elem
+		session.shares[common.HexToAddress(fmt.Sprintf("0x%040x", i+1))] = &elem
 	}
 
 	err := waitForNShares(session, n-1, 80*time.Millisecond)
@@ -82,16 +83,16 @@ func TestWaitForNShares_NewOperatorScenario(t *testing.T) {
 	const n = 4
 	session := &ProtocolSession{
 		Operators: makeTestOps(n),
-		shares:    make(map[int64]*fr.Element),
+		shares:    make(map[common.Address]*fr.Element),
 	}
 
 	// Simulate n-1 existing operators delivering shares asynchronously.
 	go func() {
 		time.Sleep(20 * time.Millisecond)
 		session.mu.Lock()
-		for i := int64(0); i < n-1; i++ {
+		for i := 0; i < n-1; i++ {
 			elem := fr.NewElement(uint64(i + 10))
-			session.shares[i] = &elem
+			session.shares[common.HexToAddress(fmt.Sprintf("0x%040x", i+1))] = &elem
 		}
 		session.mu.Unlock()
 	}()
@@ -113,13 +114,13 @@ func TestRunReshareAsNewOperator_ThresholdMatchesExistingOperators(t *testing.T)
 		const n, numNew = 5, 1
 		session := &ProtocolSession{
 			Operators: makeTestOps(n),
-			shares:    make(map[int64]*fr.Element),
+			shares:    make(map[common.Address]*fr.Element),
 		}
 
 		// Existing operators deliver n-numNew shares.
-		for i := int64(0); i < n-numNew; i++ {
+		for i := 0; i < n-numNew; i++ {
 			elem := fr.NewElement(uint64(i + 1))
-			session.shares[i] = &elem
+			session.shares[common.HexToAddress(fmt.Sprintf("0x%040x", i+1))] = &elem
 		}
 
 		// Both paths use len(operators)-numNewOperators as the threshold.
@@ -132,13 +133,13 @@ func TestRunReshareAsNewOperator_ThresholdMatchesExistingOperators(t *testing.T)
 		const n, numNew = 6, 2
 		session := &ProtocolSession{
 			Operators: makeTestOps(n),
-			shares:    make(map[int64]*fr.Element),
+			shares:    make(map[common.Address]*fr.Element),
 		}
 
 		// Only n-numNew existing operators contribute shares.
-		for i := int64(0); i < n-numNew; i++ {
+		for i := 0; i < n-numNew; i++ {
 			elem := fr.NewElement(uint64(i + 1))
-			session.shares[i] = &elem
+			session.shares[common.HexToAddress(fmt.Sprintf("0x%040x", i+1))] = &elem
 		}
 
 		// Correct threshold: n-numNew succeeds.
@@ -156,11 +157,11 @@ func TestWaitForNCommitments_SucceedsWithRequiredCount(t *testing.T) {
 	const n = 5
 	session := &ProtocolSession{
 		Operators:   makeTestOps(n),
-		commitments: make(map[int64][]types.G2Point),
+		commitments: make(map[common.Address][]types.G2Point),
 	}
 
-	for i := int64(0); i < n-1; i++ {
-		session.commitments[i] = []types.G2Point{}
+	for i := 0; i < n-1; i++ {
+		session.commitments[common.HexToAddress(fmt.Sprintf("0x%040x", i+1))] = []types.G2Point{}
 	}
 
 	require.NoError(t, waitForNCommitments(session, n-1, 200*time.Millisecond))
@@ -170,12 +171,12 @@ func TestWaitForNCommitments_TimesOutIfInsufficient(t *testing.T) {
 	const n = 5
 	session := &ProtocolSession{
 		Operators:   makeTestOps(n),
-		commitments: make(map[int64][]types.G2Point),
+		commitments: make(map[common.Address][]types.G2Point),
 	}
 
 	// Only n-2 commitments present; require n-1 → should timeout.
-	for i := int64(0); i < n-2; i++ {
-		session.commitments[i] = []types.G2Point{}
+	for i := 0; i < n-2; i++ {
+		session.commitments[common.HexToAddress(fmt.Sprintf("0x%040x", i+1))] = []types.G2Point{}
 	}
 
 	err := waitForNCommitments(session, n-1, 80*time.Millisecond)
@@ -189,14 +190,14 @@ func TestWaitForNCommitments_NewOperatorScenario(t *testing.T) {
 	const n = 4
 	session := &ProtocolSession{
 		Operators:   makeTestOps(n),
-		commitments: make(map[int64][]types.G2Point),
+		commitments: make(map[common.Address][]types.G2Point),
 	}
 
 	go func() {
 		time.Sleep(20 * time.Millisecond)
 		session.mu.Lock()
-		for i := int64(0); i < n-1; i++ {
-			session.commitments[i] = []types.G2Point{}
+		for i := 0; i < n-1; i++ {
+			session.commitments[common.HexToAddress(fmt.Sprintf("0x%040x", i+1))] = []types.G2Point{}
 		}
 		session.mu.Unlock()
 	}()
@@ -214,7 +215,7 @@ func TestWaitForNCommitments_NewOperatorScenario(t *testing.T) {
 func TestWaitForN_ErrorMessageContainsLabel(t *testing.T) {
 	session := &ProtocolSession{
 		Operators: makeTestOps(3),
-		shares:    make(map[int64]*fr.Element),
+		shares:    make(map[common.Address]*fr.Element),
 	}
 
 	err := waitForN(session, 2, 80*time.Millisecond, func() int { return 0 }, "widgets")
@@ -231,7 +232,7 @@ func TestWaitForN_ErrorMessageContainsLabel(t *testing.T) {
 func TestWaitForNShares_NegativeRequiredClampsToZero(t *testing.T) {
 	session := &ProtocolSession{
 		Operators: makeTestOps(3),
-		shares:    make(map[int64]*fr.Element),
+		shares:    make(map[common.Address]*fr.Element),
 	}
 	// required=-1 should clamp to 0 and succeed instantly.
 	require.NoError(t, waitForNShares(session, -1, 200*time.Millisecond))
@@ -245,13 +246,13 @@ func TestWaitForNShares_RequiredExceedsOperatorsClampsToMax(t *testing.T) {
 	const n = 3
 	session := &ProtocolSession{
 		Operators: makeTestOps(n),
-		shares:    make(map[int64]*fr.Element),
+		shares:    make(map[common.Address]*fr.Element),
 	}
 
 	// Only n-1 shares present, but required is clamped to n (all operators).
-	for i := int64(0); i < n-1; i++ {
+	for i := 0; i < n-1; i++ {
 		elem := fr.NewElement(uint64(i + 1))
-		session.shares[i] = &elem
+		session.shares[common.HexToAddress(fmt.Sprintf("0x%040x", i+1))] = &elem
 	}
 
 	// required=n+5 clamps to n; with only n-1 shares this should timeout.

@@ -7,6 +7,7 @@ package dkg
 import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/ethereum/go-ethereum/common"
 	mock "github.com/stretchr/testify/mock"
 )
 
@@ -38,7 +39,7 @@ func (_m *MockProtocol) EXPECT() *MockProtocol_Expecter {
 }
 
 // FinalizeKeyShare provides a mock function for the type MockProtocol
-func (_mock *MockProtocol) FinalizeKeyShare(shares map[int64]*fr.Element, allCommitments [][]types.G2Point, participantIDs []int64) *types.KeyShareVersion {
+func (_mock *MockProtocol) FinalizeKeyShare(shares map[common.Address]*fr.Element, allCommitments [][]types.G2Point, participantIDs []common.Address) *types.KeyShareVersion {
 	ret := _mock.Called(shares, allCommitments, participantIDs)
 
 	if len(ret) == 0 {
@@ -46,7 +47,7 @@ func (_mock *MockProtocol) FinalizeKeyShare(shares map[int64]*fr.Element, allCom
 	}
 
 	var r0 *types.KeyShareVersion
-	if returnFunc, ok := ret.Get(0).(func(map[int64]*fr.Element, [][]types.G2Point, []int64) *types.KeyShareVersion); ok {
+	if returnFunc, ok := ret.Get(0).(func(map[common.Address]*fr.Element, [][]types.G2Point, []common.Address) *types.KeyShareVersion); ok {
 		r0 = returnFunc(shares, allCommitments, participantIDs)
 	} else {
 		if ret.Get(0) != nil {
@@ -62,26 +63,26 @@ type MockProtocol_FinalizeKeyShare_Call struct {
 }
 
 // FinalizeKeyShare is a helper method to define mock.On call
-//   - shares map[int64]*fr.Element
+//   - shares map[common.Address]*fr.Element
 //   - allCommitments [][]types.G2Point
-//   - participantIDs []int64
+//   - participantIDs []common.Address
 func (_e *MockProtocol_Expecter) FinalizeKeyShare(shares interface{}, allCommitments interface{}, participantIDs interface{}) *MockProtocol_FinalizeKeyShare_Call {
 	return &MockProtocol_FinalizeKeyShare_Call{Call: _e.mock.On("FinalizeKeyShare", shares, allCommitments, participantIDs)}
 }
 
-func (_c *MockProtocol_FinalizeKeyShare_Call) Run(run func(shares map[int64]*fr.Element, allCommitments [][]types.G2Point, participantIDs []int64)) *MockProtocol_FinalizeKeyShare_Call {
+func (_c *MockProtocol_FinalizeKeyShare_Call) Run(run func(shares map[common.Address]*fr.Element, allCommitments [][]types.G2Point, participantIDs []common.Address)) *MockProtocol_FinalizeKeyShare_Call {
 	_c.Call.Run(func(args mock.Arguments) {
-		var arg0 map[int64]*fr.Element
+		var arg0 map[common.Address]*fr.Element
 		if args[0] != nil {
-			arg0 = args[0].(map[int64]*fr.Element)
+			arg0 = args[0].(map[common.Address]*fr.Element)
 		}
 		var arg1 [][]types.G2Point
 		if args[1] != nil {
 			arg1 = args[1].([][]types.G2Point)
 		}
-		var arg2 []int64
+		var arg2 []common.Address
 		if args[2] != nil {
-			arg2 = args[2].([]int64)
+			arg2 = args[2].([]common.Address)
 		}
 		run(
 			arg0,
@@ -97,30 +98,30 @@ func (_c *MockProtocol_FinalizeKeyShare_Call) Return(keyShareVersion *types.KeyS
 	return _c
 }
 
-func (_c *MockProtocol_FinalizeKeyShare_Call) RunAndReturn(run func(shares map[int64]*fr.Element, allCommitments [][]types.G2Point, participantIDs []int64) *types.KeyShareVersion) *MockProtocol_FinalizeKeyShare_Call {
+func (_c *MockProtocol_FinalizeKeyShare_Call) RunAndReturn(run func(shares map[common.Address]*fr.Element, allCommitments [][]types.G2Point, participantIDs []common.Address) *types.KeyShareVersion) *MockProtocol_FinalizeKeyShare_Call {
 	_c.Call.Return(run)
 	return _c
 }
 
 // GenerateShares provides a mock function for the type MockProtocol
-func (_mock *MockProtocol) GenerateShares() (map[int64]*fr.Element, []types.G2Point, error) {
+func (_mock *MockProtocol) GenerateShares() (map[common.Address]*fr.Element, []types.G2Point, error) {
 	ret := _mock.Called()
 
 	if len(ret) == 0 {
 		panic("no return value specified for GenerateShares")
 	}
 
-	var r0 map[int64]*fr.Element
+	var r0 map[common.Address]*fr.Element
 	var r1 []types.G2Point
 	var r2 error
-	if returnFunc, ok := ret.Get(0).(func() (map[int64]*fr.Element, []types.G2Point, error)); ok {
+	if returnFunc, ok := ret.Get(0).(func() (map[common.Address]*fr.Element, []types.G2Point, error)); ok {
 		return returnFunc()
 	}
-	if returnFunc, ok := ret.Get(0).(func() map[int64]*fr.Element); ok {
+	if returnFunc, ok := ret.Get(0).(func() map[common.Address]*fr.Element); ok {
 		r0 = returnFunc()
 	} else {
 		if ret.Get(0) != nil {
-			r0 = ret.Get(0).(map[int64]*fr.Element)
+			r0 = ret.Get(0).(map[common.Address]*fr.Element)
 		}
 	}
 	if returnFunc, ok := ret.Get(1).(func() []types.G2Point); ok {
@@ -155,12 +156,12 @@ func (_c *MockProtocol_GenerateShares_Call) Run(run func()) *MockProtocol_Genera
 	return _c
 }
 
-func (_c *MockProtocol_GenerateShares_Call) Return(int64ToElement map[int64]*fr.Element, g2Points []types.G2Point, err error) *MockProtocol_GenerateShares_Call {
-	_c.Call.Return(int64ToElement, g2Points, err)
+func (_c *MockProtocol_GenerateShares_Call) Return(addressToElement map[common.Address]*fr.Element, g2Points []types.G2Point, err error) *MockProtocol_GenerateShares_Call {
+	_c.Call.Return(addressToElement, g2Points, err)
 	return _c
 }
 
-func (_c *MockProtocol_GenerateShares_Call) RunAndReturn(run func() (map[int64]*fr.Element, []types.G2Point, error)) *MockProtocol_GenerateShares_Call {
+func (_c *MockProtocol_GenerateShares_Call) RunAndReturn(run func() (map[common.Address]*fr.Element, []types.G2Point, error)) *MockProtocol_GenerateShares_Call {
 	_c.Call.Return(run)
 	return _c
 }
