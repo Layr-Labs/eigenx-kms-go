@@ -8,7 +8,6 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -25,7 +24,6 @@ func TestBroadcastCommitmentsWithProofs(t *testing.T) {
 // TestBroadcastCommitmentsWithProofs_NilTree tests error handling for nil merkle tree
 func TestBroadcastCommitmentsWithProofs_NilTree(t *testing.T) {
 	client := &Client{
-		nodeID:       1,
 		operatorAddr: common.HexToAddress("0x1111"),
 	}
 
@@ -75,22 +73,6 @@ func TestBroadcastCommitmentsWithProofs_MerkleProofGeneration(t *testing.T) {
 	}
 }
 
-// TestAddressToNodeID tests address to node ID conversion
-func TestAddressToNodeID(t *testing.T) {
-	addr1 := common.HexToAddress("0x1234567890123456789012345678901234567890")
-	addr2 := common.HexToAddress("0xABCDEF1234567890ABCDEF1234567890ABCDEF12")
-
-	id1 := util.AddressToNodeID(addr1)
-	id2 := util.AddressToNodeID(addr2)
-
-	// Different addresses should produce different IDs
-	require.NotEqual(t, id1, id2)
-
-	// Same address should produce same ID (deterministic)
-	id1_again := util.AddressToNodeID(addr1)
-	require.Equal(t, id1, id1_again)
-}
-
 // TestSendCommitmentBroadcast tests the send function signature
 func TestSendCommitmentBroadcast(t *testing.T) {
 	// This test verifies the function compiles with correct types
@@ -110,7 +92,6 @@ func TestBroadcastCommitmentsWithProofs_SkipsSelf(t *testing.T) {
 		}, nil,
 	).Maybe()
 	client := &Client{
-		nodeID:       util.AddressToNodeID(myAddr),
 		operatorAddr: myAddr,
 		signer:       mockSigner,
 	}
@@ -165,7 +146,6 @@ func TestBroadcastCommitmentsWithProofs_NoAckForOperator(t *testing.T) {
 		}, nil,
 	).Maybe()
 	client := &Client{
-		nodeID:       util.AddressToNodeID(myAddr),
 		operatorAddr: myAddr,
 		signer:       mockSigner,
 	}

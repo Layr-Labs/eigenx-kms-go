@@ -36,7 +36,6 @@ func TestVerifyAcknowledgement_BindsFieldsAndSignature(t *testing.T) {
 		OperatorAddress: dealerAddr,
 	}
 
-	dealerAddr = common.HexToAddress("0x99")
 	epoch := int64(123456)
 	commitments := []types.G2Point{{CompressedBytes: []byte{1, 2, 3}}}
 	shareHash := [32]byte{1, 1, 1}

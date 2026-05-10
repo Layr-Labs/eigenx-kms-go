@@ -21,10 +21,6 @@ func TestReturningOperatorNotExcluded(t *testing.T) {
 	addrB := common.HexToAddress("0x000000000000000000000000000000000000000B")
 	addrC := common.HexToAddress("0x000000000000000000000000000000000000000C")
 
-	idA := addrA
-	idB := addrB
-	idC := addrC
-
 	operators := []*peering.OperatorSetPeer{
 		{OperatorAddress: addrA},
 		{OperatorAddress: addrB},

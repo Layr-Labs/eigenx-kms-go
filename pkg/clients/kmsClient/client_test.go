@@ -2,6 +2,7 @@ package kmsClient
 
 import (
 	"encoding/json"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -272,7 +273,7 @@ func TestDecryptWithRetry_ValidCiphertext(t *testing.T) {
 	masterSecret := new(fr.Element).SetInt64(0)
 	// We can't easily get the master secret from partial sigs, so use the crypto package
 	// to recover the app private key and verify round-trip through decryptWithRetry
-	appPrivKey, err := crypto.RecoverAppPrivateKey(appID, partialSigs, threshold)
+	appPrivKey, err := crypto.RecoverAppPrivateKeyAddr(appID, partialSigs, threshold)
 	require.NoError(t, err)
 
 	// To encrypt, we need the master public key. Derive it from the app private key
@@ -300,8 +301,8 @@ func TestDecryptWithRetry_ValidCiphertext(t *testing.T) {
 }
 
 // generateTestPartialSigs creates partial signatures for testing.
-// Returns a map of node ID -> partial signature.
-func generateTestPartialSigs(t *testing.T, appID string, n, threshold int) map[int64]types.G1Point {
+// Returns a map of address -> partial signature.
+func generateTestPartialSigs(t *testing.T, appID string, n, threshold int) map[common.Address]types.G1Point {
 	t.Helper()
 	secret := new(fr.Element)
 	_, err := secret.SetRandom()
@@ -310,7 +311,7 @@ func generateTestPartialSigs(t *testing.T, appID string, n, threshold int) map[i
 }
 
 // generatePartialSigsFromSecret creates partial signatures from a known master secret.
-func generatePartialSigsFromSecret(t *testing.T, appID string, secret *fr.Element, n, threshold int) map[int64]types.G1Point {
+func generatePartialSigsFromSecret(t *testing.T, appID string, secret *fr.Element, n, threshold int) map[common.Address]types.G1Point {
 	t.Helper()
 
 	// Generate polynomial coefficients (secret is the constant term)
@@ -326,11 +327,11 @@ func generatePartialSigsFromSecret(t *testing.T, appID string, secret *fr.Elemen
 	qID, err := crypto.HashToG1(appID)
 	require.NoError(t, err)
 
-	// Generate shares and partial signatures
-	partialSigs := make(map[int64]types.G1Point, n)
+	// Generate shares and partial signatures using addresses as keys
+	partialSigs := make(map[common.Address]types.G1Point, n)
 	for i := 1; i <= n; i++ {
-		nodeID := int64(i)
-		x := new(fr.Element).SetInt64(nodeID)
+		addr := common.BigToAddress(new(big.Int).SetInt64(int64(i)))
+		x := new(fr.Element).SetInt64(int64(i))
 
 		// Evaluate polynomial at x
 		share := new(fr.Element).Set(coeffs[threshold-1])
@@ -341,7 +342,7 @@ func generatePartialSigsFromSecret(t *testing.T, appID string, secret *fr.Elemen
 		// Partial sig = share * H(appID)
 		partialSig, err := crypto.ScalarMulG1(*qID, share)
 		require.NoError(t, err)
-		partialSigs[nodeID] = *partialSig
+		partialSigs[addr] = *partialSig
 	}
 
 	return partialSigs

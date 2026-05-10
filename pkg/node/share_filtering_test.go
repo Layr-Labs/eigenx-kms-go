@@ -4,67 +4,72 @@ import (
 	"testing"
 
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
 )
 
 func TestTrustedDealerIDs(t *testing.T) {
+	addr1 := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	addr2 := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	addr3 := common.HexToAddress("0x0000000000000000000000000000000000000003")
+
 	shareA := new(fr.Element).SetInt64(10)
 	shareB := new(fr.Element).SetInt64(20)
 	shareC := new(fr.Element).SetInt64(30)
 
 	t.Run("all verified returns all", func(t *testing.T) {
-		validShares := map[common.Address]*fr.Element{1: shareA, 2: shareB, 3: shareC}
-		verified := map[common.Address]bool{1: true, 2: true, 3: true}
+		validShares := map[common.Address]*fr.Element{addr1: shareA, addr2: shareB, addr3: shareC}
+		verified := map[common.Address]bool{addr1: true, addr2: true, addr3: true}
 
 		trusted := trustedDealerIDs(validShares, verified)
 		require.Len(t, trusted, 3)
-		require.Equal(t, shareA, trusted[1])
-		require.Equal(t, shareB, trusted[2])
-		require.Equal(t, shareC, trusted[3])
+		require.Equal(t, shareA, trusted[addr1])
+		require.Equal(t, shareB, trusted[addr2])
+		require.Equal(t, shareC, trusted[addr3])
 	})
 
 	t.Run("polynomial fail excludes dealer", func(t *testing.T) {
 		// Dealer 3 failed polynomial verification (not in validShares)
-		validShares := map[common.Address]*fr.Element{1: shareA, 2: shareB}
-		verified := map[common.Address]bool{1: true, 2: true, 3: true}
+		validShares := map[common.Address]*fr.Element{addr1: shareA, addr2: shareB}
+		verified := map[common.Address]bool{addr1: true, addr2: true, addr3: true}
 
 		trusted := trustedDealerIDs(validShares, verified)
 		require.Len(t, trusted, 2)
-		require.Nil(t, trusted[3])
+		require.Nil(t, trusted[addr3])
 	})
 
 	t.Run("merkle fail excludes dealer", func(t *testing.T) {
 		// Dealer 2 failed merkle verification (not in verifiedOperators)
-		validShares := map[common.Address]*fr.Element{1: shareA, 2: shareB, 3: shareC}
-		verified := map[common.Address]bool{1: true, 3: true}
+		validShares := map[common.Address]*fr.Element{addr1: shareA, addr2: shareB, addr3: shareC}
+		verified := map[common.Address]bool{addr1: true, addr3: true}
 
 		trusted := trustedDealerIDs(validShares, verified)
 		require.Len(t, trusted, 2)
-		require.Equal(t, shareA, trusted[1])
-		require.Nil(t, trusted[2])
-		require.Equal(t, shareC, trusted[3])
+		require.Equal(t, shareA, trusted[addr1])
+		require.Nil(t, trusted[addr2])
+		require.Equal(t, shareC, trusted[addr3])
 	})
 
 	t.Run("intersection is correct", func(t *testing.T) {
 		// Only dealer 2 passes both checks
-		validShares := map[common.Address]*fr.Element{1: shareA, 2: shareB}
-		verified := map[common.Address]bool{2: true, 3: true}
+		validShares := map[common.Address]*fr.Element{addr1: shareA, addr2: shareB}
+		verified := map[common.Address]bool{addr2: true, addr3: true}
 
 		trusted := trustedDealerIDs(validShares, verified)
 		require.Len(t, trusted, 1)
-		require.Equal(t, shareB, trusted[2])
+		require.Equal(t, shareB, trusted[addr2])
 	})
 
 	t.Run("empty validShares returns empty", func(t *testing.T) {
 		validShares := map[common.Address]*fr.Element{}
-		verified := map[common.Address]bool{1: true, 2: true}
+		verified := map[common.Address]bool{addr1: true, addr2: true}
 
 		trusted := trustedDealerIDs(validShares, verified)
 		require.Empty(t, trusted)
 	})
 
 	t.Run("empty verifiedOperators returns empty", func(t *testing.T) {
-		validShares := map[common.Address]*fr.Element{1: shareA, 2: shareB}
+		validShares := map[common.Address]*fr.Element{addr1: shareA, addr2: shareB}
 		verified := map[common.Address]bool{}
 
 		trusted := trustedDealerIDs(validShares, verified)
@@ -83,16 +88,18 @@ func TestSelfDealerAlwaysTrusted(t *testing.T) {
 	// In dealer paths (DKG and RunReshareAsExistingOperator), the caller adds
 	// verifiedOps[thisNodeID] = true before calling trustedDealerIDs.
 	selfNodeID := common.HexToAddress("0x01")
+	addr2 := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	addr3 := common.HexToAddress("0x0000000000000000000000000000000000000003")
 	selfShare := new(fr.Element).SetInt64(42)
 
 	validShares := map[common.Address]*fr.Element{
 		selfNodeID: selfShare,
-		2:          new(fr.Element).SetInt64(10),
-		3:          new(fr.Element).SetInt64(20),
+		addr2:      new(fr.Element).SetInt64(10),
+		addr3:      new(fr.Element).SetInt64(20),
 	}
 
 	// verifiedOperators does NOT include self (as in real protocol)
-	verifiedOps := map[common.Address]bool{2: true, 3: true}
+	verifiedOps := map[common.Address]bool{addr2: true, addr3: true}
 
 	// Without the self-inclusion fix, self would be excluded
 	trustedWithoutSelf := trustedDealerIDs(validShares, verifiedOps)
@@ -111,24 +118,29 @@ func TestSelfInVerifiedButNotInValidShares(t *testing.T) {
 	// but trustedDealerIDs should still handle it correctly — the self share
 	// should not appear in the result because validShares is the authoritative source.
 	selfNodeID := common.HexToAddress("0x01")
+	addr2 := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	addr3 := common.HexToAddress("0x0000000000000000000000000000000000000003")
 
 	validShares := map[common.Address]*fr.Element{
-		2: new(fr.Element).SetInt64(10),
-		3: new(fr.Element).SetInt64(20),
+		addr2: new(fr.Element).SetInt64(10),
+		addr3: new(fr.Element).SetInt64(20),
 	}
 
-	verifiedOps := map[common.Address]bool{selfNodeID: true, 2: true, 3: true}
+	verifiedOps := map[common.Address]bool{selfNodeID: true, addr2: true, addr3: true}
 
 	trusted := trustedDealerIDs(validShares, verifiedOps)
 	require.Len(t, trusted, 2, "self should not appear when absent from validShares")
 	require.Nil(t, trusted[selfNodeID])
-	require.NotNil(t, trusted[2])
-	require.NotNil(t, trusted[3])
+	require.NotNil(t, trusted[addr2])
+	require.NotNil(t, trusted[addr3])
 }
 
 func TestReshareFinalizationUsesFilteredShares(t *testing.T) {
 	// This test validates that the reshare delta computation only sums trusted shares.
 	// It simulates the reshare finalization logic from node.go.
+	addr1 := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	addr2 := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	addr3 := common.HexToAddress("0x0000000000000000000000000000000000000003")
 
 	t.Run("delta excludes unverified dealer shares", func(t *testing.T) {
 		// Simulate 3 dealers, but dealer 3 fails merkle verification
@@ -136,8 +148,8 @@ func TestReshareFinalizationUsesFilteredShares(t *testing.T) {
 		share2 := new(fr.Element).SetInt64(7)
 		share3 := new(fr.Element).SetInt64(100) // malicious share
 
-		validShares := map[common.Address]*fr.Element{1: share1, 2: share2, 3: share3}
-		verifiedOps := map[common.Address]bool{1: true, 2: true} // dealer 3 failed merkle
+		validShares := map[common.Address]*fr.Element{addr1: share1, addr2: share2, addr3: share3}
+		verifiedOps := map[common.Address]bool{addr1: true, addr2: true} // dealer 3 failed merkle
 
 		trustedShares := trustedDealerIDs(validShares, verifiedOps)
 
@@ -160,8 +172,8 @@ func TestReshareFinalizationUsesFilteredShares(t *testing.T) {
 		share1 := new(fr.Element).SetInt64(5)
 		share3 := new(fr.Element).SetInt64(8)
 
-		validShares := map[common.Address]*fr.Element{1: share1, 3: share3}
-		verifiedOps := map[common.Address]bool{1: true, 2: true, 3: true}
+		validShares := map[common.Address]*fr.Element{addr1: share1, addr3: share3}
+		verifiedOps := map[common.Address]bool{addr1: true, addr2: true, addr3: true}
 
 		trustedShares := trustedDealerIDs(validShares, verifiedOps)
 
@@ -181,33 +193,36 @@ func TestReshareFinalizationUsesFilteredShares(t *testing.T) {
 func TestDKGFinalizationFiltersUnverifiedDealers(t *testing.T) {
 	// Validates that DKG finalization builds participantIDs and allCommitments
 	// only from trusted dealers (intersection of validShares and verifiedOperators).
+	addr1 := common.HexToAddress("0x0000000000000000000000000000000000000001")
+	addr2 := common.HexToAddress("0x0000000000000000000000000000000000000002")
+	addr3 := common.HexToAddress("0x0000000000000000000000000000000000000003")
 
 	share1 := new(fr.Element).SetInt64(10)
 	share2 := new(fr.Element).SetInt64(20)
 	share3 := new(fr.Element).SetInt64(30)
 
-	validShares := map[common.Address]*fr.Element{1: share1, 2: share2, 3: share3}
+	validShares := map[common.Address]*fr.Element{addr1: share1, addr2: share2, addr3: share3}
 
 	// Only dealers 1 and 3 pass merkle verification. Self (nodeID=1) added explicitly.
-	verifiedOps := map[common.Address]bool{1: true, 3: true}
+	verifiedOps := map[common.Address]bool{addr1: true, addr3: true}
 
 	trustedShares := trustedDealerIDs(validShares, verifiedOps)
 
 	require.Len(t, trustedShares, 2)
-	require.NotNil(t, trustedShares[1])
-	require.Nil(t, trustedShares[2], "dealer 2 should be excluded (failed merkle)")
-	require.NotNil(t, trustedShares[3])
+	require.NotNil(t, trustedShares[addr1])
+	require.Nil(t, trustedShares[addr2], "dealer 2 should be excluded (failed merkle)")
+	require.NotNil(t, trustedShares[addr3])
 
 	// Verify that only trusted dealers' commitments would be included
 	// (simulating the operator iteration loop in node.go)
-	type mockOp struct{ nodeID int64 }
-	operators := []mockOp{{1}, {2}, {3}}
+	type mockOp struct{ addr common.Address }
+	operators := []mockOp{{addr1}, {addr2}, {addr3}}
 	participantIDs := make([]common.Address, 0)
 	for _, op := range operators {
-		if _, ok := trustedShares[op.nodeID]; ok {
-			participantIDs = append(participantIDs, op.nodeID)
+		if _, ok := trustedShares[op.addr]; ok {
+			participantIDs = append(participantIDs, op.addr)
 		}
 	}
 
-	require.Equal(t, []common.Address{1, 3}, participantIDs)
+	require.Equal(t, []common.Address{addr1, addr3}, participantIDs)
 }

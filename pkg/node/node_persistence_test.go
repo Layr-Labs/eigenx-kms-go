@@ -718,7 +718,7 @@ func testNodeRestart_IncompleteSessions(t *testing.T) {
 		Phase:             2, // Incomplete (not finalized)
 		StartTime:         time.Now().Unix(),
 		OperatorAddresses: []string{chainConfig.OperatorAccountAddress1},
-		Shares:            map[int64]string{1: "test"},
+		Shares:            map[string]string{"0x0000000000000000000000000000000000000001": "test"},
 		Commitments:       map[string][]types.G2Point{},
 		Acknowledgements:  map[string]map[string]*types.Acknowledgement{},
 	}

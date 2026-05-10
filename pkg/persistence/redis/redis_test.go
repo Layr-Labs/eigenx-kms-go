@@ -1,6 +1,7 @@
 package redis
 
 import (
+	"fmt"
 	"math/big"
 	"os"
 	"sync"
@@ -65,7 +66,7 @@ func TestRedisPersistence_SaveAndLoadKeyShare(t *testing.T) {
 			{CompressedBytes: []byte{1, 2, 3, 4}},
 		},
 		IsActive:       true,
-		ParticipantIDs: []common.Address{1, 2, 3},
+		ParticipantIDs: []common.Address{common.HexToAddress("0x01"), common.HexToAddress("0x02"), common.HexToAddress("0x03")},
 	}
 
 	// Save
@@ -116,7 +117,7 @@ func TestRedisPersistence_DeleteKeyShare(t *testing.T) {
 		PrivateShare:   &privateShare,
 		Commitments:    []types.G2Point{},
 		IsActive:       true,
-		ParticipantIDs: []common.Address{1},
+		ParticipantIDs: []common.Address{common.HexToAddress("0x01")},
 	}
 	err := rp.SaveKeyShareVersion(version)
 	require.NoError(t, err)
@@ -259,15 +260,15 @@ func TestRedisPersistence_ProtocolSessions(t *testing.T) {
 		StartTime:         1234567800,
 		OperatorAddresses: []string{"0x1234", "0x5678"},
 		Shares: map[string]string{
-			1: "share1",
-			2: "share2",
+			"0x0000000000000000000000000000000000000001": "share1",
+			"0x0000000000000000000000000000000000000002": "share2",
 		},
 		Commitments: map[string][]types.G2Point{
-			1: {{CompressedBytes: []byte{1, 2, 3}}},
+			"0x0000000000000000000000000000000000000001": {{CompressedBytes: []byte{1, 2, 3}}},
 		},
 		Acknowledgements: map[string]map[string]*types.Acknowledgement{
-			1: {
-				2: {PlayerAddress: common.BigToAddress(big.NewInt(2)), DealerAddress: common.BigToAddress(big.NewInt(1)), SessionTimestamp: sessionTS},
+			"0x0000000000000000000000000000000000000001": {
+				"0x0000000000000000000000000000000000000002": {PlayerAddress: common.BigToAddress(big.NewInt(2)), DealerAddress: common.BigToAddress(big.NewInt(1)), SessionTimestamp: sessionTS},
 			},
 		},
 	}
