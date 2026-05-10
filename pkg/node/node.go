@@ -1405,14 +1405,14 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		}
 	}
 
-	// Build set of existing operator IDs from active key version.
-	// Only existing operators hold valid key shares to redistribute;
-	// new operators could maliciously send shares and commitments.
-	existingOpIDs := make(map[int64]bool)
-	if activeVersion := n.keyStore.GetActiveVersion(); activeVersion != nil {
-		for _, id := range activeVersion.ParticipantIDs {
-			existingOpIDs[id] = true
-		}
+	// Build set of operator IDs from the on-chain operator set.
+	// All operators registered on-chain are legitimate dealers; polynomial
+	// commitment verification (below) guards against invalid shares.
+	// Using ParticipantIDs from activeVersion would exclude operators that
+	// missed a previous reshare, permanently orphaning them from the quorum.
+	existingOpIDs := make(map[int64]bool, len(operators))
+	for _, op := range operators {
+		existingOpIDs[addressToNodeID(op.OperatorAddress)] = true
 	}
 
 	// Wait for shares and commitments. New operators (running RunReshareAsNewOperator) do not
