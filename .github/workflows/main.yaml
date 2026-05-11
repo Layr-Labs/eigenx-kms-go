@@ -70,10 +70,14 @@ jobs:
         with:
           version: v1.5.1
       - name: Run tests
+        env:
+          # Reuse the `services.redis` container on localhost:6379 instead of
+          # letting TestMain spin up a second Redis via testcontainers.
+          REDIS_TEST_ADDRESS: localhost:6379
         run: |
           make deps
           export PATH=$PATH:$(go env GOPATH)/bin
-          
+
           echo "Running tests"
           make test
   build-binaries:
