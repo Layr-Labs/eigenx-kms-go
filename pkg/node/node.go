@@ -250,6 +250,95 @@ func (ps *ProtocolSession) toPersistenceState() *persistence.ProtocolSessionStat
 	}
 }
 
+// isValidAddressKey returns true if the key looks like a valid hex address (starts with "0x" and is 42 chars).
+func isValidAddressKey(key string) bool {
+	return len(key) == 42 && strings.HasPrefix(key, "0x")
+}
+
+// fromPersistenceState converts a persistence.ProtocolSessionState back into a ProtocolSession.
+// Keys that don't look like valid hex addresses (e.g., old int64-format keys from pre-migration
+// sessions) are skipped with a warning log.
+func fromPersistenceState(state *persistence.ProtocolSessionState, logger *zap.Logger) *ProtocolSession {
+	if state == nil {
+		return nil
+	}
+
+	// Convert operator address strings back to peers (minimal — no BN254 key or socket)
+	operators := make([]*peering.OperatorSetPeer, 0, len(state.OperatorAddresses))
+	for _, addrHex := range state.OperatorAddresses {
+		if !isValidAddressKey(addrHex) {
+			logger.Sugar().Warnw("Skipping invalid operator address from persisted session (old format?)",
+				"session_timestamp", state.SessionTimestamp,
+				"invalid_key", addrHex)
+			continue
+		}
+		operators = append(operators, &peering.OperatorSetPeer{
+			OperatorAddress: common.HexToAddress(addrHex),
+		})
+	}
+
+	// Convert shares
+	shares := make(map[common.Address]*fr.Element, len(state.Shares))
+	for key, val := range state.Shares {
+		if !isValidAddressKey(key) {
+			logger.Sugar().Warnw("Skipping share with invalid address key from persisted session (old format?)",
+				"session_timestamp", state.SessionTimestamp,
+				"invalid_key", key)
+			continue
+		}
+		shares[common.HexToAddress(key)] = types.DeserializeFr(&types.SerializedFrElement{Data: val})
+	}
+
+	// Convert commitments
+	commitments := make(map[common.Address][]types.G2Point, len(state.Commitments))
+	for key, val := range state.Commitments {
+		if !isValidAddressKey(key) {
+			logger.Sugar().Warnw("Skipping commitment with invalid address key from persisted session (old format?)",
+				"session_timestamp", state.SessionTimestamp,
+				"invalid_key", key)
+			continue
+		}
+		commitments[common.HexToAddress(key)] = val
+	}
+
+	// Convert acknowledgements
+	acks := make(map[common.Address]map[common.Address]*types.Acknowledgement, len(state.Acknowledgements))
+	for dealerKey, innerMap := range state.Acknowledgements {
+		if !isValidAddressKey(dealerKey) {
+			logger.Sugar().Warnw("Skipping ack with invalid dealer address key from persisted session (old format?)",
+				"session_timestamp", state.SessionTimestamp,
+				"invalid_key", dealerKey)
+			continue
+		}
+		dealerAddr := common.HexToAddress(dealerKey)
+		acks[dealerAddr] = make(map[common.Address]*types.Acknowledgement, len(innerMap))
+		for playerKey, ack := range innerMap {
+			if !isValidAddressKey(playerKey) {
+				logger.Sugar().Warnw("Skipping ack with invalid player address key from persisted session (old format?)",
+					"session_timestamp", state.SessionTimestamp,
+					"invalid_key", playerKey)
+				continue
+			}
+			acks[dealerAddr][common.HexToAddress(playerKey)] = ack
+		}
+	}
+
+	return &ProtocolSession{
+		SessionTimestamp:        state.SessionTimestamp,
+		Type:                    state.Type,
+		Phase:                   state.Phase,
+		StartTime:               time.Unix(state.StartTime, 0),
+		Operators:               operators,
+		shares:                  shares,
+		commitments:             commitments,
+		acks:                    acks,
+		sharesCompleteChan:      make(chan bool, 1),
+		commitmentsCompleteChan: make(chan bool, 1),
+		acksCompleteChan:        make(chan bool, 1),
+		verifiedOperators:       make(map[common.Address]bool),
+	}
+}
+
 // saveSession persists the current protocol session state
 func (n *Node) saveSession(session *ProtocolSession) error {
 	if session == nil {
@@ -664,6 +753,11 @@ func (n *Node) fetchCurrentOperators(ctx context.Context, avsAddress string, ope
 			return fmt.Sprintf("%s:%s", op.OperatorAddress.String(), op.SocketAddress)
 		}), ", "),
 	)
+
+	if err := validateOperatorSetNoDuplicates(sortedPeers); err != nil {
+		return nil, fmt.Errorf("operator set validation failed: %w", err)
+	}
+
 	return sortedPeers, nil
 }
 

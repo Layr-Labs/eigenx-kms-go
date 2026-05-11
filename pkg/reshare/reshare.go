@@ -73,7 +73,16 @@ func (r *Reshare) GenerateNewShares(currentShare *fr.Element, newThreshold int) 
 	return newShares, commitments, nil
 }
 
-// VerifyNewShare verifies a reshared share against commitments
+// VerifyNewShare verifies a reshared share against commitments.
+//
+// NOTE: This reimplements the polynomial commitment verification logic found in
+// bls.VerifyShare. The duplication exists because bls.VerifyShare operates on
+// []*bls.G2Point (which wraps bls12381.G2Affine internally) while this method
+// receives []types.G2Point (a serialization-friendly type using CompressedBytes).
+// Bridging the two types would require either a circular import (types -> bls)
+// or an awkward deserialization/conversion layer that isn't justified for a
+// single call site. If the types are unified in the future, this should delegate
+// to bls.VerifyShare.
 func (r *Reshare) VerifyNewShare(share *fr.Element, commitments []types.G2Point) bool {
 	if len(commitments) == 0 || share == nil {
 		return false
