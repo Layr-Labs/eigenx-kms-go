@@ -122,7 +122,7 @@ func FuzzRecoverAppPrivateKeyRoundTrip(f *testing.F) {
 		// Generate shares by evaluating at participant addresses.
 		participants := make([]common.Address, n)
 		for i := 0; i < n; i++ {
-			participants[i] = common.HexToAddress("0x" + common.BigToAddress(new(big.Int).SetInt64(int64(i+1))).Hex()[2:])
+			participants[i] = common.HexToAddress("0x" + common.BigToAddress(new(big.Int).SetInt64(int64(i + 1))).Hex()[2:])
 		}
 
 		appHash, err := HashToG1(appID)

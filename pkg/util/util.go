@@ -156,4 +156,3 @@ func ValidateAppID(appID string) error {
 	}
 	return nil
 }
-

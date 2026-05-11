@@ -117,10 +117,6 @@ type ProtocolSession struct {
 	mu sync.RWMutex
 }
 
-
-
-
-
 // HandleReceivedShare stores a share and signals completion if all shares received
 // Returns error if duplicate share detected
 func (s *ProtocolSession) HandleReceivedShare(sender common.Address, share *fr.Element) error {
@@ -998,7 +994,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 
 	// Send shares to each participant
 	for _, op := range operators {
-		
+
 		if op.OperatorAddress == n.OperatorAddress {
 			continue // Already stored above
 		}
@@ -1095,7 +1091,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	// Wait for acknowledgements (as a dealer).
 	// We require a threshold (t) of *other* operators to ack, so that there exist t non-dealer holders
 	// of this dealer's contribution (robust even if the dealer goes offline later).
-	
+
 	requiredAcks := threshold
 	if requiredAcks < 0 {
 		requiredAcks = 0
@@ -1219,7 +1215,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	finalShares := make(map[common.Address]*fr.Element, len(trustedShares))
 
 	for _, op := range operators {
-		
+
 		if share, ok := trustedShares[op.OperatorAddress]; ok {
 			if comm, ok := receivedCommitments[op.OperatorAddress]; ok {
 				allCommitments = append(allCommitments, comm)
@@ -1298,7 +1294,6 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	}
 
 	// Use keccak256 hash of operator address as node ID (same as DKG)
-	
 
 	// Verify this operator is in the fetched operator set
 	operatorFound := false
@@ -1372,7 +1367,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 
 	// Send shares to all operators
 	for _, op := range operators {
-		
+
 		if op.OperatorAddress == n.OperatorAddress {
 			continue // Already stored above
 		}
@@ -1530,7 +1525,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	// We require newThreshold acks so that at least t operators in the new committee have
 	// confirmed receipt of this dealer's contribution. Both existing and new operators send
 	// acks, so the reachable ack count is len(operators)-1 (everyone except this dealer).
-	
+
 	requiredAcks := newThreshold
 	if requiredAcks < 0 {
 		requiredAcks = 0
@@ -1667,7 +1662,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	participantIDsForFinalize := make([]common.Address, 0, len(trustedShares))
 	finalShares := make(map[common.Address]*fr.Element, len(trustedShares))
 	for _, op := range operators {
-		
+
 		if share, ok := trustedShares[op.OperatorAddress]; ok {
 			participantIDsForFinalize = append(participantIDsForFinalize, op.OperatorAddress)
 			finalShares[op.OperatorAddress] = share
@@ -1762,8 +1757,6 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	if numNewOperators < 1 || numNewOperators >= len(operators) {
 		return fmt.Errorf("numNewOperators %d out of range [1, %d)", numNewOperators, len(operators))
 	}
-
-	
 
 	// Create reshare instance
 	n.resharer = reshare.NewReshare(n.OperatorAddress, operators)
@@ -1906,7 +1899,7 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	participantIDs := make([]common.Address, 0, len(trustedShares))
 	finalShares := make(map[common.Address]*fr.Element, len(trustedShares))
 	for _, op := range operators {
-		
+
 		if share, ok := trustedShares[op.OperatorAddress]; ok {
 			participantIDs = append(participantIDs, op.OperatorAddress)
 			finalShares[op.OperatorAddress] = share

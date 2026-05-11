@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
-	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/ethereum/go-ethereum/common"
+	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	"go.uber.org/zap"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
@@ -24,7 +24,6 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
-	
 )
 
 // ContractCaller defines the interface for fetching operator information from the blockchain
@@ -344,8 +343,8 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 
 	type result struct {
 		operatorAddr common.Address
-		signature types.G1Point
-		opAddress string
+		signature    types.G1Point
+		opAddress    string
 	}
 
 	resultChan := make(chan result, len(operators.Peers))
@@ -669,11 +668,11 @@ func (c *Client) GetEncryptedSecretsFromKMSNodesWithPartialSigs(
 	rsaEncryption := encryption.NewRSAEncryption()
 
 	type result struct {
-		response   types.SecretsResponseV1
-		partialSig types.G1Point
+		response     types.SecretsResponseV1
+		partialSig   types.G1Point
 		operatorAddr common.Address
-		opAddress  string
-		opIndex    int
+		opAddress    string
+		opIndex      int
 	}
 
 	resultChan := make(chan result, len(operators.Peers))
@@ -726,11 +725,11 @@ func (c *Client) GetEncryptedSecretsFromKMSNodesWithPartialSigs(
 				"operator_address", operatorAddr.Hex())
 
 			resultChan <- result{
-				response:   *resp,
-				partialSig: partialSig,
+				response:     *resp,
+				partialSig:   partialSig,
 				operatorAddr: op.OperatorAddress,
-				opAddress:  op.OperatorAddress.Hex(),
-				opIndex:    idx,
+				opAddress:    op.OperatorAddress.Hex(),
+				opIndex:      idx,
 			}
 		}(i, peer)
 	}
@@ -876,8 +875,8 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 
 	type result struct {
 		operatorAddr common.Address
-		signature types.G1Point
-		opAddress string
+		signature    types.G1Point
+		opAddress    string
 	}
 
 	resultChan := make(chan result, len(operators.Peers))

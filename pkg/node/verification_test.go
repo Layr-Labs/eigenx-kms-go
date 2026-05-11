@@ -44,9 +44,9 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 
 		broadcast := &types.CommitmentBroadcast{
 			FromOperatorAddress: common.HexToAddress("0x0000000000000000000000000000000000000002"),
-			SessionTimestamp: 5,
-			Commitments:      []types.G2Point{},
-			Acknowledgements: []*types.Acknowledgement{},
+			SessionTimestamp:    5,
+			Commitments:         []types.G2Point{},
+			Acknowledgements:    []*types.Acknowledgement{},
 		}
 
 		err := node.VerifyOperatorBroadcast(99999, broadcast, common.Address{})
@@ -75,8 +75,8 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 		// Broadcast with no ack for my node (use different player address)
 		broadcast := &types.CommitmentBroadcast{
 			FromOperatorAddress: common.HexToAddress("0x0000000000000000000000000000000000000002"),
-			SessionTimestamp: 5,
-			Commitments:      []types.G2Point{},
+			SessionTimestamp:    5,
+			Commitments:         []types.G2Point{},
 			Acknowledgements: []*types.Acknowledgement{
 				{PlayerAddress: common.HexToAddress("0x999")}, // Different address than my node
 			},
@@ -108,8 +108,8 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 		// Broadcast with my ack but no share received
 		broadcast := &types.CommitmentBroadcast{
 			FromOperatorAddress: common.HexToAddress("0x0000000000000000000000000000000000000002"),
-			SessionTimestamp: 5,
-			Commitments:      []types.G2Point{},
+			SessionTimestamp:    5,
+			Commitments:         []types.G2Point{},
 			Acknowledgements: []*types.Acknowledgement{
 				{PlayerAddress: myAddr, ShareHash: [32]byte{1, 2, 3}},
 			},
@@ -150,8 +150,8 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 
 		broadcast := &types.CommitmentBroadcast{
 			FromOperatorAddress: common.HexToAddress("0x0000000000000000000000000000000000000002"),
-			SessionTimestamp: 5,
-			Commitments:      []types.G2Point{},
+			SessionTimestamp:    5,
+			Commitments:         []types.G2Point{},
 			Acknowledgements: []*types.Acknowledgement{
 				{
 					PlayerAddress: myAddr,
@@ -193,8 +193,8 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 
 		broadcast := &types.CommitmentBroadcast{
 			FromOperatorAddress: common.HexToAddress("0x0000000000000000000000000000000000000002"),
-			SessionTimestamp: 5,
-			Commitments:      []types.G2Point{},
+			SessionTimestamp:    5,
+			Commitments:         []types.G2Point{},
 			Acknowledgements: []*types.Acknowledgement{
 				{
 					PlayerAddress:    myAddr,

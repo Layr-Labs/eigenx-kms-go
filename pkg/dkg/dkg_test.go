@@ -99,7 +99,7 @@ func testCalculateThreshold(t *testing.T) {
 // testNewDKG tests DKG instance creation
 func testNewDKG(t *testing.T) {
 	operators := createTestOperators(t, 3)
-	
+
 	threshold := CalculateThreshold(len(operators))
 
 	dkg := NewDKG(operators[0].OperatorAddress, threshold, operators)
@@ -113,7 +113,7 @@ func testNewDKG(t *testing.T) {
 // testGenerateShares tests share generation
 func testGenerateShares(t *testing.T) {
 	operators := createTestOperators(t, 5)
-	
+
 	threshold := CalculateThreshold(len(operators))
 	dkg := NewDKG(operators[0].OperatorAddress, threshold, operators)
 
@@ -133,7 +133,7 @@ func testGenerateShares(t *testing.T) {
 // testVerifyShare tests share verification
 func testVerifyShare(t *testing.T) {
 	operators := createTestOperators(t, 3)
-	
+
 	threshold := CalculateThreshold(len(operators))
 	dealerDKG := NewDKG(operators[0].OperatorAddress, threshold, operators)
 
@@ -156,7 +156,7 @@ func testVerifyShare(t *testing.T) {
 // testFinalizeKeyShare tests key finalization
 func testFinalizeKeyShare(t *testing.T) {
 	operators := createTestOperators(t, 3)
-	
+
 	threshold := CalculateThreshold(len(operators))
 	dkg := NewDKG(operators[0].OperatorAddress, threshold, operators)
 
@@ -229,7 +229,7 @@ func testCreateAcknowledgement(t *testing.T) {
 // commitment array lengths do not cause a panic (H-02 audit finding).
 func Test_FinalizeKeyShare_MismatchedCommitmentLengths(t *testing.T) {
 	operators := createTestOperators(t, 3)
-	
+
 	threshold := CalculateThreshold(len(operators))
 	dkg := NewDKG(operators[0].OperatorAddress, threshold, operators)
 

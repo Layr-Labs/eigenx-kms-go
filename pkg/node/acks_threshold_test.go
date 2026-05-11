@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
 )
 

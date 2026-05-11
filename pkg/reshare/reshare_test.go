@@ -11,7 +11,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
-	
+
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
@@ -191,7 +191,7 @@ func testComputeNewKeyShare(t *testing.T) {
 	shares := make(map[common.Address]*fr.Element)
 	for _, addr := range dealerAddrs {
 		shares[addr] = new(fr.Element)
-		_,_ = shares[addr].SetRandom()
+		_, _ = shares[addr].SetRandom()
 	}
 
 	// Create test commitments with random g2 point

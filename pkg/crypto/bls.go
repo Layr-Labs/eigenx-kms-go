@@ -455,7 +455,6 @@ func ComputeMasterPublicKey(allCommitments [][]types.G2Point) (*types.G2Point, e
 	return masterPK, nil
 }
 
-
 // GetAppPublicKey computes the public key for an application given the master public key
 // This implements Q_ID = H_1(app_id) for IBE encryption
 func GetAppPublicKey(appID string) (*types.G1Point, error) {
