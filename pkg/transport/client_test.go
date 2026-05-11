@@ -9,6 +9,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -121,7 +122,7 @@ func TestBroadcastCommitmentsWithProofs_SkipsSelf(t *testing.T) {
 	require.NoError(t, err)
 
 	// This will skip self, then try to broadcast to the other operator
-	// It will fail the HTTP request but the function logs and continues (returns nil)
+	// It will fail the HTTP request but the function collects and returns errors
 	err = client.BroadcastCommitmentsWithProofs(
 		operators,
 		5, // epoch
@@ -130,8 +131,9 @@ func TestBroadcastCommitmentsWithProofs_SkipsSelf(t *testing.T) {
 		tree,
 	)
 
-	// The existing implementation logs errors but returns nil (resilient design)
-	require.NoError(t, err)
+	// The function now returns collected broadcast errors
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to send commitment broadcast")
 }
 
 // TestBroadcastCommitmentsWithProofs_NoAckForOperator tests handling of missing acks

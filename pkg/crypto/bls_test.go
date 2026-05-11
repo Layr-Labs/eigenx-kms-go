@@ -192,20 +192,19 @@ func testEvaluatePolynomial(t *testing.T) {
 	poly[1].SetInt64(2) // x coefficient
 	poly[2].SetInt64(3) // x^2 coefficient
 
-	// Address 0x...0001 maps to fr(1): f(1) = 1 + 2 + 3 = 6
+	// With keccak hashing, addresses no longer map to simple integers.
+	// Verify that evaluation is deterministic and different addresses produce different results.
 	addr1 := common.HexToAddress("0x0000000000000000000000000000000000000001")
-	result := EvaluatePolynomial(poly, addr1)
-	expected := new(fr.Element).SetInt64(6)
-	if !result.Equal(expected) {
-		t.Errorf("f(addr_1) = %v, expected %v (6)", result, expected)
+	result1 := EvaluatePolynomial(poly, addr1)
+	result1Again := EvaluatePolynomial(poly, addr1)
+	if !result1.Equal(result1Again) {
+		t.Errorf("EvaluatePolynomial should be deterministic for the same address")
 	}
 
-	// Address 0x...0002 maps to fr(2): f(2) = 1 + 4 + 12 = 17
 	addr2 := common.HexToAddress("0x0000000000000000000000000000000000000002")
-	result = EvaluatePolynomial(poly, addr2)
-	expected = new(fr.Element).SetInt64(17)
-	if !result.Equal(expected) {
-		t.Errorf("f(addr_2) = %v, expected %v (17)", result, expected)
+	result2 := EvaluatePolynomial(poly, addr2)
+	if result1.Equal(result2) {
+		t.Errorf("different addresses should produce different polynomial evaluations")
 	}
 }
 

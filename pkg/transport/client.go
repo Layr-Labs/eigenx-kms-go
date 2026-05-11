@@ -3,6 +3,7 @@ package transport
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -325,6 +326,7 @@ func (c *Client) BroadcastCommitmentsWithProofs(
 	sortedAcks := merkle.SortAcknowledgements(acks)
 
 	// Send to each operator with their specific proof
+	var broadcastErrs []error
 	for i, op := range operators {
 		if op.OperatorAddress == c.operatorAddr {
 			continue // Skip self
@@ -363,12 +365,11 @@ func (c *Client) BroadcastCommitmentsWithProofs(
 
 		// Send to operator
 		if err := c.sendCommitmentBroadcast(op, broadcast, epoch); err != nil {
-			// Log error but continue to other operators
-			fmt.Printf("Failed to send commitment broadcast to %s: %v\n", op.OperatorAddress.Hex(), err)
+			broadcastErrs = append(broadcastErrs, fmt.Errorf("failed to send commitment broadcast to %s: %w", op.OperatorAddress.Hex(), err))
 		}
 	}
 
-	return nil
+	return errors.Join(broadcastErrs...)
 }
 
 // sendCommitmentBroadcast sends an authenticated commitment broadcast to a specific operator (Phase 5)

@@ -36,29 +36,28 @@ func TestAddressToFr(t *testing.T) {
 func TestAddressToFr_ZeroAddress(t *testing.T) {
 	addr := common.Address{}
 	elem := AddressToFr(addr)
-	assert.True(t, elem.IsZero(), "zero address should produce zero field element")
+	assert.NotNil(t, elem, "zero address should produce a non-nil field element")
+	assert.False(t, elem.IsZero(), "zero address should produce a non-zero field element (keccak of zero bytes is non-zero)")
 }
 
 func TestEvaluatePolynomial(t *testing.T) {
-	t.Run("Address 0x...0001 maps to 1", func(t *testing.T) {
-		// Address 0x0000...0001 should map to fr.Element(1)
+	t.Run("Consistent evaluation for same address", func(t *testing.T) {
 		addr := common.HexToAddress("0x0000000000000000000000000000000000000001")
 
-		// P(x) = 3 + 2x => P(1) = 5
 		var coeff0, coeff1 fr.Element
 		coeff0.SetInt64(3)
 		coeff1.SetInt64(2)
 		poly := polynomial.Polynomial{coeff0, coeff1}
 
-		result := EvaluatePolynomial(poly, addr)
-		expected := new(fr.Element).SetInt64(5)
-		assert.True(t, result.Equal(expected), "P(1) should equal 5")
+		result1 := EvaluatePolynomial(poly, addr)
+		result2 := EvaluatePolynomial(poly, addr)
+		assert.True(t, result1.Equal(result2), "same address should produce same evaluation")
+		assert.False(t, result1.IsZero(), "evaluation should be non-zero for non-trivial polynomial")
 	})
 
-	t.Run("Small address gives expected result via manual evaluation", func(t *testing.T) {
-		// Address 0x...0005 maps to fr.Element(5)
-		// P(x) = 1 + 2x + 3x^2 => P(5) = 1 + 10 + 75 = 86
-		addr := common.HexToAddress("0x0000000000000000000000000000000000000005")
+	t.Run("Different addresses give different evaluations", func(t *testing.T) {
+		addr1 := common.HexToAddress("0x0000000000000000000000000000000000000001")
+		addr2 := common.HexToAddress("0x0000000000000000000000000000000000000005")
 
 		var coeff0, coeff1, coeff2 fr.Element
 		coeff0.SetInt64(1)
@@ -66,9 +65,9 @@ func TestEvaluatePolynomial(t *testing.T) {
 		coeff2.SetInt64(3)
 		poly := polynomial.Polynomial{coeff0, coeff1, coeff2}
 
-		addrResult := EvaluatePolynomial(poly, addr)
-		expected := new(fr.Element).SetInt64(86) // 1 + 2*5 + 3*25
-		assert.True(t, addrResult.Equal(expected), "P(5) should equal 86")
+		result1 := EvaluatePolynomial(poly, addr1)
+		result2 := EvaluatePolynomial(poly, addr2)
+		assert.False(t, result1.Equal(result2), "different addresses should produce different evaluations")
 	})
 }
 

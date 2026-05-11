@@ -1030,7 +1030,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	}
 
 	// Phase 2: Verify and send acknowledgements
-	n.logger.Sugar().Infow("Starting DKG Phase 2", "operator_address", n.OperatorAddress.Hex(), "operator_address", n.OperatorAddress.Hex(), "phase", "verify_and_ack")
+	n.logger.Sugar().Infow("Starting DKG Phase 2", "operator_address", n.OperatorAddress.Hex(), "phase", "verify_and_ack")
 
 	// Get shares and commitments from session (we know we have all of them now)
 	session.mu.RLock()
@@ -1076,11 +1076,10 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 			} else {
 				n.logger.Sugar().Debugw("Sent acknowledgement",
 					"operator_address", n.OperatorAddress.Hex(),
-					"dealer_address", dealerPeer.OperatorAddress.Hex(),
 					"dealer_address", dealerAddr.Hex())
 			}
 
-			n.logger.Sugar().Infow("Verified and acked share", "operator_address", n.OperatorAddress.Hex(), "operator_address", n.OperatorAddress.Hex(), "dealer_address", dealerAddr.Hex())
+			n.logger.Sugar().Infow("Verified and acked share", "operator_address", n.OperatorAddress.Hex(), "dealer_address", dealerAddr.Hex())
 		} else {
 			n.logInvalidShareComplaint("dkg", sessionTimestamp, n.OperatorAddress, dealerAddr, share, commitments)
 		}
@@ -1293,8 +1292,6 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		return fmt.Errorf("numNewOperators %d out of range [0, %d)", numNewOperators, len(operators))
 	}
 
-	// Use keccak256 hash of operator address as node ID (same as DKG)
-
 	// Verify this operator is in the fetched operator set
 	operatorFound := false
 	for _, op := range operators {
@@ -1318,7 +1315,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 
 	// Calculate new threshold
 	newThreshold := dkg.CalculateThreshold(len(operators))
-	n.logger.Sugar().Infow("Starting reshare", "operator_address", n.OperatorAddress.Hex(), "operator_address", n.OperatorAddress.Hex(), "threshold", newThreshold, "operators", len(operators))
+	n.logger.Sugar().Infow("Starting reshare", "operator_address", n.OperatorAddress.Hex(), "threshold", newThreshold, "operators", len(operators))
 
 	// Create reshare instance with current operators
 	n.resharer = reshare.NewReshare(n.OperatorAddress, operators)
@@ -1385,16 +1382,16 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	// commitment verification (below) guards against invalid shares.
 	// Using ParticipantIDs from activeVersion would exclude operators that
 	// missed a previous reshare, permanently orphaning them from the quorum.
-	existingOpIDs := make(map[common.Address]bool, len(operators))
+	onChainOpIDs := make(map[common.Address]bool, len(operators))
 	for _, op := range operators {
-		existingOpIDs[op.OperatorAddress] = true
+		onChainOpIDs[op.OperatorAddress] = true
 	}
 
 	// Wait for shares and commitments. New operators (running RunReshareAsNewOperator) do not
 	// contribute shares, so only existing operators can contribute. We require a threshold of
 	// those existing operators rather than all of them, so resharing can proceed even if some
 	// existing operators are offline (per KMS-010 recommendation).
-	// Count functions filter to existing operators only so that shares/commitments from new
+	// Count functions filter to on-chain operators so that shares/commitments from new
 	// operators do not inflate the count toward the threshold.
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
 	existingOperators := len(operators) - numNewOperators
@@ -1402,7 +1399,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	countExistingShares := func() int {
 		count := 0
 		for addr := range session.shares {
-			if existingOpIDs[addr] {
+			if onChainOpIDs[addr] {
 				count++
 			}
 		}
@@ -1411,7 +1408,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	countExistingCommitments := func() int {
 		count := 0
 		for addr := range session.commitments {
-			if existingOpIDs[addr] {
+			if onChainOpIDs[addr] {
 				count++
 			}
 		}
@@ -1436,21 +1433,20 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 
 	// Phase 1b: Verify shares and send acknowledgements
 	n.logger.Sugar().Infow("Reshare Phase 1b: Verifying shares and sending acknowledgements",
-		"operator_address", n.OperatorAddress.Hex(),
 		"operator_address", n.OperatorAddress.Hex())
 
-	// Copy shares and commitments from session under lock, filtering to existing operators only.
+	// Copy shares and commitments from session under lock, filtering to on-chain operators only.
 	// After threshold fallback, late-arriving shares may still be written concurrently.
 	session.mu.RLock()
 	receivedShares := make(map[common.Address]*fr.Element)
 	for addr, s := range session.shares {
-		if existingOpIDs[addr] {
+		if onChainOpIDs[addr] {
 			receivedShares[addr] = s
 		}
 	}
 	receivedCommitments := make(map[common.Address][]types.G2Point)
 	for addr, c := range session.commitments {
-		if existingOpIDs[addr] {
+		if onChainOpIDs[addr] {
 			receivedCommitments[addr] = c
 		}
 	}
@@ -1495,12 +1491,10 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 			} else {
 				n.logger.Sugar().Debugw("Sent reshare acknowledgement",
 					"operator_address", n.OperatorAddress.Hex(),
-					"dealer_address", dealerPeer.OperatorAddress.Hex(),
 					"dealer_address", dealerAddr.Hex())
 			}
 
 			n.logger.Sugar().Infow("Verified and acked reshare share",
-				"operator_address", n.OperatorAddress.Hex(),
 				"operator_address", n.OperatorAddress.Hex(),
 				"dealer_address", dealerAddr.Hex())
 		} else {
@@ -1710,7 +1704,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	// Only add to keystore after successful persistence
 	n.keyStore.AddVersion(newKeyVersion)
 
-	n.logger.Sugar().Infow("Reshare completed", "operator_address", n.OperatorAddress.Hex(), "operator_address", n.OperatorAddress.Hex(), "new_version", newKeyVersion.Version)
+	n.logger.Sugar().Infow("Reshare completed", "operator_address", n.OperatorAddress.Hex(), "new_version", newKeyVersion.Version)
 
 	return nil
 }
@@ -1855,12 +1849,10 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 			} else {
 				n.logger.Sugar().Debugw("Sent reshare acknowledgement (new operator)",
 					"operator_address", n.OperatorAddress.Hex(),
-					"dealer_address", op.OperatorAddress.Hex(),
 					"dealer_address", dealerAddr.Hex())
 			}
 
 			n.logger.Sugar().Infow("Verified and acked reshare share (new operator)",
-				"operator_address", n.OperatorAddress.Hex(),
 				"operator_address", n.OperatorAddress.Hex(),
 				"dealer_address", dealerAddr.Hex())
 		} else {

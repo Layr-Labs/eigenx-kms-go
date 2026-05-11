@@ -9,6 +9,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/ethereum/go-ethereum/crypto"
 )
 
 // GeneratePolynomial generates a random polynomial with given secret and degree
@@ -46,11 +47,11 @@ func CreateCommitments(poly polynomial.Polynomial) ([]*G2Point, error) {
 }
 
 // AddressToFr converts a common.Address (20 bytes) to an fr.Element for use in polynomial math.
+// It hashes the address with keccak256 for better field distribution.
 func AddressToFr(addr common.Address) *fr.Element {
-	var buf [32]byte
-	copy(buf[12:], addr.Bytes()) // right-align 20 bytes in 32-byte buffer (big-endian)
+	h := crypto.Keccak256(addr.Bytes())
 	var elem fr.Element
-	elem.SetBytes(buf[:])
+	elem.SetBytes(h)
 	return &elem
 }
 

@@ -327,11 +327,13 @@ func generatePartialSigsFromSecret(t *testing.T, appID string, secret *fr.Elemen
 	qID, err := crypto.HashToG1(appID)
 	require.NoError(t, err)
 
-	// Generate shares and partial signatures using addresses as keys
+	// Generate shares and partial signatures using addresses as keys.
+	// Use AddressToFr for the evaluation point so recovery via Lagrange interpolation
+	// (which also uses AddressToFr) is consistent.
 	partialSigs := make(map[common.Address]types.G1Point, n)
 	for i := 1; i <= n; i++ {
 		addr := common.BigToAddress(new(big.Int).SetInt64(int64(i)))
-		x := new(fr.Element).SetInt64(int64(i))
+		x := crypto.AddressToFr(addr)
 
 		// Evaluate polynomial at x
 		share := new(fr.Element).Set(coeffs[threshold-1])
