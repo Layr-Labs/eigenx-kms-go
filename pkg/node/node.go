@@ -654,7 +654,7 @@ func (n *Node) fetchCurrentOperators(ctx context.Context, avsAddress string, ope
 	sortedPeers := make([]*peering.OperatorSetPeer, len(operatorSetPeers.Peers))
 	copy(sortedPeers, operatorSetPeers.Peers)
 	sort.Slice(sortedPeers, func(i, j int) bool {
-		return sortedPeers[i].OperatorAddress.Hex() < sortedPeers[j].OperatorAddress.Hex()
+		return bytes.Compare(sortedPeers[i].OperatorAddress.Bytes(), sortedPeers[j].OperatorAddress.Bytes()) < 0
 	})
 
 	n.logger.Sugar().Infow("Fetched operators from chain",
@@ -1193,7 +1193,6 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 
 	// Phase 6: Finalize
 	n.logger.Sugar().Infow("DKG Phase 6: Finalizing key share",
-		"operator_address", n.OperatorAddress.Hex(),
 		"operator_address", n.OperatorAddress.Hex())
 
 	// Build trusted dealer set: intersection of polynomial-verified shares and merkle-verified operators.
@@ -1272,7 +1271,6 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	n.keyStore.AddVersion(keyVersion)
 
 	n.logger.Sugar().Infow("DKG complete",
-		"operator_address", n.OperatorAddress.Hex(),
 		"operator_address", n.OperatorAddress.Hex(),
 		"version", keyVersion.Version)
 	return nil
@@ -1401,7 +1399,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
 	existingOperators := len(operators) - numNewOperators
 	requiredContributions := dkg.CalculateThreshold(existingOperators)
-	countExistingShares := func() int {
+	countOnChainShares := func() int {
 		count := 0
 		for addr := range session.shares {
 			if onChainOpIDs[addr] {
@@ -1410,7 +1408,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		}
 		return count
 	}
-	countExistingCommitments := func() int {
+	countOnChainCommitments := func() int {
 		count := 0
 		for addr := range session.commitments {
 			if onChainOpIDs[addr] {
@@ -1419,10 +1417,10 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		}
 		return count
 	}
-	if err := waitForN(session, requiredContributions, protocolTimeout, countExistingShares, "shares"); err != nil {
+	if err := waitForN(session, requiredContributions, protocolTimeout, countOnChainShares, "shares"); err != nil {
 		return err
 	}
-	if err := waitForN(session, requiredContributions, protocolTimeout, countExistingCommitments, "commitments"); err != nil {
+	if err := waitForN(session, requiredContributions, protocolTimeout, countOnChainCommitments, "commitments"); err != nil {
 		return err
 	}
 
@@ -1637,7 +1635,6 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 
 	// Phase 5: Finalize reshare
 	n.logger.Sugar().Infow("Reshare Phase 5: Finalizing key share",
-		"operator_address", n.OperatorAddress.Hex(),
 		"operator_address", n.OperatorAddress.Hex())
 
 	// Build trusted dealer set: intersection of polynomial-verified shares and merkle-verified operators.
@@ -1950,7 +1947,6 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	n.keyStore.AddVersion(newKeyVersion)
 
 	n.logger.Sugar().Infow("Successfully joined cluster via reshare",
-		"operator_address", n.OperatorAddress.Hex(),
 		"operator_address", n.OperatorAddress.Hex(),
 		"version", newKeyVersion.Version)
 
