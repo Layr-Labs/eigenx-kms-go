@@ -13,6 +13,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/stretchr/testify/require"
 )
 
 // Test_ReshareIntegration tests the complete reshare protocol using real Node instances
@@ -93,9 +94,7 @@ func testAutomaticReshare(t *testing.T) {
 	dkgVersions := make(map[int]int64)
 	for i, n := range cluster.Nodes {
 		activeVersion := n.GetKeyStore().GetActiveVersion()
-		if activeVersion == nil {
-			t.Fatalf("Node %d should have key version after DKG", i+1)
-		}
+		require.NotNilf(t, activeVersion, "Node %d should have key version after DKG", i+1)
 		dkgVersions[i] = activeVersion.Version
 		t.Logf("  Node %d DKG version: %d", i+1, activeVersion.Version)
 	}
@@ -111,9 +110,7 @@ func testAutomaticReshare(t *testing.T) {
 	// Verify all nodes have NEW key versions (different from DKG versions)
 	for i, n := range cluster.Nodes {
 		activeVersion := n.GetKeyStore().GetActiveVersion()
-		if activeVersion == nil {
-			t.Fatalf("Node %d should have key version after reshare", i+1)
-		}
+		require.NotNilf(t, activeVersion, "Node %d should have key version after reshare", i+1)
 		if activeVersion.Version == dkgVersions[i] {
 			t.Errorf("Node %d key version did not change from DKG version %d (reshare did not occur)",
 				i+1, dkgVersions[i])
@@ -152,9 +149,7 @@ func testReshareWithThresholdChange(t *testing.T) {
 
 	// Get a current share from an existing node
 	activeVersion := cluster.Nodes[0].GetKeyStore().GetActiveVersion()
-	if activeVersion == nil {
-		t.Fatal("Should have active version from DKG")
-	}
+	require.NotNil(t, activeVersion, "Should have active version from DKG")
 
 	// Test that reshare module can generate new shares with new threshold
 	firstNodeAddr := cluster.Nodes[0].GetOperatorAddress()
