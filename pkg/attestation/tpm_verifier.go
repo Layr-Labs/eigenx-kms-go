@@ -13,6 +13,11 @@ var (
 	// that binds the RSA public key to the TPM attestation's report data.
 	// Must match the value used by the eigenx-kms client (EnvClient).
 	EnvRequestRSAKeyHeader = []byte("COMPUTE_APP_ENV_REQUEST_RSA_KEY_V1")
+
+	// JWTRequestRSAKeyHeader is the header prefix used to compute the challenge
+	// for the /auth/attest endpoint. Distinct from EnvRequestRSAKeyHeader to avoid
+	// cross-endpoint attestation replay.
+	JWTRequestRSAKeyHeader = []byte("COMPUTE_APP_JWT_REQUEST_RSA_KEY_V1")
 )
 
 var machineTypeSuffixToPlatform = map[byte]attest.Platform{
@@ -52,9 +57,11 @@ func (v *VerifiedAttestation) VerifyPlatform(machineType string) error {
 }
 
 // BoundAttestationEvidenceVerifier verifies raw bound attestation evidence against a
-// challenge and returns the extracted TPM and (where applicable) TEE claims.
+// challenge and optional extraData, returning the extracted TPM and (where applicable) TEE claims.
+// go-tpm-tools hashes extraData (SHA-256/SHA-512) before binding it into the hardware nonce,
+// so arbitrary-length data is accepted.
 type BoundAttestationEvidenceVerifier interface {
-	Verify(ctx context.Context, attestationBytes, challenge []byte) (*VerifiedAttestation, error)
+	Verify(ctx context.Context, attestationBytes, challenge, extraData []byte) (*VerifiedAttestation, error)
 }
 
 type attestVerifier struct{}
@@ -64,12 +71,12 @@ func NewBoundAttestationEvidenceVerifier() BoundAttestationEvidenceVerifier {
 	return &attestVerifier{}
 }
 
-func (v *attestVerifier) Verify(_ context.Context, attestationBytes, challenge []byte) (*VerifiedAttestation, error) {
+func (v *attestVerifier) Verify(_ context.Context, attestationBytes, challenge, extraData []byte) (*VerifiedAttestation, error) {
 	a, err := attest.Parse(attestationBytes)
 	if err != nil {
 		return nil, fmt.Errorf("attestation parsing failed: %w", err)
 	}
-	verified, err := a.VerifyTPM(challenge, nil)
+	verified, err := a.VerifyTPM(challenge, extraData)
 	if err != nil {
 		return nil, fmt.Errorf("TPM verification failed: %w", err)
 	}
@@ -87,7 +94,7 @@ func (v *attestVerifier) Verify(_ context.Context, attestationBytes, challenge [
 	result.Container = container
 
 	if a.Platform() != attest.PlatformGCPShieldedVM {
-		teeVerified, err := a.VerifyBoundTEE(challenge, nil)
+		teeVerified, err := a.VerifyBoundTEE(challenge, extraData)
 		if err != nil {
 			return nil, fmt.Errorf("TEE verification failed: %w", err)
 		}
