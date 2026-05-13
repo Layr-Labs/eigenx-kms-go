@@ -269,6 +269,7 @@ func Test_OnChainIntegration(t *testing.T) {
 			commitmentRegistryAddress,
 			nodePersistence,
 			l,
+			nil,
 		)
 		require.NoError(t, err)
 

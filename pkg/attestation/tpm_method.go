@@ -68,7 +68,7 @@ func (t *TPMAttestationMethod) Verify(request *AttestationRequest) (*types.Attes
 
 	// Verify the raw TPM attestation against the challenge
 	ctx := context.Background()
-	result, err := t.verifier.Verify(ctx, request.Attestation, challenge)
+	result, err := t.verifier.Verify(ctx, request.Attestation, challenge, nil)
 	if err != nil {
 		return nil, fmt.Errorf("TPM attestation verification failed: %w", err)
 	}
@@ -82,7 +82,7 @@ func (t *TPMAttestationMethod) Verify(request *AttestationRequest) (*types.Attes
 	}
 
 	// Extract app ID from instance name (reuses existing function in attestation.go)
-	appID, err := extractAppIDFromInstanceName(result.TPMClaims.GCE.InstanceName)
+	appID, err := ExtractAppIDFromInstanceName(result.TPMClaims.GCE.InstanceName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract app ID from instance name: %w", err)
 	}

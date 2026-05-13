@@ -21,7 +21,7 @@ type mockVerifier struct {
 	capturedChallenge []byte
 }
 
-func (m *mockVerifier) Verify(_ context.Context, _ []byte, challenge []byte) (*VerifiedAttestation, error) {
+func (m *mockVerifier) Verify(_ context.Context, _ []byte, challenge, _ []byte) (*VerifiedAttestation, error) {
 	m.capturedChallenge = challenge
 	return m.result, m.err
 }
@@ -211,7 +211,7 @@ func TestTPMAttestationMethod_Verify_BadInstanceName(t *testing.T) {
 	}
 	method := NewTPMAttestationMethodWithVerifier(mock, testLogger())
 
-	// extractAppIDFromInstanceName expects at least 2 parts split by "-"
+	// ExtractAppIDFromInstanceName expects at least 2 parts split by "-"
 	// "nohyphen" has no hyphens, so it should fail
 	_, err := method.Verify(&AttestationRequest{
 		Method:      "tpm",

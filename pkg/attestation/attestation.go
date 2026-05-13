@@ -195,7 +195,7 @@ func (av *AttestationVerifier) VerifyAttestation(ctx context.Context, tokenStrin
 	}
 
 	// Extract app ID from instance name
-	appID, err := extractAppIDFromInstanceName(csToken.SubMods.GCE.InstanceName)
+	appID, err := ExtractAppIDFromInstanceName(csToken.SubMods.GCE.InstanceName)
 	if err != nil {
 		return nil, fmt.Errorf("failed to extract app ID from instance name: %w", err)
 	}
@@ -356,7 +356,9 @@ func (av *AttestationVerifier) validateIntelTrustAuthorityToken(csToken *Confide
 	return av.validateToken(csToken, intelValidationConfig)
 }
 
-func extractAppIDFromInstanceName(instanceName string) (string, error) {
+// ExtractAppIDFromInstanceName extracts the app ID from a GCE instance name.
+// The app ID is the last component after splitting by the delimiter ("-").
+func ExtractAppIDFromInstanceName(instanceName string) (string, error) {
 	instanceNameParts := strings.Split(instanceName, instanceNameDelimiter)
 	if len(instanceNameParts) < 2 {
 		return "", fmt.Errorf("invalid instance name: %s. Expected at least %d parts", instanceName, 2)

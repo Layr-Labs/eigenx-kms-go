@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -779,4 +780,118 @@ func (s *Server) handleCommitmentBroadcast(w http.ResponseWriter, r *http.Reques
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// handleAttestRequest handles the /auth/attest endpoint for JWT attestation.
+// It verifies raw TPM attestation and returns an encrypted, signed JWT containing
+// the attested appId, image digest, and hardware measurements.
+func (s *Server) handleAttestRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if s.node.jwtSigner == nil {
+		http.Error(w, "attestation JWT signing not configured", http.StatusServiceUnavailable)
+		return
+	}
+
+	var req types.AttestRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf("Failed to parse attest request: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	if req.Version != 3 {
+		http.Error(w, fmt.Sprintf("Unsupported attestation version: %d, only version 3 is supported", req.Version), http.StatusBadRequest)
+		return
+	}
+
+	if req.RSAKeyPEM == "" {
+		http.Error(w, "rsaKey is required", http.StatusBadRequest)
+		return
+	}
+
+	// Decode base64-encoded attestation
+	attestationBytes, err := base64.StdEncoding.DecodeString(req.Attestation)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to decode attestation: %v", err), http.StatusBadRequest)
+		return
+	}
+
+	// Decode optional extra_data (base64). go-tpm-tools hashes it (SHA-256/SHA-512)
+	// before binding into the hardware nonce, so arbitrary data up to 1MB is accepted.
+	var extraData []byte
+	if req.ExtraData != "" {
+		extraData, err = base64.StdEncoding.DecodeString(req.ExtraData)
+		if err != nil {
+			http.Error(w, fmt.Sprintf("Failed to decode extra_data: %v", err), http.StatusBadRequest)
+			return
+		}
+		if len(extraData) > types.MaxExtraDataSize {
+			http.Error(w, fmt.Sprintf("extra_data exceeds 1MB limit (%d bytes)", len(extraData)), http.StatusBadRequest)
+			return
+		}
+	}
+
+	// Compute challenge using the JWT-specific header (distinct from /secrets env header)
+	challenge := attestation.CalculateChallenge(attestation.JWTRequestRSAKeyHeader, []byte(req.RSAKeyPEM))
+
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Verify the raw TPM attestation against the challenge
+	result, err := s.node.tpmVerifier.Verify(ctx, attestationBytes, challenge, extraData)
+	if err != nil {
+		s.node.logger.Sugar().Warnw("Attestation verification failed", "error", err)
+		http.Error(w, fmt.Sprintf("Attestation verification failed: %v", err), http.StatusUnauthorized)
+		return
+	}
+
+	if result.TPMClaims == nil || result.TPMClaims.GCE == nil {
+		http.Error(w, "GCE instance info not found in attestation", http.StatusUnauthorized)
+		return
+	}
+	if result.Container == nil {
+		http.Error(w, "Container info not found in attestation", http.StatusUnauthorized)
+		return
+	}
+
+	// Extract app ID from GCE instance name
+	appID, err := attestation.ExtractAppIDFromInstanceName(result.TPMClaims.GCE.InstanceName)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("Failed to extract app ID: %v", err), http.StatusUnauthorized)
+		return
+	}
+
+	// Sign the attestation JWT
+	token, err := s.node.jwtSigner.SignAttestationJWT(appID, result, req.Audience, req.ExtraData)
+	if err != nil {
+		s.node.logger.Sugar().Errorw("Failed to sign attestation JWT", "error", err)
+		http.Error(w, "Failed to sign attestation JWT", http.StatusInternalServerError)
+		return
+	}
+
+	// Encrypt the token with the client's RSA public key
+	tokenBytes, err := json.Marshal(map[string]string{"token": token})
+	if err != nil {
+		http.Error(w, "Failed to marshal token", http.StatusInternalServerError)
+		return
+	}
+
+	encryptedToken, err := s.node.rsaEncryption.Encrypt(tokenBytes, []byte(req.RSAKeyPEM))
+	if err != nil {
+		s.node.logger.Sugar().Errorw("Failed to encrypt token", "error", err)
+		http.Error(w, fmt.Sprintf("Failed to encrypt token: %v", err), http.StatusInternalServerError)
+		return
+	}
+
+	resp := types.AttestResponse{EncryptedToken: base64.StdEncoding.EncodeToString(encryptedToken)}
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		s.node.logger.Sugar().Errorw("Failed to encode attest response", "error", err)
+	}
+
+	s.node.logger.Sugar().Infow("Successfully served attestation JWT", "app_id", appID)
 }
