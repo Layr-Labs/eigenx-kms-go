@@ -10,10 +10,10 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/reshare"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/testutil"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/stretchr/testify/require"
 )
 
 // Test_ReshareIntegration tests the complete reshare protocol using real Node instances
@@ -94,9 +94,7 @@ func testAutomaticReshare(t *testing.T) {
 	dkgVersions := make(map[int]int64)
 	for i, n := range cluster.Nodes {
 		activeVersion := n.GetKeyStore().GetActiveVersion()
-		if activeVersion == nil {
-			t.Fatalf("Node %d should have key version after DKG", i+1)
-		}
+		require.NotNilf(t, activeVersion, "Node %d should have key version after DKG", i+1)
 		dkgVersions[i] = activeVersion.Version
 		t.Logf("  Node %d DKG version: %d", i+1, activeVersion.Version)
 	}
@@ -112,9 +110,7 @@ func testAutomaticReshare(t *testing.T) {
 	// Verify all nodes have NEW key versions (different from DKG versions)
 	for i, n := range cluster.Nodes {
 		activeVersion := n.GetKeyStore().GetActiveVersion()
-		if activeVersion == nil {
-			t.Fatalf("Node %d should have key version after reshare", i+1)
-		}
+		require.NotNilf(t, activeVersion, "Node %d should have key version after reshare", i+1)
 		if activeVersion.Version == dkgVersions[i] {
 			t.Errorf("Node %d key version did not change from DKG version %d (reshare did not occur)",
 				i+1, dkgVersions[i])
@@ -153,14 +149,11 @@ func testReshareWithThresholdChange(t *testing.T) {
 
 	// Get a current share from an existing node
 	activeVersion := cluster.Nodes[0].GetKeyStore().GetActiveVersion()
-	if activeVersion == nil {
-		t.Fatal("Should have active version from DKG")
-	}
+	require.NotNil(t, activeVersion, "Should have active version from DKG")
 
 	// Test that reshare module can generate new shares with new threshold
 	firstNodeAddr := cluster.Nodes[0].GetOperatorAddress()
-	firstNodeID := util.AddressToNodeID(firstNodeAddr)
-	resharer := reshare.NewReshare(firstNodeID, newOperators)
+	resharer := reshare.NewReshare(firstNodeAddr, newOperators)
 	newShares, commitments, err := resharer.GenerateNewShares(activeVersion.PrivateShare, newThreshold)
 	if err != nil {
 		t.Fatalf("Failed to generate new shares with threshold change: %v", err)
@@ -190,14 +183,14 @@ func testReshareSecretConsistency(t *testing.T) {
 	// Test with a known secret scenario using crypto functions
 	threshold := dkg.CalculateThreshold(5)
 
-	// Create test operators and derive their actual node IDs
+	// Create test operators and use their addresses directly
 	testOperators := createTestOperatorsForReshare(t, 5)
-	nodeIDs := make([]int64, 5)
+	addresses := make([]common.Address, 5)
 	for i := 0; i < 5; i++ {
-		nodeIDs[i] = util.AddressToNodeID(testOperators[i].OperatorAddress)
+		addresses[i] = testOperators[i].OperatorAddress
 	}
 
-	// Create a known secret and proper polynomial shares using actual node IDs
+	// Create a known secret and proper polynomial shares using operator addresses
 	secret := new(fr.Element).SetInt64(42)
 	poly := make(polynomial.Polynomial, threshold)
 	poly[0].Set(secret)
@@ -205,49 +198,49 @@ func testReshareSecretConsistency(t *testing.T) {
 		_, _ = poly[i].SetRandom()
 	}
 
-	// Generate shares by evaluating polynomial at actual node IDs
-	shares := make(map[int64]*fr.Element)
+	// Generate shares by evaluating polynomial at operator addresses
+	shares := make(map[common.Address]*fr.Element)
 	for i := 0; i < 5; i++ {
-		shares[nodeIDs[i]] = eigenxcrypto.EvaluatePolynomial(poly, int64(nodeIDs[i]))
+		shares[addresses[i]] = eigenxcrypto.EvaluatePolynomial(poly, addresses[i])
 	}
 
 	// Each node reshares preserving their share
-	allNewShares := make(map[int64]map[int64]*fr.Element) // dealerNodeID -> recipientNodeID -> share
+	allNewShares := make(map[common.Address]map[common.Address]*fr.Element) // dealerAddr -> recipientAddr -> share
 
 	for i := 0; i < 5; i++ {
-		dealerNodeID := nodeIDs[i]
-		resharer := reshare.NewReshare(dealerNodeID, testOperators)
+		dealerAddr := addresses[i]
+		resharer := reshare.NewReshare(dealerAddr, testOperators)
 
-		newShares, _, err := resharer.GenerateNewShares(shares[dealerNodeID], threshold)
+		newShares, _, err := resharer.GenerateNewShares(shares[dealerAddr], threshold)
 		if err != nil {
-			t.Fatalf("Node %d failed to reshare: %v", dealerNodeID, err)
+			t.Fatalf("Node %s failed to reshare: %v", dealerAddr.Hex(), err)
 		}
-		allNewShares[dealerNodeID] = newShares
+		allNewShares[dealerAddr] = newShares
 	}
 
 	// Compute new shares for each node using Lagrange
-	newFinalShares := make(map[int64]*fr.Element)
+	newFinalShares := make(map[common.Address]*fr.Element)
 
-	for _, recipientNodeID := range nodeIDs {
+	for _, recipientAddr := range addresses {
 		nodeShare := new(fr.Element).SetZero()
 
-		for _, dealerNodeID := range nodeIDs {
-			lambda := eigenxcrypto.ComputeLagrangeCoefficient(dealerNodeID, nodeIDs)
-			share := allNewShares[dealerNodeID][recipientNodeID]
+		for _, dealerAddr := range addresses {
+			lambda := eigenxcrypto.ComputeLagrangeCoefficient(dealerAddr, addresses)
+			share := allNewShares[dealerAddr][recipientAddr]
 			if share == nil {
-				t.Fatalf("Missing share from dealer %d to recipient %d", dealerNodeID, recipientNodeID)
+				t.Fatalf("Missing share from dealer %s to recipient %s", dealerAddr.Hex(), recipientAddr.Hex())
 			}
 			term := new(fr.Element).Mul(lambda, share)
 			nodeShare.Add(nodeShare, term)
 		}
 
-		newFinalShares[recipientNodeID] = nodeShare
+		newFinalShares[recipientAddr] = nodeShare
 	}
 
 	// Use threshold of new shares to recover secret
-	thresholdShares := make(map[int64]*fr.Element)
+	thresholdShares := make(map[common.Address]*fr.Element)
 	for i := 0; i < threshold; i++ {
-		thresholdShares[nodeIDs[i]] = newFinalShares[nodeIDs[i]]
+		thresholdShares[addresses[i]] = newFinalShares[addresses[i]]
 	}
 
 	recoveredSecret, err := eigenxcrypto.RecoverSecret(thresholdShares)

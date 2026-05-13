@@ -11,7 +11,6 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	bls12381 "github.com/consensys/gnark-crypto/ecc/bls12-381"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
@@ -100,13 +99,13 @@ func testCalculateThreshold(t *testing.T) {
 // testNewDKG tests DKG instance creation
 func testNewDKG(t *testing.T) {
 	operators := createTestOperators(t, 3)
-	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
+
 	threshold := CalculateThreshold(len(operators))
 
-	dkg := NewDKG(nodeID, threshold, operators)
+	dkg := NewDKG(operators[0].OperatorAddress, threshold, operators)
 
 	require.NotNil(t, dkg, "Expected non-nil DKG instance")
-	require.Equal(t, nodeID, dkg.nodeID)
+	require.Equal(t, operators[0].OperatorAddress, dkg.nodeAddress)
 	require.Equal(t, threshold, dkg.threshold)
 	require.Equal(t, len(operators), len(dkg.operators))
 }
@@ -114,9 +113,9 @@ func testNewDKG(t *testing.T) {
 // testGenerateShares tests share generation
 func testGenerateShares(t *testing.T) {
 	operators := createTestOperators(t, 5)
-	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
+
 	threshold := CalculateThreshold(len(operators))
-	dkg := NewDKG(nodeID, threshold, operators)
+	dkg := NewDKG(operators[0].OperatorAddress, threshold, operators)
 
 	shares, commitments, err := dkg.GenerateShares()
 	require.NoError(t, err, "GenerateShares failed")
@@ -126,25 +125,25 @@ func testGenerateShares(t *testing.T) {
 
 	// Verify all operators have shares
 	for _, op := range operators {
-		opNodeID := util.AddressToNodeID(op.OperatorAddress)
-		require.NotNil(t, shares[opNodeID], "Missing share for operator %s (ID: %d)", op.OperatorAddress.Hex(), opNodeID)
+		opAddr := op.OperatorAddress
+		require.NotNil(t, shares[opAddr], "Missing share for operator %s (ID: %d)", op.OperatorAddress.Hex())
 	}
 }
 
 // testVerifyShare tests share verification
 func testVerifyShare(t *testing.T) {
 	operators := createTestOperators(t, 3)
-	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
+
 	threshold := CalculateThreshold(len(operators))
-	dealerDKG := NewDKG(nodeID, threshold, operators)
+	dealerDKG := NewDKG(operators[0].OperatorAddress, threshold, operators)
 
 	shares, commitments, err := dealerDKG.GenerateShares()
 	require.NoError(t, err, "GenerateShares failed")
 
 	// Test verification with valid share - create verifier DKG instance
-	targetNodeID := util.AddressToNodeID(operators[1].OperatorAddress)
-	verifierDKG := NewDKG(targetNodeID, threshold, operators)
-	valid := verifierDKG.VerifyShare(shares[targetNodeID], commitments)
+	targetAddr := operators[1].OperatorAddress
+	verifierDKG := NewDKG(targetAddr, threshold, operators)
+	valid := verifierDKG.VerifyShare(shares[targetAddr], commitments)
 	require.True(t, valid, "Valid share should verify successfully")
 
 	// Test verification with invalid share
@@ -157,18 +156,18 @@ func testVerifyShare(t *testing.T) {
 // testFinalizeKeyShare tests key finalization
 func testFinalizeKeyShare(t *testing.T) {
 	operators := createTestOperators(t, 3)
-	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
+
 	threshold := CalculateThreshold(len(operators))
-	dkg := NewDKG(nodeID, threshold, operators)
+	dkg := NewDKG(operators[0].OperatorAddress, threshold, operators)
 
 	shares, commitments, err := dkg.GenerateShares()
 	require.NoError(t, err, "GenerateShares failed")
 
 	// Create participant IDs from addresses
-	participantIDs := make([]int64, len(operators))
+	participantIDs := make([]common.Address, len(operators))
 	allCommitments := [][]types.G2Point{commitments}
 	for i, op := range operators {
-		participantIDs[i] = util.AddressToNodeID(op.OperatorAddress)
+		participantIDs[i] = op.OperatorAddress
 	}
 
 	keyVersion := dkg.FinalizeKeyShare(shares, allCommitments, participantIDs)
@@ -230,16 +229,16 @@ func testCreateAcknowledgement(t *testing.T) {
 // commitment array lengths do not cause a panic (H-02 audit finding).
 func Test_FinalizeKeyShare_MismatchedCommitmentLengths(t *testing.T) {
 	operators := createTestOperators(t, 3)
-	nodeID := util.AddressToNodeID(operators[0].OperatorAddress)
+
 	threshold := CalculateThreshold(len(operators))
-	dkg := NewDKG(nodeID, threshold, operators)
+	dkg := NewDKG(operators[0].OperatorAddress, threshold, operators)
 
 	shares, commitments, err := dkg.GenerateShares()
 	require.NoError(t, err)
 
-	participantIDs := make([]int64, len(operators))
+	participantIDs := make([]common.Address, len(operators))
 	for i, op := range operators {
-		participantIDs[i] = util.AddressToNodeID(op.OperatorAddress)
+		participantIDs[i] = op.OperatorAddress
 	}
 
 	// Create a shorter commitment array (simulating a malicious dealer)

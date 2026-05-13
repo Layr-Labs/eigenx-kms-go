@@ -11,7 +11,6 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/ethereum/go-ethereum/common"
 )
 
@@ -94,7 +93,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.node.appAllowlist != nil && !s.node.appAllowlist[req.AppID] {
 		s.node.logger.Sugar().Warnw("Secrets request rejected: app not in allowlist",
-			"node_id", s.node.OperatorAddress.Hex(),
+			"operator_address", s.node.OperatorAddress.Hex(),
 			"app_id", req.AppID)
 		http.Error(w, "app not allowed", http.StatusForbidden)
 		return
@@ -112,11 +111,11 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.node.logger.Sugar().Infow("Processing secrets request", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "attestation_method", req.AttestationMethod)
+	s.node.logger.Sugar().Infow("Processing secrets request", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "attestation_method", req.AttestationMethod)
 
 	// Step 1: Validate attestation method is provided
 	if req.AttestationMethod == "" {
-		s.node.logger.Sugar().Warnw("Attestation method is required", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID)
+		s.node.logger.Sugar().Warnw("Attestation method is required", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID)
 		http.Error(w, "Attestation method is required", http.StatusBadRequest)
 		return
 	}
@@ -142,7 +141,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	claims, err := s.node.attestationManager.VerifyWithMethod(req.AttestationMethod, attestReq)
 	if err != nil {
 		s.node.logger.Sugar().Warnw("Attestation verification failed",
-			"node_id", s.node.OperatorAddress.Hex(),
+			"operator_address", s.node.OperatorAddress.Hex(),
 			"method", req.AttestationMethod,
 			"error", err)
 		http.Error(w, fmt.Sprintf("Invalid attestation: %v", err), http.StatusUnauthorized)
@@ -152,7 +151,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	// Step 2b: Ensure attested application identity matches requested app.
 	if claims.AppID != req.AppID {
 		s.node.logger.Sugar().Warnw("App ID mismatch in attestation claims",
-			"node_id", s.node.OperatorAddress.Hex(),
+			"operator_address", s.node.OperatorAddress.Hex(),
 			"requested_app_id", req.AppID,
 			"attested_app_id", claims.AppID)
 		http.Error(w, "App ID mismatch - unauthorized app", http.StatusForbidden)
@@ -164,7 +163,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	if claims.JTI != "" {
 		if !s.checkAndStoreJTI(claims.JTI, claims.ExpiresAt) {
 			s.node.logger.Sugar().Warnw("Replayed attestation token rejected",
-				"node_id", s.node.OperatorAddress.Hex(),
+				"operator_address", s.node.OperatorAddress.Hex(),
 				"app_id", req.AppID,
 				"jti", claims.JTI)
 			http.Error(w, "attestation token already used", http.StatusUnauthorized)
@@ -175,21 +174,21 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	// Step 3: Query latest release from on-chain AppController
 	release, err := s.node.baseContractCaller.GetLatestReleaseAsRelease(r.Context(), req.AppID)
 	if err != nil {
-		s.node.logger.Sugar().Warnw("Failed to get release", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
+		s.node.logger.Sugar().Warnw("Failed to get release", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
 		http.Error(w, "Release not found", http.StatusNotFound)
 		return
 	}
 
 	// Step 5: Verify image digest matches
 	if claims.ImageDigest != release.ImageDigest {
-		s.node.logger.Sugar().Warnw("Image digest mismatch", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "expected", release.ImageDigest, "got", claims.ImageDigest)
+		s.node.logger.Sugar().Warnw("Image digest mismatch", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "expected", release.ImageDigest, "got", claims.ImageDigest)
 		http.Error(w, "Image digest mismatch - unauthorized image", http.StatusForbidden)
 		return
 	}
 
 	// Step 4b: Verify container execution policy matches on-chain values
 	if err := validateContainerPolicy(claims.ContainerPolicy, release.ContainerPolicy); err != nil {
-		s.node.logger.Sugar().Warnw("Container policy mismatch", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
+		s.node.logger.Sugar().Warnw("Container policy mismatch", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
 		http.Error(w, "Container policy mismatch", http.StatusForbidden)
 		return
 	}
@@ -201,7 +200,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		keyVersion = s.node.keyStore.GetKeyVersionAtTime(req.AttestationTime)
 		if keyVersion == nil {
 			s.node.logger.Sugar().Warnw("No key version found for attestation time",
-				"node_id", s.node.OperatorAddress.Hex(),
+				"operator_address", s.node.OperatorAddress.Hex(),
 				"attestation_time", req.AttestationTime)
 			http.Error(w, "No key version found for the specified attestation time", http.StatusNotFound)
 			return
@@ -211,7 +210,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if keyVersion == nil || keyVersion.PrivateShare == nil {
-		s.node.logger.Sugar().Errorw("No valid key share available", "node_id", s.node.OperatorAddress.Hex())
+		s.node.logger.Sugar().Errorw("No valid key share available", "operator_address", s.node.OperatorAddress.Hex())
 		http.Error(w, "No valid key share", http.StatusServiceUnavailable)
 		return
 	}
@@ -220,17 +219,17 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	// partial_sig = H(app_id)^{key_share}
 	partialSig, err := s.node.signAppIDWithVersion(req.AppID, keyVersion)
 	if err != nil {
-		s.node.logger.Sugar().Errorw("Failed to compute partial signature", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
+		s.node.logger.Sugar().Errorw("Failed to compute partial signature", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
 
-	s.node.logger.Sugar().Infow("Generated partial signature", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID)
+	s.node.logger.Sugar().Infow("Generated partial signature", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID)
 
 	// Step 8: Serialize partial signature for encryption
 	partialSigBytes, err := json.Marshal(partialSig)
 	if err != nil {
-		s.node.logger.Sugar().Errorw("Failed to serialize partial signature", "node_id", s.node.OperatorAddress.Hex(), "error", err)
+		s.node.logger.Sugar().Errorw("Failed to serialize partial signature", "operator_address", s.node.OperatorAddress.Hex(), "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
@@ -238,7 +237,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	// Step 9: Encrypt partial signature with ephemeral RSA public key
 	encryptedPartialSig, err := s.node.rsaEncryption.Encrypt(partialSigBytes, req.RSAPubKeyTmp)
 	if err != nil {
-		s.node.logger.Sugar().Errorw("Failed to encrypt partial signature", "node_id", s.node.OperatorAddress.Hex(), "error", err)
+		s.node.logger.Sugar().Errorw("Failed to encrypt partial signature", "operator_address", s.node.OperatorAddress.Hex(), "error", err)
 		http.Error(w, "Encryption failed", http.StatusInternalServerError)
 		return
 	}
@@ -254,12 +253,12 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	// Return JSON response
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(response); err != nil {
-		s.node.logger.Sugar().Errorw("Failed to encode response", "node_id", s.node.OperatorAddress.Hex(), "error", err)
+		s.node.logger.Sugar().Errorw("Failed to encode response", "operator_address", s.node.OperatorAddress.Hex(), "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
 
-	s.node.logger.Sugar().Infow("Successfully served secrets", "node_id", s.node.OperatorAddress.Hex(), "app_id", req.AppID)
+	s.node.logger.Sugar().Infow("Successfully served secrets", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID)
 }
 
 // handleDKGCommitment handles DKG commitment messages
@@ -294,11 +293,10 @@ func (s *Server) handleDKGCommitment(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert sender address to node ID and store commitments
-	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
+	senderAddr := senderPeer.OperatorAddress
 
 	// Store commitment in session (handles duplicate detection and completion signaling)
-	if err := session.HandleReceivedCommitment(senderNodeID, commitMsg.Commitments); err != nil {
+	if err := session.HandleReceivedCommitment(senderAddr, commitMsg.Commitments); err != nil {
 		s.node.logger.Sugar().Warnw("Failed to store commitment",
 			"from", senderPeer.OperatorAddress.Hex(),
 			"error", err)
@@ -307,9 +305,9 @@ func (s *Server) handleDKGCommitment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.node.logger.Sugar().Debugw("Received authenticated DKG commitments",
-		"node_id", s.node.OperatorAddress.Hex(),
+		"operator_address", s.node.OperatorAddress.Hex(),
 		"from_address", senderPeer.OperatorAddress.Hex(),
-		"sender_node_id", senderNodeID,
+		"sender_address", senderAddr.Hex(),
 		"session_timestamp", commitMsg.SessionTimestamp,
 		"count", len(commitMsg.Commitments))
 
@@ -354,12 +352,11 @@ func (s *Server) handleDKGShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert addresses to node IDs
-	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
+	senderAddr := senderPeer.OperatorAddress
 	share := types.DeserializeFr(shareMsg.Share)
 
 	// Store share in session (handles duplicate detection and completion signaling)
-	if err := session.HandleReceivedShare(senderNodeID, share); err != nil {
+	if err := session.HandleReceivedShare(senderAddr, share); err != nil {
 		s.node.logger.Sugar().Warnw("Failed to store share",
 			"from", senderPeer.OperatorAddress.Hex(),
 			"error", err)
@@ -368,9 +365,9 @@ func (s *Server) handleDKGShare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.node.logger.Sugar().Debugw("Received authenticated DKG share",
-		"node_id", s.node.OperatorAddress.Hex(),
+		"operator_address", s.node.OperatorAddress.Hex(),
 		"from_address", senderPeer.OperatorAddress.Hex(),
-		"sender_node_id", senderNodeID,
+		"sender_address", senderAddr.Hex(),
 		"session_timestamp", shareMsg.SessionTimestamp)
 
 	w.WriteHeader(http.StatusOK)
@@ -408,11 +405,10 @@ func (s *Server) handleDKGAck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert sender address to node ID and store acknowledgement
-	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
-	thisNodeID := util.AddressToNodeID(s.node.OperatorAddress)
+	senderAddr := senderPeer.OperatorAddress
+	thisAddr := s.node.OperatorAddress
 
-	if err := s.node.verifyAcknowledgement(session, senderPeer, thisNodeID, ackMsg.SessionTimestamp, ackMsg.Ack); err != nil {
+	if err := s.node.verifyAcknowledgement(session, senderPeer, thisAddr, ackMsg.SessionTimestamp, ackMsg.Ack); err != nil {
 		s.node.logger.Sugar().Warnw("Invalid DKG acknowledgement",
 			"from", senderPeer.OperatorAddress.Hex(),
 			"error", err)
@@ -421,7 +417,7 @@ func (s *Server) handleDKGAck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Store ack in session (handles duplicate detection and completion signaling)
-	if err := session.HandleReceivedAck(thisNodeID, senderNodeID, ackMsg.Ack); err != nil {
+	if err := session.HandleReceivedAck(thisAddr, senderAddr, ackMsg.Ack); err != nil {
 		s.node.logger.Sugar().Warnw("Failed to store ack",
 			"from", senderPeer.OperatorAddress.Hex(),
 			"error", err)
@@ -430,10 +426,10 @@ func (s *Server) handleDKGAck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.node.logger.Sugar().Debugw("Received authenticated acknowledgement",
-		"node_id", s.node.OperatorAddress.Hex(),
+		"operator_address", s.node.OperatorAddress.Hex(),
 		"from_address", senderPeer.OperatorAddress.Hex(),
-		"from_player", senderNodeID,
-		"for_dealer", thisNodeID,
+		"from_player", senderAddr.Hex(),
+		"for_dealer", thisAddr.Hex(),
 		"session_timestamp", ackMsg.SessionTimestamp)
 
 	w.WriteHeader(http.StatusOK)
@@ -471,11 +467,10 @@ func (s *Server) handleReshareCommitment(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Convert sender address to node ID
-	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
+	senderAddr := senderPeer.OperatorAddress
 
 	// Store commitment in session
-	if err := session.HandleReceivedCommitment(senderNodeID, commitMsg.Commitments); err != nil {
+	if err := session.HandleReceivedCommitment(senderAddr, commitMsg.Commitments); err != nil {
 		s.node.logger.Sugar().Warnw("Failed to store reshare commitment",
 			"from", senderPeer.OperatorAddress.Hex(),
 			"error", err)
@@ -484,7 +479,7 @@ func (s *Server) handleReshareCommitment(w http.ResponseWriter, r *http.Request)
 	}
 
 	s.node.logger.Sugar().Debugw("Received reshare commitments",
-		"node_id", s.node.OperatorAddress.Hex(),
+		"operator_address", s.node.OperatorAddress.Hex(),
 		"from", senderPeer.OperatorAddress.Hex(),
 		"count", len(commitMsg.Commitments))
 
@@ -529,12 +524,11 @@ func (s *Server) handleReshareShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert addresses to node IDs
-	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
+	senderAddr := senderPeer.OperatorAddress
 	share := types.DeserializeFr(shareMsg.Share)
 
 	// Store share in session
-	if err := session.HandleReceivedShare(senderNodeID, share); err != nil {
+	if err := session.HandleReceivedShare(senderAddr, share); err != nil {
 		s.node.logger.Sugar().Warnw("Failed to store reshare share",
 			"from", senderPeer.OperatorAddress.Hex(),
 			"error", err)
@@ -543,7 +537,7 @@ func (s *Server) handleReshareShare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.node.logger.Sugar().Debugw("Received reshare share",
-		"node_id", s.node.OperatorAddress.Hex(),
+		"operator_address", s.node.OperatorAddress.Hex(),
 		"from", senderPeer.OperatorAddress.Hex())
 
 	w.WriteHeader(http.StatusOK)
@@ -580,11 +574,10 @@ func (s *Server) handleReshareAck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Convert sender address to node ID
-	senderNodeID := util.AddressToNodeID(senderPeer.OperatorAddress)
-	thisNodeID := util.AddressToNodeID(s.node.OperatorAddress)
+	senderAddr := senderPeer.OperatorAddress
+	thisAddr := s.node.OperatorAddress
 
-	if err := s.node.verifyAcknowledgement(session, senderPeer, thisNodeID, ackMsg.SessionTimestamp, ackMsg.Ack); err != nil {
+	if err := s.node.verifyAcknowledgement(session, senderPeer, thisAddr, ackMsg.SessionTimestamp, ackMsg.Ack); err != nil {
 		s.node.logger.Sugar().Warnw("Invalid reshare acknowledgement",
 			"from", senderPeer.OperatorAddress.Hex(),
 			"error", err)
@@ -593,7 +586,7 @@ func (s *Server) handleReshareAck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Store ack in session
-	if err := session.HandleReceivedAck(thisNodeID, senderNodeID, ackMsg.Ack); err != nil {
+	if err := session.HandleReceivedAck(thisAddr, senderAddr, ackMsg.Ack); err != nil {
 		s.node.logger.Sugar().Warnw("Failed to store reshare ack",
 			"from", senderPeer.OperatorAddress.Hex(),
 			"error", err)
@@ -602,9 +595,9 @@ func (s *Server) handleReshareAck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.node.logger.Sugar().Debugw("Received reshare ack",
-		"node_id", s.node.OperatorAddress.Hex(),
-		"from_player", senderNodeID,
-		"for_dealer", thisNodeID)
+		"operator_address", s.node.OperatorAddress.Hex(),
+		"from_player", senderAddr.Hex(),
+		"for_dealer", thisAddr.Hex())
 
 	w.WriteHeader(http.StatusOK)
 }
@@ -668,7 +661,7 @@ func (s *Server) handleAppSign(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.node.appAllowlist != nil && !s.node.appAllowlist[req.AppID] {
 		s.node.logger.Sugar().Warnw("App sign request rejected: app not in allowlist",
-			"node_id", s.node.OperatorAddress.Hex(),
+			"operator_address", s.node.OperatorAddress.Hex(),
 			"app_id", req.AppID)
 		http.Error(w, "app not allowed", http.StatusForbidden)
 		return
@@ -677,7 +670,7 @@ func (s *Server) handleAppSign(w http.ResponseWriter, r *http.Request) {
 	partialSig, err := s.node.SignAppID(req.AppID, req.AttestationTime)
 	if err != nil {
 		s.node.logger.Sugar().Errorw("Failed to compute partial signature for app",
-			"node_id", s.node.OperatorAddress.Hex(),
+			"operator_address", s.node.OperatorAddress.Hex(),
 			"app_id", req.AppID,
 			"error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
@@ -685,7 +678,7 @@ func (s *Server) handleAppSign(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.node.logger.Sugar().Infow("Served partial signature",
-		"node_id", s.node.OperatorAddress.Hex(),
+		"operator_address", s.node.OperatorAddress.Hex(),
 		"app_id", req.AppID)
 
 	resp := types.AppSignResponse{

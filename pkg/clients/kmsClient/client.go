@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/ethereum/go-ethereum/common"
 	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	"go.uber.org/zap"
 
@@ -23,7 +24,6 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 )
 
 // ContractCaller defines the interface for fetching operator information from the blockchain
@@ -54,7 +54,7 @@ type SecretsResult struct {
 	AppPrivateKey   types.G1Point
 	EncryptedEnv    string
 	PublicEnv       string
-	PartialSigs     map[int64]types.G1Point
+	PartialSigs     map[common.Address]types.G1Point
 	ResponseCount   int
 	ThresholdNeeded int
 	ExtraData       []byte // echoed from KMS response
@@ -324,7 +324,7 @@ func (c *Client) Encrypt(appID string, data []byte, operators *peering.OperatorS
 }
 
 // CollectPartialSignatures collects partial signatures from threshold number of operators concurrently
-func (c *Client) CollectPartialSignatures(appID string, operators *peering.OperatorSetPeers, threshold int) (map[int64]types.G1Point, error) {
+func (c *Client) CollectPartialSignatures(appID string, operators *peering.OperatorSetPeers, threshold int) (map[common.Address]types.G1Point, error) {
 	if appID == "" {
 		return nil, fmt.Errorf("app ID is required")
 	}
@@ -342,9 +342,9 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 	)
 
 	type result struct {
-		nodeID    int64
-		signature types.G1Point
-		opAddress string
+		operatorAddr common.Address
+		signature    types.G1Point
+		opAddress    string
 	}
 
 	resultChan := make(chan result, len(operators.Peers))
@@ -414,7 +414,7 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 			}
 
 			// SECURITY: bind response identity to the operator we actually queried.
-			// Never trust response.OperatorAddress as the source of truth for nodeID.
+			// Use the operator address from our operator set, not the response.
 			expectedAddress := op.OperatorAddress.Hex()
 			if !strings.EqualFold(response.OperatorAddress, expectedAddress) {
 				c.logger.Sugar().Warnw("Operator address mismatch in partial signature response",
@@ -424,14 +424,14 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 				)
 				return
 			}
-			nodeID := util.AddressToNodeID(op.OperatorAddress)
+			operatorAddr := op.OperatorAddress
 
 			c.logger.Sugar().Debugw("Collected partial signature from operator",
 				"operator_index", idx,
-				"node_id", nodeID,
+				"operator_address", operatorAddr.Hex(),
 				"operator_address", response.OperatorAddress)
 
-			resultChan <- result{nodeID: nodeID, signature: response.PartialSignature, opAddress: response.OperatorAddress}
+			resultChan <- result{operatorAddr: operatorAddr, signature: response.PartialSignature, opAddress: response.OperatorAddress}
 		}(i, operator)
 	}
 
@@ -443,13 +443,13 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 
 	// Collect all available results (not just threshold) to enable retry with
 	// alternative subsets if some operators provided invalid signatures (KMS-012)
-	partialSigs := make(map[int64]types.G1Point)
+	partialSigs := make(map[common.Address]types.G1Point)
 	// TODO(security): only count cryptographically verified partial signatures.
 	// Current code counts non-zero shares and relies on later interpolation failure.
 	// With KMS-012 retry logic, a single malicious operator can now trigger up to
 	// DefaultMaxRecoveryAttempts (1000) Lagrange interpolation + pairing calls.
 	for res := range resultChan {
-		partialSigs[res.nodeID] = res.signature
+		partialSigs[res.operatorAddr] = res.signature
 	}
 
 	if len(partialSigs) < threshold {
@@ -505,7 +505,7 @@ func (c *Client) Decrypt(appID string, encryptedData []byte, operators *peering.
 // If the ciphertext itself is malformed (invalid format, wrong version, etc.), the
 // function fails fast without retrying, since no subset of partial signatures can fix
 // invalid input.
-func decryptWithRetry(appID string, partialSigs map[int64]types.G1Point, threshold int, ciphertext []byte) ([]byte, error) {
+func decryptWithRetry(appID string, partialSigs map[common.Address]types.G1Point, threshold int, ciphertext []byte) ([]byte, error) {
 	// Validate ciphertext format upfront — retrying with different key subsets
 	// cannot fix a structurally invalid ciphertext.
 	if err := crypto.ValidateCiphertextFormat(ciphertext); err != nil {
@@ -618,7 +618,7 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 	// Step 6: Recover application private key with retry to tolerate invalid partial signatures.
 	// Attempt pairing-based validation using master public key. If the master public key
 	// cannot be fetched (e.g., key rotation race), fall back to single-attempt recovery.
-	// partialSigs is already a map[int64]types.G1Point with correct node IDs
+	// partialSigs is already a map[common.Address]types.G1Point with correct node IDs
 	var appPrivateKey *types.G1Point
 	masterPubKey, masterPKErr := c.GetMasterPublicKey(operators)
 	if masterPKErr == nil {
@@ -664,15 +664,15 @@ func (c *Client) GetEncryptedSecretsFromKMSNodesWithPartialSigs(
 	operators *peering.OperatorSetPeers,
 	req types.SecretsRequestV1,
 	rsaPrivateKeyPEM []byte,
-) ([]types.SecretsResponseV1, map[int64]types.G1Point, error) {
+) ([]types.SecretsResponseV1, map[common.Address]types.G1Point, error) {
 	rsaEncryption := encryption.NewRSAEncryption()
 
 	type result struct {
-		response   types.SecretsResponseV1
-		partialSig types.G1Point
-		nodeID     int64
-		opAddress  string
-		opIndex    int
+		response     types.SecretsResponseV1
+		partialSig   types.G1Point
+		operatorAddr common.Address
+		opAddress    string
+		opIndex      int
 	}
 
 	resultChan := make(chan result, len(operators.Peers))
@@ -718,18 +718,18 @@ func (c *Client) GetEncryptedSecretsFromKMSNodesWithPartialSigs(
 			}
 
 			// Convert operator address to node ID
-			nodeID := util.AddressToNodeID(op.OperatorAddress)
+			operatorAddr := op.OperatorAddress
 
 			c.logger.Sugar().Debugw("Received valid response from operator",
 				"operator_index", idx+1,
-				"node_id", nodeID)
+				"operator_address", operatorAddr.Hex())
 
 			resultChan <- result{
-				response:   *resp,
-				partialSig: partialSig,
-				nodeID:     nodeID,
-				opAddress:  op.OperatorAddress.Hex(),
-				opIndex:    idx,
+				response:     *resp,
+				partialSig:   partialSig,
+				operatorAddr: op.OperatorAddress,
+				opAddress:    op.OperatorAddress.Hex(),
+				opIndex:      idx,
 			}
 		}(i, peer)
 	}
@@ -742,11 +742,11 @@ func (c *Client) GetEncryptedSecretsFromKMSNodesWithPartialSigs(
 
 	// Collect results
 	var responses []types.SecretsResponseV1
-	partialSigs := make(map[int64]types.G1Point)
+	partialSigs := make(map[common.Address]types.G1Point)
 
 	for res := range resultChan {
 		responses = append(responses, res.response)
-		partialSigs[res.nodeID] = res.partialSig
+		partialSigs[res.operatorAddr] = res.partialSig
 	}
 
 	if len(responses) == 0 {
@@ -867,16 +867,16 @@ func (c *Client) DecryptForApp(appID string, ciphertext []byte, attestationTime 
 }
 
 // collectPartialSignaturesForDecrypt collects partial signatures using operator address-based node IDs
-func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *peering.OperatorSetPeers, attestationTime int64, threshold int) (map[int64]types.G1Point, error) {
+func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *peering.OperatorSetPeers, attestationTime int64, threshold int) (map[common.Address]types.G1Point, error) {
 	c.logger.Sugar().Infow("Collecting partial signatures for decryption",
 		"app_id", appID,
 		"threshold", threshold,
 		"operators", len(operators.Peers))
 
 	type result struct {
-		nodeID    int64
-		signature types.G1Point
-		opAddress string
+		operatorAddr common.Address
+		signature    types.G1Point
+		opAddress    string
 	}
 
 	resultChan := make(chan result, len(operators.Peers))
@@ -929,7 +929,7 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 			}
 
 			// SECURITY: bind response identity to the operator we actually queried.
-			// Never trust response.OperatorAddress as the source of truth for nodeID.
+			// Use the operator address from our operator set, not the response.
 			expectedAddress := op.OperatorAddress.Hex()
 			if !strings.EqualFold(response.OperatorAddress, expectedAddress) {
 				c.logger.Sugar().Warnw("Operator address mismatch in partial signature response",
@@ -939,10 +939,10 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 				)
 				return
 			}
-			nodeID := util.AddressToNodeID(op.OperatorAddress)
+			operatorAddr := op.OperatorAddress
 
-			c.logger.Sugar().Debugw("Collected partial signature", "operator_index", idx, "node_id", nodeID, "operator_address", response.OperatorAddress)
-			resultChan <- result{nodeID: nodeID, signature: response.PartialSignature, opAddress: response.OperatorAddress}
+			c.logger.Sugar().Debugw("Collected partial signature", "operator_index", idx, "operator_address", operatorAddr.Hex(), "operator_address", response.OperatorAddress)
+			resultChan <- result{operatorAddr: operatorAddr, signature: response.PartialSignature, opAddress: response.OperatorAddress}
 		}(i, peer)
 	}
 
@@ -954,13 +954,13 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 
 	// Collect all available results (not just threshold) to enable retry with
 	// alternative subsets if some operators provided invalid signatures (KMS-012)
-	partialSigs := make(map[int64]types.G1Point)
+	partialSigs := make(map[common.Address]types.G1Point)
 	// TODO(security): DOS vector — only count cryptographically verified partial signatures.
 	// Current code counts non-zero shares and relies on later interpolation failure.
 	// With KMS-012 retry logic, a single malicious operator can now trigger up to
 	// DefaultMaxRecoveryAttempts (1000) Lagrange interpolation + pairing calls.
 	for res := range resultChan {
-		partialSigs[res.nodeID] = res.signature
+		partialSigs[res.operatorAddr] = res.signature
 	}
 
 	if len(partialSigs) < threshold {

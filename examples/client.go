@@ -10,12 +10,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 	"time"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/ethereum/go-ethereum/common"
 )
 
 // ExampleAppClient demonstrates how an application would retrieve secrets from KMS
@@ -106,9 +108,10 @@ func ExampleAppClient() {
 	}
 
 	// Step 7: Recover application private key using Lagrange interpolation
-	partialSigMap := make(map[int64]types.G1Point)
+	partialSigMap := make(map[common.Address]types.G1Point)
 	for i, sig := range partialSigs {
-		partialSigMap[int64(i+1)] = sig // Node IDs are 1-indexed
+		// In production, use actual operator addresses from chain data
+		partialSigMap[common.BigToAddress(big.NewInt(int64(i+1)))] = sig
 	}
 
 	appPrivateKey, err := crypto.RecoverAppPrivateKey(appID, partialSigMap, threshold)

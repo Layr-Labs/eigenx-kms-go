@@ -97,9 +97,9 @@ type ProtocolSession struct {
 	Operators        []*peering.OperatorSetPeer
 
 	// Session-specific state (moved from global Node state)
-	shares      map[int64]*fr.Element
-	commitments map[int64][]types.G2Point
-	acks        map[int64]map[int64]*types.Acknowledgement
+	shares      map[common.Address]*fr.Element
+	commitments map[common.Address][]types.G2Point
+	acks        map[common.Address]map[common.Address]*types.Acknowledgement
 
 	// Completion channels (buffered, size 1) - signaled when all expected messages received
 	sharesCompleteChan      chan bool
@@ -112,27 +112,23 @@ type ProtocolSession struct {
 	contractSubmitted bool
 
 	// Phase 4: Verification state
-	verifiedOperators map[int64]bool
+	verifiedOperators map[common.Address]bool
 
 	mu sync.RWMutex
 }
 
-// addressToNodeID is a small seam for testability so we can force nodeID collisions in unit tests.
-// In production it always points to util.AddressToNodeID.
-var addressToNodeID = util.AddressToNodeID
-
 // HandleReceivedShare stores a share and signals completion if all shares received
 // Returns error if duplicate share detected
-func (s *ProtocolSession) HandleReceivedShare(senderNodeID int64, share *fr.Element) error {
+func (s *ProtocolSession) HandleReceivedShare(sender common.Address, share *fr.Element) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// Reject duplicates
-	if _, exists := s.shares[senderNodeID]; exists {
-		return fmt.Errorf("duplicate share from node %d", senderNodeID)
+	if _, exists := s.shares[sender]; exists {
+		return fmt.Errorf("duplicate share from %s", sender.Hex())
 	}
 
-	s.shares[senderNodeID] = share
+	s.shares[sender] = share
 
 	// Signal completion when ALL shares received (not threshold).
 	// The threshold fallback is handled by waitForNShares, which polls
@@ -151,21 +147,21 @@ func (s *ProtocolSession) HandleReceivedShare(senderNodeID int64, share *fr.Elem
 
 // HandleReceivedCommitment stores commitments and signals completion if all received
 // Returns error if duplicate commitment detected
-func (s *ProtocolSession) HandleReceivedCommitment(senderNodeID int64, commitments []types.G2Point) error {
+func (s *ProtocolSession) HandleReceivedCommitment(sender common.Address, commitments []types.G2Point) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// Reject empty commitments
 	if len(commitments) == 0 {
-		return fmt.Errorf("empty commitments from node %d", senderNodeID)
+		return fmt.Errorf("empty commitments from %s", sender.Hex())
 	}
 
 	// Reject duplicates
-	if _, exists := s.commitments[senderNodeID]; exists {
-		return fmt.Errorf("duplicate commitment from node %d", senderNodeID)
+	if _, exists := s.commitments[sender]; exists {
+		return fmt.Errorf("duplicate commitment from %s", sender.Hex())
 	}
 
-	s.commitments[senderNodeID] = commitments
+	s.commitments[sender] = commitments
 
 	// Signal completion when ALL commitments received (not threshold).
 	// The threshold fallback is handled by waitForCommitmentsWithThreshold.
@@ -181,25 +177,25 @@ func (s *ProtocolSession) HandleReceivedCommitment(senderNodeID int64, commitmen
 
 // HandleReceivedAck stores an acknowledgement and signals completion if all acks received for this dealer
 // Returns error if duplicate ack detected
-func (s *ProtocolSession) HandleReceivedAck(dealerNodeID, playerNodeID int64, ack *types.Acknowledgement) error {
+func (s *ProtocolSession) HandleReceivedAck(dealer, player common.Address, ack *types.Acknowledgement) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	// Reject duplicates
-	if s.acks[dealerNodeID] != nil {
-		if _, exists := s.acks[dealerNodeID][playerNodeID]; exists {
-			return fmt.Errorf("duplicate ack from player %d for dealer %d", playerNodeID, dealerNodeID)
+	if s.acks[dealer] != nil {
+		if _, exists := s.acks[dealer][player]; exists {
+			return fmt.Errorf("duplicate ack from player %s for dealer %s", player.Hex(), dealer.Hex())
 		}
 	}
 
-	if s.acks[dealerNodeID] == nil {
-		s.acks[dealerNodeID] = make(map[int64]*types.Acknowledgement)
+	if s.acks[dealer] == nil {
+		s.acks[dealer] = make(map[common.Address]*types.Acknowledgement)
 	}
-	s.acks[dealerNodeID][playerNodeID] = ack
+	s.acks[dealer][player] = ack
 
 	// Signal completion when EXACTLY all expected acks received (for this dealer)
 	expectedAcks := len(s.Operators) - 1 // All except self
-	if len(s.acks[dealerNodeID]) == expectedAcks {
+	if len(s.acks[dealer]) == expectedAcks {
 		select {
 		case s.acksCompleteChan <- true:
 		default: // Already signaled
@@ -220,21 +216,26 @@ func (ps *ProtocolSession) toPersistenceState() *persistence.ProtocolSessionStat
 		operatorAddresses[i] = op.OperatorAddress.Hex()
 	}
 
-	// Convert shares (fr.Element -> string)
-	shares := make(map[int64]string)
-	for nodeID, share := range ps.shares {
-		shares[nodeID] = types.SerializeFr(share).Data
+	// Convert shares (fr.Element -> string, key = address hex)
+	shares := make(map[string]string)
+	for addr, share := range ps.shares {
+		shares[addr.Hex()] = types.SerializeFr(share).Data
 	}
 
-	// Commitments and acknowledgements are already serializable
-	commitments := make(map[int64][]types.G2Point)
-	for k, v := range ps.commitments {
-		commitments[k] = v
+	// Commitments (key = address hex)
+	commitments := make(map[string][]types.G2Point)
+	for addr, v := range ps.commitments {
+		commitments[addr.Hex()] = v
 	}
 
-	acks := make(map[int64]map[int64]*types.Acknowledgement)
-	for k, v := range ps.acks {
-		acks[k] = v
+	// Acknowledgements (key = address hex)
+	acks := make(map[string]map[string]*types.Acknowledgement)
+	for dealer, ackMap := range ps.acks {
+		innerMap := make(map[string]*types.Acknowledgement)
+		for player, ack := range ackMap {
+			innerMap[player.Hex()] = ack
+		}
+		acks[dealer.Hex()] = innerMap
 	}
 
 	return &persistence.ProtocolSessionState{
@@ -304,9 +305,6 @@ func NewNode(
 	// Parse operator address
 	operatorAddress := common.HexToAddress(cfg.OperatorAddress)
 
-	// Use operator address hash as transport client ID (for consistency)
-	transportClientID := addressToNodeID(operatorAddress)
-
 	n := &Node{
 		OperatorAddress:           operatorAddress,
 		Port:                      cfg.Port,
@@ -344,7 +342,7 @@ func NewNode(
 
 	// Initialize transport with authenticated messaging
 	// TODO(seanmcgary): this should be injected, not created here
-	n.transport = transport.NewClient(transportClientID, operatorAddress, tps)
+	n.transport = transport.NewClient(operatorAddress, tps)
 
 	return n, nil
 }
@@ -656,12 +654,8 @@ func (n *Node) fetchCurrentOperators(ctx context.Context, avsAddress string, ope
 	sortedPeers := make([]*peering.OperatorSetPeer, len(operatorSetPeers.Peers))
 	copy(sortedPeers, operatorSetPeers.Peers)
 	sort.Slice(sortedPeers, func(i, j int) bool {
-		return sortedPeers[i].OperatorAddress.Hex() < sortedPeers[j].OperatorAddress.Hex()
+		return bytes.Compare(sortedPeers[i].OperatorAddress.Bytes(), sortedPeers[j].OperatorAddress.Bytes()) < 0
 	})
-
-	if err := validateOperatorSetNoNodeIDCollisions(sortedPeers); err != nil {
-		return nil, err
-	}
 
 	n.logger.Sugar().Infow("Fetched operators from chain",
 		"operator_address", n.OperatorAddress.Hex(),
@@ -670,18 +664,17 @@ func (n *Node) fetchCurrentOperators(ctx context.Context, avsAddress string, ope
 			return fmt.Sprintf("%s:%s", op.OperatorAddress.String(), op.SocketAddress)
 		}), ", "),
 	)
+
+	if err := validateOperatorSetNoDuplicates(sortedPeers); err != nil {
+		return nil, fmt.Errorf("operator set validation failed: %w", err)
+	}
+
 	return sortedPeers, nil
 }
 
-// validateOperatorSetNoNodeIDCollisions fails fast if:
-// - the operator list contains duplicate addresses, or
-// - util.AddressToNodeID(address) collides for two different addresses.
-//
-// This is critical because node IDs are used as map keys in protocol sessions; collisions would
-// cause silent overwrites and split-brain / misrouting.
-func validateOperatorSetNoNodeIDCollisions(operators []*peering.OperatorSetPeer) error {
+// validateOperatorSetNoDuplicates fails fast if the operator list contains duplicate addresses.
+func validateOperatorSetNoDuplicates(operators []*peering.OperatorSetPeer) error {
 	seenAddrs := make(map[common.Address]struct{}, len(operators))
-	seenNodeIDs := make(map[int64]common.Address, len(operators))
 
 	for _, op := range operators {
 		if op == nil {
@@ -693,14 +686,6 @@ func validateOperatorSetNoNodeIDCollisions(operators []*peering.OperatorSetPeer)
 			return fmt.Errorf("duplicate operator address in operator set: %s", addr.Hex())
 		}
 		seenAddrs[addr] = struct{}{}
-
-		id := addressToNodeID(addr)
-		// Check for nodeID collision between different addresses.
-		// (If prev == addr, the duplicate-address check above would have already triggered.)
-		if prev, ok := seenNodeIDs[id]; ok && prev != addr {
-			return fmt.Errorf("derived nodeID collision: node_id=%d addr1=%s addr2=%s", id, prev.Hex(), addr.Hex())
-		}
-		seenNodeIDs[id] = addr
 	}
 
 	return nil
@@ -709,21 +694,21 @@ func validateOperatorSetNoNodeIDCollisions(operators []*peering.OperatorSetPeer)
 // validateReshareOperatorOverlap ensures that enough operators from the previous key version
 // remain in the new operator set to satisfy the old threshold. If fewer than ⌈2n/3⌉ of the
 // original n participants are still present, the reshare cannot reconstruct the master secret.
-func validateReshareOperatorOverlap(oldParticipantIDs []int64, newOperators []*peering.OperatorSetPeer) error {
-	if len(oldParticipantIDs) == 0 {
+func validateReshareOperatorOverlap(oldParticipants []common.Address, newOperators []*peering.OperatorSetPeer) error {
+	if len(oldParticipants) == 0 {
 		return nil
 	}
 
-	oldThreshold := dkg.CalculateThreshold(len(oldParticipantIDs))
+	oldThreshold := dkg.CalculateThreshold(len(oldParticipants))
 
-	newOperatorIDs := make(map[int64]struct{}, len(newOperators))
+	newOperatorAddrs := make(map[common.Address]struct{}, len(newOperators))
 	for _, op := range newOperators {
-		newOperatorIDs[addressToNodeID(op.OperatorAddress)] = struct{}{}
+		newOperatorAddrs[op.OperatorAddress] = struct{}{}
 	}
 
 	overlap := 0
-	for _, id := range oldParticipantIDs {
-		if _, ok := newOperatorIDs[id]; ok {
+	for _, addr := range oldParticipants {
+		if _, ok := newOperatorAddrs[addr]; ok {
 			overlap++
 		}
 	}
@@ -731,7 +716,7 @@ func validateReshareOperatorOverlap(oldParticipantIDs []int64, newOperators []*p
 	if overlap < oldThreshold {
 		return fmt.Errorf(
 			"insufficient operator overlap for reshare: %d of %d previous participants remain in the new operator set, need at least %d",
-			overlap, len(oldParticipantIDs), oldThreshold,
+			overlap, len(oldParticipants), oldThreshold,
 		)
 	}
 
@@ -757,13 +742,13 @@ func (n *Node) hasExistingShares() bool {
 func (n *Node) countNewOperatorsInSet(operators []*peering.OperatorSetPeer) int {
 	activeVersion := n.keyStore.GetActiveVersion()
 	if activeVersion != nil {
-		prevIDs := make(map[int64]struct{}, len(activeVersion.ParticipantIDs))
-		for _, id := range activeVersion.ParticipantIDs {
-			prevIDs[id] = struct{}{}
+		prevAddrs := make(map[common.Address]struct{}, len(activeVersion.ParticipantIDs))
+		for _, addr := range activeVersion.ParticipantIDs {
+			prevAddrs[addr] = struct{}{}
 		}
 		newCount := 0
 		for _, op := range operators {
-			if _, found := prevIDs[addressToNodeID(op.OperatorAddress)]; !found {
+			if _, found := prevAddrs[op.OperatorAddress]; !found {
 				newCount++
 			}
 		}
@@ -823,7 +808,7 @@ func (n *Node) detectClusterState(operators []*peering.OperatorSetPeer) string {
 
 // createSession creates a new protocol session with the provided timestamp
 func (n *Node) createSession(sessionType string, operators []*peering.OperatorSetPeer, sessionTimestamp int64) (*ProtocolSession, error) {
-	if err := validateOperatorSetNoNodeIDCollisions(operators); err != nil {
+	if err := validateOperatorSetNoDuplicates(operators); err != nil {
 		return nil, err
 	}
 
@@ -833,19 +818,18 @@ func (n *Node) createSession(sessionType string, operators []*peering.OperatorSe
 		Phase:                   1,
 		StartTime:               time.Now(),
 		Operators:               operators,
-		shares:                  make(map[int64]*fr.Element),
-		commitments:             make(map[int64][]types.G2Point),
-		acks:                    make(map[int64]map[int64]*types.Acknowledgement),
+		shares:                  make(map[common.Address]*fr.Element),
+		commitments:             make(map[common.Address][]types.G2Point),
+		acks:                    make(map[common.Address]map[common.Address]*types.Acknowledgement),
 		sharesCompleteChan:      make(chan bool, 1),
 		commitmentsCompleteChan: make(chan bool, 1),
 		acksCompleteChan:        make(chan bool, 1),
-		verifiedOperators:       make(map[int64]bool),
+		verifiedOperators:       make(map[common.Address]bool),
 	}
 
 	// Initialize acks map for each operator (as dealer)
 	for _, op := range operators {
-		nodeID := addressToNodeID(op.OperatorAddress)
-		session.acks[nodeID] = make(map[int64]*types.Acknowledgement)
+		session.acks[op.OperatorAddress] = make(map[common.Address]*types.Acknowledgement)
 	}
 
 	n.sessionMutex.Lock()
@@ -975,9 +959,6 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 			"error", err)
 	}
 
-	// Use keccak256 hash of operator address as node ID
-	thisNodeID := addressToNodeID(n.OperatorAddress)
-
 	// Verify this operator is in the fetched operator set
 	operatorFound := false
 	for _, op := range operators {
@@ -987,14 +968,14 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 		}
 	}
 	if !operatorFound {
-		return fmt.Errorf("this operator %s (ID: %d) not found in operator set", n.OperatorAddress.Hex(), thisNodeID)
+		return fmt.Errorf("this operator %s not found in operator set", n.OperatorAddress.Hex())
 	}
 
-	// Create DKG instance using address-derived ID
+	// Create DKG instance using operator address
 	threshold := dkg.CalculateThreshold(len(operators))
-	n.dkg = dkg.NewDKG(thisNodeID, threshold, operators)
+	n.dkg = dkg.NewDKG(n.OperatorAddress, threshold, operators)
 
-	n.logger.Sugar().Infow("Starting DKG Phase 1", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "threshold", threshold, "total_operators", len(operators))
+	n.logger.Sugar().Infow("Starting DKG Phase 1", "operator_address", n.OperatorAddress.Hex(), "threshold", threshold, "total_operators", len(operators))
 
 	// Phase 1: Generate shares and commitments
 	shares, commitments, err := n.dkg.GenerateShares()
@@ -1007,8 +988,8 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	// and sends an ack back before we've stored our own commitment in the
 	// session — causing verifyAcknowledgement to reject the ack with
 	// "dealer commitments unavailable".
-	_ = session.HandleReceivedShare(thisNodeID, shares[thisNodeID])
-	_ = session.HandleReceivedCommitment(thisNodeID, commitments)
+	_ = session.HandleReceivedShare(n.OperatorAddress, shares[n.OperatorAddress])
+	_ = session.HandleReceivedCommitment(n.OperatorAddress, commitments)
 
 	// Broadcast commitments
 	if err := n.transport.BroadcastDKGCommitments(operators, commitments, session.SessionTimestamp); err != nil {
@@ -1018,14 +999,14 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 
 	// Send shares to each participant
 	for _, op := range operators {
-		opNodeID := addressToNodeID(op.OperatorAddress)
-		if opNodeID == thisNodeID {
+
+		if op.OperatorAddress == n.OperatorAddress {
 			continue // Already stored above
 		}
 		n.logger.Sugar().Debugw("Sending share to operator",
 			"operator_address", n.OperatorAddress.Hex(),
 			"target", op.OperatorAddress.Hex())
-		if err := n.transport.SendDKGShare(op, shares[opNodeID], session.SessionTimestamp); err != nil {
+		if err := n.transport.SendDKGShare(op, shares[op.OperatorAddress], session.SessionTimestamp); err != nil {
 			n.logger.Sugar().Warnw("Failed to send share to operator",
 				"operator_address", n.OperatorAddress.Hex(),
 				"target", op.OperatorAddress.Hex(),
@@ -1054,7 +1035,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	}
 
 	// Phase 2: Verify and send acknowledgements
-	n.logger.Sugar().Infow("Starting DKG Phase 2", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "phase", "verify_and_ack")
+	n.logger.Sugar().Infow("Starting DKG Phase 2", "operator_address", n.OperatorAddress.Hex(), "phase", "verify_and_ack")
 
 	// Get shares and commitments from session (we know we have all of them now)
 	session.mu.RLock()
@@ -1062,22 +1043,22 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	receivedCommitments := session.commitments
 	session.mu.RUnlock()
 
-	validShares := make(map[int64]*fr.Element)
-	for dealerID, share := range receivedShares {
-		commitments := receivedCommitments[dealerID]
+	validShares := make(map[common.Address]*fr.Element)
+	for dealerAddr, share := range receivedShares {
+		commitments := receivedCommitments[dealerAddr]
 		if n.dkg.VerifyShare(share, commitments) {
-			validShares[dealerID] = share
+			validShares[dealerAddr] = share
 
 			// Skip sending ack to self — a dealer does not need to ack its own share.
-			if dealerID == thisNodeID {
-				n.logger.Sugar().Debugw("Skipping self-ack", "operator_address", n.OperatorAddress.Hex(), "dealer_id", dealerID)
+			if dealerAddr == n.OperatorAddress {
+				n.logger.Sugar().Debugw("Skipping self-ack", "operator_address", n.OperatorAddress.Hex(), "dealer_address", dealerAddr.Hex())
 				continue
 			}
 
 			// Find dealer's peer info for transport
 			var dealerPeer *peering.OperatorSetPeer
 			for _, op := range operators {
-				if addressToNodeID(op.OperatorAddress) == dealerID {
+				if op.OperatorAddress == dealerAddr {
 					dealerPeer = op
 					break
 				}
@@ -1100,13 +1081,12 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 			} else {
 				n.logger.Sugar().Debugw("Sent acknowledgement",
 					"operator_address", n.OperatorAddress.Hex(),
-					"dealer_address", dealerPeer.OperatorAddress.Hex(),
-					"dealer_id", dealerID)
+					"dealer_address", dealerAddr.Hex())
 			}
 
-			n.logger.Sugar().Infow("Verified and acked share", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "dealer_id", dealerID)
+			n.logger.Sugar().Infow("Verified and acked share", "operator_address", n.OperatorAddress.Hex(), "dealer_address", dealerAddr.Hex())
 		} else {
-			n.logInvalidShareComplaint("dkg", sessionTimestamp, thisNodeID, dealerID, share, commitments)
+			n.logInvalidShareComplaint("dkg", sessionTimestamp, n.OperatorAddress, dealerAddr, share, commitments)
 		}
 	}
 
@@ -1115,12 +1095,12 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	// Wait for acknowledgements (as a dealer).
 	// We require a threshold (t) of *other* operators to ack, so that there exist t non-dealer holders
 	// of this dealer's contribution (robust even if the dealer goes offline later).
-	myNodeID := addressToNodeID(n.OperatorAddress)
+
 	requiredAcks := threshold
 	if requiredAcks < 0 {
 		requiredAcks = 0
 	}
-	if err := waitForAcks(session, myNodeID, requiredAcks, protocolTimeout); err != nil {
+	if err := waitForAcks(session, n.OperatorAddress, requiredAcks, protocolTimeout); err != nil {
 		return fmt.Errorf("insufficient acknowledgements: %v", err)
 	}
 
@@ -1142,7 +1122,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	// Collect acknowledgements from session where I am the dealer
 	session.mu.RLock()
 	myAcks := make([]*types.Acknowledgement, 0)
-	if ackMap, ok := session.acks[myNodeID]; ok {
+	if ackMap, ok := session.acks[n.OperatorAddress]; ok {
 		for _, ack := range ackMap {
 			myAcks = append(myAcks, ack)
 		}
@@ -1213,18 +1193,17 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 
 	// Phase 6: Finalize
 	n.logger.Sugar().Infow("DKG Phase 6: Finalizing key share",
-		"operator_address", n.OperatorAddress.Hex(),
-		"node_id", thisNodeID)
+		"operator_address", n.OperatorAddress.Hex())
 
 	// Build trusted dealer set: intersection of polynomial-verified shares and merkle-verified operators.
 	// Self is always trusted (a node doesn't verify its own broadcast).
 	session.mu.RLock()
-	verifiedOps := make(map[int64]bool, len(session.verifiedOperators))
+	verifiedOps := make(map[common.Address]bool, len(session.verifiedOperators))
 	for k, v := range session.verifiedOperators {
 		verifiedOps[k] = v
 	}
 	session.mu.RUnlock()
-	verifiedOps[thisNodeID] = true
+	verifiedOps[n.OperatorAddress] = true
 
 	trustedShares := trustedDealerIDs(validShares, verifiedOps)
 
@@ -1235,16 +1214,16 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 		"trusted_dealers", len(trustedShares))
 
 	allCommitments := make([][]types.G2Point, 0, len(trustedShares))
-	participantIDs := make([]int64, 0, len(trustedShares))
-	finalShares := make(map[int64]*fr.Element, len(trustedShares))
+	participantIDs := make([]common.Address, 0, len(trustedShares))
+	finalShares := make(map[common.Address]*fr.Element, len(trustedShares))
 
 	for _, op := range operators {
-		opNodeID := addressToNodeID(op.OperatorAddress)
-		if share, ok := trustedShares[opNodeID]; ok {
-			if comm, ok := receivedCommitments[opNodeID]; ok {
+
+		if share, ok := trustedShares[op.OperatorAddress]; ok {
+			if comm, ok := receivedCommitments[op.OperatorAddress]; ok {
 				allCommitments = append(allCommitments, comm)
-				participantIDs = append(participantIDs, opNodeID)
-				finalShares[opNodeID] = share
+				participantIDs = append(participantIDs, op.OperatorAddress)
+				finalShares[op.OperatorAddress] = share
 			}
 		}
 	}
@@ -1293,7 +1272,6 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 
 	n.logger.Sugar().Infow("DKG complete",
 		"operator_address", n.OperatorAddress.Hex(),
-		"node_id", thisNodeID,
 		"version", keyVersion.Version)
 	return nil
 }
@@ -1317,9 +1295,6 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		return fmt.Errorf("numNewOperators %d out of range [0, %d)", numNewOperators, len(operators))
 	}
 
-	// Use keccak256 hash of operator address as node ID (same as DKG)
-	thisNodeID := addressToNodeID(n.OperatorAddress)
-
 	// Verify this operator is in the fetched operator set
 	operatorFound := false
 	for _, op := range operators {
@@ -1329,7 +1304,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		}
 	}
 	if !operatorFound {
-		return fmt.Errorf("this operator %s (ID: %d) not found in reshare operator set", n.OperatorAddress.Hex(), thisNodeID)
+		return fmt.Errorf("this operator %s not found in reshare operator set", n.OperatorAddress.Hex())
 	}
 
 	// Validate that enough old participants remain in the new operator set to reconstruct the secret.
@@ -1343,10 +1318,10 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 
 	// Calculate new threshold
 	newThreshold := dkg.CalculateThreshold(len(operators))
-	n.logger.Sugar().Infow("Starting reshare", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "threshold", newThreshold, "operators", len(operators))
+	n.logger.Sugar().Infow("Starting reshare", "operator_address", n.OperatorAddress.Hex(), "threshold", newThreshold, "operators", len(operators))
 
 	// Create reshare instance with current operators
-	n.resharer = reshare.NewReshare(thisNodeID, operators)
+	n.resharer = reshare.NewReshare(n.OperatorAddress, operators)
 
 	// Get current share
 	currentShare, err := n.keyStore.GetActivePrivateShare()
@@ -1381,8 +1356,8 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	// and sends an ack back before we've stored our own commitment in the
 	// session — causing verifyAcknowledgement to reject the ack with
 	// "dealer commitments unavailable".
-	_ = session.HandleReceivedShare(thisNodeID, shares[thisNodeID])
-	_ = session.HandleReceivedCommitment(thisNodeID, commitments)
+	_ = session.HandleReceivedShare(n.OperatorAddress, shares[n.OperatorAddress])
+	_ = session.HandleReceivedCommitment(n.OperatorAddress, commitments)
 
 	// Broadcast commitments
 	if err := n.transport.BroadcastReshareCommitments(operators, commitments, session.SessionTimestamp); err != nil {
@@ -1392,11 +1367,11 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 
 	// Send shares to all operators
 	for _, op := range operators {
-		opNodeID := addressToNodeID(op.OperatorAddress)
-		if opNodeID == thisNodeID {
+
+		if op.OperatorAddress == n.OperatorAddress {
 			continue // Already stored above
 		}
-		if err := n.transport.SendReshareShare(op, shares[opNodeID], session.SessionTimestamp); err != nil {
+		if err := n.transport.SendReshareShare(op, shares[op.OperatorAddress], session.SessionTimestamp); err != nil {
 			n.logger.Sugar().Warnw("Failed to send reshare share to operator",
 				"operator_address", n.OperatorAddress.Hex(),
 				"target", op.OperatorAddress.Hex(),
@@ -1405,47 +1380,47 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		}
 	}
 
-	// Build set of existing operator IDs from active key version.
-	// Only existing operators hold valid key shares to redistribute;
-	// new operators could maliciously send shares and commitments.
-	existingOpIDs := make(map[int64]bool)
-	if activeVersion := n.keyStore.GetActiveVersion(); activeVersion != nil {
-		for _, id := range activeVersion.ParticipantIDs {
-			existingOpIDs[id] = true
-		}
+	// Build set of operator IDs from the on-chain operator set.
+	// All operators registered on-chain are legitimate dealers; polynomial
+	// commitment verification (below) guards against invalid shares.
+	// Using ParticipantIDs from activeVersion would exclude operators that
+	// missed a previous reshare, permanently orphaning them from the quorum.
+	onChainOpIDs := make(map[common.Address]bool, len(operators))
+	for _, op := range operators {
+		onChainOpIDs[op.OperatorAddress] = true
 	}
 
 	// Wait for shares and commitments. New operators (running RunReshareAsNewOperator) do not
 	// contribute shares, so only existing operators can contribute. We require a threshold of
 	// those existing operators rather than all of them, so resharing can proceed even if some
 	// existing operators are offline (per KMS-010 recommendation).
-	// Count functions filter to existing operators only so that shares/commitments from new
+	// Count functions filter to on-chain operators so that shares/commitments from new
 	// operators do not inflate the count toward the threshold.
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
 	existingOperators := len(operators) - numNewOperators
 	requiredContributions := dkg.CalculateThreshold(existingOperators)
-	countExistingShares := func() int {
+	countOnChainShares := func() int {
 		count := 0
-		for id := range session.shares {
-			if existingOpIDs[id] {
+		for addr := range session.shares {
+			if onChainOpIDs[addr] {
 				count++
 			}
 		}
 		return count
 	}
-	countExistingCommitments := func() int {
+	countOnChainCommitments := func() int {
 		count := 0
-		for id := range session.commitments {
-			if existingOpIDs[id] {
+		for addr := range session.commitments {
+			if onChainOpIDs[addr] {
 				count++
 			}
 		}
 		return count
 	}
-	if err := waitForN(session, requiredContributions, protocolTimeout, countExistingShares, "shares"); err != nil {
+	if err := waitForN(session, requiredContributions, protocolTimeout, countOnChainShares, "shares"); err != nil {
 		return err
 	}
-	if err := waitForN(session, requiredContributions, protocolTimeout, countExistingCommitments, "commitments"); err != nil {
+	if err := waitForN(session, requiredContributions, protocolTimeout, countOnChainCommitments, "commitments"); err != nil {
 		return err
 	}
 
@@ -1461,43 +1436,42 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 
 	// Phase 1b: Verify shares and send acknowledgements
 	n.logger.Sugar().Infow("Reshare Phase 1b: Verifying shares and sending acknowledgements",
-		"operator_address", n.OperatorAddress.Hex(),
-		"node_id", thisNodeID)
+		"operator_address", n.OperatorAddress.Hex())
 
-	// Copy shares and commitments from session under lock, filtering to existing operators only.
+	// Copy shares and commitments from session under lock, filtering to on-chain operators only.
 	// After threshold fallback, late-arriving shares may still be written concurrently.
 	session.mu.RLock()
-	receivedShares := make(map[int64]*fr.Element)
-	for id, s := range session.shares {
-		if existingOpIDs[id] {
-			receivedShares[id] = s
+	receivedShares := make(map[common.Address]*fr.Element)
+	for addr, s := range session.shares {
+		if onChainOpIDs[addr] {
+			receivedShares[addr] = s
 		}
 	}
-	receivedCommitments := make(map[int64][]types.G2Point)
-	for id, c := range session.commitments {
-		if existingOpIDs[id] {
-			receivedCommitments[id] = c
+	receivedCommitments := make(map[common.Address][]types.G2Point)
+	for addr, c := range session.commitments {
+		if onChainOpIDs[addr] {
+			receivedCommitments[addr] = c
 		}
 	}
 	session.mu.RUnlock()
 
-	validShares := make(map[int64]*fr.Element)
-	invalidDealers := make([]int64, 0)
-	for dealerID, share := range receivedShares {
-		commitments := receivedCommitments[dealerID]
+	validShares := make(map[common.Address]*fr.Element)
+	invalidDealers := make([]common.Address, 0)
+	for dealerAddr, share := range receivedShares {
+		commitments := receivedCommitments[dealerAddr]
 		if n.resharer.VerifyNewShare(share, commitments) {
-			validShares[dealerID] = share
+			validShares[dealerAddr] = share
 
 			// Skip sending ack to self — a dealer does not need to ack its own share.
-			if dealerID == thisNodeID {
-				n.logger.Sugar().Debugw("Skipping self-ack for reshare", "operator_address", n.OperatorAddress.Hex(), "dealer_id", dealerID)
+			if dealerAddr == n.OperatorAddress {
+				n.logger.Sugar().Debugw("Skipping self-ack for reshare", "operator_address", n.OperatorAddress.Hex(), "dealer_address", dealerAddr.Hex())
 				continue
 			}
 
 			// Find dealer's peer info for transport
 			var dealerPeer *peering.OperatorSetPeer
 			for _, op := range operators {
-				if addressToNodeID(op.OperatorAddress) == dealerID {
+				if op.OperatorAddress == dealerAddr {
 					dealerPeer = op
 					break
 				}
@@ -1520,17 +1494,15 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 			} else {
 				n.logger.Sugar().Debugw("Sent reshare acknowledgement",
 					"operator_address", n.OperatorAddress.Hex(),
-					"dealer_address", dealerPeer.OperatorAddress.Hex(),
-					"dealer_id", dealerID)
+					"dealer_address", dealerAddr.Hex())
 			}
 
 			n.logger.Sugar().Infow("Verified and acked reshare share",
 				"operator_address", n.OperatorAddress.Hex(),
-				"node_id", thisNodeID,
-				"dealer_id", dealerID)
+				"dealer_address", dealerAddr.Hex())
 		} else {
-			n.logInvalidShareComplaint("reshare", sessionTimestamp, thisNodeID, dealerID, share, commitments)
-			invalidDealers = append(invalidDealers, dealerID)
+			n.logInvalidShareComplaint("reshare", sessionTimestamp, n.OperatorAddress, dealerAddr, share, commitments)
+			invalidDealers = append(invalidDealers, dealerAddr)
 		}
 	}
 
@@ -1550,15 +1522,15 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	// We require newThreshold acks so that at least t operators in the new committee have
 	// confirmed receipt of this dealer's contribution. Both existing and new operators send
 	// acks, so the reachable ack count is len(operators)-1 (everyone except this dealer).
-	myNodeID := addressToNodeID(n.OperatorAddress)
+
 	requiredAcks := newThreshold
 	if requiredAcks < 0 {
 		requiredAcks = 0
 	}
-	if err := waitForAcks(session, myNodeID, requiredAcks, protocolTimeout); err != nil {
+	if err := waitForAcks(session, n.OperatorAddress, requiredAcks, protocolTimeout); err != nil {
 		// Threshold fallback: check if we have at least threshold-1 acks
 		session.mu.RLock()
-		ackMap := session.acks[myNodeID]
+		ackMap := session.acks[n.OperatorAddress]
 		received := 0
 		if ackMap != nil {
 			received = len(ackMap)
@@ -1585,7 +1557,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	// Collect acknowledgements from session where I am the dealer
 	session.mu.RLock()
 	myAcks := make([]*types.Acknowledgement, 0)
-	if ackMap, ok := session.acks[myNodeID]; ok {
+	if ackMap, ok := session.acks[n.OperatorAddress]; ok {
 		for _, ack := range ackMap {
 			myAcks = append(myAcks, ack)
 		}
@@ -1604,7 +1576,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 
 	// Compute commitment hash from my commitments (from session)
 	session.mu.RLock()
-	myCommitments, ok := session.commitments[myNodeID]
+	myCommitments, ok := session.commitments[n.OperatorAddress]
 	session.mu.RUnlock()
 	if !ok {
 		return fmt.Errorf("my commitments not found in reshare")
@@ -1663,18 +1635,17 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 
 	// Phase 5: Finalize reshare
 	n.logger.Sugar().Infow("Reshare Phase 5: Finalizing key share",
-		"operator_address", n.OperatorAddress.Hex(),
-		"node_id", thisNodeID)
+		"operator_address", n.OperatorAddress.Hex())
 
 	// Build trusted dealer set: intersection of polynomial-verified shares and merkle-verified operators.
 	// Self is always trusted (a node doesn't verify its own broadcast).
 	session.mu.RLock()
-	verifiedOps := make(map[int64]bool, len(session.verifiedOperators))
+	verifiedOps := make(map[common.Address]bool, len(session.verifiedOperators))
 	for k, v := range session.verifiedOperators {
 		verifiedOps[k] = v
 	}
 	session.mu.RUnlock()
-	verifiedOps[thisNodeID] = true
+	verifiedOps[n.OperatorAddress] = true
 
 	trustedShares := trustedDealerIDs(validShares, verifiedOps)
 
@@ -1684,13 +1655,13 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		"merkle_verified", len(verifiedOps),
 		"trusted_dealers", len(trustedShares))
 
-	participantIDsForFinalize := make([]int64, 0, len(trustedShares))
-	finalShares := make(map[int64]*fr.Element, len(trustedShares))
+	participantIDsForFinalize := make([]common.Address, 0, len(trustedShares))
+	finalShares := make(map[common.Address]*fr.Element, len(trustedShares))
 	for _, op := range operators {
-		opNodeID := addressToNodeID(op.OperatorAddress)
-		if share, ok := trustedShares[opNodeID]; ok {
-			participantIDsForFinalize = append(participantIDsForFinalize, opNodeID)
-			finalShares[opNodeID] = share
+
+		if share, ok := trustedShares[op.OperatorAddress]; ok {
+			participantIDsForFinalize = append(participantIDsForFinalize, op.OperatorAddress)
+			finalShares[op.OperatorAddress] = share
 		}
 	}
 	if len(participantIDsForFinalize) < newThreshold {
@@ -1735,7 +1706,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	// Only add to keystore after successful persistence
 	n.keyStore.AddVersion(newKeyVersion)
 
-	n.logger.Sugar().Infow("Reshare completed", "operator_address", n.OperatorAddress.Hex(), "node_id", thisNodeID, "new_version", newKeyVersion.Version)
+	n.logger.Sugar().Infow("Reshare completed", "operator_address", n.OperatorAddress.Hex(), "new_version", newKeyVersion.Version)
 
 	return nil
 }
@@ -1756,7 +1727,7 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	// Build set of existing operator IDs by querying /pubkey endpoints.
 	// Only existing operators hold valid key shares to redistribute;
 	// new operators could maliciously send shares and commitments.
-	existingOpIDs := make(map[int64]bool)
+	existingOpIDs := make(map[common.Address]bool)
 	if n.transport != nil {
 		for _, op := range operators {
 			commitments, err := n.transport.QueryOperatorPubkey(op)
@@ -1766,7 +1737,7 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 					"peer", op.OperatorAddress.Hex(),
 					"error", err)
 			} else if len(commitments) > 0 {
-				existingOpIDs[addressToNodeID(op.OperatorAddress)] = true
+				existingOpIDs[op.OperatorAddress] = true
 			}
 		}
 	} else {
@@ -1783,10 +1754,8 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		return fmt.Errorf("numNewOperators %d out of range [1, %d)", numNewOperators, len(operators))
 	}
 
-	thisNodeID := addressToNodeID(n.OperatorAddress)
-
 	// Create reshare instance
-	n.resharer = reshare.NewReshare(thisNodeID, operators)
+	n.resharer = reshare.NewReshare(n.OperatorAddress, operators)
 
 	// Create session for this reshare (as recipient only)
 	session, err := n.createSession("reshare", operators, sessionTimestamp)
@@ -1817,8 +1786,8 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	protocolTimeout := config.GetProtocolTimeoutForChain(n.ChainID)
 	countExistingShares := func() int {
 		count := 0
-		for id := range session.shares {
-			if existingOpIDs[id] {
+		for addr := range session.shares {
+			if existingOpIDs[addr] {
 				count++
 			}
 		}
@@ -1826,8 +1795,8 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	}
 	countExistingCommitments := func() int {
 		count := 0
-		for id := range session.commitments {
-			if existingOpIDs[id] {
+		for addr := range session.commitments {
+			if existingOpIDs[addr] {
 				count++
 			}
 		}
@@ -1843,31 +1812,31 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	// Copy shares and commitments from session under lock, filtering to existing operators only.
 	// After threshold fallback, late-arriving shares may still be written concurrently.
 	session.mu.RLock()
-	receivedShares := make(map[int64]*fr.Element)
-	for id, s := range session.shares {
-		if existingOpIDs[id] {
-			receivedShares[id] = s
+	receivedShares := make(map[common.Address]*fr.Element)
+	for addr, s := range session.shares {
+		if existingOpIDs[addr] {
+			receivedShares[addr] = s
 		}
 	}
-	receivedCommitments := make(map[int64][]types.G2Point)
-	for id, c := range session.commitments {
-		if existingOpIDs[id] {
-			receivedCommitments[id] = c
+	receivedCommitments := make(map[common.Address][]types.G2Point)
+	for addr, c := range session.commitments {
+		if existingOpIDs[addr] {
+			receivedCommitments[addr] = c
 		}
 	}
 	session.mu.RUnlock()
 
 	// Verify all dealer shares and send acknowledgements to prevent dealer equivocation.
-	validShares := make(map[int64]*fr.Element)
+	validShares := make(map[common.Address]*fr.Element)
 	for _, op := range operators {
-		dealerID := addressToNodeID(op.OperatorAddress)
-		share, hasShare := receivedShares[dealerID]
-		commitments, hasCommitments := receivedCommitments[dealerID]
+		dealerAddr := op.OperatorAddress
+		share, hasShare := receivedShares[dealerAddr]
+		commitments, hasCommitments := receivedCommitments[dealerAddr]
 		if !hasShare || share == nil || !hasCommitments || len(commitments) == 0 {
 			continue
 		}
 		if n.resharer.VerifyNewShare(share, commitments) {
-			validShares[dealerID] = share
+			validShares[dealerAddr] = share
 
 			// Create acknowledgement for verified share using operator addresses
 			ack := eigenxcrypto.CreateAcknowledgement(n.OperatorAddress, op.OperatorAddress, sessionTimestamp, share, commitments, n.signAcknowledgement)
@@ -1882,16 +1851,14 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 			} else {
 				n.logger.Sugar().Debugw("Sent reshare acknowledgement (new operator)",
 					"operator_address", n.OperatorAddress.Hex(),
-					"dealer_address", op.OperatorAddress.Hex(),
-					"dealer_id", dealerID)
+					"dealer_address", dealerAddr.Hex())
 			}
 
 			n.logger.Sugar().Infow("Verified and acked reshare share (new operator)",
 				"operator_address", n.OperatorAddress.Hex(),
-				"node_id", thisNodeID,
-				"dealer_id", dealerID)
+				"dealer_address", dealerAddr.Hex())
 		} else {
-			n.logInvalidShareComplaint("reshare-new-operator", sessionTimestamp, thisNodeID, dealerID, share, commitments)
+			n.logInvalidShareComplaint("reshare-new-operator", sessionTimestamp, n.OperatorAddress, dealerAddr, share, commitments)
 		}
 	}
 
@@ -1909,7 +1876,7 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 
 	// Build trusted dealer set: intersection of polynomial-verified shares and merkle-verified operators.
 	session.mu.RLock()
-	verifiedOps := make(map[int64]bool, len(session.verifiedOperators))
+	verifiedOps := make(map[common.Address]bool, len(session.verifiedOperators))
 	for k, v := range session.verifiedOperators {
 		verifiedOps[k] = v
 	}
@@ -1923,13 +1890,13 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		"merkle_verified", len(verifiedOps),
 		"trusted_dealers", len(trustedShares))
 
-	participantIDs := make([]int64, 0, len(trustedShares))
-	finalShares := make(map[int64]*fr.Element, len(trustedShares))
+	participantIDs := make([]common.Address, 0, len(trustedShares))
+	finalShares := make(map[common.Address]*fr.Element, len(trustedShares))
 	for _, op := range operators {
-		opNodeID := addressToNodeID(op.OperatorAddress)
-		if share, ok := trustedShares[opNodeID]; ok {
-			participantIDs = append(participantIDs, opNodeID)
-			finalShares[opNodeID] = share
+
+		if share, ok := trustedShares[op.OperatorAddress]; ok {
+			participantIDs = append(participantIDs, op.OperatorAddress)
+			finalShares[op.OperatorAddress] = share
 		}
 	}
 
@@ -1981,7 +1948,6 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 
 	n.logger.Sugar().Infow("Successfully joined cluster via reshare",
 		"operator_address", n.OperatorAddress.Hex(),
-		"node_id", thisNodeID,
 		"version", newKeyVersion.Version)
 
 	return nil
@@ -2116,7 +2082,7 @@ func waitForNCommitments(session *ProtocolSession, required int, timeout time.Du
 // waitForAcks waits for at least required acknowledgements to be received for a specific dealer using polling.
 // Note: We poll instead of using acksCompleteChan because the channel signals when ANY dealer
 // completes, not when THIS specific dealer completes. Each dealer needs to wait for their own acks.
-func waitForAcks(session *ProtocolSession, dealerNodeID int64, required int, timeout time.Duration) error {
+func waitForAcks(session *ProtocolSession, dealer common.Address, required int, timeout time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
@@ -2136,7 +2102,7 @@ func waitForAcks(session *ProtocolSession, dealerNodeID int64, required int, tim
 		select {
 		case <-ctx.Done():
 			session.mu.RLock()
-			ackMap := session.acks[dealerNodeID]
+			ackMap := session.acks[dealer]
 			received := 0
 			if ackMap != nil {
 				received = len(ackMap)
@@ -2146,7 +2112,7 @@ func waitForAcks(session *ProtocolSession, dealerNodeID int64, required int, tim
 
 		case <-ticker.C:
 			session.mu.RLock()
-			ackMap := session.acks[dealerNodeID]
+			ackMap := session.acks[dealer]
 			received := 0
 			if ackMap != nil {
 				received = len(ackMap)
@@ -2173,7 +2139,7 @@ func (n *Node) GetKeyStore() *keystore.KeyStore {
 }
 
 // RunDKGPhase1 runs only phase 1 of DKG (for testing)
-func (n *Node) RunDKGPhase1() (map[int64]*fr.Element, []types.G2Point, error) {
+func (n *Node) RunDKGPhase1() (map[common.Address]*fr.Element, []types.G2Point, error) {
 	return n.dkg.GenerateShares()
 }
 
@@ -2237,17 +2203,17 @@ func (n *Node) verifyMessage(authMsg *types.AuthenticatedMessage, senderPeer *pe
 
 // trustedDealerIDs returns the subset of validShares whose dealers also passed
 // merkle proof verification (present in verifiedOperators).
-func trustedDealerIDs(validShares map[int64]*fr.Element, verifiedOperators map[int64]bool) map[int64]*fr.Element {
-	trusted := make(map[int64]*fr.Element, len(validShares))
-	for dealerID, share := range validShares {
-		if verifiedOperators[dealerID] {
-			trusted[dealerID] = share
+func trustedDealerIDs(validShares map[common.Address]*fr.Element, verifiedOperators map[common.Address]bool) map[common.Address]*fr.Element {
+	trusted := make(map[common.Address]*fr.Element, len(validShares))
+	for addr, share := range validShares {
+		if verifiedOperators[addr] {
+			trusted[addr] = share
 		}
 	}
 	return trusted
 }
 
-func (n *Node) logInvalidShareComplaint(protocol string, sessionTimestamp int64, receiverNodeID int64, dealerID int64, share *fr.Element, commitments []types.G2Point) {
+func (n *Node) logInvalidShareComplaint(protocol string, sessionTimestamp int64, receiverAddr common.Address, dealerAddr common.Address, share *fr.Element, commitments []types.G2Point) {
 	// We intentionally log a compact "complaint record" that is sufficient to correlate
 	// off-chain alerts and (future) on-chain fraud proofs without dumping huge payloads.
 	//
@@ -2266,9 +2232,9 @@ func (n *Node) logInvalidShareComplaint(protocol string, sessionTimestamp int64,
 	n.logger.Sugar().Warnw("ComplaintRecord: invalid share",
 		"protocol", protocol,
 		"operator_address", n.OperatorAddress.Hex(),
-		"receiver_node_id", receiverNodeID,
+		"receiver_address", receiverAddr.Hex(),
 		"session_timestamp", sessionTimestamp,
-		"dealer_id", dealerID,
+		"dealer_address", dealerAddr.Hex(),
 		"share_hash", fmt.Sprintf("0x%x", shareHash[:]),
 		"share", shareStr,
 		"commitment_hash", fmt.Sprintf("0x%x", commitmentHash[:]),
@@ -2378,7 +2344,7 @@ func (n *Node) signAcknowledgement(dealerAddress, playerAddress common.Address, 
 func (n *Node) verifyAcknowledgement(
 	session *ProtocolSession,
 	senderPeer *peering.OperatorSetPeer,
-	expectedDealerID int64,
+	expectedDealer common.Address,
 	sessionTimestamp int64,
 	ack *types.Acknowledgement,
 ) error {
@@ -2401,10 +2367,10 @@ func (n *Node) verifyAcknowledgement(
 	}
 
 	session.mu.RLock()
-	dealerCommitments, ok := session.commitments[expectedDealerID]
+	dealerCommitments, ok := session.commitments[expectedDealer]
 	session.mu.RUnlock()
 	if !ok || len(dealerCommitments) == 0 {
-		return fmt.Errorf("dealer commitments unavailable for dealer %d", expectedDealerID)
+		return fmt.Errorf("dealer commitments unavailable for dealer %s", expectedDealer.Hex())
 	}
 	expectedCommitmentHash := eigenxcrypto.HashCommitment(dealerCommitments)
 	if ack.CommitmentHash != expectedCommitmentHash {
@@ -2488,11 +2454,11 @@ func (n *Node) VerifyOperatorBroadcast(
 
 	// Step 4: Verify MY ack's shareHash matches the share I received
 	session.mu.RLock()
-	receivedShare := session.shares[broadcast.FromOperatorID]
+	receivedShare := session.shares[broadcast.FromOperatorAddress]
 	session.mu.RUnlock()
 
 	if receivedShare == nil {
-		return fmt.Errorf("no share received from operator %d", broadcast.FromOperatorID)
+		return fmt.Errorf("no share received from operator %s", broadcast.FromOperatorAddress.Hex())
 	}
 
 	expectedShareHash := eigenxcrypto.HashShareForAck(receivedShare)
@@ -2513,11 +2479,11 @@ func (n *Node) VerifyOperatorBroadcast(
 
 	// Mark operator as verified
 	session.mu.Lock()
-	session.verifiedOperators[broadcast.FromOperatorID] = true
+	session.verifiedOperators[broadcast.FromOperatorAddress] = true
 	session.mu.Unlock()
 
 	n.logger.Sugar().Debugw("Verified operator broadcast",
-		"from_operator", broadcast.FromOperatorID,
+		"from_operator", broadcast.FromOperatorAddress.Hex(),
 		"session_timestamp", broadcast.SessionTimestamp,
 		"commitment_hash", fmt.Sprintf("%x", broadcastCommitmentHash[:8]),
 	)

@@ -109,7 +109,7 @@ func createTestNodeWithManager(t *testing.T, manager *attestation.AttestationMan
 		PrivateShare:   testShare,
 		Commitments:    []kmsTypes.G2Point{},
 		IsActive:       true,
-		ParticipantIDs: []int64{1},
+		ParticipantIDs: []common.Address{common.HexToAddress(chainConfig.OperatorAccountAddress1)},
 	}
 	n.GetKeyStore().AddVersion(keyVersion)
 

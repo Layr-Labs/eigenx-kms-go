@@ -4,7 +4,6 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 	"github.com/stretchr/testify/require"
 )
@@ -27,22 +26,6 @@ func FuzzValidateAppID(f *testing.F) {
 			return
 		}
 		require.NoError(t, err)
-	})
-}
-
-func FuzzAddressToNodeIDDeterministic(f *testing.F) {
-	f.Add(make([]byte, 20))
-	f.Add([]byte("01234567890123456789"))
-
-	f.Fuzz(func(t *testing.T, b []byte) {
-		if len(b) < 20 {
-			return
-		}
-		addr := common.BytesToAddress(b[:20])
-
-		id1 := AddressToNodeID(addr)
-		id2 := AddressToNodeID(addr)
-		require.Equal(t, id1, id2)
 	})
 }
 

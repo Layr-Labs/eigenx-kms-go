@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/testutil"
+	"github.com/stretchr/testify/require"
 )
 
 // Test_DKGIntegration tests the complete DKG protocol using real Node instances
@@ -23,12 +24,8 @@ func testFullDKGProtocol(t *testing.T) {
 	// Verify all nodes have active key shares
 	for i, n := range cluster.Nodes {
 		activeVersion := n.GetKeyStore().GetActiveVersion()
-		if activeVersion == nil {
-			t.Fatalf("Node %d should have active key version after automatic DKG", i+1)
-		}
-		if activeVersion.PrivateShare == nil {
-			t.Fatalf("Node %d should have valid private share", i+1)
-		}
+		require.NotNilf(t, activeVersion, "Node %d should have active key version after automatic DKG", i+1)
+		require.NotNilf(t, activeVersion.PrivateShare, "Node %d should have valid private share", i+1)
 	}
 
 	// Verify master public key was computed

@@ -24,7 +24,7 @@ func TestMarshalUnmarshalKeyShareVersion_RoundTrip(t *testing.T) {
 			{CompressedBytes: []byte{10, 20, 30}},
 		},
 		IsActive:       false,
-		ParticipantIDs: []int64{10, 20, 30},
+		ParticipantIDs: []common.Address{common.HexToAddress("0x0A"), common.HexToAddress("0x14"), common.HexToAddress("0x1E")},
 	}
 	data, err := json.Marshal(original)
 	require.NoError(t, err)
@@ -55,7 +55,7 @@ func TestMarshalUnmarshalKeyShareVersion_WithMasterPublicKey(t *testing.T) {
 		Commitments:     []types.G2Point{{CompressedBytes: []byte{10, 20, 30}}},
 		MasterPublicKey: mpk,
 		IsActive:        true,
-		ParticipantIDs:  []int64{1, 2, 3},
+		ParticipantIDs:  []common.Address{common.HexToAddress("0x01"), common.HexToAddress("0x02"), common.HexToAddress("0x03")},
 	}
 
 	data, err := json.Marshal(original)
@@ -72,8 +72,8 @@ func TestMarshalUnmarshalKeyShareVersion_WithMasterPublicKey(t *testing.T) {
 
 // TestUnmarshalKeyShareVersion_BackwardCompat tests that old data without MasterPublicKey deserializes correctly
 func TestUnmarshalKeyShareVersion_BackwardCompat(t *testing.T) {
-	// JSON without MasterPublicKey field (simulating data from old version)
-	oldJSON := []byte(`{"Version":1234567890,"PrivateShare":null,"Commitments":[{"CompressedBytes":"CgoeHg=="}],"IsActive":true,"ParticipantIDs":[1,2,3]}`)
+	// JSON without MasterPublicKey field (simulating data from version before MasterPublicKey was added)
+	oldJSON := []byte(`{"Version":1234567890,"PrivateShare":null,"Commitments":[{"CompressedBytes":"CgoeHg=="}],"IsActive":true,"ParticipantIDs":["0x0000000000000000000000000000000000000001","0x0000000000000000000000000000000000000002","0x0000000000000000000000000000000000000003"]}`)
 
 	var restored *types.KeyShareVersion
 	err := json.Unmarshal(oldJSON, &restored)
@@ -139,17 +139,17 @@ func TestMarshalUnmarshalProtocolSessionState_RoundTrip(t *testing.T) {
 		Phase:             2,
 		StartTime:         1234567800,
 		OperatorAddresses: []string{"0x1234", "0x5678"},
-		Shares: map[int64]string{
-			1: "share1",
-			2: "share2",
+		Shares: map[string]string{
+			"0x0000000000000000000000000000000000000001": "share1",
+			"0x0000000000000000000000000000000000000002": "share2",
 		},
-		Commitments: map[int64][]types.G2Point{
-			1: {{CompressedBytes: []byte{1, 2, 3}}},
-			2: {{CompressedBytes: []byte{4, 5, 6}}},
+		Commitments: map[string][]types.G2Point{
+			"0x0000000000000000000000000000000000000001": {{CompressedBytes: []byte{1, 2, 3}}},
+			"0x0000000000000000000000000000000000000002": {{CompressedBytes: []byte{4, 5, 6}}},
 		},
-		Acknowledgements: map[int64]map[int64]*types.Acknowledgement{
-			1: {
-				2: {PlayerAddress: common.BigToAddress(big.NewInt(2)), DealerAddress: common.BigToAddress(big.NewInt(1)), SessionTimestamp: 1234567890},
+		Acknowledgements: map[string]map[string]*types.Acknowledgement{
+			"0x0000000000000000000000000000000000000001": {
+				"0x0000000000000000000000000000000000000002": {PlayerAddress: common.BigToAddress(big.NewInt(2)), DealerAddress: common.BigToAddress(big.NewInt(1)), SessionTimestamp: 1234567890},
 			},
 		},
 	}
