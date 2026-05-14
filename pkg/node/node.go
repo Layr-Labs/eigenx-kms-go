@@ -2615,7 +2615,7 @@ func (n *Node) fetchMPKFromPeers(ctx context.Context, operators []*peering.Opera
 			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, types.MaxErrorBodySize))
 				n.logger.Sugar().Warnw("Peer returned error for MPK", "peer", peer.SocketAddress, "status", resp.StatusCode, "body", string(body))
 				return
 			}

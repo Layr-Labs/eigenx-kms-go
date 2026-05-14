@@ -118,6 +118,8 @@ func Test_SecretsEndpoint(t *testing.T) {
 	t.Run("AllowlistNilAllowsAll", func(t *testing.T) { testSecretsEndpointAllowlistNilAllowsAll(t) })
 	t.Run("ExtraDataEchoBehavior", func(t *testing.T) { testSecretsEndpointExtraDataEchoBehavior(t) })
 	t.Run("ExtraDataTooLarge", func(t *testing.T) { testSecretsEndpointExtraDataTooLarge(t) })
+	t.Run("FutureAttestationTimeRejected", func(t *testing.T) { testSecretsEndpointFutureAttestationTime(t) })
+	t.Run("PastAttestationTimeRejected", func(t *testing.T) { testSecretsEndpointPastAttestationTime(t) })
 }
 
 // createTestPeeringDataFetcher creates a test peering data fetcher using ChainConfig data
@@ -908,5 +910,64 @@ func testSecretsEndpointExtraDataTooLarge(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "extra_data exceeds 1MB limit") {
 		t.Errorf("Expected error message about 1MB limit, got: %s", w.Body.String())
+	}
+}
+
+func testSecretsEndpointFutureAttestationTime(t *testing.T) {
+	f := newTestSecretsFixture(t)
+
+	// Attestation time 10 minutes in the future (exceeds 5-minute skew limit).
+	// Rejected during early validation, before attestation crypto or on-chain lookups.
+	futureTime := time.Now().Unix() + 600
+
+	req := kmsTypes.SecretsRequestV1{
+		AppID:             "test-app",
+		AttestationMethod: "gcp",
+		Attestation:       []byte(`{}`),
+		RSAPubKeyTmp:      []byte("fake-rsa-key"),
+		AttestationTime:   futureTime,
+	}
+
+	reqBody, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
+	httpReq.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	f.server.handleSecretsRequest(w, httpReq)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400 for future attestation time, got %d. Body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "attestation time is too far in the future") {
+		t.Errorf("Expected future-time error message, got: %s", w.Body.String())
+	}
+}
+
+func testSecretsEndpointPastAttestationTime(t *testing.T) {
+	f := newTestSecretsFixture(t)
+
+	// Attestation time 2 days ago (exceeds 24-hour past-age limit).
+	pastTime := time.Now().Unix() - 2*86400
+
+	req := kmsTypes.SecretsRequestV1{
+		AppID:             "test-app",
+		AttestationMethod: "gcp",
+		Attestation:       []byte(`{}`),
+		RSAPubKeyTmp:      []byte("fake-rsa-key"),
+		AttestationTime:   pastTime,
+	}
+
+	reqBody, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
+	httpReq.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	f.server.handleSecretsRequest(w, httpReq)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("Expected status 400 for past attestation time, got %d. Body: %s", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "attestation time is too far in the past") {
+		t.Errorf("Expected past-time error message, got: %s", w.Body.String())
 	}
 }

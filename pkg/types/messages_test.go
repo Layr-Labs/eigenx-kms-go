@@ -1,0 +1,91 @@
+package types
+
+import (
+	"testing"
+
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+)
+
+func TestDeserializeFr(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   *SerializedFrElement
+		wantErr bool
+		wantVal *fr.Element // if non-nil, verify deserialized value matches
+	}{
+		{
+			name:    "nil input returns error",
+			input:   nil,
+			wantErr: true,
+		},
+		{
+			name:    "empty string returns error",
+			input:   &SerializedFrElement{Data: ""},
+			wantErr: true,
+		},
+		{
+			name:    "non-numeric string returns error",
+			input:   &SerializedFrElement{Data: "not-a-number"},
+			wantErr: true,
+		},
+		{
+			name:    "valid element round-trips",
+			input:   SerializeFr(new(fr.Element).SetInt64(42)),
+			wantErr: false,
+			wantVal: new(fr.Element).SetInt64(42),
+		},
+		{
+			name:    "zero element round-trips",
+			input:   SerializeFr(new(fr.Element).SetInt64(0)),
+			wantErr: false,
+			wantVal: new(fr.Element).SetInt64(0),
+		},
+		{
+			name:    "large valid element round-trips",
+			input:   SerializeFr(new(fr.Element).SetInt64(1<<62 - 1)),
+			wantErr: false,
+			wantVal: new(fr.Element).SetInt64(1<<62 - 1),
+		},
+		{
+			name:    "negative value is rejected",
+			input:   &SerializedFrElement{Data: "-1"},
+			wantErr: true,
+		},
+		{
+			name:    "max valid value (modulus - 1) accepted",
+			input:   &SerializedFrElement{Data: "52435875175126190479447740508185965837690552500527637822603658699938581184512"},
+			wantErr: false,
+		},
+		{
+			name:    "value at field order is rejected",
+			input:   &SerializedFrElement{Data: "52435875175126190479447740508185965837690552500527637822603658699938581184513"},
+			wantErr: true,
+		},
+		{
+			name:    "value above field order is rejected",
+			input:   &SerializedFrElement{Data: "52435875175126190479447740508185965837690552500527637822603658699938581184514"},
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := DeserializeFr(tt.input)
+			if tt.wantErr {
+				if err == nil {
+					t.Errorf("DeserializeFr() expected error, got nil (result=%v)", result)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("DeserializeFr() unexpected error: %v", err)
+			}
+			if result == nil {
+				t.Fatal("DeserializeFr() returned nil element for valid input")
+			}
+			if tt.wantVal != nil && !result.Equal(tt.wantVal) {
+				t.Errorf("DeserializeFr() round-trip mismatch: got %s, want %s", result.String(), tt.wantVal.String())
+			}
+		})
+	}
+}
