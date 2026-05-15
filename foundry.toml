@@ -15,7 +15,8 @@ remappings = [
     "@eigenlayer-middleware/=contracts/lib/eigenlayer-middleware/",
     "@eigenlayer-contracts/=contracts/lib/eigenlayer-middleware/lib/eigenlayer-contracts/",
     "@openzeppelin/=contracts/lib/eigenlayer-middleware/lib/openzeppelin-contracts/",
-    "@openzeppelin-upgrades/=contracts/lib/eigenlayer-middleware/lib/openzeppelin-contracts-upgradeable/"
+    "@openzeppelin-upgrades/=contracts/lib/eigenlayer-middleware/lib/openzeppelin-contracts-upgradeable/",
+    "zeus-templates/=contracts/lib/zeus-templates/src/"
 ]
 
 solc_version = '0.8.27'
@@ -28,6 +29,8 @@ optimizer = true
 # across the life-time of the contract. This means it is a trade-off parameter between code size (deploy cost)
 # and code execution cost (cost after deployment).
 optimizer_runs = 200
+
+no_match_path = "contracts/script/releases/**/*.sol"
 
 # An array of file paths from which warnings should be ignored during compilation.
 ignored_warnings_from = [
