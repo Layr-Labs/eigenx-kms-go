@@ -7,3 +7,6 @@
 [submodule "contracts/lib/eigenlayer-middleware"]
 	path = contracts/lib/eigenlayer-middleware
 	url = https://github.com/Layr-Labs/eigenlayer-middleware
+[submodule "contracts/lib/zeus-templates"]
+	path = contracts/lib/zeus-templates
+	url = https://github.com/Layr-Labs/zeus-templates

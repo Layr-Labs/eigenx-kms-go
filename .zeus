@@ -1,0 +1,4 @@
+{
+    "zeusHost": "https://github.com/Layr-Labs/eigenx-kms-go-zeus-metadata",
+    "migrationDirectory": "contracts/script/releases"
+}

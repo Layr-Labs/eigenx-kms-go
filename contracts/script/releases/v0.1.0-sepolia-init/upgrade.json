@@ -1,0 +1,11 @@
+{
+    "name": "sepolia-init",
+    "from": "0.0.0",
+    "to": "0.1.0",
+    "phases": [
+        {
+            "type": "eoa",
+            "filename": "1-registerContracts.s.sol"
+        }
+    ]
+}
