@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@layr-labs/zeus": "latest"
+  }
+}
