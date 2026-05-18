@@ -63,7 +63,7 @@ type SecretsResult struct {
 // SecretsOptions configures secret retrieval behavior
 type SecretsOptions struct {
 	// AttestationMethod specifies which attestation method to use
-	// Options: "gcp" (default), "intel", "ecdsa"
+	// Options: "gcp" (default), "intel", "ecdsa", "tpm"
 	AttestationMethod string
 
 	// For GCP/Intel attestation (production)
@@ -71,6 +71,9 @@ type SecretsOptions struct {
 
 	// For ECDSA attestation (development)
 	ECDSAPrivateKey *ecdsa.PrivateKey // Optional: if nil, generates new key
+
+	// For TPM attestation (raw hardware attestation)
+	TPMAttestationBytes []byte // Raw TPM attestation evidence from the hardware
 
 	// RSA key pair for encrypting partial signatures in transit
 	RSAPrivateKeyPEM []byte // Required: RSA private key in PEM format
@@ -585,6 +588,19 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 			AppID:             appID,
 			AttestationMethod: opts.AttestationMethod,
 			Attestation:       attestationBytes,
+			RSAPubKeyTmp:      opts.RSAPublicKeyPEM,
+			AttestationTime:   time.Now().Unix(),
+			ExtraData:         opts.ExtraData,
+		}
+
+	case "tpm":
+		if len(opts.TPMAttestationBytes) == 0 {
+			return nil, fmt.Errorf("TPM attestation bytes are required for tpm method")
+		}
+		req = types.SecretsRequestV1{
+			AppID:             appID,
+			AttestationMethod: "tpm",
+			Attestation:       opts.TPMAttestationBytes,
 			RSAPubKeyTmp:      opts.RSAPublicKeyPEM,
 			AttestationTime:   time.Now().Unix(),
 			ExtraData:         opts.ExtraData,
