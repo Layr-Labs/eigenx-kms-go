@@ -848,6 +848,33 @@ func (c *Client) createECDSAAttestationRequest(appID string, opts *SecretsOption
 	}, nil
 }
 
+// GetPublicKeyForApp returns the IBE public key (H_1(appID)) and the master public key
+// for an application. No authentication is required — it queries the unauthenticated
+// /pubkey endpoint on operators to derive the master key, then computes the app-specific
+// hash-to-G1 point used for IBE encryption.
+func (c *Client) GetPublicKeyForApp(appID string) (*types.G1Point, *types.G2Point, error) {
+	if appID == "" {
+		return nil, nil, fmt.Errorf("app ID is required")
+	}
+
+	operators, err := c.GetOperators()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get operators: %w", err)
+	}
+
+	masterPubKey, err := c.GetMasterPublicKey(operators)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get master public key: %w", err)
+	}
+
+	appPubKey, err := crypto.GetAppPublicKey(appID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to compute app public key: %w", err)
+	}
+
+	return appPubKey, masterPubKey, nil
+}
+
 // EncryptForApp encrypts data for a specific application using IBE
 func (c *Client) EncryptForApp(appID string, plaintext []byte) ([]byte, error) {
 	operators, err := c.GetOperators()
