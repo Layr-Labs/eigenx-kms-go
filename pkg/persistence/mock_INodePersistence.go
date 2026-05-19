@@ -81,8 +81,8 @@ func (_c *MockINodePersistence_Close_Call) RunAndReturn(run func() error) *MockI
 }
 
 // DeleteKeyShareVersion provides a mock function for the type MockINodePersistence
-func (_mock *MockINodePersistence) DeleteKeyShareVersion(epoch int64) error {
-	ret := _mock.Called(epoch)
+func (_mock *MockINodePersistence) DeleteKeyShareVersion(timestamp int64) error {
+	ret := _mock.Called(timestamp)
 
 	if len(ret) == 0 {
 		panic("no return value specified for DeleteKeyShareVersion")
@@ -90,7 +90,7 @@ func (_mock *MockINodePersistence) DeleteKeyShareVersion(epoch int64) error {
 
 	var r0 error
 	if returnFunc, ok := ret.Get(0).(func(int64) error); ok {
-		r0 = returnFunc(epoch)
+		r0 = returnFunc(timestamp)
 	} else {
 		r0 = ret.Error(0)
 	}
@@ -103,12 +103,12 @@ type MockINodePersistence_DeleteKeyShareVersion_Call struct {
 }
 
 // DeleteKeyShareVersion is a helper method to define mock.On call
-//   - epoch int64
-func (_e *MockINodePersistence_Expecter) DeleteKeyShareVersion(epoch interface{}) *MockINodePersistence_DeleteKeyShareVersion_Call {
-	return &MockINodePersistence_DeleteKeyShareVersion_Call{Call: _e.mock.On("DeleteKeyShareVersion", epoch)}
+//   - timestamp int64
+func (_e *MockINodePersistence_Expecter) DeleteKeyShareVersion(timestamp interface{}) *MockINodePersistence_DeleteKeyShareVersion_Call {
+	return &MockINodePersistence_DeleteKeyShareVersion_Call{Call: _e.mock.On("DeleteKeyShareVersion", timestamp)}
 }
 
-func (_c *MockINodePersistence_DeleteKeyShareVersion_Call) Run(run func(epoch int64)) *MockINodePersistence_DeleteKeyShareVersion_Call {
+func (_c *MockINodePersistence_DeleteKeyShareVersion_Call) Run(run func(timestamp int64)) *MockINodePersistence_DeleteKeyShareVersion_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 int64
 		if args[0] != nil {
@@ -126,7 +126,7 @@ func (_c *MockINodePersistence_DeleteKeyShareVersion_Call) Return(err error) *Mo
 	return _c
 }
 
-func (_c *MockINodePersistence_DeleteKeyShareVersion_Call) RunAndReturn(run func(epoch int64) error) *MockINodePersistence_DeleteKeyShareVersion_Call {
+func (_c *MockINodePersistence_DeleteKeyShareVersion_Call) RunAndReturn(run func(timestamp int64) error) *MockINodePersistence_DeleteKeyShareVersion_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -182,12 +182,12 @@ func (_c *MockINodePersistence_DeleteProtocolSession_Call) RunAndReturn(run func
 	return _c
 }
 
-// GetActiveVersionEpoch provides a mock function for the type MockINodePersistence
-func (_mock *MockINodePersistence) GetActiveVersionEpoch() (int64, error) {
+// GetActiveVersionTimestamp provides a mock function for the type MockINodePersistence
+func (_mock *MockINodePersistence) GetActiveVersionTimestamp() (int64, error) {
 	ret := _mock.Called()
 
 	if len(ret) == 0 {
-		panic("no return value specified for GetActiveVersionEpoch")
+		panic("no return value specified for GetActiveVersionTimestamp")
 	}
 
 	var r0 int64
@@ -208,29 +208,29 @@ func (_mock *MockINodePersistence) GetActiveVersionEpoch() (int64, error) {
 	return r0, r1
 }
 
-// MockINodePersistence_GetActiveVersionEpoch_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetActiveVersionEpoch'
-type MockINodePersistence_GetActiveVersionEpoch_Call struct {
+// MockINodePersistence_GetActiveVersionTimestamp_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetActiveVersionTimestamp'
+type MockINodePersistence_GetActiveVersionTimestamp_Call struct {
 	*mock.Call
 }
 
-// GetActiveVersionEpoch is a helper method to define mock.On call
-func (_e *MockINodePersistence_Expecter) GetActiveVersionEpoch() *MockINodePersistence_GetActiveVersionEpoch_Call {
-	return &MockINodePersistence_GetActiveVersionEpoch_Call{Call: _e.mock.On("GetActiveVersionEpoch")}
+// GetActiveVersionTimestamp is a helper method to define mock.On call
+func (_e *MockINodePersistence_Expecter) GetActiveVersionTimestamp() *MockINodePersistence_GetActiveVersionTimestamp_Call {
+	return &MockINodePersistence_GetActiveVersionTimestamp_Call{Call: _e.mock.On("GetActiveVersionTimestamp")}
 }
 
-func (_c *MockINodePersistence_GetActiveVersionEpoch_Call) Run(run func()) *MockINodePersistence_GetActiveVersionEpoch_Call {
+func (_c *MockINodePersistence_GetActiveVersionTimestamp_Call) Run(run func()) *MockINodePersistence_GetActiveVersionTimestamp_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		run()
 	})
 	return _c
 }
 
-func (_c *MockINodePersistence_GetActiveVersionEpoch_Call) Return(n int64, err error) *MockINodePersistence_GetActiveVersionEpoch_Call {
+func (_c *MockINodePersistence_GetActiveVersionTimestamp_Call) Return(n int64, err error) *MockINodePersistence_GetActiveVersionTimestamp_Call {
 	_c.Call.Return(n, err)
 	return _c
 }
 
-func (_c *MockINodePersistence_GetActiveVersionEpoch_Call) RunAndReturn(run func() (int64, error)) *MockINodePersistence_GetActiveVersionEpoch_Call {
+func (_c *MockINodePersistence_GetActiveVersionTimestamp_Call) RunAndReturn(run func() (int64, error)) *MockINodePersistence_GetActiveVersionTimestamp_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -390,8 +390,8 @@ func (_c *MockINodePersistence_ListProtocolSessions_Call) RunAndReturn(run func(
 }
 
 // LoadKeyShareVersion provides a mock function for the type MockINodePersistence
-func (_mock *MockINodePersistence) LoadKeyShareVersion(epoch int64) (*types.KeyShareVersion, error) {
-	ret := _mock.Called(epoch)
+func (_mock *MockINodePersistence) LoadKeyShareVersion(timestamp int64) (*types.KeyShareVersion, error) {
+	ret := _mock.Called(timestamp)
 
 	if len(ret) == 0 {
 		panic("no return value specified for LoadKeyShareVersion")
@@ -400,17 +400,17 @@ func (_mock *MockINodePersistence) LoadKeyShareVersion(epoch int64) (*types.KeyS
 	var r0 *types.KeyShareVersion
 	var r1 error
 	if returnFunc, ok := ret.Get(0).(func(int64) (*types.KeyShareVersion, error)); ok {
-		return returnFunc(epoch)
+		return returnFunc(timestamp)
 	}
 	if returnFunc, ok := ret.Get(0).(func(int64) *types.KeyShareVersion); ok {
-		r0 = returnFunc(epoch)
+		r0 = returnFunc(timestamp)
 	} else {
 		if ret.Get(0) != nil {
 			r0 = ret.Get(0).(*types.KeyShareVersion)
 		}
 	}
 	if returnFunc, ok := ret.Get(1).(func(int64) error); ok {
-		r1 = returnFunc(epoch)
+		r1 = returnFunc(timestamp)
 	} else {
 		r1 = ret.Error(1)
 	}
@@ -423,12 +423,12 @@ type MockINodePersistence_LoadKeyShareVersion_Call struct {
 }
 
 // LoadKeyShareVersion is a helper method to define mock.On call
-//   - epoch int64
-func (_e *MockINodePersistence_Expecter) LoadKeyShareVersion(epoch interface{}) *MockINodePersistence_LoadKeyShareVersion_Call {
-	return &MockINodePersistence_LoadKeyShareVersion_Call{Call: _e.mock.On("LoadKeyShareVersion", epoch)}
+//   - timestamp int64
+func (_e *MockINodePersistence_Expecter) LoadKeyShareVersion(timestamp interface{}) *MockINodePersistence_LoadKeyShareVersion_Call {
+	return &MockINodePersistence_LoadKeyShareVersion_Call{Call: _e.mock.On("LoadKeyShareVersion", timestamp)}
 }
 
-func (_c *MockINodePersistence_LoadKeyShareVersion_Call) Run(run func(epoch int64)) *MockINodePersistence_LoadKeyShareVersion_Call {
+func (_c *MockINodePersistence_LoadKeyShareVersion_Call) Run(run func(timestamp int64)) *MockINodePersistence_LoadKeyShareVersion_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 int64
 		if args[0] != nil {
@@ -446,7 +446,7 @@ func (_c *MockINodePersistence_LoadKeyShareVersion_Call) Return(keyShareVersion 
 	return _c
 }
 
-func (_c *MockINodePersistence_LoadKeyShareVersion_Call) RunAndReturn(run func(epoch int64) (*types.KeyShareVersion, error)) *MockINodePersistence_LoadKeyShareVersion_Call {
+func (_c *MockINodePersistence_LoadKeyShareVersion_Call) RunAndReturn(run func(timestamp int64) (*types.KeyShareVersion, error)) *MockINodePersistence_LoadKeyShareVersion_Call {
 	_c.Call.Return(run)
 	return _c
 }
@@ -721,35 +721,35 @@ func (_c *MockINodePersistence_SaveProtocolSession_Call) RunAndReturn(run func(s
 	return _c
 }
 
-// SetActiveVersionEpoch provides a mock function for the type MockINodePersistence
-func (_mock *MockINodePersistence) SetActiveVersionEpoch(epoch int64) error {
-	ret := _mock.Called(epoch)
+// SetActiveVersionTimestamp provides a mock function for the type MockINodePersistence
+func (_mock *MockINodePersistence) SetActiveVersionTimestamp(timestamp int64) error {
+	ret := _mock.Called(timestamp)
 
 	if len(ret) == 0 {
-		panic("no return value specified for SetActiveVersionEpoch")
+		panic("no return value specified for SetActiveVersionTimestamp")
 	}
 
 	var r0 error
 	if returnFunc, ok := ret.Get(0).(func(int64) error); ok {
-		r0 = returnFunc(epoch)
+		r0 = returnFunc(timestamp)
 	} else {
 		r0 = ret.Error(0)
 	}
 	return r0
 }
 
-// MockINodePersistence_SetActiveVersionEpoch_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetActiveVersionEpoch'
-type MockINodePersistence_SetActiveVersionEpoch_Call struct {
+// MockINodePersistence_SetActiveVersionTimestamp_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'SetActiveVersionTimestamp'
+type MockINodePersistence_SetActiveVersionTimestamp_Call struct {
 	*mock.Call
 }
 
-// SetActiveVersionEpoch is a helper method to define mock.On call
-//   - epoch int64
-func (_e *MockINodePersistence_Expecter) SetActiveVersionEpoch(epoch interface{}) *MockINodePersistence_SetActiveVersionEpoch_Call {
-	return &MockINodePersistence_SetActiveVersionEpoch_Call{Call: _e.mock.On("SetActiveVersionEpoch", epoch)}
+// SetActiveVersionTimestamp is a helper method to define mock.On call
+//   - timestamp int64
+func (_e *MockINodePersistence_Expecter) SetActiveVersionTimestamp(timestamp interface{}) *MockINodePersistence_SetActiveVersionTimestamp_Call {
+	return &MockINodePersistence_SetActiveVersionTimestamp_Call{Call: _e.mock.On("SetActiveVersionTimestamp", timestamp)}
 }
 
-func (_c *MockINodePersistence_SetActiveVersionEpoch_Call) Run(run func(epoch int64)) *MockINodePersistence_SetActiveVersionEpoch_Call {
+func (_c *MockINodePersistence_SetActiveVersionTimestamp_Call) Run(run func(timestamp int64)) *MockINodePersistence_SetActiveVersionTimestamp_Call {
 	_c.Call.Run(func(args mock.Arguments) {
 		var arg0 int64
 		if args[0] != nil {
@@ -762,12 +762,12 @@ func (_c *MockINodePersistence_SetActiveVersionEpoch_Call) Run(run func(epoch in
 	return _c
 }
 
-func (_c *MockINodePersistence_SetActiveVersionEpoch_Call) Return(err error) *MockINodePersistence_SetActiveVersionEpoch_Call {
+func (_c *MockINodePersistence_SetActiveVersionTimestamp_Call) Return(err error) *MockINodePersistence_SetActiveVersionTimestamp_Call {
 	_c.Call.Return(err)
 	return _c
 }
 
-func (_c *MockINodePersistence_SetActiveVersionEpoch_Call) RunAndReturn(run func(epoch int64) error) *MockINodePersistence_SetActiveVersionEpoch_Call {
+func (_c *MockINodePersistence_SetActiveVersionTimestamp_Call) RunAndReturn(run func(timestamp int64) error) *MockINodePersistence_SetActiveVersionTimestamp_Call {
 	_c.Call.Return(run)
 	return _c
 }
