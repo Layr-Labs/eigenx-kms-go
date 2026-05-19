@@ -278,7 +278,7 @@ func decryptCommand(c *cli.Context) error {
 func getPubkeyCommand(c *cli.Context) error {
 	appID := c.String("app-id")
 
-	fmt.Printf("🔑 Getting master public key for app: %s\n", appID)
+	fmt.Printf("🔑 Getting public key for app: %s\n", appID)
 
 	// Create KMS client
 	client, err := createClient(c)
@@ -286,18 +286,13 @@ func getPubkeyCommand(c *cli.Context) error {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
 
-	// Get operators from chain
-	operators, err := client.GetOperators()
+	appPubKey, masterPubKey, err := client.GetPublicKeyForApp(appID)
 	if err != nil {
-		return fmt.Errorf("failed to get operators: %w", err)
+		return fmt.Errorf("failed to get public key for app: %w", err)
 	}
 
-	// Get master public key
-	masterPubKey, err := client.GetMasterPublicKey(operators)
-	if err != nil {
-		return fmt.Errorf("failed to get master public key: %w", err)
-	}
-
+	fmt.Printf("✅ App Public Key (H_1(appID)):\n")
+	fmt.Printf("  %s\n", hex.EncodeToString(appPubKey.CompressedBytes))
 	fmt.Printf("✅ Master Public Key:\n")
 	fmt.Printf("  %s\n", hex.EncodeToString(masterPubKey.CompressedBytes))
 
