@@ -3,40 +3,41 @@ package reshare
 import (
 	"fmt"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/merkle"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
+	"github.com/ethereum/go-ethereum/common"
 )
 
 // Protocol represents the reshare protocol interface
 type Protocol interface {
-	GenerateNewShares(currentShare *fr.Element, newThreshold int) (map[int64]*fr.Element, []types.G2Point, error)
+	GenerateNewShares(currentShare *fr.Element, newThreshold int) (map[common.Address]*fr.Element, []types.G2Point, error)
 	VerifyNewShare(share *fr.Element, commitments []types.G2Point) bool
-	ComputeNewKeyShare(dealerIDs []int64, shares map[int64]*fr.Element, allCommitments [][]types.G2Point) (*types.KeyShareVersion, error)
+	ComputeNewKeyShare(dealers []common.Address, shares map[common.Address]*fr.Element, allCommitments [][]types.G2Point) (*types.KeyShareVersion, error)
 }
 
 // Reshare implements the reshare protocol
 type Reshare struct {
-	nodeID    int64
-	operators []*peering.OperatorSetPeer
-	poly      polynomial.Polynomial
+	nodeAddress common.Address
+	operators   []*peering.OperatorSetPeer
+	poly        polynomial.Polynomial
 }
 
 // NewReshare creates a new reshare instance
-func NewReshare(nodeID int64, operators []*peering.OperatorSetPeer) *Reshare {
+func NewReshare(nodeAddress common.Address, operators []*peering.OperatorSetPeer) *Reshare {
 	return &Reshare{
-		nodeID:    nodeID,
-		operators: operators,
+		nodeAddress: nodeAddress,
+		operators:   operators,
 	}
 }
 
 // GenerateNewShares generates new shares with the current share as the constant term
-func (r *Reshare) GenerateNewShares(currentShare *fr.Element, newThreshold int) (map[int64]*fr.Element, []types.G2Point, error) {
+func (r *Reshare) GenerateNewShares(currentShare *fr.Element, newThreshold int) (map[common.Address]*fr.Element, []types.G2Point, error) {
 	if currentShare == nil {
 		return nil, nil, fmt.Errorf("no current share to reshare")
 	}
@@ -53,11 +54,10 @@ func (r *Reshare) GenerateNewShares(currentShare *fr.Element, newThreshold int) 
 	r.poly = coeffs
 
 	// Compute shares for all operators
-	newShares := make(map[int64]*fr.Element)
+	newShares := make(map[common.Address]*fr.Element)
 	for _, op := range r.operators {
-		opNodeID := util.AddressToNodeID(op.OperatorAddress)
-		share := crypto.EvaluatePolynomial(r.poly, int64(opNodeID))
-		newShares[opNodeID] = share
+		share := crypto.EvaluatePolynomial(r.poly, op.OperatorAddress)
+		newShares[op.OperatorAddress] = share
 	}
 
 	// Create commitments in G2
@@ -73,7 +73,16 @@ func (r *Reshare) GenerateNewShares(currentShare *fr.Element, newThreshold int) 
 	return newShares, commitments, nil
 }
 
-// VerifyNewShare verifies a reshared share against commitments
+// VerifyNewShare verifies a reshared share against commitments.
+//
+// NOTE: This reimplements the polynomial commitment verification logic found in
+// bls.VerifyShare. The duplication exists because bls.VerifyShare operates on
+// []*bls.G2Point (which wraps bls12381.G2Affine internally) while this method
+// receives []types.G2Point (a serialization-friendly type using CompressedBytes).
+// Bridging the two types would require either a circular import (types -> bls)
+// or an awkward deserialization/conversion layer that isn't justified for a
+// single call site. If the types are unified in the future, this should delegate
+// to bls.VerifyShare.
 func (r *Reshare) VerifyNewShare(share *fr.Element, commitments []types.G2Point) bool {
 	if len(commitments) == 0 || share == nil {
 		return false
@@ -85,7 +94,7 @@ func (r *Reshare) VerifyNewShare(share *fr.Element, commitments []types.G2Point)
 		return false
 	}
 
-	jFr := new(fr.Element).SetInt64(r.nodeID)
+	jFr := bls.AddressToFr(r.nodeAddress)
 	jPower := new(fr.Element).SetOne()
 	rightSide := commitments[0]
 
@@ -106,21 +115,21 @@ func (r *Reshare) VerifyNewShare(share *fr.Element, commitments []types.G2Point)
 }
 
 // ComputeNewKeyShare computes the new key share using Lagrange interpolation
-func (r *Reshare) ComputeNewKeyShare(dealerIDs []int64, shares map[int64]*fr.Element, _ [][]types.G2Point) (*types.KeyShareVersion, error) {
-	if len(dealerIDs) == 0 {
+func (r *Reshare) ComputeNewKeyShare(dealers []common.Address, shares map[common.Address]*fr.Element, _ [][]types.G2Point) (*types.KeyShareVersion, error) {
+	if len(dealers) == 0 {
 		return nil, fmt.Errorf("no dealer IDs provided")
 	}
 
 	// Compute x'_j = Σ_{i∈dealers} λ_i * s'_{ij}
 	newShare := new(fr.Element).SetZero()
 
-	for _, dealerID := range dealerIDs {
-		share := shares[dealerID]
+	for _, dealerAddr := range dealers {
+		share := shares[dealerAddr]
 		if share == nil {
 			continue
 		}
 
-		lambda := crypto.ComputeLagrangeCoefficient(dealerID, dealerIDs)
+		lambda := crypto.ComputeLagrangeCoefficient(dealerAddr, dealers)
 		term := new(fr.Element).Mul(lambda, share)
 		newShare.Add(newShare, term)
 	}
@@ -132,7 +141,7 @@ func (r *Reshare) ComputeNewKeyShare(dealerIDs []int64, shares map[int64]*fr.Ele
 	if err != nil {
 		return nil, fmt.Errorf("failed to compute share commitment: %w", err)
 	}
-	lambdaJ := crypto.ComputeLagrangeCoefficient(r.nodeID, dealerIDs)
+	lambdaJ := crypto.ComputeLagrangeCoefficient(r.nodeAddress, dealers)
 	scaledCommitment, scaleErr := crypto.ScalarMulG2(*shareCommitment, lambdaJ)
 	if scaleErr != nil {
 		return nil, fmt.Errorf("failed to scale commitment: %w", scaleErr)
@@ -144,16 +153,16 @@ func (r *Reshare) ComputeNewKeyShare(dealerIDs []int64, shares map[int64]*fr.Ele
 		PrivateShare:   newShare,
 		Commitments:    commitments,
 		IsActive:       false,
-		ParticipantIDs: dealerIDs,
+		ParticipantIDs: dealers,
 	}, nil
 }
 
 // CreateCompletionSignature creates a completion signature for reshare
-func CreateCompletionSignature(nodeID int64, epoch int64, commitmentHash [32]byte, signer func(int64, [32]byte) []byte) *types.CompletionSignature {
+func CreateCompletionSignature(nodeAddress common.Address, epoch int64, commitmentHash [32]byte, signer func(int64, [32]byte) []byte) *types.CompletionSignature {
 	signature := signer(epoch, commitmentHash)
 
 	return &types.CompletionSignature{
-		NodeID:           nodeID,
+		NodeAddress:      nodeAddress,
 		SessionTimestamp: epoch,
 		CommitmentHash:   commitmentHash,
 		Signature:        signature,

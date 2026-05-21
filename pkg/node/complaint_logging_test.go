@@ -26,7 +26,7 @@ func TestLogInvalidShareComplaint_EmitsStructuredLog(t *testing.T) {
 		{CompressedBytes: []byte{4, 5, 6}},
 	}
 
-	n.logInvalidShareComplaint("dkg", 999, 7, 42, &share, commitments)
+	n.logInvalidShareComplaint("dkg", 999, common.HexToAddress("0x07"), common.HexToAddress("0x2A"), &share, commitments)
 
 	entries := observed.All()
 	require.Len(t, entries, 1)
@@ -35,9 +35,9 @@ func TestLogInvalidShareComplaint_EmitsStructuredLog(t *testing.T) {
 	ctx := entries[0].ContextMap()
 	require.Equal(t, "dkg", ctx["protocol"])
 	require.Equal(t, n.OperatorAddress.Hex(), ctx["operator_address"])
-	require.Equal(t, int64(7), ctx["receiver_node_id"])
+	require.Equal(t, common.HexToAddress("0x07").Hex(), ctx["receiver_address"])
 	require.Equal(t, int64(999), ctx["session_timestamp"])
-	require.Equal(t, int64(42), ctx["dealer_id"])
+	require.Equal(t, common.HexToAddress("0x2A").Hex(), ctx["dealer_address"])
 	require.Equal(t, int64(2), ctx["commitment_count"])
 	require.NotEmpty(t, ctx["share_hash"])
 	require.NotEmpty(t, ctx["commitment_hash"])

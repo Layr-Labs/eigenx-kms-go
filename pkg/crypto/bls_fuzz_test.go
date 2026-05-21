@@ -3,6 +3,7 @@ package crypto
 import (
 	"bytes"
 	"crypto/sha256"
+	"math/big"
 	"strings"
 	"testing"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr/polynomial"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -117,29 +119,29 @@ func FuzzRecoverAppPrivateKeyRoundTrip(f *testing.F) {
 			poly[i].Set(deriveScalar(coeffSeed))
 		}
 
-		// Generate shares by evaluating at participant IDs.
-		participants := make([]int64, n)
+		// Generate shares by evaluating at participant addresses.
+		participants := make([]common.Address, n)
 		for i := 0; i < n; i++ {
-			participants[i] = int64(i + 1)
+			participants[i] = common.HexToAddress("0x" + common.BigToAddress(new(big.Int).SetInt64(int64(i + 1))).Hex()[2:])
 		}
 
 		appHash, err := HashToG1(appID)
 		require.NoError(t, err)
 
 		// Create partial signatures: partialSig_i = share_i * H(appID)
-		allPartialSigs := make(map[int64]types.G1Point, n)
-		for _, id := range participants {
-			share := EvaluatePolynomial(poly, id)
+		allPartialSigs := make(map[common.Address]types.G1Point, n)
+		for _, addr := range participants {
+			share := EvaluatePolynomial(poly, addr)
 			partial, err := ScalarMulG1(*appHash, share)
 			require.NoError(t, err)
-			allPartialSigs[id] = *partial
+			allPartialSigs[addr] = *partial
 		}
 
 		// Test 1: Recovery with exactly threshold shares should succeed.
-		thresholdSigs := make(map[int64]types.G1Point, threshold)
+		thresholdSigs := make(map[common.Address]types.G1Point, threshold)
 		for i := 0; i < threshold; i++ {
-			id := participants[i]
-			thresholdSigs[id] = allPartialSigs[id]
+			addr := participants[i]
+			thresholdSigs[addr] = allPartialSigs[addr]
 		}
 
 		recovered, err := RecoverAppPrivateKey(appID, thresholdSigs, threshold)
@@ -184,12 +186,13 @@ func FuzzRecoverAppPrivateKeyInsufficientShares(f *testing.F) {
 		require.NoError(t, err)
 
 		// Create only threshold-1 shares (insufficient).
-		insufficientSigs := make(map[int64]types.G1Point, threshold-1)
-		for i := int64(1); i < int64(threshold); i++ {
-			share := EvaluatePolynomial(poly, i)
+		insufficientSigs := make(map[common.Address]types.G1Point, threshold-1)
+		for i := 1; i < threshold; i++ {
+			addr := common.BigToAddress(new(big.Int).SetInt64(int64(i)))
+			share := EvaluatePolynomial(poly, addr)
 			partial, err := ScalarMulG1(*appHash, share)
 			require.NoError(t, err)
-			insufficientSigs[i] = *partial
+			insufficientSigs[addr] = *partial
 		}
 
 		// RecoverAppPrivateKey should reject insufficient shares.

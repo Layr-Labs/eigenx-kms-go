@@ -8,8 +8,8 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -26,7 +26,6 @@ func TestBroadcastCommitmentsWithProofs(t *testing.T) {
 // TestBroadcastCommitmentsWithProofs_NilTree tests error handling for nil merkle tree
 func TestBroadcastCommitmentsWithProofs_NilTree(t *testing.T) {
 	client := &Client{
-		nodeID:       1,
 		operatorAddr: common.HexToAddress("0x1111"),
 		logger:       zap.NewNop(),
 	}
@@ -77,22 +76,6 @@ func TestBroadcastCommitmentsWithProofs_MerkleProofGeneration(t *testing.T) {
 	}
 }
 
-// TestAddressToNodeID tests address to node ID conversion
-func TestAddressToNodeID(t *testing.T) {
-	addr1 := common.HexToAddress("0x1234567890123456789012345678901234567890")
-	addr2 := common.HexToAddress("0xABCDEF1234567890ABCDEF1234567890ABCDEF12")
-
-	id1 := util.AddressToNodeID(addr1)
-	id2 := util.AddressToNodeID(addr2)
-
-	// Different addresses should produce different IDs
-	require.NotEqual(t, id1, id2)
-
-	// Same address should produce same ID (deterministic)
-	id1_again := util.AddressToNodeID(addr1)
-	require.Equal(t, id1, id1_again)
-}
-
 // TestSendCommitmentBroadcast tests the send function signature
 func TestSendCommitmentBroadcast(t *testing.T) {
 	// This test verifies the function compiles with correct types
@@ -112,7 +95,6 @@ func TestBroadcastCommitmentsWithProofs_SkipsSelf(t *testing.T) {
 		}, nil,
 	).Maybe()
 	client := &Client{
-		nodeID:       util.AddressToNodeID(myAddr),
 		operatorAddr: myAddr,
 		signer:       mockSigner,
 		logger:       zap.NewNop(),
@@ -143,7 +125,7 @@ func TestBroadcastCommitmentsWithProofs_SkipsSelf(t *testing.T) {
 	require.NoError(t, err)
 
 	// This will skip self, then try to broadcast to the other operator
-	// It will fail the HTTP request but the function logs and continues (returns nil)
+	// It will fail the HTTP request but the function collects and returns errors
 	err = client.BroadcastCommitmentsWithProofs(
 		operators,
 		5, // epoch
@@ -152,8 +134,9 @@ func TestBroadcastCommitmentsWithProofs_SkipsSelf(t *testing.T) {
 		tree,
 	)
 
-	// The existing implementation logs errors but returns nil (resilient design)
-	require.NoError(t, err)
+	// The function now returns collected broadcast errors
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to send commitment broadcast")
 }
 
 // TestBroadcastCommitmentsWithProofs_NoAckForOperator tests handling of missing acks
@@ -168,7 +151,6 @@ func TestBroadcastCommitmentsWithProofs_NoAckForOperator(t *testing.T) {
 		}, nil,
 	).Maybe()
 	client := &Client{
-		nodeID:       util.AddressToNodeID(myAddr),
 		operatorAddr: myAddr,
 		signer:       mockSigner,
 		logger:       zap.NewNop(),

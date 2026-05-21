@@ -1,6 +1,7 @@
 package node
 
 import (
+	"fmt"
 	"math/big"
 	"testing"
 	"time"
@@ -42,10 +43,10 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 		}
 
 		broadcast := &types.CommitmentBroadcast{
-			FromOperatorID:   2,
-			SessionTimestamp: 5,
-			Commitments:      []types.G2Point{},
-			Acknowledgements: []*types.Acknowledgement{},
+			FromOperatorAddress: common.HexToAddress("0x0000000000000000000000000000000000000002"),
+			SessionTimestamp:    5,
+			Commitments:         []types.G2Point{},
+			Acknowledgements:    []*types.Acknowledgement{},
 		}
 
 		err := node.VerifyOperatorBroadcast(99999, broadcast, common.Address{})
@@ -59,10 +60,10 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 
 		session := &ProtocolSession{
 			SessionTimestamp:  12345,
-			shares:            make(map[int64]*fr.Element),
-			commitments:       make(map[int64][]types.G2Point),
-			acks:              make(map[int64]map[int64]*types.Acknowledgement),
-			verifiedOperators: make(map[int64]bool),
+			shares:            make(map[common.Address]*fr.Element),
+			commitments:       make(map[common.Address][]types.G2Point),
+			acks:              make(map[common.Address]map[common.Address]*types.Acknowledgement),
+			verifiedOperators: make(map[common.Address]bool),
 		}
 
 		node := &Node{
@@ -73,9 +74,9 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 
 		// Broadcast with no ack for my node (use different player address)
 		broadcast := &types.CommitmentBroadcast{
-			FromOperatorID:   2,
-			SessionTimestamp: 5,
-			Commitments:      []types.G2Point{},
+			FromOperatorAddress: common.HexToAddress("0x0000000000000000000000000000000000000002"),
+			SessionTimestamp:    5,
+			Commitments:         []types.G2Point{},
 			Acknowledgements: []*types.Acknowledgement{
 				{PlayerAddress: common.HexToAddress("0x999")}, // Different address than my node
 			},
@@ -92,10 +93,10 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 
 		session := &ProtocolSession{
 			SessionTimestamp:  12345,
-			shares:            make(map[int64]*fr.Element), // Empty shares
-			commitments:       make(map[int64][]types.G2Point),
-			acks:              make(map[int64]map[int64]*types.Acknowledgement),
-			verifiedOperators: make(map[int64]bool),
+			shares:            make(map[common.Address]*fr.Element), // Empty shares
+			commitments:       make(map[common.Address][]types.G2Point),
+			acks:              make(map[common.Address]map[common.Address]*types.Acknowledgement),
+			verifiedOperators: make(map[common.Address]bool),
 		}
 
 		node := &Node{
@@ -106,9 +107,9 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 
 		// Broadcast with my ack but no share received
 		broadcast := &types.CommitmentBroadcast{
-			FromOperatorID:   2,
-			SessionTimestamp: 5,
-			Commitments:      []types.G2Point{},
+			FromOperatorAddress: common.HexToAddress("0x0000000000000000000000000000000000000002"),
+			SessionTimestamp:    5,
+			Commitments:         []types.G2Point{},
 			Acknowledgements: []*types.Acknowledgement{
 				{PlayerAddress: myAddr, ShareHash: [32]byte{1, 2, 3}},
 			},
@@ -129,12 +130,12 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 
 		session := &ProtocolSession{
 			SessionTimestamp: 12345,
-			shares: map[int64]*fr.Element{
-				2: &realShare, // Share from operator 2
+			shares: map[common.Address]*fr.Element{
+				common.HexToAddress("0x0000000000000000000000000000000000000002"): &realShare, // Share from operator 2
 			},
-			commitments:       make(map[int64][]types.G2Point),
-			acks:              make(map[int64]map[int64]*types.Acknowledgement),
-			verifiedOperators: make(map[int64]bool),
+			commitments:       make(map[common.Address][]types.G2Point),
+			acks:              make(map[common.Address]map[common.Address]*types.Acknowledgement),
+			verifiedOperators: make(map[common.Address]bool),
 		}
 
 		node := &Node{
@@ -148,9 +149,9 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 		require.NotEqual(t, expectedHash, wrongHash, "Test setup error: hashes should be different")
 
 		broadcast := &types.CommitmentBroadcast{
-			FromOperatorID:   2,
-			SessionTimestamp: 5,
-			Commitments:      []types.G2Point{},
+			FromOperatorAddress: common.HexToAddress("0x0000000000000000000000000000000000000002"),
+			SessionTimestamp:    5,
+			Commitments:         []types.G2Point{},
 			Acknowledgements: []*types.Acknowledgement{
 				{
 					PlayerAddress: myAddr,
@@ -176,12 +177,12 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 
 		session := &ProtocolSession{
 			SessionTimestamp: 12345,
-			shares: map[int64]*fr.Element{
-				2: &realShare,
+			shares: map[common.Address]*fr.Element{
+				common.HexToAddress("0x0000000000000000000000000000000000000002"): &realShare,
 			},
-			commitments:       make(map[int64][]types.G2Point),
-			acks:              make(map[int64]map[int64]*types.Acknowledgement),
-			verifiedOperators: make(map[int64]bool),
+			commitments:       make(map[common.Address][]types.G2Point),
+			acks:              make(map[common.Address]map[common.Address]*types.Acknowledgement),
+			verifiedOperators: make(map[common.Address]bool),
 		}
 
 		node := &Node{
@@ -191,9 +192,9 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 		}
 
 		broadcast := &types.CommitmentBroadcast{
-			FromOperatorID:   2,
-			SessionTimestamp: 5,
-			Commitments:      []types.G2Point{},
+			FromOperatorAddress: common.HexToAddress("0x0000000000000000000000000000000000000002"),
+			SessionTimestamp:    5,
+			Commitments:         []types.G2Point{},
 			Acknowledgements: []*types.Acknowledgement{
 				{
 					PlayerAddress:    myAddr,
@@ -211,7 +212,7 @@ func TestVerifyOperatorBroadcast(t *testing.T) {
 
 		// Verify operator was marked as verified
 		session.mu.RLock()
-		verified := session.verifiedOperators[2]
+		verified := session.verifiedOperators[common.HexToAddress("0x0000000000000000000000000000000000000002")]
 		session.mu.RUnlock()
 		require.True(t, verified, "Operator should be marked as verified")
 	})
@@ -243,7 +244,7 @@ func TestWaitForVerifications(t *testing.T) {
 			Operators: []*peering.OperatorSetPeer{
 				{}, {}, {}, // 3 operators total
 			},
-			verifiedOperators: make(map[int64]bool),
+			verifiedOperators: make(map[common.Address]bool),
 		}
 
 		node := &Node{
@@ -252,7 +253,7 @@ func TestWaitForVerifications(t *testing.T) {
 		}
 
 		// Only verify 1 operator (need 2 for 3 total)
-		session.verifiedOperators[1] = true
+		session.verifiedOperators[common.HexToAddress("0x01")] = true
 
 		err := node.WaitForVerifications(12345, 100*time.Millisecond)
 		require.Error(t, err)
@@ -267,7 +268,7 @@ func TestWaitForVerifications(t *testing.T) {
 			Operators: []*peering.OperatorSetPeer{
 				{}, {}, {}, // 3 operators total (need 2 verifications)
 			},
-			verifiedOperators: make(map[int64]bool),
+			verifiedOperators: make(map[common.Address]bool),
 		}
 
 		node := &Node{
@@ -276,8 +277,8 @@ func TestWaitForVerifications(t *testing.T) {
 		}
 
 		// Verify 2 operators (enough for 3 total)
-		session.verifiedOperators[1] = true
-		session.verifiedOperators[2] = true
+		session.verifiedOperators[common.HexToAddress("0x01")] = true
+		session.verifiedOperators[common.HexToAddress("0x02")] = true
 
 		err := node.WaitForVerifications(12345, 2*time.Second)
 		require.NoError(t, err)
@@ -291,14 +292,14 @@ func TestWaitForVerifications(t *testing.T) {
 			Operators: []*peering.OperatorSetPeer{
 				{}, {}, {}, // 3 operators, threshold=⌈2*3/3⌉=2, need min(1, receivedShares-1) verifications
 			},
-			shares:            make(map[int64]*fr.Element),
-			verifiedOperators: make(map[int64]bool),
+			shares:            make(map[common.Address]*fr.Element),
+			verifiedOperators: make(map[common.Address]bool),
 		}
 
 		// Simulate having received shares from all 3 operators (including self)
-		for i := int64(0); i < 3; i++ {
+		for i := 0; i < 3; i++ {
 			elem := fr.NewElement(uint64(i + 1))
-			session.shares[i] = &elem
+			session.shares[common.HexToAddress(fmt.Sprintf("0x%040x", i))] = &elem
 		}
 
 		node := &Node{
@@ -307,7 +308,7 @@ func TestWaitForVerifications(t *testing.T) {
 		}
 
 		// Only 1 verification — sufficient for reshare threshold (min(2-1, 3-1) = 1)
-		session.verifiedOperators[1] = true
+		session.verifiedOperators[common.HexToAddress("0x01")] = true
 
 		err := node.WaitForVerifications(12345, 2*time.Second)
 		require.NoError(t, err)
@@ -321,14 +322,14 @@ func TestWaitForVerifications(t *testing.T) {
 			Operators: []*peering.OperatorSetPeer{
 				{}, {}, {}, {}, {}, {}, // 6 operators, threshold=⌈2*6/3⌉=4, need 3 verifications
 			},
-			shares:            make(map[int64]*fr.Element),
-			verifiedOperators: make(map[int64]bool),
+			shares:            make(map[common.Address]*fr.Element),
+			verifiedOperators: make(map[common.Address]bool),
 		}
 
 		// Simulate having received shares from all 6 operators
-		for i := int64(0); i < 6; i++ {
+		for i := 0; i < 6; i++ {
 			elem := fr.NewElement(uint64(i + 1))
-			session.shares[i] = &elem
+			session.shares[common.HexToAddress(fmt.Sprintf("0x%040x", i))] = &elem
 		}
 
 		node := &Node{
@@ -337,8 +338,8 @@ func TestWaitForVerifications(t *testing.T) {
 		}
 
 		// Only 2 verifications, need 3 (min(threshold-1, receivedShares-1) = min(3, 5) = 3)
-		session.verifiedOperators[1] = true
-		session.verifiedOperators[2] = true
+		session.verifiedOperators[common.HexToAddress("0x01")] = true
+		session.verifiedOperators[common.HexToAddress("0x02")] = true
 
 		err := node.WaitForVerifications(12345, 100*time.Millisecond)
 		require.Error(t, err)

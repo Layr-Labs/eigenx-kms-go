@@ -49,7 +49,7 @@ jobs:
         run: |
           VERSION=$(cat VERSION | tr -d '[:space:]' | sed 's/+/_/g')
           if [[ $GITHUB_REF == refs/heads/master || $GITHUB_REF == refs/tags/* ]]; then
-            docker buildx build --platform "linux/amd64,linux/arm64" -t $REGISTRY/$REPOSITORY:$VERSION -t $REGISTRY/$REPOSITORY:latest --push .
+            docker buildx build --platform "linux/amd64" -t $REGISTRY/$REPOSITORY:$VERSION -t $REGISTRY/$REPOSITORY:latest --push .
           else
             docker buildx build --platform "linux/amd64" -t $REGISTRY/$REPOSITORY:$VERSION --push .
           fi

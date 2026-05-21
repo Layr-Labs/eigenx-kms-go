@@ -3,6 +3,7 @@ package transport
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -11,7 +12,6 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 	"go.uber.org/zap"
@@ -35,7 +35,6 @@ var DefaultRetryConfig = RetryConfig{
 
 // Client handles network communication
 type Client struct {
-	nodeID       int64
 	operatorAddr common.Address
 	signer       transportSigner.ITransportSigner
 	retryConfig  RetryConfig
@@ -43,9 +42,8 @@ type Client struct {
 }
 
 // NewClient creates a new transport client
-func NewClient(nodeID int64, operatorAddr common.Address, signer transportSigner.ITransportSigner) *Client {
+func NewClient(operatorAddr common.Address, signer transportSigner.ITransportSigner) *Client {
 	return &Client{
-		nodeID:       nodeID,
 		operatorAddr: operatorAddr,
 		signer:       signer,
 		retryConfig:  DefaultRetryConfig,
@@ -361,6 +359,7 @@ func (c *Client) BroadcastCommitmentsWithProofs(
 	sortedAcks := merkle.SortAcknowledgements(acks)
 
 	// Send to each operator with their specific proof
+	var broadcastErrs []error
 	for i, op := range operators {
 		if op.OperatorAddress == c.operatorAddr {
 			continue // Skip self
@@ -390,20 +389,20 @@ func (c *Client) BroadcastCommitmentsWithProofs(
 
 		// Create broadcast message with proof
 		broadcast := &types.CommitmentBroadcast{
-			FromOperatorID:   c.nodeID,
-			SessionTimestamp: epoch,
-			Commitments:      commitments,
-			Acknowledgements: acks,
-			MerkleProof:      proof.Proof,
+			FromOperatorAddress: c.operatorAddr,
+			SessionTimestamp:    epoch,
+			Commitments:         commitments,
+			Acknowledgements:    acks,
+			MerkleProof:         proof.Proof,
 		}
 
 		// Send to operator
 		if err := c.sendCommitmentBroadcast(op, broadcast, epoch); err != nil {
-			c.log().Sugar().Warnw("Failed to send commitment broadcast", "peer", op.OperatorAddress.Hex(), "error", err)
+			broadcastErrs = append(broadcastErrs, fmt.Errorf("failed to send commitment broadcast to %s: %w", op.OperatorAddress.Hex(), err))
 		}
 	}
 
-	return nil
+	return errors.Join(broadcastErrs...)
 }
 
 // sendCommitmentBroadcast sends an authenticated commitment broadcast to a specific operator (Phase 5)
@@ -412,14 +411,10 @@ func (c *Client) sendCommitmentBroadcast(
 	broadcast *types.CommitmentBroadcast,
 	sessionTimestamp int64,
 ) error {
-	toNodeID := util.AddressToNodeID(toOperator.OperatorAddress)
-
 	// Create message wrapper with address fields for authentication
 	msg := types.CommitmentBroadcastMessage{
 		FromOperatorAddress: c.operatorAddr,
 		ToOperatorAddress:   toOperator.OperatorAddress,
-		FromOperatorID:      c.nodeID,
-		ToOperatorID:        toNodeID,
 		SessionTimestamp:    sessionTimestamp,
 		Broadcast:           broadcast,
 	}

@@ -11,12 +11,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math/big"
 	"net/http"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
 	kmscrypto "github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
 )
 
@@ -163,9 +165,10 @@ func main() {
 
 	// Step 7: Recover application private key
 	fmt.Println("🔓 Step 7: Recovering application private key...")
-	partialSigMap := make(map[int64]types.G1Point)
+	partialSigMap := make(map[common.Address]types.G1Point)
 	for i, sig := range partialSigs {
-		partialSigMap[int64(i+1)] = sig
+		// In production, use actual operator addresses from chain data
+		partialSigMap[common.BigToAddress(big.NewInt(int64(i+1)))] = sig
 	}
 
 	appPrivKey, err := kmscrypto.RecoverAppPrivateKey(appID, partialSigMap, threshold)

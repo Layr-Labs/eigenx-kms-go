@@ -36,7 +36,6 @@ func TestVerifyAcknowledgement_BindsFieldsAndSignature(t *testing.T) {
 		OperatorAddress: dealerAddr,
 	}
 
-	dealerID := int64(11)
 	epoch := int64(123456)
 	commitments := []types.G2Point{{CompressedBytes: []byte{1, 2, 3}}}
 	shareHash := [32]byte{1, 1, 1}
@@ -54,8 +53,8 @@ func TestVerifyAcknowledgement_BindsFieldsAndSignature(t *testing.T) {
 	ack.Signature = n.signAcknowledgement(ack.DealerAddress, ack.PlayerAddress, ack.SessionTimestamp, ack.ShareHash, ack.CommitmentHash)
 
 	session := &ProtocolSession{
-		commitments: map[int64][]types.G2Point{
-			dealerID: commitments,
+		commitments: map[common.Address][]types.G2Point{
+			dealerAddr: commitments,
 		},
 	}
 	senderPeer := &peering.OperatorSetPeer{
@@ -66,14 +65,14 @@ func TestVerifyAcknowledgement_BindsFieldsAndSignature(t *testing.T) {
 		},
 	}
 
-	if err := n.verifyAcknowledgement(session, senderPeer, dealerID, epoch, ack); err != nil {
+	if err := n.verifyAcknowledgement(session, senderPeer, dealerAddr, epoch, ack); err != nil {
 		t.Fatalf("expected valid acknowledgement, got error: %v", err)
 	}
 
 	// Tamper epoch: signature/semantic binding must fail.
 	tampered := *ack
 	tampered.SessionTimestamp = epoch + 1
-	if err := n.verifyAcknowledgement(session, senderPeer, dealerID, epoch, &tampered); err == nil {
+	if err := n.verifyAcknowledgement(session, senderPeer, dealerAddr, epoch, &tampered); err == nil {
 		t.Fatal("expected tampered acknowledgement to be rejected")
 	}
 }

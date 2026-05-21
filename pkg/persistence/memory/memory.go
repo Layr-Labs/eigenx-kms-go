@@ -8,6 +8,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/persistence"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/ethereum/go-ethereum/common"
 )
 
 // MemoryPersistence is an in-memory implementation of INodePersistence.
@@ -38,8 +39,8 @@ type MemoryPersistence struct {
 // NewMemoryPersistence creates a new in-memory persistence layer.
 // Prints a loud warning since this should only be used for testing.
 func NewMemoryPersistence() *MemoryPersistence {
-	fmt.Println("⚠️  WARNING: Using in-memory persistence - ALL DATA WILL BE LOST ON RESTART")
-	fmt.Println("⚠️  This should ONLY be used for testing. Set KMS_PERSISTENCE_TYPE=badger for production")
+	fmt.Println("WARNING: Using in-memory persistence - ALL DATA WILL BE LOST ON RESTART")
+	fmt.Println("WARNING: This should ONLY be used for testing. Set KMS_PERSISTENCE_TYPE=badger for production")
 
 	return &MemoryPersistence{
 		keyShares: make(map[int64]*types.KeyShareVersion),
@@ -315,7 +316,7 @@ func deepCopyKeyShareVersion(v *types.KeyShareVersion) *types.KeyShareVersion {
 	}
 
 	// Copy participant IDs
-	participantIDs := make([]int64, len(v.ParticipantIDs))
+	participantIDs := make([]common.Address, len(v.ParticipantIDs))
 	copy(participantIDs, v.ParticipantIDs)
 
 	return &types.KeyShareVersion{
@@ -338,13 +339,13 @@ func deepCopyProtocolSessionState(s *persistence.ProtocolSessionState) *persiste
 	copy(operatorAddresses, s.OperatorAddresses)
 
 	// Copy shares map
-	shares := make(map[int64]string)
+	shares := make(map[string]string)
 	for k, v := range s.Shares {
 		shares[k] = v
 	}
 
 	// Copy commitments map
-	commitments := make(map[int64][]types.G2Point)
+	commitments := make(map[string][]types.G2Point)
 	for k, v := range s.Commitments {
 		commitmentsCopy := make([]types.G2Point, len(v))
 		for i, c := range v {
@@ -356,10 +357,10 @@ func deepCopyProtocolSessionState(s *persistence.ProtocolSessionState) *persiste
 	}
 
 	// Copy acknowledgements map
-	acknowledgements := make(map[int64]map[int64]*types.Acknowledgement)
-	for dealerID, ackMap := range s.Acknowledgements {
-		ackMapCopy := make(map[int64]*types.Acknowledgement)
-		for receiverID, ack := range ackMap {
+	acknowledgements := make(map[string]map[string]*types.Acknowledgement)
+	for dealerAddr, ackMap := range s.Acknowledgements {
+		ackMapCopy := make(map[string]*types.Acknowledgement)
+		for receiverAddr, ack := range ackMap {
 			ackCopy := &types.Acknowledgement{
 				PlayerAddress:    ack.PlayerAddress,
 				DealerAddress:    ack.DealerAddress,
@@ -372,9 +373,9 @@ func deepCopyProtocolSessionState(s *persistence.ProtocolSessionState) *persiste
 				copy(signatureCopy, ack.Signature)
 				ackCopy.Signature = signatureCopy
 			}
-			ackMapCopy[receiverID] = ackCopy
+			ackMapCopy[receiverAddr] = ackCopy
 		}
-		acknowledgements[dealerID] = ackMapCopy
+		acknowledgements[dealerAddr] = ackMapCopy
 	}
 
 	return &persistence.ProtocolSessionState{

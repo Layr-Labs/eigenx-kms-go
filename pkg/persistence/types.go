@@ -62,18 +62,17 @@ type ProtocolSessionState struct {
 	// Stored as hex strings for JSON serialization.
 	OperatorAddresses []string `json:"operatorAddresses"`
 
-	// Shares maps dealer node ID to serialized share (SerializeFr string format).
+	// Shares maps operator address (hex) to serialized share (SerializeFr string format).
 	// This captures shares received during the protocol.
-	Shares map[int64]string `json:"shares"`
+	Shares map[string]string `json:"shares"`
 
-	// Commitments maps dealer node ID to their broadcast commitments.
+	// Commitments maps operator address (hex) to their broadcast commitments.
 	// G2Points are JSON-serializable via CompressedBytes.
-	Commitments map[int64][]types.G2Point `json:"commitments"`
+	Commitments map[string][]types.G2Point `json:"commitments"`
 
-	// Acknowledgements maps dealer ID -> receiver ID -> acknowledgement.
+	// Acknowledgements maps dealer address (hex) -> receiver address (hex) -> acknowledgement.
 	// This tracks which operators have acknowledged which shares.
-	// Nested map structure: dealerID -> map[receiverID]Acknowledgement
-	Acknowledgements map[int64]map[int64]*types.Acknowledgement `json:"acknowledgements"`
+	Acknowledgements map[string]map[string]*types.Acknowledgement `json:"acknowledgements"`
 }
 
 // MarshalJSON implements json.Marshaler. The Alias type strips the method

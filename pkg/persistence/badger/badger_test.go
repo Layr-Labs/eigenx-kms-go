@@ -43,7 +43,7 @@ func TestBadgerPersistence_SaveAndLoadKeyShare(t *testing.T) {
 			{CompressedBytes: []byte{1, 2, 3, 4}},
 		},
 		IsActive:       true,
-		ParticipantIDs: []int64{1, 2, 3},
+		ParticipantIDs: []common.Address{common.HexToAddress("0x01"), common.HexToAddress("0x02"), common.HexToAddress("0x03")},
 	}
 
 	// Save
@@ -103,7 +103,7 @@ func TestBadgerPersistence_DeleteKeyShare(t *testing.T) {
 		PrivateShare:   &privateShare,
 		Commitments:    []types.G2Point{},
 		IsActive:       true,
-		ParticipantIDs: []int64{1},
+		ParticipantIDs: []common.Address{common.HexToAddress("0x01")},
 	}
 	err = bp.SaveKeyShareVersion(version)
 	require.NoError(t, err)
@@ -152,7 +152,7 @@ func TestBadgerPersistence_ListKeyShareVersions(t *testing.T) {
 			PrivateShare:   &privateShare,
 			Commitments:    []types.G2Point{},
 			IsActive:       i == 4,
-			ParticipantIDs: []int64{int64(i)},
+			ParticipantIDs: []common.Address{common.HexToAddress(fmt.Sprintf("0x%040x", i))},
 		}
 		err := bp.SaveKeyShareVersion(version)
 		require.NoError(t, err)
@@ -273,16 +273,16 @@ func TestBadgerPersistence_ProtocolSessions(t *testing.T) {
 		Phase:             2,
 		StartTime:         1234567800,
 		OperatorAddresses: []string{"0x1234", "0x5678"},
-		Shares: map[int64]string{
-			1: "share1",
-			2: "share2",
+		Shares: map[string]string{
+			"0x0000000000000000000000000000000000000001": "share1",
+			"0x0000000000000000000000000000000000000002": "share2",
 		},
-		Commitments: map[int64][]types.G2Point{
-			1: {{CompressedBytes: []byte{1, 2, 3}}},
+		Commitments: map[string][]types.G2Point{
+			"0x0000000000000000000000000000000000000001": {{CompressedBytes: []byte{1, 2, 3}}},
 		},
-		Acknowledgements: map[int64]map[int64]*types.Acknowledgement{
-			1: {
-				2: {PlayerAddress: common.BigToAddress(big.NewInt(2)), DealerAddress: common.BigToAddress(big.NewInt(1)), SessionTimestamp: 1234567890},
+		Acknowledgements: map[string]map[string]*types.Acknowledgement{
+			"0x0000000000000000000000000000000000000001": {
+				"0x0000000000000000000000000000000000000002": {PlayerAddress: common.BigToAddress(big.NewInt(2)), DealerAddress: common.BigToAddress(big.NewInt(1)), SessionTimestamp: 1234567890},
 			},
 		},
 	}
@@ -345,9 +345,9 @@ func TestBadgerPersistence_DeleteProtocolSession(t *testing.T) {
 		Phase:             1,
 		StartTime:         100,
 		OperatorAddresses: []string{"0x1"},
-		Shares:            map[int64]string{},
-		Commitments:       map[int64][]types.G2Point{},
-		Acknowledgements:  map[int64]map[int64]*types.Acknowledgement{},
+		Shares:            map[string]string{},
+		Commitments:       map[string][]types.G2Point{},
+		Acknowledgements:  map[string]map[string]*types.Acknowledgement{},
 	}
 	err = bp.SaveProtocolSession(session)
 	require.NoError(t, err)
@@ -378,9 +378,9 @@ func TestBadgerPersistence_ListProtocolSessions(t *testing.T) {
 			Phase:             1,
 			StartTime:         int64(i * 100),
 			OperatorAddresses: []string{},
-			Shares:            map[int64]string{},
-			Commitments:       map[int64][]types.G2Point{},
-			Acknowledgements:  map[int64]map[int64]*types.Acknowledgement{},
+			Shares:            map[string]string{},
+			Commitments:       map[string][]types.G2Point{},
+			Acknowledgements:  map[string]map[string]*types.Acknowledgement{},
 		}
 		err := bp.SaveProtocolSession(session)
 		require.NoError(t, err)
@@ -485,7 +485,7 @@ func TestBadgerPersistence_ThreadSafety(t *testing.T) {
 					PrivateShare:   &privateShare,
 					Commitments:    []types.G2Point{},
 					IsActive:       false,
-					ParticipantIDs: []int64{int64(id)},
+					ParticipantIDs: []common.Address{common.HexToAddress(fmt.Sprintf("0x%040x", id))},
 				}
 				err := bp.SaveKeyShareVersion(version)
 				assert.NoError(t, err)
@@ -534,7 +534,7 @@ func TestBadgerPersistence_Persistence_AcrossRestarts(t *testing.T) {
 		PrivateShare:   &privateShare,
 		Commitments:    []types.G2Point{{CompressedBytes: []byte{9, 9, 9}}},
 		IsActive:       true,
-		ParticipantIDs: []int64{1, 2, 3},
+		ParticipantIDs: []common.Address{common.HexToAddress("0x01"), common.HexToAddress("0x02"), common.HexToAddress("0x03")},
 	}
 	err = bp1.SaveKeyShareVersion(version)
 	require.NoError(t, err)
