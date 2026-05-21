@@ -19,6 +19,8 @@ func Test_BLSOperations(t *testing.T) {
 	t.Run("PolynomialCommitments", func(t *testing.T) { testPolynomialCommitments(t) })
 	t.Run("AggregateG1_NilPoint", func(t *testing.T) { testAggregateG1NilPoint(t) })
 	t.Run("AggregateG2_NilPoint", func(t *testing.T) { testAggregateG2NilPoint(t) })
+	t.Run("SignatureG1_RoundTrip", func(t *testing.T) { testSignatureG1RoundTrip(t) })
+	t.Run("SignatureG2_RoundTrip", func(t *testing.T) { testSignatureG2RoundTrip(t) })
 }
 
 // testAggregateG1NilPoint verifies that AggregateG1 does not panic when given
@@ -402,5 +404,61 @@ func testPolynomialCommitments(t *testing.T) {
 	// Different coefficients should have different commitments
 	if commitments1[1].Equal(commitments2[1]) {
 		t.Error("Different coefficients should produce different commitments")
+	}
+}
+
+func testSignatureG1RoundTrip(t *testing.T) {
+	sk, err := GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("Failed to generate private key: %v", err)
+	}
+
+	msg := []byte("round trip test message")
+	sig, err := sk.SignG1(msg)
+	if err != nil {
+		t.Fatalf("Failed to sign: %v", err)
+	}
+
+	bytes := sig.Marshal()
+	recovered, err := NewSignatureG1FromBytes(bytes)
+	if err != nil {
+		t.Fatalf("Failed to deserialize signature: %v", err)
+	}
+
+	pkG2 := sk.GetPublicKeyG2()
+	valid, err := VerifyG1(pkG2, msg, recovered)
+	if err != nil {
+		t.Fatalf("Failed to verify recovered signature: %v", err)
+	}
+	if !valid {
+		t.Error("Recovered G1 signature should verify")
+	}
+}
+
+func testSignatureG2RoundTrip(t *testing.T) {
+	sk, err := GeneratePrivateKey()
+	if err != nil {
+		t.Fatalf("Failed to generate private key: %v", err)
+	}
+
+	msg := []byte("round trip test message")
+	sig, err := sk.SignG2(msg)
+	if err != nil {
+		t.Fatalf("Failed to sign: %v", err)
+	}
+
+	bytes := sig.Marshal()
+	recovered, err := NewSignatureG2FromBytes(bytes)
+	if err != nil {
+		t.Fatalf("Failed to deserialize signature: %v", err)
+	}
+
+	pkG1 := sk.GetPublicKeyG1()
+	valid, err := VerifyG2(pkG1, msg, recovered)
+	if err != nil {
+		t.Fatalf("Failed to verify recovered signature: %v", err)
+	}
+	if !valid {
+		t.Error("Recovered G2 signature should verify")
 	}
 }

@@ -183,6 +183,42 @@ func G1PointFromBigInt(x, y *big.Int) (*G1Point, error) {
 	return NewG1Point(point), nil
 }
 
+// NewSignatureG1FromBytes creates a SignatureG1 from compressed G1 point bytes.
+func NewSignatureG1FromBytes(data []byte) (*SignatureG1, error) {
+	point, err := G1PointFromCompressedBytes(data)
+	if err != nil {
+		return nil, err
+	}
+	return &SignatureG1{point: point.point}, nil
+}
+
+// NewSignatureG2FromBytes creates a SignatureG2 from compressed G2 point bytes.
+func NewSignatureG2FromBytes(data []byte) (*SignatureG2, error) {
+	point, err := G2PointFromCompressedBytes(data)
+	if err != nil {
+		return nil, err
+	}
+	return &SignatureG2{point: point.point}, nil
+}
+
+// Marshal serializes the SignatureG1 to compressed bytes.
+func (s *SignatureG1) Marshal() []byte {
+	if s.point == nil {
+		return make([]byte, 48)
+	}
+	bytes := s.point.Bytes()
+	return bytes[:]
+}
+
+// Marshal serializes the SignatureG2 to compressed bytes.
+func (s *SignatureG2) Marshal() []byte {
+	if s.point == nil {
+		return make([]byte, 96)
+	}
+	bytes := s.point.Bytes()
+	return bytes[:]
+}
+
 // G1PointFromCompressedBytes creates a G1Point from compressed bytes
 func G1PointFromCompressedBytes(bytes []byte) (*G1Point, error) {
 	point := new(bls12381.G1Affine)
