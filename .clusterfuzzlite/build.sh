@@ -135,7 +135,6 @@ compile_native_go_fuzzer github.com/Layr-Labs/eigenx-kms-go/pkg/encryption FuzzR
 
 # Util package fuzzers
 compile_native_go_fuzzer github.com/Layr-Labs/eigenx-kms-go/pkg/util FuzzValidateAppID util_validate_app_id
-compile_native_go_fuzzer github.com/Layr-Labs/eigenx-kms-go/pkg/util FuzzAddressToNodeIDDeterministic util_address_to_node_id
 compile_native_go_fuzzer github.com/Layr-Labs/eigenx-kms-go/pkg/util FuzzStringToECDSAPrivateKeyAndDeriveAddressRoundTrip util_ecdsakey_roundtrip
 compile_native_go_fuzzer github.com/Layr-Labs/eigenx-kms-go/pkg/util FuzzMapFilterReduceFlattenBasics util_slice_helpers
 compile_native_go_fuzzer github.com/Layr-Labs/eigenx-kms-go/pkg/util FuzzEncodeStringRoundTrip util_encode_string
@@ -197,7 +196,6 @@ ln -sf rsa.dict "$OUT/encryption_rsa_weak_keys.dict" || true
 
 # util fuzzers don't need a dedicated dict; use crypto.dict for generic tokens.
 ln -sf crypto.dict "$OUT/util_validate_app_id.dict" || true
-ln -sf crypto.dict "$OUT/util_address_to_node_id.dict" || true
 ln -sf crypto.dict "$OUT/util_ecdsakey_roundtrip.dict" || true
 ln -sf crypto.dict "$OUT/util_slice_helpers.dict" || true
 ln -sf crypto.dict "$OUT/util_encode_string.dict" || true

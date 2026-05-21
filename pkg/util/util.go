@@ -52,27 +52,6 @@ func Filter[A any](coll []A, criteria func(i A) bool) []A {
 	return out
 }
 
-// Find returns the first element in a slice that satisfies the provided criteria function.
-// If no element satisfies the criteria, nil is returned.
-//
-// Type Parameters:
-//   - A: The type of elements in the slice
-//
-// Parameters:
-//   - coll: The input slice to search
-//   - criteria: Function that determines whether an element matches
-//
-// Returns:
-//   - *A: Pointer to the first matching element, or nil if no match is found
-func Find[A any](coll []*A, criteria func(i *A) bool) *A {
-	for _, item := range coll {
-		if criteria(item) {
-			return item
-		}
-	}
-	return nil
-}
-
 // Reduce applies a function against an accumulator and each element in the slice
 // to reduce it to a single value.
 //
@@ -93,24 +72,6 @@ func Reduce[A any, B any](coll []A, processor func(accum B, next A) B, initialSt
 		val = processor(val, item)
 	}
 	return val
-}
-
-// Flatten combines multiple slices into a single slice.
-//
-// Type Parameters:
-//   - A: The type of elements in the slices
-//
-// Parameters:
-//   - coll: A slice of slices to flatten
-//
-// Returns:
-//   - []A: A new slice containing all elements from all input slices
-func Flatten[A any](coll [][]A) []A {
-	out := []A{}
-	for _, arr := range coll {
-		out = append(out, arr...)
-	}
-	return out
 }
 
 func StringToECDSAPrivateKey(pk string) (*ecdsa.PrivateKey, error) {
