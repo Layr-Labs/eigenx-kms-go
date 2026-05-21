@@ -94,7 +94,8 @@ type TLSConfig struct {
 	ClientCert string
 	// ClientKey is the PEM-encoded client private key for mutual TLS authentication
 	ClientKey string
-	// InsecureSkipVerify skips server certificate verification (not recommended for production)
+	// InsecureSkipVerify skips server certificate verification (not recommended for production).
+	// When true, a WARN is logged at client construction so misconfigured prod deploys are visible in logs.
 	InsecureSkipVerify bool
 }
 
@@ -191,6 +192,13 @@ func createHTTPClient(cfg *Config, logger *zap.Logger) (*http.Client, error) {
 			return nil, fmt.Errorf("failed to build TLS config: %w", err)
 		}
 		transport.TLSClientConfig = tlsConfig
+		if cfg.TLS.InsecureSkipVerify {
+			logger.Warn(
+				"TLS certificate verification is DISABLED for Web3Signer -- this is insecure and MUST NOT be used in production",
+				zap.String("baseURL", cfg.BaseURL),
+				zap.String("hint", "unset InsecureSkipVerify in production configs"),
+			)
+		}
 		logger.Sugar().Debugw("Configured TLS for Web3Signer client")
 	} else if strings.HasPrefix(cfg.BaseURL, "https://") {
 		// HTTPS without custom TLS config - use default TLS
