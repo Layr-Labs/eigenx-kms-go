@@ -184,6 +184,36 @@ This server implements:
 				Usage:   "Custom prefix for Redis keys (for multi-tenant setups)",
 				EnvVars: []string{config.EnvKMSRedisKeyPrefix},
 			},
+			&cli.BoolFlag{
+				Name:    "redis-allow-no-auth",
+				Usage:   "Permit empty Redis password (fail-closed by default; refused on production chains)",
+				EnvVars: []string{config.EnvKMSRedisAllowNoAuth},
+			},
+			&cli.BoolFlag{
+				Name:    "redis-use-tls",
+				Usage:   "Connect to Redis over TLS (rediss://). Strongly recommended for non-loopback deployments.",
+				EnvVars: []string{config.EnvKMSRedisUseTLS},
+			},
+			&cli.StringFlag{
+				Name:    "redis-tls-ca-cert",
+				Usage:   "PEM-encoded CA bundle to verify the Redis server certificate (empty = system trust store)",
+				EnvVars: []string{config.EnvKMSRedisTLSCACertPath},
+			},
+			&cli.StringFlag{
+				Name:    "redis-tls-cert",
+				Usage:   "Client certificate for Redis mTLS (must be set with --redis-tls-key)",
+				EnvVars: []string{config.EnvKMSRedisTLSCertPath},
+			},
+			&cli.StringFlag{
+				Name:    "redis-tls-key",
+				Usage:   "Client key for Redis mTLS (must be set with --redis-tls-cert)",
+				EnvVars: []string{config.EnvKMSRedisTLSKeyPath},
+			},
+			&cli.BoolFlag{
+				Name:    "redis-tls-insecure-skip-verify",
+				Usage:   "Skip Redis server cert verification (refused on production chains)",
+				EnvVars: []string{config.EnvKMSRedisTLSInsecureSkipVerify},
+			},
 			// Attestation configuration
 			&cli.StringFlag{
 				Name:    "gcp-project-id",
@@ -518,13 +548,43 @@ func runKMSServer(c *cli.Context) error {
 		l.Sugar().Infow("Using Badger persistence",
 			"path", kmsConfig.PersistenceConfig.DataPath)
 	case "redis":
+		rc := kmsConfig.PersistenceConfig.RedisConfig
+		// Refuse security-relaxing Redis flags on production chains.
+		if config.IsProductionChain(kmsConfig.ChainID) {
+			if rc.AllowNoAuth {
+				l.Sugar().Fatalw("--redis-allow-no-auth is not permitted on production chain",
+					"chain_id", kmsConfig.ChainID, "chain_name", kmsConfig.ChainName)
+			}
+			if rc.TLSInsecureSkipVerify {
+				l.Sugar().Fatalw("--redis-tls-insecure-skip-verify is not permitted on production chain",
+					"chain_id", kmsConfig.ChainID, "chain_name", kmsConfig.ChainName)
+			}
+			if !rc.UseTLS {
+				l.Sugar().Fatalw("--redis-use-tls is required on production chain (BLS shares are transmitted over this connection)",
+					"chain_id", kmsConfig.ChainID, "chain_name", kmsConfig.ChainName)
+			}
+		}
+		if rc.AllowNoAuth {
+			l.Sugar().Warnw("Redis AUTH is disabled (--redis-allow-no-auth). Do NOT use in production.",
+				"address", rc.Address)
+		}
+		if rc.TLSInsecureSkipVerify {
+			l.Sugar().Warnw("Redis TLS server cert verification is disabled (--redis-tls-insecure-skip-verify). Do NOT use in production.",
+				"address", rc.Address)
+		}
+
 		var err error
 		nodePersistence, err = persistenceRedis.NewRedisPersistence(
 			&persistenceRedis.RedisConfig{
-				Address:   kmsConfig.PersistenceConfig.RedisConfig.Address,
-				Password:  kmsConfig.PersistenceConfig.RedisConfig.Password,
-				DB:        kmsConfig.PersistenceConfig.RedisConfig.DB,
-				KeyPrefix: kmsConfig.PersistenceConfig.RedisConfig.KeyPrefix,
+				Address:               rc.Address,
+				Password:              rc.Password,
+				DB:                    rc.DB,
+				KeyPrefix:             rc.KeyPrefix,
+				UseTLS:                rc.UseTLS,
+				TLSCACertPath:         rc.TLSCACertPath,
+				TLSCertPath:           rc.TLSCertPath,
+				TLSKeyPath:            rc.TLSKeyPath,
+				TLSInsecureSkipVerify: rc.TLSInsecureSkipVerify,
 			},
 			l,
 		)
@@ -532,11 +592,12 @@ func runKMSServer(c *cli.Context) error {
 			l.Sugar().Fatalw("Failed to create Redis persistence", "error", err)
 		}
 		logFields := []interface{}{
-			"address", kmsConfig.PersistenceConfig.RedisConfig.Address,
-			"db", kmsConfig.PersistenceConfig.RedisConfig.DB,
+			"address", rc.Address,
+			"db", rc.DB,
+			"tls", rc.UseTLS,
 		}
-		if kmsConfig.PersistenceConfig.RedisConfig.KeyPrefix != "" {
-			logFields = append(logFields, "key_prefix", kmsConfig.PersistenceConfig.RedisConfig.KeyPrefix)
+		if rc.KeyPrefix != "" {
+			logFields = append(logFields, "key_prefix", rc.KeyPrefix)
 		}
 		l.Sugar().Infow("Using Redis persistence", logFields...)
 	default:
@@ -638,10 +699,16 @@ func parseKMSConfig(c *cli.Context) (*config.KMSServerConfig, error) {
 	// Add Redis config if using Redis persistence
 	if persistenceConfig.Type == "redis" {
 		persistenceConfig.RedisConfig = &config.RedisConfig{
-			Address:   c.String("redis-address"),
-			Password:  c.String("redis-password"),
-			DB:        c.Int("redis-db"),
-			KeyPrefix: c.String("redis-key-prefix"),
+			Address:               c.String("redis-address"),
+			Password:              c.String("redis-password"),
+			DB:                    c.Int("redis-db"),
+			KeyPrefix:             c.String("redis-key-prefix"),
+			AllowNoAuth:           c.Bool("redis-allow-no-auth"),
+			UseTLS:                c.Bool("redis-use-tls"),
+			TLSCACertPath:         c.String("redis-tls-ca-cert"),
+			TLSCertPath:           c.String("redis-tls-cert"),
+			TLSKeyPath:            c.String("redis-tls-key"),
+			TLSInsecureSkipVerify: c.Bool("redis-tls-insecure-skip-verify"),
 		}
 	}
 
