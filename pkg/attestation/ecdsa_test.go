@@ -487,6 +487,46 @@ func TestECDSAVerifyWithAllowedImageDigest(t *testing.T) {
 	assert.Equal(t, "sha256:custom-image", claims.ImageDigest)
 }
 
+func TestECDSAVerifyDoesNotMutateCallerSignature(t *testing.T) {
+	method := NewECDSAAttestationMethod(ECDSAAttestationConfig{
+		ChallengeTimeWindow: DefaultChallengeTimeWindow,
+	})
+
+	privateKey, err := crypto.GenerateKey()
+	require.NoError(t, err)
+
+	appID := "test-app"
+	nonce := make([]byte, NonceLength)
+	_, err = rand.Read(nonce)
+	require.NoError(t, err)
+
+	challenge, err := GenerateChallenge(nonce)
+	require.NoError(t, err)
+
+	signature, err := SignChallenge(privateKey, appID, challenge)
+	require.NoError(t, err)
+
+	original := append([]byte(nil), signature...)
+
+	publicKey := crypto.FromECDSAPub(&privateKey.PublicKey)
+	request := &AttestationRequest{
+		AppID:       appID,
+		Challenge:   []byte(challenge),
+		PublicKey:   publicKey,
+		Attestation: signature,
+	}
+
+	_, err = method.Verify(request)
+	require.NoError(t, err)
+	assert.Equal(t, original, signature, "Verify must not mutate caller's signature slice")
+
+	// Second Verify on the same request must still succeed (regression: previously
+	// the second call would fail because byte 64 had been decremented twice).
+	_, err = method.Verify(request)
+	require.NoError(t, err)
+	assert.Equal(t, original, signature, "Verify must remain idempotent on the caller's slice")
+}
+
 func TestRecoverAddress(t *testing.T) {
 	privateKey, err := crypto.GenerateKey()
 	require.NoError(t, err)
