@@ -59,11 +59,22 @@ function runWeb3SignerContainer() {
 }
 
 # isRedisReachable returns 0 if a Redis server responds to PING on the
-# configured host:port, 1 otherwise. Uses a one-shot redis:7-alpine container
-# so we don't require redis-cli on the host.
+# configured host:port, 1 otherwise. Prefers a host-installed redis-cli when
+# available because Docker Desktop's --network host on macOS attaches to the
+# Linux VM's loopback rather than the host's, which would always miss a
+# Redis running directly on the Mac. Falls back to a one-shot redis:7-alpine
+# container that uses host.docker.internal so the lookup works on
+# macOS / Windows without requiring redis-cli on the host.
 function isRedisReachable() {
-    docker run --rm --network host redis:7-alpine \
+    if command -v redis-cli >/dev/null 2>&1; then
         redis-cli -h "$redisHost" -p "$redisPort" ping 2>/dev/null \
+            | grep -q "PONG"
+        return
+    fi
+    docker run --rm \
+        --add-host=host.docker.internal:host-gateway \
+        redis:7-alpine \
+        redis-cli -h host.docker.internal -p "$redisPort" ping 2>/dev/null \
         | grep -q "PONG"
 }
 

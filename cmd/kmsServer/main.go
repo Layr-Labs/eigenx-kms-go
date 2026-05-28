@@ -470,6 +470,7 @@ func runKMSServer(c *cli.Context) error {
 		if err != nil {
 			return fmt.Errorf("failed to create attestation verifier: %w", err)
 		}
+		defer attestationVerifierCore.Close()
 
 		// Create GCP method and register
 		gcpMethod := attestation.NewGCPAttestationMethod(attestationVerifierCore, provider)
@@ -552,16 +553,16 @@ func runKMSServer(c *cli.Context) error {
 		// Refuse security-relaxing Redis flags on production chains.
 		if config.IsProductionChain(kmsConfig.ChainID) {
 			if rc.AllowNoAuth {
-				l.Sugar().Fatalw("--redis-allow-no-auth is not permitted on production chain",
-					"chain_id", kmsConfig.ChainID, "chain_name", kmsConfig.ChainName)
+				return fmt.Errorf("--redis-allow-no-auth is not permitted on production chain %d (%s)",
+					kmsConfig.ChainID, kmsConfig.ChainName)
 			}
 			if rc.TLSInsecureSkipVerify {
-				l.Sugar().Fatalw("--redis-tls-insecure-skip-verify is not permitted on production chain",
-					"chain_id", kmsConfig.ChainID, "chain_name", kmsConfig.ChainName)
+				return fmt.Errorf("--redis-tls-insecure-skip-verify is not permitted on production chain %d (%s)",
+					kmsConfig.ChainID, kmsConfig.ChainName)
 			}
 			if !rc.UseTLS {
-				l.Sugar().Fatalw("--redis-use-tls is required on production chain (BLS shares are transmitted over this connection)",
-					"chain_id", kmsConfig.ChainID, "chain_name", kmsConfig.ChainName)
+				return fmt.Errorf("--redis-use-tls is required on production chain %d (%s); BLS shares are transmitted over this connection",
+					kmsConfig.ChainID, kmsConfig.ChainName)
 			}
 		}
 		if rc.AllowNoAuth {
