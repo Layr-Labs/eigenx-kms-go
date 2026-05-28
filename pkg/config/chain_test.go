@@ -2,7 +2,7 @@ package config
 
 import "testing"
 
-func TestIsProductionChain(t *testing.T) {
+func Test_IsProductionChain(t *testing.T) {
 	cases := []struct {
 		name string
 		id   ChainId

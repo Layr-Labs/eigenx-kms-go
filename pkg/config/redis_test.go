@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-func TestRedisConfig_Validate(t *testing.T) {
+func Test_RedisConfig_Validate(t *testing.T) {
 	cases := []struct {
 		name    string
 		cfg     RedisConfig

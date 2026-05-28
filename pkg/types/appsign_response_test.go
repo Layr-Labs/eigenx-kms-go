@@ -8,11 +8,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestAppSignResponse_OperatorAddressIsCanonical guards against the aliasing
+// Test_AppSignResponse_OperatorAddressIsCanonical guards against the aliasing
 // regression where AppSignResponse.OperatorAddress was a string. Two payloads
 // that differ only in hex casing must decode to the same common.Address so a
 // collector can't be tricked into counting a single responder twice.
-func TestAppSignResponse_OperatorAddressIsCanonical(t *testing.T) {
+func Test_AppSignResponse_OperatorAddressIsCanonical(t *testing.T) {
 	// Same address, three encodings: lower-case, upper-case (EIP-55-ish), no 0x prefix on inner hex.
 	encodings := []string{
 		`{"operator_address":"0xabcdef1234567890abcdef1234567890abcdef12","partial_signature":{"compressed_bytes":null}}`,
@@ -29,9 +29,9 @@ func TestAppSignResponse_OperatorAddressIsCanonical(t *testing.T) {
 	}
 }
 
-// TestAppSignResponse_RoundTrip checks that the OperatorAddress survives a
+// Test_AppSignResponse_RoundTrip checks that the OperatorAddress survives a
 // marshal/unmarshal cycle and remains comparable with ==.
-func TestAppSignResponse_RoundTrip(t *testing.T) {
+func Test_AppSignResponse_RoundTrip(t *testing.T) {
 	addr := common.HexToAddress("0x9095535f04796d223A83c0e1346e7C1D9C6EE6f3")
 
 	enc, err := json.Marshal(AppSignResponse{OperatorAddress: addr})

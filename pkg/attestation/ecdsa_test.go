@@ -487,7 +487,7 @@ func TestECDSAVerifyWithAllowedImageDigest(t *testing.T) {
 	assert.Equal(t, "sha256:custom-image", claims.ImageDigest)
 }
 
-func TestECDSAVerifyDoesNotMutateCallerSignature(t *testing.T) {
+func Test_ECDSAVerify_DoesNotMutateCallerSignature(t *testing.T) {
 	method := NewECDSAAttestationMethod(ECDSAAttestationConfig{
 		ChallengeTimeWindow: DefaultChallengeTimeWindow,
 	})

@@ -45,7 +45,7 @@ func writeRawBytes(t *testing.T, bp *BadgerPersistence, key string, value []byte
 // path (must land at 0700) and the fail-closed path (refuse to open on a
 // pre-existing 0755 directory rather than silently chmod-ing it). Regression
 // for the Docker-volume scenario where the host mount lands at 0755.
-func TestNewBadgerPersistence_DataDirPermissions(t *testing.T) {
+func Test_NewBadgerPersistence_DataDirPermissions(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("POSIX-mode permissions are not enforced the same way on Windows")
 	}
