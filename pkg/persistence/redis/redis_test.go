@@ -2,6 +2,7 @@ package redis
 
 import (
 	"fmt"
+	"log"
 	"math/big"
 	"os"
 	"sync"
@@ -16,22 +17,36 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// getTestRedisAddress returns the Redis address for testing.
-// Uses REDIS_TEST_ADDRESS env var if set, otherwise defaults to localhost:6379.
-func getTestRedisAddress() string {
-	if addr := os.Getenv("REDIS_TEST_ADDRESS"); addr != "" {
-		return addr
+// testRedisAddress holds the host:port of the Redis instance used by tests.
+// It is read once from the REDIS_TEST_ADDRESS env var, which the surrounding
+// runner (scripts/goTest.sh in local development, or the GitHub Actions
+// `services.redis` container in CI) is responsible for exporting. If the var
+// is unset, individual tests skip cleanly via requireRedis.
+var testRedisAddress string
+
+func TestMain(m *testing.M) {
+	testRedisAddress = os.Getenv("REDIS_TEST_ADDRESS")
+	if testRedisAddress == "" {
+		log.Printf("REDIS_TEST_ADDRESS not set; redis tests will be skipped. " +
+			"Run via scripts/goTest.sh or set REDIS_TEST_ADDRESS=host:port.")
 	}
-	return "localhost:6379"
+	os.Exit(m.Run())
 }
 
-// requireRedis fails the test if Redis is not available
+// requireRedis returns a fresh RedisPersistence connected to the Redis
+// instance configured via REDIS_TEST_ADDRESS. Tests skip cleanly when the
+// env var is not set, rather than failing spuriously on dev machines without
+// Redis available.
 func requireRedis(t *testing.T) *RedisPersistence {
 	t.Helper()
 
+	if testRedisAddress == "" {
+		t.Skip("REDIS_TEST_ADDRESS not set; skipping (run via scripts/goTest.sh or export REDIS_TEST_ADDRESS=host:port).")
+	}
+
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 	cfg := &RedisConfig{
-		Address: getTestRedisAddress(),
+		Address: testRedisAddress,
 		DB:      15, // Use DB 15 for tests to avoid conflicts
 	}
 
@@ -44,18 +59,9 @@ func requireRedis(t *testing.T) *RedisPersistence {
 	return rp
 }
 
-// cleanupRedis clears all test keys from Redis
-func cleanupRedis(t *testing.T, rp *RedisPersistence) {
-	t.Helper()
-	// Note: We're using DB 15 which is dedicated for tests
-	// In a real scenario, you might want to FLUSHDB but that's risky
-	// For now, we rely on test isolation by using unique epochs
-}
-
 func TestRedisPersistence_SaveAndLoadKeyShare(t *testing.T) {
 	rp := requireRedis(t)
 	defer func() { _ = rp.Close() }()
-	defer cleanupRedis(t, rp)
 
 	// Create a sample key share version
 	privateShare := fr.NewElement(uint64(12345))
