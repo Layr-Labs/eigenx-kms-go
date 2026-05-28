@@ -706,9 +706,12 @@ func (s *Server) handleGetCommitments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return commitments, operator address, and pre-computed master public key
-	response := map[string]interface{}{
-		"operatorAddress": s.node.OperatorAddress.Hex(),
+	// Return commitments, operator address, and pre-computed master public key.
+	// OperatorAddress is emitted as a typed common.Address so callers decode
+	// into the canonical 20-byte form (matches the AppSign response shape and
+	// blocks hex-encoding aliasing on the threshold-collection path).
+	response := map[string]any{
+		"operatorAddress": s.node.OperatorAddress,
 		"commitments":     activeVersion.Commitments,
 		"masterPublicKey": activeVersion.MasterPublicKey,
 		"version":         activeVersion.Version,
