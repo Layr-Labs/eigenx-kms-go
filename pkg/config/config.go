@@ -469,6 +469,34 @@ func (c *KMSServerConfig) Validate() error {
 		return fmt.Errorf("invalid persistence config: %w", err)
 	}
 
+	// Chain-aware refusal of security-relaxing flags. Lives here (not in
+	// PersistenceConfig.Validate) so any binary or future config-linting
+	// tool that calls KMSServerConfig.Validate gets the same protection
+	// as cmd/kmsServer.
+	if err := validateRedisForChain(&c.PersistenceConfig, c.ChainID, c.ChainName); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateRedisForChain enforces production-chain rules on the Redis config:
+// requires TLS, forbids AllowNoAuth, forbids TLSInsecureSkipVerify. No-op on
+// non-production chains and on non-redis persistence types.
+func validateRedisForChain(pc *PersistenceConfig, chainID ChainId, chainName ChainName) error {
+	if pc.Type != "redis" || pc.RedisConfig == nil || !IsProductionChain(chainID) {
+		return nil
+	}
+	rc := pc.RedisConfig
+	if rc.AllowNoAuth {
+		return fmt.Errorf("--redis-allow-no-auth is not permitted on production chain %d (%s)", chainID, chainName)
+	}
+	if rc.TLSInsecureSkipVerify {
+		return fmt.Errorf("--redis-tls-insecure-skip-verify is not permitted on production chain %d (%s)", chainID, chainName)
+	}
+	if !rc.UseTLS {
+		return fmt.Errorf("--redis-use-tls is required on production chain %d (%s); BLS shares are transmitted over this connection", chainID, chainName)
+	}
 	return nil
 }
 

@@ -550,21 +550,10 @@ func runKMSServer(c *cli.Context) error {
 			"path", kmsConfig.PersistenceConfig.DataPath)
 	case "redis":
 		rc := kmsConfig.PersistenceConfig.RedisConfig
-		// Refuse security-relaxing Redis flags on production chains.
-		if config.IsProductionChain(kmsConfig.ChainID) {
-			if rc.AllowNoAuth {
-				return fmt.Errorf("--redis-allow-no-auth is not permitted on production chain %d (%s)",
-					kmsConfig.ChainID, kmsConfig.ChainName)
-			}
-			if rc.TLSInsecureSkipVerify {
-				return fmt.Errorf("--redis-tls-insecure-skip-verify is not permitted on production chain %d (%s)",
-					kmsConfig.ChainID, kmsConfig.ChainName)
-			}
-			if !rc.UseTLS {
-				return fmt.Errorf("--redis-use-tls is required on production chain %d (%s); BLS shares are transmitted over this connection",
-					kmsConfig.ChainID, kmsConfig.ChainName)
-			}
-		}
+		// Production-chain enforcement of TLS / auth lives in
+		// KMSServerConfig.Validate(); we only emit operator-visible warn banners
+		// here so non-production deployments still get a loud heads-up when a
+		// security-relaxing flag is set.
 		if rc.AllowNoAuth {
 			l.Sugar().Warnw("Redis AUTH is disabled (--redis-allow-no-auth). Do NOT use in production.",
 				"address", rc.Address)

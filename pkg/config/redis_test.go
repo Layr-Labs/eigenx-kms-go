@@ -74,3 +74,61 @@ func Test_RedisConfig_Validate(t *testing.T) {
 		})
 	}
 }
+
+func Test_validateRedisForChain(t *testing.T) {
+	prodCfg := func(rc RedisConfig) *PersistenceConfig {
+		return &PersistenceConfig{Type: "redis", RedisConfig: &rc}
+	}
+
+	tests := []struct {
+		name    string
+		pc      *PersistenceConfig
+		chainID ChainId
+		wantErr string
+	}{
+		{
+			name: "non-redis persistence is a no-op",
+			pc:   &PersistenceConfig{Type: "badger"},
+			chainID: ChainId_EthereumMainnet,
+		},
+		{
+			name:    "non-production chain is a no-op",
+			pc:      prodCfg(RedisConfig{Address: "localhost:6379"}),
+			chainID: ChainId_EthereumSepolia,
+		},
+		{
+			name:    "production chain requires TLS",
+			pc:      prodCfg(RedisConfig{Address: "localhost:6379", Password: "p"}),
+			chainID: ChainId_EthereumMainnet,
+			wantErr: "--redis-use-tls is required on production chain",
+		},
+		{
+			name:    "production chain refuses AllowNoAuth",
+			pc:      prodCfg(RedisConfig{Address: "localhost:6379", UseTLS: true, AllowNoAuth: true}),
+			chainID: ChainId_EthereumMainnet,
+			wantErr: "--redis-allow-no-auth is not permitted on production chain",
+		},
+		{
+			name:    "production chain refuses InsecureSkipVerify",
+			pc:      prodCfg(RedisConfig{Address: "localhost:6379", Password: "p", UseTLS: true, TLSInsecureSkipVerify: true}),
+			chainID: ChainId_EthereumMainnet,
+			wantErr: "--redis-tls-insecure-skip-verify is not permitted on production chain",
+		},
+		{
+			name:    "production chain accepts TLS + auth",
+			pc:      prodCfg(RedisConfig{Address: "localhost:6379", Password: "p", UseTLS: true}),
+			chainID: ChainId_EthereumMainnet,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			chainName := ChainIdToName[tt.chainID]
+			err := validateRedisForChain(tt.pc, tt.chainID, chainName)
+			if tt.wantErr == "" {
+				require.NoError(t, err)
+				return
+			}
+			require.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
