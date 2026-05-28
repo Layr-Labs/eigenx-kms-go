@@ -127,6 +127,12 @@ func IsEthereum(chainId ChainId) bool {
 	return chainId == ChainId_EthereumMainnet || chainId == ChainId_EthereumSepolia || chainId == ChainId_EthereumAnvil
 }
 
+// IsProductionChain reports whether the chain is a real public network where
+// security-relaxing flags (e.g. attestation-debug-mode) must be refused.
+func IsProductionChain(chainId ChainId) bool {
+	return chainId == ChainId_EthereumMainnet
+}
+
 func GetDefaultPollerIntervalForChainId(chainId ChainId) time.Duration {
 	switch chainId {
 	case ChainId_EthereumMainnet:
