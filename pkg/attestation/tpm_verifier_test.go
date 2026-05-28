@@ -65,7 +65,7 @@ func TestCalculateChallenge(t *testing.T) {
 
 // Covers the "attestation parsing failed" wrapper and doubles as a
 // constructor smoke test.
-func TestAttestVerifier_Verify_ParseFailures(t *testing.T) {
+func Test_AttestVerifier_Verify_ParseFailures(t *testing.T) {
 	cases := []struct {
 		name             string
 		attestationBytes []byte
