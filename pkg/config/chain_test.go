@@ -1,9 +1,13 @@
 package config
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 func Test_IsProductionChain(t *testing.T) {
-	cases := []struct {
+	tests := []struct {
 		name string
 		id   ChainId
 		want bool
@@ -15,11 +19,9 @@ func Test_IsProductionChain(t *testing.T) {
 		{"base anvil", ChainId_BaseAnvil, false},
 		{"unknown id", ChainId(424242), false},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			if got := IsProductionChain(tc.id); got != tc.want {
-				t.Fatalf("IsProductionChain(%d) = %v, want %v", tc.id, got, tc.want)
-			}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.Equal(t, tt.want, IsProductionChain(tt.id))
 		})
 	}
 }

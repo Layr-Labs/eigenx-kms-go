@@ -1,12 +1,13 @@
 package config
 
 import (
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func Test_RedisConfig_Validate(t *testing.T) {
-	cases := []struct {
+	tests := []struct {
 		name    string
 		cfg     RedisConfig
 		wantErr string // substring; empty means no error
@@ -62,21 +63,14 @@ func Test_RedisConfig_Validate(t *testing.T) {
 			},
 		},
 	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			err := tc.cfg.Validate()
-			if tc.wantErr == "" {
-				if err != nil {
-					t.Fatalf("unexpected error: %v", err)
-				}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := tt.cfg.Validate()
+			if tt.wantErr == "" {
+				require.NoError(t, err)
 				return
 			}
-			if err == nil {
-				t.Fatalf("expected error containing %q, got nil", tc.wantErr)
-			}
-			if !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("error %q does not contain %q", err.Error(), tc.wantErr)
-			}
+			require.ErrorContains(t, err, tt.wantErr)
 		})
 	}
 }
