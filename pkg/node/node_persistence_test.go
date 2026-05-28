@@ -14,7 +14,7 @@ import (
 	"github.com/Layr-Labs/chain-indexer/pkg/transactionLogParser"
 	"github.com/Layr-Labs/crypto-libs/pkg/ecdsa"
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation/testhelpers"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller"
@@ -117,7 +117,7 @@ func testNodeRestart_CleanShutdown(t *testing.T) {
 	imts1, err := inMemoryTransportSigner.NewECDSAInMemoryTransportSigner(pkBytes, testLogger)
 	require.NoError(t, err)
 
-	attestationManager := attestation.NewStubManager()
+	attestationManager := testhelpers.NewStubManager()
 
 	mockCC1, mockRegistryAddr := createMockContractCaller(t)
 
@@ -287,7 +287,7 @@ func testNodeRestart_BlockBoundaryTracking(t *testing.T) {
 	imts1, err := inMemoryTransportSigner.NewECDSAInMemoryTransportSigner(pkBytes, testLogger)
 	require.NoError(t, err)
 
-	attestationManager := attestation.NewStubManager()
+	attestationManager := testhelpers.NewStubManager()
 
 	mockCC1, mockRegistryAddr := createMockContractCaller(t)
 
@@ -446,7 +446,7 @@ func testNodeRestart_MultipleKeyVersions(t *testing.T) {
 	imts1, err := inMemoryTransportSigner.NewECDSAInMemoryTransportSigner(pkBytes, testLogger)
 	require.NoError(t, err)
 
-	attestationManager := attestation.NewStubManager()
+	attestationManager := testhelpers.NewStubManager()
 
 	mockCC1, mockRegistryAddr := createMockContractCaller(t)
 
@@ -633,7 +633,7 @@ func testNodeRestart_EmptyState(t *testing.T) {
 	imts, err := inMemoryTransportSigner.NewECDSAInMemoryTransportSigner(pkBytes, testLogger)
 	require.NoError(t, err)
 
-	attestationManager := attestation.NewStubManager()
+	attestationManager := testhelpers.NewStubManager()
 
 	mockCC, mockRegistryAddr := createMockContractCaller(t)
 
@@ -762,7 +762,7 @@ func testNodeRestart_IncompleteSessions(t *testing.T) {
 	imts, err := inMemoryTransportSigner.NewECDSAInMemoryTransportSigner(pkBytes, testLogger)
 	require.NoError(t, err)
 
-	attestationManager := attestation.NewStubManager()
+	attestationManager := testhelpers.NewStubManager()
 
 	mockCC, mockRegistryAddr := createMockContractCaller(t)
 
@@ -965,7 +965,7 @@ func testSessionPersistence_ExpirationCleanup(t *testing.T) {
 	imts, err := inMemoryTransportSigner.NewECDSAInMemoryTransportSigner(pkBytes, testLogger)
 	require.NoError(t, err)
 
-	attestationManager := attestation.NewStubManager()
+	attestationManager := testhelpers.NewStubManager()
 
 	mockCC, mockRegistryAddr := createMockContractCaller(t)
 

@@ -14,7 +14,7 @@ import (
 	"github.com/Layr-Labs/chain-indexer/pkg/contractStore/inMemoryContractStore"
 	"github.com/Layr-Labs/chain-indexer/pkg/transactionLogParser"
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation/testhelpers"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/kmsClient"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/web3signer"
@@ -267,7 +267,7 @@ func Test_OnChainIntegration(t *testing.T) {
 
 		// Use stub attestation manager for testing
 		// Production would use registered GCP, Intel, or ECDSA methods
-		attestationManager := attestation.NewStubManager()
+		attestationManager := testhelpers.NewStubManager()
 
 		// Create in-memory persistence for testing
 		nodePersistence := persistenceMemory.NewMemoryPersistence()
