@@ -666,7 +666,7 @@ func TestNonceDecoding(t *testing.T) {
 	}
 }
 
-func TestExtractNonce(t *testing.T) {
+func Test_ExtractNonce(t *testing.T) {
 	cases := []struct {
 		name       string
 		input      any
