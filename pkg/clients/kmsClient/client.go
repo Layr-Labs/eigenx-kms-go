@@ -63,7 +63,7 @@ type SecretsResult struct {
 // SecretsOptions configures secret retrieval behavior
 type SecretsOptions struct {
 	// AttestationMethod specifies which attestation method to use
-	// Options: "gcp" (default), "intel", "ecdsa"
+	// Options: "gcp" (default), "intel", "ecdsa", "tpm"
 	AttestationMethod string
 
 	// For GCP/Intel attestation (production)
@@ -71,6 +71,9 @@ type SecretsOptions struct {
 
 	// For ECDSA attestation (development)
 	ECDSAPrivateKey *ecdsa.PrivateKey // Optional: if nil, generates new key
+
+	// For TPM attestation (raw hardware attestation)
+	TPMAttestationBytes []byte // Raw TPM attestation evidence from the hardware
 
 	// RSA key pair for encrypting partial signatures in transit
 	RSAPrivateKeyPEM []byte // Required: RSA private key in PEM format
@@ -590,6 +593,19 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 			ExtraData:         opts.ExtraData,
 		}
 
+	case "tpm":
+		if len(opts.TPMAttestationBytes) == 0 {
+			return nil, fmt.Errorf("TPM attestation bytes are required for tpm method")
+		}
+		req = types.SecretsRequestV1{
+			AppID:             appID,
+			AttestationMethod: "tpm",
+			Attestation:       opts.TPMAttestationBytes,
+			RSAPubKeyTmp:      opts.RSAPublicKeyPEM,
+			AttestationTime:   time.Now().Unix(),
+			ExtraData:         opts.ExtraData,
+		}
+
 	default:
 		return nil, fmt.Errorf("unsupported attestation method: %s", opts.AttestationMethod)
 	}
@@ -830,6 +846,33 @@ func (c *Client) createECDSAAttestationRequest(appID string, opts *SecretsOption
 		RSAPubKeyTmp:      rsaPubKeyPEM,
 		AttestationTime:   time.Now().Unix(),
 	}, nil
+}
+
+// GetPublicKeyForApp returns the IBE public key (H_1(appID)) and the master public key
+// for an application. No authentication is required — it queries the unauthenticated
+// /pubkey endpoint on operators to derive the master key, then computes the app-specific
+// hash-to-G1 point used for IBE encryption.
+func (c *Client) GetPublicKeyForApp(appID string) (*types.G1Point, *types.G2Point, error) {
+	if appID == "" {
+		return nil, nil, fmt.Errorf("app ID is required")
+	}
+
+	operators, err := c.GetOperators()
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get operators: %w", err)
+	}
+
+	masterPubKey, err := c.GetMasterPublicKey(operators)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get master public key: %w", err)
+	}
+
+	appPubKey, err := crypto.GetAppPublicKey(appID)
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to compute app public key: %w", err)
+	}
+
+	return appPubKey, masterPubKey, nil
 }
 
 // EncryptForApp encrypts data for a specific application using IBE
