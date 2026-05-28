@@ -3,6 +3,7 @@ package tests
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -13,6 +14,19 @@ import (
 
 	"github.com/Layr-Labs/chain-indexer/pkg/clients/ethereum"
 )
+
+// CloneDefaultTransport returns a clone of http.DefaultTransport when it is
+// the standard *http.Transport, or a fresh *http.Transport otherwise. Tests
+// use this to install an owned transport whose idle connections can be torn
+// down deterministically (for goleak), without panicking if an application
+// has installed a non-standard DefaultTransport (e.g. an instrumented or
+// wrapping transport).
+func CloneDefaultTransport() *http.Transport {
+	if dt, ok := http.DefaultTransport.(*http.Transport); ok {
+		return dt.Clone()
+	}
+	return &http.Transport{}
+}
 
 type AnvilConfig struct {
 	ForkUrl         string `json:"forkUrl"`
@@ -50,11 +64,24 @@ func StartAnvil(projectRoot string, ctx context.Context, cfg *AnvilConfig) (*exe
 
 	rpcUrl := fmt.Sprintf("http://localhost:%s", cfg.PortNumber)
 
+	// Use a dedicated transport whose idle connections we tear down before
+	// returning — http.DefaultClient would leak persistConn goroutines past
+	// the caller's lifetime (goleak would report them).
+	readinessTransport := CloneDefaultTransport()
+	readinessClient := &http.Client{Transport: readinessTransport, Timeout: 5 * time.Second}
+	defer readinessTransport.CloseIdleConnections()
+
 	for i := 1; i < 10; i++ {
-		res, err := http.Post(rpcUrl, "application/json", nil)
-		if err == nil && res.StatusCode == 200 {
-			fmt.Println("Anvil is up and running")
-			return cmd, nil
+		res, err := readinessClient.Post(rpcUrl, "application/json", nil)
+		if err == nil {
+			// Drain the response body before closing so the TCP connection can
+			// be returned to the idle pool cleanly instead of being RST-torn.
+			_, _ = io.Copy(io.Discard, res.Body)
+			_ = res.Body.Close()
+			if res.StatusCode == 200 {
+				fmt.Println("Anvil is up and running")
+				return cmd, nil
+			}
 		}
 		fmt.Printf("Anvil not ready yet, retrying... %d\n", i)
 		time.Sleep(time.Second * time.Duration(i))

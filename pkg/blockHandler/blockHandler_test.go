@@ -2,6 +2,7 @@ package blockHandler
 
 import (
 	"context"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -459,11 +460,17 @@ func Test_BlockHandler(t *testing.T) {
 			BlockType: ethereum.BlockType_Latest,
 		}, l)
 
+		// Install an owned HTTP transport so CloseIdleConnections can tear down
+		// the persistConn read/write loop goroutines created while polling.
+		rpcTransport := tests.CloneDefaultTransport()
+		l1EthereumClient.SetHttpClient(&http.Client{Transport: rpcTransport, Timeout: 10 * time.Second})
+		t.Cleanup(rpcTransport.CloseIdleConnections)
+
 		ethClient, err := l1EthereumClient.GetEthereumContractCaller()
 		if err != nil {
 			l.Sugar().Fatalf("failed to get Ethereum contract caller: %v", err)
 		}
-		_ = ethClient
+		t.Cleanup(ethClient.Close)
 
 		// ------------------------------------------------------------------------
 		// Setup anvil
