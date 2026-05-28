@@ -665,3 +665,35 @@ func TestNonceDecoding(t *testing.T) {
 		}
 	}
 }
+
+func Test_ExtractNonce(t *testing.T) {
+	cases := []struct {
+		name       string
+		input      any
+		wantNonce  string
+		wantErrSub string
+	}{
+		{name: "nil returns empty", input: nil, wantNonce: ""},
+		{name: "string value", input: "abc123", wantNonce: "abc123"},
+		{name: "empty string", input: "", wantNonce: ""},
+		{name: "single-element array (Intel format)", input: []any{"nonce-from-intel"}, wantNonce: "nonce-from-intel"},
+		{name: "empty array", input: []any{}, wantErrSub: "exactly one string element, got 0"},
+		{name: "two-element array", input: []any{"a", "b"}, wantErrSub: "exactly one string element, got 2"},
+		{name: "single-element array with non-string", input: []any{42}, wantErrSub: "exactly one string element, got 1"},
+		{name: "integer", input: 42, wantErrSub: "must be a string or array of strings"},
+		{name: "map", input: map[string]any{"x": "y"}, wantErrSub: "must be a string or array of strings"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := extractNonce(tc.input)
+			if tc.wantErrSub != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.wantErrSub)
+				require.Empty(t, got)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tc.wantNonce, got)
+		})
+	}
+}
