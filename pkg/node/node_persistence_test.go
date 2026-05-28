@@ -2,6 +2,8 @@ package node
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -36,6 +38,19 @@ const (
 	L1RpcUrl = "http://127.0.0.1:8545"
 )
 
+// secureBadgerTmpDir returns a freshly-created subdir of t.TempDir() with
+// 0700 perms so persistenceBadger.NewBadgerPersistence's permission check
+// passes. t.TempDir itself is 0755 on most platforms, which the production
+// code rejects.
+func secureBadgerTmpDir(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "kms-data")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("secureBadgerTmpDir mkdir: %v", err)
+	}
+	return dir
+}
+
 // createMockContractCaller creates a mock contract caller for tests
 func createMockContractCaller(t *testing.T) (contractCaller.IContractCaller, common.Address) {
 	mockCC := &contractCaller.MockContractCallerStub{}
@@ -55,7 +70,7 @@ func TestNodePersistence(t *testing.T) {
 
 // testNodeRestart_CleanShutdown tests that a node can restore state after clean shutdown
 func testNodeRestart_CleanShutdown(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureBadgerTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	// Get test data
@@ -229,7 +244,7 @@ func testNodeRestart_CleanShutdown(t *testing.T) {
 
 // testNodeRestart_BlockBoundaryTracking tests that block boundary tracking survives restart
 func testNodeRestart_BlockBoundaryTracking(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureBadgerTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	// Get test data
@@ -388,7 +403,7 @@ func testNodeRestart_BlockBoundaryTracking(t *testing.T) {
 
 // testNodeRestart_MultipleKeyVersions tests that multiple key versions persist correctly
 func testNodeRestart_MultipleKeyVersions(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureBadgerTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	// Get test data
@@ -574,7 +589,7 @@ func testNodeRestart_MultipleKeyVersions(t *testing.T) {
 
 // testNodeRestart_EmptyState tests first-run behavior with no persisted state
 func testNodeRestart_EmptyState(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureBadgerTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	// Get test data
@@ -674,7 +689,7 @@ func testNodeRestart_EmptyState(t *testing.T) {
 
 // testNodeRestart_IncompleteSessions tests cleanup of incomplete protocol sessions
 func testNodeRestart_IncompleteSessions(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureBadgerTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	// Get test data
@@ -829,7 +844,7 @@ func createSingleNodePeering(t *testing.T, chainConfig *tests.ChainConfig) peeri
 
 // testSessionPersistence_DuringDKG tests that protocol sessions are saved during DKG execution
 func testSessionPersistence_DuringDKG(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureBadgerTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	// Get test data
@@ -880,7 +895,7 @@ func testSessionPersistence_DuringDKG(t *testing.T) {
 
 // testSessionPersistence_ExpirationCleanup tests that expired sessions are cleaned up
 func testSessionPersistence_ExpirationCleanup(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureBadgerTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	// Get test data
@@ -1004,7 +1019,7 @@ func testSessionPersistence_ExpirationCleanup(t *testing.T) {
 
 // testSessionPersistence_CleanupOnCompletion tests that sessions are deleted when protocols complete
 func testSessionPersistence_CleanupOnCompletion(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureBadgerTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	persistenceLayer, err := persistenceBadger.NewBadgerPersistence(tmpDir, testLogger)

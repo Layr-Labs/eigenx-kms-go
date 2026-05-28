@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"sync"
@@ -45,6 +46,21 @@ func NewBadgerPersistence(dataPath string, logger *zap.Logger) (*BadgerPersisten
 	absPath, err := filepath.Abs(dataPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to resolve absolute path: %w", err)
+	}
+
+	// Create the data directory at 0o700 if it doesn't yet exist, and refuse
+	// to start if a pre-existing directory has looser permissions. Silent
+	// chmod would mask a misconfigured deployment (e.g. a Docker volume
+	// mounted at 0o755), so fail closed instead.
+	if err := os.MkdirAll(absPath, 0o700); err != nil {
+		return nil, fmt.Errorf("failed to create badger data directory %s: %w", absPath, err)
+	}
+	info, err := os.Stat(absPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to stat badger data directory %s: %w", absPath, err)
+	}
+	if mode := info.Mode().Perm(); mode != 0o700 {
+		return nil, fmt.Errorf("badger data directory %s has insecure permissions %#o (must be 0700)", absPath, mode)
 	}
 
 	// Configure Badger for production use
