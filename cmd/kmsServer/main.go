@@ -398,6 +398,26 @@ func runKMSServer(c *cli.Context) error {
 		providerStr := c.String("attestation-provider")
 		debugMode := c.Bool("attestation-debug-mode")
 
+		// Refuse to start on a production chain when attestation-debug-mode is enabled,
+		// because debug mode skips the dbgstat ("disabled-since-boot") and
+		// confidential_space.support_attributes checks. Allowing this on mainnet would
+		// silently accept "attestations" from non-TEE machines.
+		if debugMode && config.IsProductionChain(kmsConfig.ChainID) {
+			return fmt.Errorf("--attestation-debug-mode is not permitted on production chain %d (%s); it disables TEE security checks",
+				kmsConfig.ChainID, kmsConfig.ChainName)
+		}
+		if debugMode {
+			l.Sugar().Warnw("attestation-debug-mode is ENABLED — skipping dbgstat=disabled-since-boot and confidential_space.support_attributes checks. Do NOT use in production.",
+				"chain_id", kmsConfig.ChainID, "chain_name", kmsConfig.ChainName)
+		}
+
+		// gcp-project-id is mandatory when GCP attestation is enabled. The attestation
+		// verifier compares this value against the JWT's project_id claim; an empty
+		// string compared against an empty claim would silently accept any token.
+		if gcpProjectID == "" {
+			return fmt.Errorf("--gcp-project-id is required when --enable-gcp-attestation=true")
+		}
+
 		// Parse attestation provider
 		var provider attestation.AttestationProvider
 		switch providerStr {
