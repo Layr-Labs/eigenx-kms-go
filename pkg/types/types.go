@@ -115,10 +115,17 @@ type AppSignRequest struct {
 	AttestationTime int64
 }
 
-// AppSignResponse contains a partial signature from a node
+// AppSignResponse contains a partial signature from a node.
+//
+// OperatorAddress is sent and received as a typed common.Address so that
+// JSON encode/decode round-trips through the canonical 20-byte form. This
+// rules out aliasing attacks where a malicious responder submits two
+// partial signatures under different string encodings of the same address
+// (lower-case vs EIP-55, with-or-without 0x prefix) and the collector
+// counts both toward the ⌈2n/3⌉ threshold.
 type AppSignResponse struct {
-	OperatorAddress  string
-	PartialSignature G1Point
+	OperatorAddress  common.Address `json:"operator_address"`
+	PartialSignature G1Point        `json:"partial_signature"`
 }
 
 // SecretsRequestV1 represents a request for application secrets

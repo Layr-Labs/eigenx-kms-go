@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -347,7 +346,7 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 	type result struct {
 		operatorAddr common.Address
 		signature    types.G1Point
-		opAddress    string
+		opAddress    common.Address
 	}
 
 	resultChan := make(chan result, len(operators.Peers))
@@ -418,12 +417,11 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 
 			// SECURITY: bind response identity to the operator we actually queried.
 			// Use the operator address from our operator set, not the response.
-			expectedAddress := op.OperatorAddress.Hex()
-			if !strings.EqualFold(response.OperatorAddress, expectedAddress) {
+			if response.OperatorAddress != op.OperatorAddress {
 				c.logger.Sugar().Warnw("Operator address mismatch in partial signature response",
 					"operator_index", idx,
-					"expected_operator_address", expectedAddress,
-					"response_operator_address", response.OperatorAddress,
+					"expected_operator_address", op.OperatorAddress.Hex(),
+					"response_operator_address", response.OperatorAddress.Hex(),
 				)
 				return
 			}
@@ -431,8 +429,7 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 
 			c.logger.Sugar().Debugw("Collected partial signature from operator",
 				"operator_index", idx,
-				"operator_address", operatorAddr.Hex(),
-				"operator_address", response.OperatorAddress)
+				"operator_address", operatorAddr.Hex())
 
 			resultChan <- result{operatorAddr: operatorAddr, signature: response.PartialSignature, opAddress: response.OperatorAddress}
 		}(i, operator)
@@ -919,7 +916,7 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 	type result struct {
 		operatorAddr common.Address
 		signature    types.G1Point
-		opAddress    string
+		opAddress    common.Address
 	}
 
 	resultChan := make(chan result, len(operators.Peers))
@@ -967,24 +964,23 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 				return
 			}
 			if isZero {
-				c.logger.Sugar().Warnw("Received zero partial signature", "operator_index", idx, "operator_address", response.OperatorAddress)
+				c.logger.Sugar().Warnw("Received zero partial signature", "operator_index", idx, "operator_address", response.OperatorAddress.Hex())
 				return
 			}
 
 			// SECURITY: bind response identity to the operator we actually queried.
 			// Use the operator address from our operator set, not the response.
-			expectedAddress := op.OperatorAddress.Hex()
-			if !strings.EqualFold(response.OperatorAddress, expectedAddress) {
+			if response.OperatorAddress != op.OperatorAddress {
 				c.logger.Sugar().Warnw("Operator address mismatch in partial signature response",
 					"operator_index", idx,
-					"expected_operator_address", expectedAddress,
-					"response_operator_address", response.OperatorAddress,
+					"expected_operator_address", op.OperatorAddress.Hex(),
+					"response_operator_address", response.OperatorAddress.Hex(),
 				)
 				return
 			}
 			operatorAddr := op.OperatorAddress
 
-			c.logger.Sugar().Debugw("Collected partial signature", "operator_index", idx, "operator_address", operatorAddr.Hex(), "operator_address", response.OperatorAddress)
+			c.logger.Sugar().Debugw("Collected partial signature", "operator_index", idx, "operator_address", operatorAddr.Hex())
 			resultChan <- result{operatorAddr: operatorAddr, signature: response.PartialSignature, opAddress: response.OperatorAddress}
 		}(i, peer)
 	}

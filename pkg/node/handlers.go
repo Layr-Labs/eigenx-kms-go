@@ -682,7 +682,7 @@ func (s *Server) handleAppSign(w http.ResponseWriter, r *http.Request) {
 		"app_id", req.AppID)
 
 	resp := types.AppSignResponse{
-		OperatorAddress:  s.node.OperatorAddress.Hex(),
+		OperatorAddress:  s.node.OperatorAddress,
 		PartialSignature: partialSig,
 	}
 
