@@ -61,7 +61,7 @@ test: forge-test
 
 .PHONY: lint
 lint:
-	golangci-lint run --timeout "5m"
+	golangci-lint run --timeout "10m"
 
 .PHONY: fmt
 fmt:
