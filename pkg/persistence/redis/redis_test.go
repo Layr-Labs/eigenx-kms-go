@@ -15,6 +15,7 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/goleak"
 )
 
 // testRedisAddress holds the host:port of the Redis instance used by tests.
@@ -30,7 +31,7 @@ func TestMain(m *testing.M) {
 		log.Printf("REDIS_TEST_ADDRESS not set; redis tests will be skipped. " +
 			"Run via scripts/goTest.sh or set REDIS_TEST_ADDRESS=host:port.")
 	}
-	os.Exit(m.Run())
+	goleak.VerifyTestMain(m)
 }
 
 // requireRedis returns a fresh RedisPersistence connected to the Redis
