@@ -1,15 +1,12 @@
 package redis
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"math/big"
-	"net/url"
 	"os"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/persistence"
@@ -18,80 +15,33 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	tcredis "github.com/testcontainers/testcontainers-go/modules/redis"
 )
 
 // testRedisAddress holds the host:port of the Redis instance used by tests.
-// It is set once by TestMain, either from a user-provided REDIS_TEST_ADDRESS
-// env var (useful in CI environments that already run Redis) or from a
-// testcontainers-managed Redis container started for the duration of the
-// package's tests.
+// It is read once from the REDIS_TEST_ADDRESS env var, which the surrounding
+// runner (scripts/goTest.sh in local development, or the GitHub Actions
+// `services.redis` container in CI) is responsible for exporting. If the var
+// is unset, individual tests skip cleanly via requireRedis.
 var testRedisAddress string
 
 func TestMain(m *testing.M) {
-	os.Exit(runTests(m))
+	testRedisAddress = os.Getenv("REDIS_TEST_ADDRESS")
+	if testRedisAddress == "" {
+		log.Printf("REDIS_TEST_ADDRESS not set; redis tests will be skipped. " +
+			"Run via scripts/goTest.sh or set REDIS_TEST_ADDRESS=host:port.")
+	}
+	os.Exit(m.Run())
 }
 
-// runTests is split out from TestMain so defers execute even when a test
-// panics or calls os.Exit indirectly.
-func runTests(m *testing.M) int {
-	if addr := os.Getenv("REDIS_TEST_ADDRESS"); addr != "" {
-		testRedisAddress = addr
-		return m.Run()
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-	defer cancel()
-
-	container, err := tcredis.Run(ctx, "redis:7-alpine")
-	if err != nil {
-		log.Printf("skipping redis tests: failed to start redis container (is Docker running?): %v", err)
-		return 0
-	}
-	defer func() {
-		// Use a fresh context because ctx may already be done.
-		termCtx, termCancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer termCancel()
-		if err := container.Terminate(termCtx); err != nil {
-			log.Printf("failed to terminate redis container: %v", err)
-		}
-	}()
-
-	connStr, err := container.ConnectionString(ctx)
-	if err != nil {
-		log.Printf("skipping redis tests: failed to get redis connection string: %v", err)
-		return 0
-	}
-	addr, err := hostPortFromRedisURL(connStr)
-	if err != nil {
-		log.Printf("skipping redis tests: %v", err)
-		return 0
-	}
-	testRedisAddress = addr
-	return m.Run()
-}
-
-// hostPortFromRedisURL extracts the host:port from a redis://host:port URL.
-func hostPortFromRedisURL(redisURL string) (string, error) {
-	u, err := url.Parse(redisURL)
-	if err != nil {
-		return "", fmt.Errorf("parse redis url %q: %w", redisURL, err)
-	}
-	if u.Host == "" {
-		return "", fmt.Errorf("redis url %q has no host", redisURL)
-	}
-	return u.Host, nil
-}
-
-// requireRedis returns a fresh RedisPersistence connected to the shared test
-// Redis instance. Tests that call this must ensure TestMain has succeeded in
-// provisioning Redis; if it hasn't, testRedisAddress is empty and the test
-// is skipped rather than failing spuriously.
+// requireRedis returns a fresh RedisPersistence connected to the Redis
+// instance configured via REDIS_TEST_ADDRESS. Tests skip cleanly when the
+// env var is not set, rather than failing spuriously on dev machines without
+// Redis available.
 func requireRedis(t *testing.T) *RedisPersistence {
 	t.Helper()
 
 	if testRedisAddress == "" {
-		t.Skip("redis not available for tests (Docker required; or set REDIS_TEST_ADDRESS)")
+		t.Skip("REDIS_TEST_ADDRESS not set; skipping (run via scripts/goTest.sh or export REDIS_TEST_ADDRESS=host:port).")
 	}
 
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
