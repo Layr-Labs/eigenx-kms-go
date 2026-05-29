@@ -87,8 +87,8 @@ func Test_validateRedisForChain(t *testing.T) {
 		wantErr string
 	}{
 		{
-			name: "non-redis persistence is a no-op",
-			pc:   &PersistenceConfig{Type: "badger"},
+			name:    "non-redis persistence is a no-op",
+			pc:      &PersistenceConfig{Type: "badger"},
 			chainID: ChainId_EthereumMainnet,
 		},
 		{
