@@ -48,7 +48,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"slices"
 	"strings"
@@ -56,8 +55,15 @@ import (
 	"time"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"go.uber.org/zap"
 )
+
+// maxWeb3SignerResponseBytes caps every response read from the Web3Signer
+// service so a misbehaving (or compromised) signer cannot OOM the KMS by
+// streaming an arbitrarily large body. Signature hex strings and JSON-RPC
+// envelopes are well under 1 KiB; 64 KiB leaves comfortable headroom.
+const maxWeb3SignerResponseBytes int64 = 64 * 1024
 
 // Client represents a Web3Signer JSON-RPC client that provides methods for
 // interacting with a Web3Signer service instance.
@@ -359,8 +365,9 @@ func (c *Client) SignRaw(ctx context.Context, identifier string, data []byte) (s
 	// nolint:errcheck
 	defer resp.Body.Close()
 
-	// Read response body
-	responseData, err := io.ReadAll(resp.Body)
+	// Read response body, bounded so a misbehaving Web3Signer can't OOM us.
+	// A signature hex string is well under 1 KiB; cap at maxWeb3SignerResponseBytes.
+	responseData, err := util.ReadResponseBody(resp, maxWeb3SignerResponseBytes)
 	if err != nil {
 		return "", fmt.Errorf("failed to read response body: %w", err)
 	}
@@ -498,8 +505,7 @@ func (c *Client) makeHttpRequest(
 	// nolint:errcheck
 	defer resp.Body.Close()
 
-	//nolint:staticcheck
-	responseData, err := io.ReadAll(resp.Body)
+	responseData, err := util.ReadResponseBody(resp, maxWeb3SignerResponseBytes)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
@@ -560,8 +566,7 @@ func (c *Client) makeJSONRPCRequest(ctx context.Context, method string, params i
 	// nolint:errcheck
 	defer resp.Body.Close()
 
-	// Read response body
-	responseData, err := io.ReadAll(resp.Body)
+	responseData, err := util.ReadResponseBody(resp, maxWeb3SignerResponseBytes)
 	if err != nil {
 		return fmt.Errorf("failed to read response body: %w", err)
 	}

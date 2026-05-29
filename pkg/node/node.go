@@ -5,9 +5,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"sort"
 	"strings"
@@ -41,6 +39,13 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 )
+
+// mpkResponse is the subset of the /pubkey response consumed by
+// fetchMPKFromPeers. Defined at file scope so generic decode helpers can
+// reference it by name.
+type mpkResponse struct {
+	MasterPublicKey *types.G2Point `json:"masterPublicKey"`
+}
 
 // Node represents a KMS node
 type Node struct {
@@ -2580,15 +2585,13 @@ func (n *Node) fetchMPKFromPeers(ctx context.Context, operators []*peering.Opera
 			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
-				n.logger.Sugar().Warnw("Peer returned error for MPK", "peer", peer.SocketAddress, "status", resp.StatusCode, "body", string(body))
+				body, _ := util.ReadErrorBody(resp, util.DefaultMaxErrorBodyBytes)
+				n.logger.Sugar().Warnw("Peer returned error for MPK", "peer", peer.SocketAddress, "status", resp.StatusCode, "body", body)
 				return
 			}
 
-			var response struct {
-				MasterPublicKey *types.G2Point `json:"masterPublicKey"`
-			}
-			if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			response, err := util.DecodeJSONResponse[mpkResponse](resp, util.DefaultMaxJSONResponseBytes)
+			if err != nil {
 				n.logger.Sugar().Warnw("Failed to decode MPK response", "peer", peer.SocketAddress, "error", err)
 				return
 			}

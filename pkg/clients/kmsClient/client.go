@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -23,7 +22,27 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 )
+
+// Per-endpoint response-body caps. Conservative bounds picked from the actual
+// payload sizes (G2 commitments, RSA-OAEP-2048 ciphertexts, etc.) plus headroom.
+// Values used by util.DecodeJSONResponse to cap reads from operator-controlled
+// peers, blocking memory-exhaustion DoS via attacker-supplied payloads.
+const (
+	maxAppSignResponseBytes int64 = 4 * 1024  // ~150 B actual; cap 4 KiB
+	maxSecretsResponseBytes int64 = 16 * 1024 // ~2 KiB actual; cap 16 KiB
+)
+
+// pubkeyResponse is the shape of the operator /pubkey endpoint response.
+// Defined at file scope so generic decode helpers can reference it by name.
+type pubkeyResponse struct {
+	OperatorAddress common.Address  `json:"operatorAddress"`
+	Commitments     []types.G2Point `json:"commitments"`
+	MasterPublicKey *types.G2Point  `json:"masterPublicKey"`
+	Version         int64           `json:"version"`
+	IsActive        bool            `json:"isActive"`
+}
 
 // ContractCaller defines the interface for fetching operator information from the blockchain
 type ContractCaller interface {
@@ -181,24 +200,17 @@ func (c *Client) GetMasterPublicKey(operators *peering.OperatorSetPeers) (*types
 			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
+				body, _ := util.ReadErrorBody(resp, util.DefaultMaxErrorBodyBytes)
 				c.logger.Sugar().Warnw("Operator returned error",
 					"operator_index", idx,
 					"status_code", resp.StatusCode,
-					"body", string(body),
+					"body", body,
 				)
 				return
 			}
 
-			var response struct {
-				OperatorAddress common.Address  `json:"operatorAddress"`
-				Commitments     []types.G2Point `json:"commitments"`
-				MasterPublicKey *types.G2Point  `json:"masterPublicKey"`
-				Version         int64           `json:"version"`
-				IsActive        bool            `json:"isActive"`
-			}
-
-			if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			response, err := util.DecodeJSONResponse[pubkeyResponse](resp, util.DefaultMaxJSONResponseBytes)
+			if err != nil {
 				c.logger.Sugar().Warnw("Failed to decode response from operator",
 					"operator_index", idx,
 					"error", err,
@@ -408,17 +420,17 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
+				body, _ := util.ReadErrorBody(resp, util.DefaultMaxErrorBodyBytes)
 				c.logger.Sugar().Warnw("Operator returned error",
 					"operator_index", idx,
 					"status_code", resp.StatusCode,
-					"body", string(body),
+					"body", body,
 				)
 				return
 			}
 
-			var response types.AppSignResponse
-			if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			response, err := util.DecodeJSONResponse[types.AppSignResponse](resp, maxAppSignResponseBytes)
+			if err != nil {
 				c.logger.Sugar().Warnw("Failed to decode response from operator",
 					"operator_index", idx,
 					"error", err,
@@ -807,12 +819,12 @@ func (c *Client) requestSecretsFromKMS(serverURL string, req types.SecretsReques
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("KMS server returned status %d: %s", resp.StatusCode, string(body))
+		body, _ := util.ReadErrorBody(resp, util.DefaultMaxErrorBodyBytes)
+		return nil, fmt.Errorf("KMS server returned status %d: %s", resp.StatusCode, body)
 	}
 
-	var response types.SecretsResponseV1
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+	response, err := util.DecodeJSONResponse[types.SecretsResponseV1](resp, maxSecretsResponseBytes)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
@@ -975,13 +987,13 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
-				c.logger.Sugar().Warnw("Operator returned error", "operator_index", idx, "status", resp.StatusCode, "body", string(body))
+				body, _ := util.ReadErrorBody(resp, util.DefaultMaxErrorBodyBytes)
+				c.logger.Sugar().Warnw("Operator returned error", "operator_index", idx, "status", resp.StatusCode, "body", body)
 				return
 			}
 
-			var response types.AppSignResponse
-			if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			response, err := util.DecodeJSONResponse[types.AppSignResponse](resp, maxAppSignResponseBytes)
+			if err != nil {
 				c.logger.Sugar().Warnw("Failed to decode response", "operator_index", idx, "error", err)
 				return
 			}
