@@ -13,10 +13,7 @@ type LoggerConfig struct {
 }
 
 func NewLogger(cfg *LoggerConfig, options ...zap.Option) (*zap.Logger, error) {
-	mergedOptions := []zap.Option{
-		zap.WithCaller(true),
-	}
-	copy(mergedOptions, options)
+	mergedOptions := append([]zap.Option{zap.WithCaller(true)}, options...)
 
 	c := zap.NewProductionConfig()
 	c.EncoderConfig = zap.NewProductionEncoderConfig()

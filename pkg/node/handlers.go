@@ -31,7 +31,6 @@ func (s *Server) validateAuthenticatedMessage(r *http.Request, expectedRecipient
 	if err := json.Unmarshal(authMsg.Payload, &baseMsg); err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to parse message addresses: %w", err)
 	}
-	// s.node.logger.Sugar().Infow("received authenticated message", "msg", baseMsg)
 
 	// Verify message is intended for this node
 	if baseMsg.ToOperatorAddress != expectedRecipient {
@@ -682,7 +681,7 @@ func (s *Server) handleAppSign(w http.ResponseWriter, r *http.Request) {
 		"app_id", req.AppID)
 
 	resp := types.AppSignResponse{
-		OperatorAddress:  s.node.OperatorAddress.Hex(),
+		OperatorAddress:  s.node.OperatorAddress,
 		PartialSignature: partialSig,
 	}
 
@@ -706,9 +705,12 @@ func (s *Server) handleGetCommitments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Return commitments, operator address, and pre-computed master public key
-	response := map[string]interface{}{
-		"operatorAddress": s.node.OperatorAddress.Hex(),
+	// Return commitments, operator address, and pre-computed master public key.
+	// OperatorAddress is emitted as a typed common.Address so callers decode
+	// into the canonical 20-byte form (matches the AppSign response shape and
+	// blocks hex-encoding aliasing on the threshold-collection path).
+	response := map[string]any{
+		"operatorAddress": s.node.OperatorAddress,
 		"commitments":     activeVersion.Commitments,
 		"masterPublicKey": activeVersion.MasterPublicKey,
 		"version":         activeVersion.Version,

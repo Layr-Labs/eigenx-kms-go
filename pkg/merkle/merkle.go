@@ -6,6 +6,7 @@ import (
 
 	merkletree "github.com/wealdtech/go-merkletree/v2"
 	"github.com/wealdtech/go-merkletree/v2/keccak256"
+	"go.uber.org/zap"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
@@ -107,8 +108,15 @@ func (mt *MerkleTree) GenerateProof(leafIndex int) (*MerkleProof, error) {
 
 // VerifyProof verifies that a leaf is included in the merkle tree with the given root.
 // It recomputes the root hash using the proof and checks if it matches the expected root.
-func VerifyProof(proof *MerkleProof, root [32]byte) bool {
+//
+// Returns false on any failure mode — nil proof or an underlying verification error.
+// The bool-only return is kept for back-compat with existing callers; failure-mode
+// detail is emitted via the supplied logger so operators can distinguish "valid
+// proof, doesn't match the root" from a malformed-input rejection. Pass
+// zap.NewNop() if logging is unwanted.
+func VerifyProof(logger *zap.Logger, proof *MerkleProof, root [32]byte) bool {
 	if proof == nil {
+		logger.Warn("merkle.VerifyProof rejected nil proof")
 		return false
 	}
 
@@ -126,6 +134,10 @@ func VerifyProof(proof *MerkleProof, root [32]byte) bool {
 	// Verify using go-merkletree with keccak256
 	verified, err := merkletree.VerifyProofUsing(proof.Leaf[:], false, merkleProof, [][]byte{root[:]}, keccak256.New())
 	if err != nil {
+		logger.Warn("merkle.VerifyProof underlying verification failed",
+			zap.Int("leaf_index", proof.LeafIndex),
+			zap.Error(err),
+		)
 		return false
 	}
 

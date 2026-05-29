@@ -2,9 +2,12 @@ package redis
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"os"
 	"sort"
 	"sync"
 	"time"
@@ -43,7 +46,8 @@ type RedisPersistence struct {
 type RedisConfig struct {
 	// Address is the Redis server address (host:port)
 	Address string
-	// Password is the optional Redis password
+	// Password is the Redis password. The caller (pkg/config) is responsible
+	// for refusing an empty password unless AllowNoAuth was set.
 	Password string
 	// DB is the Redis database number (0-15)
 	DB int
@@ -51,6 +55,57 @@ type RedisConfig struct {
 	// If set, this prefix is prepended to all keys, e.g., "myapp:" would result in
 	// keys like "myapp:kms:keyshare:123". If empty, keys use the default "kms:" prefix.
 	KeyPrefix string
+
+	// UseTLS enables a TLS connection (rediss://). Required for any
+	// non-loopback deployment because the persistence layer transmits
+	// BLS private shares.
+	UseTLS bool
+	// TLSCACertPath is a PEM-encoded CA bundle used to verify the Redis
+	// server certificate. Empty = system trust store.
+	TLSCACertPath string
+	// TLSCertPath / TLSKeyPath enable Redis client mTLS. Both must be set
+	// together; either both empty or both non-empty.
+	TLSCertPath string
+	TLSKeyPath  string
+	// TLSInsecureSkipVerify disables Redis server cert verification. Only
+	// honored when UseTLS is true. Caller is responsible for refusing this
+	// on production chains.
+	TLSInsecureSkipVerify bool
+}
+
+// buildTLSConfig assembles a *tls.Config from the RedisConfig fields. Returns
+// nil, nil when UseTLS is false (caller passes nil to redis.Options.TLSConfig).
+func (cfg *RedisConfig) buildTLSConfig() (*tls.Config, error) {
+	if !cfg.UseTLS {
+		return nil, nil
+	}
+
+	tlsCfg := &tls.Config{
+		MinVersion:         tls.VersionTLS12,
+		InsecureSkipVerify: cfg.TLSInsecureSkipVerify, //nolint:gosec // honored only when caller opts in; refused on prod chains by pkg/config
+	}
+
+	if cfg.TLSCACertPath != "" {
+		caBytes, err := os.ReadFile(cfg.TLSCACertPath)
+		if err != nil {
+			return nil, fmt.Errorf("read redis CA cert %q: %w", cfg.TLSCACertPath, err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caBytes) {
+			return nil, fmt.Errorf("redis CA cert %q contains no PEM certificates", cfg.TLSCACertPath)
+		}
+		tlsCfg.RootCAs = pool
+	}
+
+	if cfg.TLSCertPath != "" || cfg.TLSKeyPath != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.TLSCertPath, cfg.TLSKeyPath)
+		if err != nil {
+			return nil, fmt.Errorf("load redis client keypair: %w", err)
+		}
+		tlsCfg.Certificates = []tls.Certificate{cert}
+	}
+
+	return tlsCfg, nil
 }
 
 // NewRedisPersistence creates a new Redis-backed persistence layer.
@@ -64,10 +119,15 @@ func NewRedisPersistence(cfg *RedisConfig, logger *zap.Logger) (*RedisPersistenc
 	}
 
 	// Create Redis client options
+	tlsCfg, err := cfg.buildTLSConfig()
+	if err != nil {
+		return nil, fmt.Errorf("build redis TLS config: %w", err)
+	}
 	opts := &redis.Options{
-		Addr:     cfg.Address,
-		Password: cfg.Password,
-		DB:       cfg.DB,
+		Addr:      cfg.Address,
+		Password:  cfg.Password,
+		DB:        cfg.DB,
+		TLSConfig: tlsCfg,
 	}
 
 	// Create Redis client

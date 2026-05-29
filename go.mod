@@ -22,6 +22,7 @@ require (
 	github.com/stretchr/testify v1.11.1
 	github.com/urfave/cli/v2 v2.27.7
 	github.com/wealdtech/go-merkletree/v2 v2.6.1
+	go.uber.org/goleak v1.3.0
 	go.uber.org/zap v1.27.1
 	golang.org/x/crypto v0.48.0
 	golang.org/x/time v0.9.0
@@ -84,7 +85,7 @@ require (
 	github.com/holiman/uint256 v1.3.2 // indirect
 	github.com/iden3/go-iden3-crypto v0.0.16 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
-	github.com/klauspost/compress v1.17.8 // indirect
+	github.com/klauspost/compress v1.18.0 // indirect
 	github.com/lestrrat-go/blackmagic v1.0.4 // indirect
 	github.com/lestrrat-go/dsig v1.0.0 // indirect
 	github.com/lestrrat-go/dsig-secp256k1 v1.0.0 // indirect

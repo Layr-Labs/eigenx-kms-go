@@ -103,6 +103,7 @@ func BenchmarkGCPMethodStub(b *testing.B) {
 	if err != nil {
 		b.Fatalf("Failed to create verifier: %v", err)
 	}
+	b.Cleanup(verifier.Close)
 
 	gcpMethod := NewGCPAttestationMethod(verifier, GoogleConfidentialSpace)
 

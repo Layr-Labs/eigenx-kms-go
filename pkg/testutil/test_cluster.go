@@ -10,7 +10,7 @@ import (
 
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation/testhelpers"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller"
@@ -119,7 +119,7 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 		}
 
 		// Use mock attestation verifier for tests
-		mockManager := attestation.NewStubManager()
+		mockManager := testhelpers.NewStubManager()
 
 		// Create mock base contract caller for commitment registry
 		mockBaseContractCaller := &contractCaller.MockContractCallerStub{}

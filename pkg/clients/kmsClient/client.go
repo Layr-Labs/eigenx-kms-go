@@ -7,9 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -24,7 +22,27 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 )
+
+// Per-endpoint response-body caps. Conservative bounds picked from the actual
+// payload sizes (G2 commitments, RSA-OAEP-2048 ciphertexts, etc.) plus headroom.
+// Values used by util.DecodeJSONResponse to cap reads from operator-controlled
+// peers, blocking memory-exhaustion DoS via attacker-supplied payloads.
+const (
+	maxAppSignResponseBytes int64 = 4 * 1024  // ~150 B actual; cap 4 KiB
+	maxSecretsResponseBytes int64 = 16 * 1024 // ~2 KiB actual; cap 16 KiB
+)
+
+// pubkeyResponse is the shape of the operator /pubkey endpoint response.
+// Defined at file scope so generic decode helpers can reference it by name.
+type pubkeyResponse struct {
+	OperatorAddress common.Address  `json:"operatorAddress"`
+	Commitments     []types.G2Point `json:"commitments"`
+	MasterPublicKey *types.G2Point  `json:"masterPublicKey"`
+	Version         int64           `json:"version"`
+	IsActive        bool            `json:"isActive"`
+}
 
 // ContractCaller defines the interface for fetching operator information from the blockchain
 type ContractCaller interface {
@@ -150,10 +168,15 @@ func (c *Client) GetMasterPublicKey(operators *peering.OperatorSetPeers) (*types
 
 	c.logger.Sugar().Infow("Collecting commitments from operators", "count", len(operators.Peers))
 
+	// opAddress holds the trusted on-chain identity (op.OperatorAddress),
+	// not whatever string the operator echoed back in its /pubkey response.
+	// Storing only the trusted value means downstream code (logging, threshold
+	// counting, retry maps) can never accidentally key off an attacker-supplied
+	// hex encoding even if a future refactor drops the binding check above.
 	type result struct {
 		commitments     []types.G2Point
 		masterPublicKey *types.G2Point
-		opAddress       string
+		opAddress       common.Address
 	}
 
 	resultChan := make(chan result, len(operators.Peers))
@@ -177,27 +200,33 @@ func (c *Client) GetMasterPublicKey(operators *peering.OperatorSetPeers) (*types
 			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
+				body, _ := util.ReadErrorBody(resp, util.DefaultMaxErrorBodyBytes)
 				c.logger.Sugar().Warnw("Operator returned error",
 					"operator_index", idx,
 					"status_code", resp.StatusCode,
-					"body", string(body),
+					"body", body,
 				)
 				return
 			}
 
-			var response struct {
-				OperatorAddress string          `json:"operatorAddress"`
-				Commitments     []types.G2Point `json:"commitments"`
-				MasterPublicKey *types.G2Point  `json:"masterPublicKey"`
-				Version         int64           `json:"version"`
-				IsActive        bool            `json:"isActive"`
-			}
-
-			if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			response, err := util.DecodeJSONResponse[pubkeyResponse](resp, util.DefaultMaxJSONResponseBytes)
+			if err != nil {
 				c.logger.Sugar().Warnw("Failed to decode response from operator",
 					"operator_index", idx,
 					"error", err,
+				)
+				return
+			}
+
+			// SECURITY: bind response identity to the operator we actually queried.
+			// Mirrors the AppSign-response check below; blocks Sybil-via-encoding
+			// even though /pubkey is read-only — keeps logs and threshold counting
+			// pinned to the on-chain identity.
+			if response.OperatorAddress != op.OperatorAddress {
+				c.logger.Sugar().Warnw("Operator address mismatch in /pubkey response",
+					"operator_index", idx,
+					"expected_operator_address", op.OperatorAddress.Hex(),
+					"response_operator_address", response.OperatorAddress.Hex(),
 				)
 				return
 			}
@@ -214,9 +243,9 @@ func (c *Client) GetMasterPublicKey(operators *peering.OperatorSetPeers) (*types
 
 			c.logger.Sugar().Debugw("Collected commitments from operator",
 				"operator_index", idx,
-				"operator_address", response.OperatorAddress,
+				"operator_address", op.OperatorAddress.Hex(),
 			)
-			resultChan <- result{commitments: response.Commitments, masterPublicKey: response.MasterPublicKey, opAddress: response.OperatorAddress}
+			resultChan <- result{commitments: response.Commitments, masterPublicKey: response.MasterPublicKey, opAddress: op.OperatorAddress}
 		}(i, operator)
 	}
 
@@ -247,7 +276,7 @@ func (c *Client) GetMasterPublicKey(operators *peering.OperatorSetPeers) (*types
 			// Validate the bytes decode to a valid G2 curve point
 			if _, err := bls.G2PointFromCompressedBytes(res.masterPublicKey.CompressedBytes); err != nil {
 				c.logger.Sugar().Warnw("Operator returned invalid G2 point for MPK, skipping",
-					"operator", res.opAddress, "error", err)
+					"operator", res.opAddress.Hex(), "error", err)
 				continue
 			}
 			hasMPK = true
@@ -344,10 +373,14 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 		"total_operators", len(operators.Peers),
 	)
 
+	// operatorAddr holds the trusted on-chain identity (op.OperatorAddress),
+	// never the wire-supplied response.OperatorAddress. After the binding
+	// check below, only this value flows into the partial-signature map keyed
+	// by common.Address, so an attacker-influenceable hex encoding can never
+	// reach threshold accumulation even if future refactors loosen the check.
 	type result struct {
 		operatorAddr common.Address
 		signature    types.G1Point
-		opAddress    string
 	}
 
 	resultChan := make(chan result, len(operators.Peers))
@@ -387,17 +420,17 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
+				body, _ := util.ReadErrorBody(resp, util.DefaultMaxErrorBodyBytes)
 				c.logger.Sugar().Warnw("Operator returned error",
 					"operator_index", idx,
 					"status_code", resp.StatusCode,
-					"body", string(body),
+					"body", body,
 				)
 				return
 			}
 
-			var response types.AppSignResponse
-			if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			response, err := util.DecodeJSONResponse[types.AppSignResponse](resp, maxAppSignResponseBytes)
+			if err != nil {
 				c.logger.Sugar().Warnw("Failed to decode response from operator",
 					"operator_index", idx,
 					"error", err,
@@ -418,12 +451,11 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 
 			// SECURITY: bind response identity to the operator we actually queried.
 			// Use the operator address from our operator set, not the response.
-			expectedAddress := op.OperatorAddress.Hex()
-			if !strings.EqualFold(response.OperatorAddress, expectedAddress) {
+			if response.OperatorAddress != op.OperatorAddress {
 				c.logger.Sugar().Warnw("Operator address mismatch in partial signature response",
 					"operator_index", idx,
-					"expected_operator_address", expectedAddress,
-					"response_operator_address", response.OperatorAddress,
+					"expected_operator_address", op.OperatorAddress.Hex(),
+					"response_operator_address", response.OperatorAddress.Hex(),
 				)
 				return
 			}
@@ -431,10 +463,9 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 
 			c.logger.Sugar().Debugw("Collected partial signature from operator",
 				"operator_index", idx,
-				"operator_address", operatorAddr.Hex(),
-				"operator_address", response.OperatorAddress)
+				"operator_address", operatorAddr.Hex())
 
-			resultChan <- result{operatorAddr: operatorAddr, signature: response.PartialSignature, opAddress: response.OperatorAddress}
+			resultChan <- result{operatorAddr: operatorAddr, signature: response.PartialSignature}
 		}(i, operator)
 	}
 
@@ -683,11 +714,14 @@ func (c *Client) GetEncryptedSecretsFromKMSNodesWithPartialSigs(
 ) ([]types.SecretsResponseV1, map[common.Address]types.G1Point, error) {
 	rsaEncryption := encryption.NewRSAEncryption()
 
+	// operatorAddr is the trusted on-chain identity (op.OperatorAddress),
+	// not the encrypted-response sender claim. Pinning to the on-chain value
+	// keeps the partial-sig map and any future per-operator dedup keyed off
+	// data the caller controls, never off attacker-influenceable wire bytes.
 	type result struct {
 		response     types.SecretsResponseV1
 		partialSig   types.G1Point
 		operatorAddr common.Address
-		opAddress    string
 		opIndex      int
 	}
 
@@ -744,7 +778,6 @@ func (c *Client) GetEncryptedSecretsFromKMSNodesWithPartialSigs(
 				response:     *resp,
 				partialSig:   partialSig,
 				operatorAddr: op.OperatorAddress,
-				opAddress:    op.OperatorAddress.Hex(),
 				opIndex:      idx,
 			}
 		}(i, peer)
@@ -786,12 +819,12 @@ func (c *Client) requestSecretsFromKMS(serverURL string, req types.SecretsReques
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("KMS server returned status %d: %s", resp.StatusCode, string(body))
+		body, _ := util.ReadErrorBody(resp, util.DefaultMaxErrorBodyBytes)
+		return nil, fmt.Errorf("KMS server returned status %d: %s", resp.StatusCode, body)
 	}
 
-	var response types.SecretsResponseV1
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+	response, err := util.DecodeJSONResponse[types.SecretsResponseV1](resp, maxSecretsResponseBytes)
+	if err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
@@ -916,10 +949,14 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 		"threshold", threshold,
 		"operators", len(operators.Peers))
 
+	// operatorAddr is the trusted on-chain identity (op.OperatorAddress),
+	// not response.OperatorAddress. After the binding check below, only this
+	// value flows into the partial-signature map; the wire-supplied address
+	// is verified once and discarded so attacker-controlled bytes never
+	// influence threshold accumulation or downstream Lagrange recovery.
 	type result struct {
 		operatorAddr common.Address
 		signature    types.G1Point
-		opAddress    string
 	}
 
 	resultChan := make(chan result, len(operators.Peers))
@@ -950,13 +987,13 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
-				c.logger.Sugar().Warnw("Operator returned error", "operator_index", idx, "status", resp.StatusCode, "body", string(body))
+				body, _ := util.ReadErrorBody(resp, util.DefaultMaxErrorBodyBytes)
+				c.logger.Sugar().Warnw("Operator returned error", "operator_index", idx, "status", resp.StatusCode, "body", body)
 				return
 			}
 
-			var response types.AppSignResponse
-			if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			response, err := util.DecodeJSONResponse[types.AppSignResponse](resp, maxAppSignResponseBytes)
+			if err != nil {
 				c.logger.Sugar().Warnw("Failed to decode response", "operator_index", idx, "error", err)
 				return
 			}
@@ -967,25 +1004,24 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 				return
 			}
 			if isZero {
-				c.logger.Sugar().Warnw("Received zero partial signature", "operator_index", idx, "operator_address", response.OperatorAddress)
+				c.logger.Sugar().Warnw("Received zero partial signature", "operator_index", idx, "operator_address", response.OperatorAddress.Hex())
 				return
 			}
 
 			// SECURITY: bind response identity to the operator we actually queried.
 			// Use the operator address from our operator set, not the response.
-			expectedAddress := op.OperatorAddress.Hex()
-			if !strings.EqualFold(response.OperatorAddress, expectedAddress) {
+			if response.OperatorAddress != op.OperatorAddress {
 				c.logger.Sugar().Warnw("Operator address mismatch in partial signature response",
 					"operator_index", idx,
-					"expected_operator_address", expectedAddress,
-					"response_operator_address", response.OperatorAddress,
+					"expected_operator_address", op.OperatorAddress.Hex(),
+					"response_operator_address", response.OperatorAddress.Hex(),
 				)
 				return
 			}
 			operatorAddr := op.OperatorAddress
 
-			c.logger.Sugar().Debugw("Collected partial signature", "operator_index", idx, "operator_address", operatorAddr.Hex(), "operator_address", response.OperatorAddress)
-			resultChan <- result{operatorAddr: operatorAddr, signature: response.PartialSignature, opAddress: response.OperatorAddress}
+			c.logger.Sugar().Debugw("Collected partial signature", "operator_index", idx, "operator_address", operatorAddr.Hex())
+			resultChan <- result{operatorAddr: operatorAddr, signature: response.PartialSignature}
 		}(i, peer)
 	}
 

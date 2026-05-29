@@ -1,10 +1,12 @@
 package attestation
 
 import (
+	"context"
 	"testing"
 
 	"github.com/Layr-Labs/go-tpm-tools/sdk/attest"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestVerifyPlatform_EmptyMachineType_TDX(t *testing.T) {
@@ -59,4 +61,26 @@ func TestCalculateChallenge(t *testing.T) {
 	// Different inputs should produce different output
 	result3 := CalculateChallenge(header, []byte("different-data"))
 	assert.NotEqual(t, result, result3)
+}
+
+// Covers the "attestation parsing failed" wrapper and doubles as a
+// constructor smoke test.
+func Test_AttestVerifier_Verify_ParseFailures(t *testing.T) {
+	cases := []struct {
+		name             string
+		attestationBytes []byte
+	}{
+		{name: "non-protobuf bytes", attestationBytes: []byte("not a protobuf")},
+		{name: "empty bytes", attestationBytes: []byte{}},
+		{name: "single invalid byte", attestationBytes: []byte{0xFF}},
+	}
+	v := NewBoundAttestationEvidenceVerifier()
+	require.NotNil(t, v)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := v.Verify(context.Background(), tc.attestationBytes, []byte("challenge"))
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "attestation parsing failed")
+		})
+	}
 }

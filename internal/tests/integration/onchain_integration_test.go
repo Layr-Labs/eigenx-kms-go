@@ -2,6 +2,7 @@ package integration
 
 import (
 	"context"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
@@ -13,7 +14,7 @@ import (
 	"github.com/Layr-Labs/chain-indexer/pkg/contractStore/inMemoryContractStore"
 	"github.com/Layr-Labs/chain-indexer/pkg/transactionLogParser"
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation/testhelpers"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/kmsClient"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/web3signer"
@@ -84,6 +85,13 @@ func Test_OnChainIntegration(t *testing.T) {
 		BlockType: ethereum.BlockType_Latest,
 	}, l)
 
+	// Install an owned HTTP transport so CloseIdleConnections can tear down
+	// the persistConn read/write loop goroutines that the RPC polling loop
+	// creates (otherwise goleak flags them when the test exits).
+	l1RpcTransport := tests.CloneDefaultTransport()
+	l1Client.SetHttpClient(&http.Client{Transport: l1RpcTransport, Timeout: 10 * time.Second})
+	t.Cleanup(l1RpcTransport.CloseIdleConnections)
+
 	anvilWg := &sync.WaitGroup{}
 	anvilWg.Add(1)
 	startErrorsChan := make(chan error, 1)
@@ -125,6 +133,10 @@ func Test_OnChainIntegration(t *testing.T) {
 		BlockType: ethereum.BlockType_Latest,
 	}, l)
 
+	l2RpcTransport := tests.CloneDefaultTransport()
+	l2Client.SetHttpClient(&http.Client{Transport: l2RpcTransport, Timeout: 10 * time.Second})
+	t.Cleanup(l2RpcTransport.CloseIdleConnections)
+
 	anvilWg2 := &sync.WaitGroup{}
 	anvilWg2.Add(1)
 	startErrorsChan2 := make(chan error, 1)
@@ -149,6 +161,7 @@ func Test_OnChainIntegration(t *testing.T) {
 	// ------------------------------------------------------------------------
 	l1EthClient, err := l1Client.GetEthereumContractCaller()
 	require.NoError(t, err)
+	t.Cleanup(l1EthClient.Close)
 
 	l1ContractCaller, err := caller.NewContractCaller(l1EthClient, nil, l)
 	require.NoError(t, err)
@@ -182,8 +195,14 @@ func Test_OnChainIntegration(t *testing.T) {
 			BaseUrl:   L2RpcUrl,
 			BlockType: ethereum.BlockType_Latest,
 		}, l)
+
+		nodeL2RpcTransport := tests.CloneDefaultTransport()
+		nodeL2Client.SetHttpClient(&http.Client{Transport: nodeL2RpcTransport, Timeout: 10 * time.Second})
+		t.Cleanup(nodeL2RpcTransport.CloseIdleConnections)
+
 		nodeL2EthClient, err := nodeL2Client.GetEthereumContractCaller()
 		require.NoError(t, err)
+		t.Cleanup(nodeL2EthClient.Close)
 
 		// Create block handler and chain poller for each node
 		bh := blockHandler.NewBlockHandler(l)
@@ -222,6 +241,10 @@ func Test_OnChainIntegration(t *testing.T) {
 				l.Sugar().Fatalw("Failed to create Web3Signer client", "error", err)
 			}
 
+			w3sTransport := tests.CloneDefaultTransport()
+			web3SignerClient.SetHttpClient(&http.Client{Transport: w3sTransport, Timeout: 10 * time.Second})
+			t.Cleanup(w3sTransport.CloseIdleConnections)
+
 			txSigner, err = transactionSigner.NewWeb3TransactionSigner(web3SignerClient, common.HexToAddress(operatorConfigs[i].address), nodeL2EthClient, l)
 			require.NoError(t, err)
 
@@ -244,7 +267,7 @@ func Test_OnChainIntegration(t *testing.T) {
 
 		// Use stub attestation manager for testing
 		// Production would use registered GCP, Intel, or ECDSA methods
-		attestationManager := attestation.NewStubManager()
+		attestationManager := testhelpers.NewStubManager()
 
 		// Create in-memory persistence for testing
 		nodePersistence := persistenceMemory.NewMemoryPersistence()
@@ -330,12 +353,19 @@ func Test_OnChainIntegration(t *testing.T) {
 	// ------------------------------------------------------------------------
 	t.Log("Using KMSClient to get master public key...")
 
-	// Create KMS client with contract caller for fetching operators on-demand
+	// Create KMS client with contract caller for fetching operators on-demand.
+	// Provide an owned HTTP transport so idle persistConn goroutines created
+	// for the node-facing /pubkey and /app/sign calls can be torn down at
+	// test end (goleak would otherwise flag them).
+	kmsHttpTransport := tests.CloneDefaultTransport()
+	t.Cleanup(kmsHttpTransport.CloseIdleConnections)
+
 	client, err := kmsClient.NewClient(&kmsClient.ClientConfig{
 		AVSAddress:     chainConfig.AVSAccountAddress,
 		OperatorSetID:  0,
 		Logger:         l,
 		ContractCaller: l1ContractCaller,
+		HTTPClient:     &http.Client{Transport: kmsHttpTransport, Timeout: 30 * time.Second},
 	})
 	require.NoError(t, err)
 

@@ -32,10 +32,16 @@ const (
 	EnvKMSPersistenceType     = "KMS_PERSISTENCE_TYPE"
 	EnvKMSPersistenceDataPath = "KMS_PERSISTENCE_DATA_PATH"
 	// Redis persistence configuration
-	EnvKMSRedisAddress   = "KMS_REDIS_ADDRESS"
-	EnvKMSRedisPassword  = "KMS_REDIS_PASSWORD"
-	EnvKMSRedisDB        = "KMS_REDIS_DB"
-	EnvKMSRedisKeyPrefix = "KMS_REDIS_KEY_PREFIX"
+	EnvKMSRedisAddress               = "KMS_REDIS_ADDRESS"
+	EnvKMSRedisPassword              = "KMS_REDIS_PASSWORD"
+	EnvKMSRedisDB                    = "KMS_REDIS_DB"
+	EnvKMSRedisKeyPrefix             = "KMS_REDIS_KEY_PREFIX"
+	EnvKMSRedisAllowNoAuth           = "KMS_REDIS_ALLOW_NO_AUTH"
+	EnvKMSRedisUseTLS                = "KMS_REDIS_USE_TLS"
+	EnvKMSRedisTLSCACertPath         = "KMS_REDIS_TLS_CA_CERT_PATH"
+	EnvKMSRedisTLSCertPath           = "KMS_REDIS_TLS_CERT_PATH"
+	EnvKMSRedisTLSKeyPath            = "KMS_REDIS_TLS_KEY_PATH"
+	EnvKMSRedisTLSInsecureSkipVerify = "KMS_REDIS_TLS_INSECURE_SKIP_VERIFY"
 	// Attestation configuration
 	EnvKMSGCPProjectID           = "KMS_GCP_PROJECT_ID"
 	EnvKMSAttestationProvider    = "KMS_ATTESTATION_PROVIDER"
@@ -125,6 +131,12 @@ var ChainNameToId = map[ChainName]ChainId{
 
 func IsEthereum(chainId ChainId) bool {
 	return chainId == ChainId_EthereumMainnet || chainId == ChainId_EthereumSepolia || chainId == ChainId_EthereumAnvil
+}
+
+// IsProductionChain reports whether the chain is a real public network where
+// security-relaxing flags (e.g. attestation-debug-mode) must be refused.
+func IsProductionChain(chainId ChainId) bool {
+	return chainId == ChainId_EthereumMainnet
 }
 
 func GetDefaultPollerIntervalForChainId(chainId ChainId) time.Duration {
@@ -291,7 +303,7 @@ type PersistenceConfig struct {
 type RedisConfig struct {
 	// Address is the Redis server address (host:port)
 	Address string `json:"address"`
-	// Password is the optional Redis password
+	// Password is the Redis password. Required unless AllowNoAuth is true.
 	Password string `json:"password,omitempty"`
 	// DB is the Redis database number (0-15)
 	DB int `json:"db"`
@@ -299,6 +311,28 @@ type RedisConfig struct {
 	// If set, this prefix is prepended to all keys, e.g., "myapp:" would result in
 	// keys like "myapp:kms:keyshare:123". If empty, keys use the default "kms:" prefix.
 	KeyPrefix string `json:"key_prefix,omitempty"`
+
+	// UseTLS enables TLS for the Redis connection (rediss://). Strongly
+	// recommended for any non-loopback deployment because the persistence
+	// layer transmits BLS private shares.
+	UseTLS bool `json:"use_tls,omitempty"`
+	// TLSCACertPath is the path to a PEM-encoded CA bundle used to verify
+	// the Redis server certificate. Optional; if empty, the system trust
+	// store is used.
+	TLSCACertPath string `json:"tls_ca_cert_path,omitempty"`
+	// TLSCertPath / TLSKeyPath enable Redis client mTLS. Both must be set
+	// together; either both empty or both non-empty.
+	TLSCertPath string `json:"tls_cert_path,omitempty"`
+	TLSKeyPath  string `json:"tls_key_path,omitempty"`
+	// TLSInsecureSkipVerify disables Redis server certificate verification.
+	// Refused when chain_id is a production chain (see IsProductionChain).
+	TLSInsecureSkipVerify bool `json:"tls_insecure_skip_verify,omitempty"`
+
+	// AllowNoAuth permits an empty Password. Off by default so a missing
+	// --redis-password fails closed instead of silently joining a Redis
+	// instance that may or may not require AUTH. Refused when chain_id is
+	// a production chain.
+	AllowNoAuth bool `json:"allow_no_auth,omitempty"`
 }
 
 // Validate validates the persistence configuration
@@ -323,14 +357,36 @@ func (pc *PersistenceConfig) Validate() error {
 		if pc.RedisConfig == nil {
 			return fmt.Errorf("redis_config is required when persistence type is 'redis'")
 		}
-		if pc.RedisConfig.Address == "" {
-			return fmt.Errorf("redis address cannot be empty")
-		}
-		if pc.RedisConfig.DB < 0 || pc.RedisConfig.DB > 15 {
-			return fmt.Errorf("redis DB must be between 0 and 15, got %d", pc.RedisConfig.DB)
+		if err := pc.RedisConfig.Validate(); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+// Validate checks Redis configuration:
+//   - Address must be non-empty.
+//   - DB must be in [0, 15].
+//   - Password must be set unless AllowNoAuth is true (fail-closed default).
+//   - TLSCertPath / TLSKeyPath must both be set or both empty (mTLS pairing).
+//   - TLSInsecureSkipVerify is rejected unless UseTLS is true.
+func (rc *RedisConfig) Validate() error {
+	if rc.Address == "" {
+		return fmt.Errorf("redis address cannot be empty")
+	}
+	if rc.DB < 0 || rc.DB > 15 {
+		return fmt.Errorf("redis DB must be between 0 and 15, got %d", rc.DB)
+	}
+	if rc.Password == "" && !rc.AllowNoAuth {
+		return fmt.Errorf("redis password is required (set --redis-password / KMS_REDIS_PASSWORD, or pass --redis-allow-no-auth to opt in to no-auth)")
+	}
+	if (rc.TLSCertPath == "") != (rc.TLSKeyPath == "") {
+		return fmt.Errorf("redis TLS client cert and key must be set together (got cert=%q key=%q)", rc.TLSCertPath, rc.TLSKeyPath)
+	}
+	if rc.TLSInsecureSkipVerify && !rc.UseTLS {
+		return fmt.Errorf("redis tls_insecure_skip_verify has no effect without use_tls=true")
+	}
 	return nil
 }
 
@@ -413,6 +469,34 @@ func (c *KMSServerConfig) Validate() error {
 		return fmt.Errorf("invalid persistence config: %w", err)
 	}
 
+	// Chain-aware refusal of security-relaxing flags. Lives here (not in
+	// PersistenceConfig.Validate) so any binary or future config-linting
+	// tool that calls KMSServerConfig.Validate gets the same protection
+	// as cmd/kmsServer.
+	if err := validateRedisForChain(&c.PersistenceConfig, c.ChainID, c.ChainName); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// validateRedisForChain enforces production-chain rules on the Redis config:
+// requires TLS, forbids AllowNoAuth, forbids TLSInsecureSkipVerify. No-op on
+// non-production chains and on non-redis persistence types.
+func validateRedisForChain(pc *PersistenceConfig, chainID ChainId, chainName ChainName) error {
+	if pc.Type != "redis" || pc.RedisConfig == nil || !IsProductionChain(chainID) {
+		return nil
+	}
+	rc := pc.RedisConfig
+	if rc.AllowNoAuth {
+		return fmt.Errorf("--redis-allow-no-auth is not permitted on production chain %d (%s)", chainID, chainName)
+	}
+	if rc.TLSInsecureSkipVerify {
+		return fmt.Errorf("--redis-tls-insecure-skip-verify is not permitted on production chain %d (%s)", chainID, chainName)
+	}
+	if !rc.UseTLS {
+		return fmt.Errorf("--redis-use-tls is required on production chain %d (%s); BLS shares are transmitted over this connection", chainID, chainName)
+	}
 	return nil
 }
 

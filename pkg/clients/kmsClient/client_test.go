@@ -350,16 +350,24 @@ func generatePartialSigsFromSecret(t *testing.T, appID string, secret *fr.Elemen
 	return partialSigs
 }
 
-// createMockPubkeyServer creates a test HTTP server that returns a /pubkey response
-func createMockPubkeyServer(t *testing.T, commitments []types.G2Point, mpk *types.G2Point) *httptest.Server {
+// peerAddr returns a deterministic test operator address for index i.
+func peerAddr(i int) common.Address {
+	return common.HexToAddress("0x" + string(rune('1'+i)) + "000000000000000000000000000000000000000")
+}
+
+// createMockPubkeyServer creates a test HTTP server that returns a /pubkey response.
+// operatorAddr is the address the server claims to be — must match the
+// OperatorSetPeer.OperatorAddress used by the caller, otherwise the client's
+// address-binding check rejects the response.
+func createMockPubkeyServer(t *testing.T, operatorAddr common.Address, commitments []types.G2Point, mpk *types.G2Point) *httptest.Server {
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/pubkey" {
 			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		resp := map[string]interface{}{
-			"operatorAddress": "0x0000000000000000000000000000000000000001",
+		resp := map[string]any{
+			"operatorAddress": operatorAddr,
 			"commitments":     commitments,
 			"masterPublicKey": mpk,
 			"version":         int64(1),
@@ -378,10 +386,11 @@ func TestGetMasterPublicKey_ThresholdAgreement_AllHonest(t *testing.T) {
 	commitments := []types.G2Point{crypto.G2Generator}
 	peers := make([]*peering.OperatorSetPeer, 4)
 	for i := 0; i < 4; i++ {
-		srv := createMockPubkeyServer(t, commitments, &crypto.G2Generator)
+		addr := peerAddr(i)
+		srv := createMockPubkeyServer(t, addr, commitments, &crypto.G2Generator)
 		defer srv.Close()
 		peers[i] = &peering.OperatorSetPeer{
-			OperatorAddress: common.HexToAddress("0x" + string(rune('1'+i)) + "000000000000000000000000000000000000000"),
+			OperatorAddress: addr,
 			SocketAddress:   srv.URL,
 		}
 	}
@@ -415,19 +424,21 @@ func TestGetMasterPublicKey_ThresholdAgreement_OneCorrupted(t *testing.T) {
 	peers := make([]*peering.OperatorSetPeer, 4)
 
 	for i := 0; i < 3; i++ {
-		srv := createMockPubkeyServer(t, honestCommitments, &honestMPK)
+		addr := peerAddr(i)
+		srv := createMockPubkeyServer(t, addr, honestCommitments, &honestMPK)
 		defer srv.Close()
 		peers[i] = &peering.OperatorSetPeer{
-			OperatorAddress: common.HexToAddress("0x" + string(rune('1'+i)) + "000000000000000000000000000000000000000"),
+			OperatorAddress: addr,
 			SocketAddress:   srv.URL,
 		}
 	}
 
 	// Corrupted operator returns different MPK
-	corruptedSrv := createMockPubkeyServer(t, honestCommitments, &corruptedMPK)
+	corruptedAddr := peerAddr(3)
+	corruptedSrv := createMockPubkeyServer(t, corruptedAddr, honestCommitments, &corruptedMPK)
 	defer corruptedSrv.Close()
 	peers[3] = &peering.OperatorSetPeer{
-		OperatorAddress: common.HexToAddress("0x4000000000000000000000000000000000000000"),
+		OperatorAddress: corruptedAddr,
 		SocketAddress:   corruptedSrv.URL,
 	}
 
@@ -462,19 +473,21 @@ func TestGetMasterPublicKey_ThresholdAgreement_TooManyCorrupted(t *testing.T) {
 	peers := make([]*peering.OperatorSetPeer, 4)
 
 	for i := 0; i < 2; i++ {
-		srv := createMockPubkeyServer(t, honestCommitments, &honestMPK)
+		addr := peerAddr(i)
+		srv := createMockPubkeyServer(t, addr, honestCommitments, &honestMPK)
 		defer srv.Close()
 		peers[i] = &peering.OperatorSetPeer{
-			OperatorAddress: common.HexToAddress("0x" + string(rune('1'+i)) + "000000000000000000000000000000000000000"),
+			OperatorAddress: addr,
 			SocketAddress:   srv.URL,
 		}
 	}
 
 	for i := 2; i < 4; i++ {
-		srv := createMockPubkeyServer(t, honestCommitments, &corruptedMPK)
+		addr := peerAddr(i)
+		srv := createMockPubkeyServer(t, addr, honestCommitments, &corruptedMPK)
 		defer srv.Close()
 		peers[i] = &peering.OperatorSetPeer{
-			OperatorAddress: common.HexToAddress("0x" + string(rune('1'+i)) + "000000000000000000000000000000000000000"),
+			OperatorAddress: addr,
 			SocketAddress:   srv.URL,
 		}
 	}
@@ -503,9 +516,10 @@ func TestGetMasterPublicKey_FallbackToAggregation(t *testing.T) {
 	peers := make([]*peering.OperatorSetPeer, 3)
 
 	for i := 0; i < 3; i++ {
+		addr := peerAddr(i)
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			resp := map[string]interface{}{
-				"operatorAddress": "0x0000000000000000000000000000000000000001",
+			resp := map[string]any{
+				"operatorAddress": addr,
 				"commitments":     commitments,
 				"version":         int64(1),
 				"isActive":        true,
@@ -516,7 +530,7 @@ func TestGetMasterPublicKey_FallbackToAggregation(t *testing.T) {
 		}))
 		defer srv.Close()
 		peers[i] = &peering.OperatorSetPeer{
-			OperatorAddress: common.HexToAddress("0x" + string(rune('1'+i)) + "000000000000000000000000000000000000000"),
+			OperatorAddress: addr,
 			SocketAddress:   srv.URL,
 		}
 	}
@@ -546,18 +560,20 @@ func TestGetMasterPublicKey_RollingUpgrade_PartialMPK(t *testing.T) {
 	peers := make([]*peering.OperatorSetPeer, 4)
 
 	// 1 upgraded operator returns MPK
-	upgradedSrv := createMockPubkeyServer(t, commitments, &honestMPK)
+	upgradedAddr := peerAddr(0)
+	upgradedSrv := createMockPubkeyServer(t, upgradedAddr, commitments, &honestMPK)
 	defer upgradedSrv.Close()
 	peers[0] = &peering.OperatorSetPeer{
-		OperatorAddress: common.HexToAddress("0x1000000000000000000000000000000000000000"),
+		OperatorAddress: upgradedAddr,
 		SocketAddress:   upgradedSrv.URL,
 	}
 
 	// 3 old operators return commitments but no MPK
 	for i := 1; i < 4; i++ {
+		addr := peerAddr(i)
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			resp := map[string]interface{}{
-				"operatorAddress": "0x0000000000000000000000000000000000000001",
+			resp := map[string]any{
+				"operatorAddress": addr,
 				"commitments":     commitments,
 				"version":         int64(1),
 				"isActive":        true,
@@ -567,7 +583,7 @@ func TestGetMasterPublicKey_RollingUpgrade_PartialMPK(t *testing.T) {
 		}))
 		defer srv.Close()
 		peers[i] = &peering.OperatorSetPeer{
-			OperatorAddress: common.HexToAddress("0x" + string(rune('1'+i)) + "000000000000000000000000000000000000000"),
+			OperatorAddress: addr,
 			SocketAddress:   srv.URL,
 		}
 	}

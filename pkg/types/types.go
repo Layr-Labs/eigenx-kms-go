@@ -115,9 +115,19 @@ type AppSignRequest struct {
 	AttestationTime int64
 }
 
-// AppSignResponse contains a partial signature from a node
+// AppSignResponse contains a partial signature from a node.
+//
+// OperatorAddress is a typed common.Address so JSON encode/decode round-trips
+// through the canonical 20-byte form. This rules out aliasing attacks where a
+// malicious responder submits two partial signatures under different string
+// encodings of the same address (lower-case vs EIP-55, with-or-without 0x
+// prefix) and the collector counts both toward the ⌈2n/3⌉ threshold.
+//
+// Wire keys ("OperatorAddress", "PartialSignature") are intentionally derived
+// from the unexported default rather than `json:` tags so that the type
+// change stays wire-compatible with operators still running pre-PR builds.
 type AppSignResponse struct {
-	OperatorAddress  string
+	OperatorAddress  common.Address
 	PartialSignature G1Point
 }
 

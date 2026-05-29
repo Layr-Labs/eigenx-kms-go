@@ -15,12 +15,24 @@ web3signerL2Port=9200
 web3signerL2HttpPort=9201
 web3signerL2ChainId=31338
 
+# Redis container settings (only used if no Redis is already reachable on
+# localhost:6379, e.g. when running locally outside CI). In CI, the workflow
+# starts Redis as a service container and exports REDIS_TEST_ADDRESS, so this
+# script's probe will short-circuit before launching anything.
+redisContainerName="eigenx-kms-go-test-redis-$$"
+redisHost="localhost"
+redisPort=6379
+redisStartedByScript="false"
+
 cleanup_containers() {
     echo "Cleaning up containers..."
     # Avoid noisy "No such container" messages during cleanup (e.g. if the
     # container never started or already exited due to --rm).
     docker rm -f "$web3signerL1Name" >/dev/null 2>&1 || true
     docker rm -f "$web3signerL2Name" >/dev/null 2>&1 || true
+    if [ "$redisStartedByScript" = "true" ]; then
+        docker rm -f "$redisContainerName" >/dev/null 2>&1 || true
+    fi
 }
 
 trap cleanup_containers ERR EXIT SIGINT SIGTERM
@@ -46,11 +58,69 @@ function runWeb3SignerContainer() {
             --keystores-passwords-path=/web3signer/passwords
 }
 
+# isRedisReachable returns 0 if a Redis server responds to PING on the
+# configured host:port, 1 otherwise. Prefers a host-installed redis-cli when
+# available because Docker Desktop's --network host on macOS attaches to the
+# Linux VM's loopback rather than the host's, which would always miss a
+# Redis running directly on the Mac. Falls back to a one-shot redis:7-alpine
+# container that uses host.docker.internal so the lookup works on
+# macOS / Windows without requiring redis-cli on the host.
+function isRedisReachable() {
+    if command -v redis-cli >/dev/null 2>&1; then
+        redis-cli -h "$redisHost" -p "$redisPort" ping 2>/dev/null \
+            | grep -q "PONG"
+        return
+    fi
+    docker run --rm \
+        --add-host=host.docker.internal:host-gateway \
+        redis:7-alpine \
+        redis-cli -h host.docker.internal -p "$redisPort" ping 2>/dev/null \
+        | grep -q "PONG"
+}
+
+function ensureRedisRunning() {
+    if [ -n "${REDIS_TEST_ADDRESS:-}" ]; then
+        echo "REDIS_TEST_ADDRESS is set to '${REDIS_TEST_ADDRESS}', skipping Redis container startup."
+        return
+    fi
+
+    if isRedisReachable; then
+        echo "Redis already reachable on ${redisHost}:${redisPort}, reusing it."
+        export REDIS_TEST_ADDRESS="${redisHost}:${redisPort}"
+        return
+    fi
+
+    echo "Starting Redis container '${redisContainerName}' on ${redisHost}:${redisPort}..."
+    docker run \
+        --rm \
+        --name "$redisContainerName" \
+        -p "${redisPort}:${redisPort}" \
+        --detach \
+        redis:7-alpine >/dev/null
+    redisStartedByScript="true"
+
+    # Poll for readiness up to ~30s.
+    local i
+    for i in $(seq 1 30); do
+        if isRedisReachable; then
+            echo "Redis container is ready."
+            export REDIS_TEST_ADDRESS="${redisHost}:${redisPort}"
+            return
+        fi
+        sleep 1
+    done
+
+    echo "Redis container failed to become ready within 30s." >&2
+    exit 1
+}
+
 runWeb3SignerContainer $web3signerL1Name $web3signerL1Port $web3signerL1ChainId
 runWeb3SignerContainer $web3signerL2Name $web3signerL2Port $web3signerL2ChainId
 
 echo "Sleeping to let web3signer containers start..."
 sleep 3
+
+ensureRedisRunning
 
 
 # run the tests

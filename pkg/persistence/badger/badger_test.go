@@ -3,6 +3,9 @@ package badger
 import (
 	"fmt"
 	"math/big"
+	"os"
+	"path/filepath"
+	"runtime"
 	"sync"
 	"testing"
 
@@ -16,6 +19,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// secureTmpDir returns a freshly-created subdir of t.TempDir() set to 0700
+// so NewBadgerPersistence's permission check passes. t.TempDir itself is
+// 0755 on most platforms, which the production code now rejects.
+func secureTmpDir(t *testing.T) string {
+	t.Helper()
+	dir := filepath.Join(t.TempDir(), "kms-data")
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		t.Fatalf("secureTmpDir mkdir: %v", err)
+	}
+	return dir
+}
+
 // writeRawBytes bypasses the typed Save* methods and writes raw bytes to a
 // badger key. Used to simulate corrupt storage for null-rejection tests.
 func writeRawBytes(t *testing.T, bp *BadgerPersistence, key string, value []byte) {
@@ -26,8 +41,47 @@ func writeRawBytes(t *testing.T, bp *BadgerPersistence, key string, value []byte
 	require.NoError(t, err)
 }
 
+// TestNewBadgerPersistence_DataDirPermissions covers both the create-fresh
+// path (must land at 0700) and the fail-closed path (refuse to open on a
+// pre-existing 0755 directory rather than silently chmod-ing it). Regression
+// for the Docker-volume scenario where the host mount lands at 0755.
+func Test_NewBadgerPersistence_DataDirPermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX-mode permissions are not enforced the same way on Windows")
+	}
+
+	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
+
+	t.Run("creates fresh dir at 0700", func(t *testing.T) {
+		dataDir := filepath.Join(t.TempDir(), "kms-data")
+		bp, err := NewBadgerPersistence(dataDir, testLogger)
+		require.NoError(t, err)
+		defer func() { _ = bp.Close() }()
+
+		info, err := os.Stat(dataDir)
+		require.NoError(t, err)
+		require.Equal(t, os.FileMode(0o700), info.Mode().Perm(),
+			"freshly-created data dir must be 0700")
+	})
+
+	t.Run("refuses pre-existing 0755 dir", func(t *testing.T) {
+		dataDir := filepath.Join(t.TempDir(), "kms-data")
+		require.NoError(t, os.MkdirAll(dataDir, 0o755))
+		require.NoError(t, os.Chmod(dataDir, 0o755))
+
+		_, err := NewBadgerPersistence(dataDir, testLogger)
+		require.Error(t, err, "must fail closed on insecure pre-existing perms")
+		require.Contains(t, err.Error(), "insecure permissions")
+
+		info, err := os.Stat(dataDir)
+		require.NoError(t, err)
+		require.Equal(t, os.FileMode(0o755), info.Mode().Perm(),
+			"existing dir must NOT be silently chmod-ed (operator must fix the deploy)")
+	})
+}
+
 func TestBadgerPersistence_SaveAndLoadKeyShare(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -63,7 +117,7 @@ func TestBadgerPersistence_SaveAndLoadKeyShare(t *testing.T) {
 }
 
 func TestBadgerPersistence_LoadKeyShare_NotFound(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -76,7 +130,7 @@ func TestBadgerPersistence_LoadKeyShare_NotFound(t *testing.T) {
 }
 
 func TestBadgerPersistence_SaveKeyShare_Nil(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -89,7 +143,7 @@ func TestBadgerPersistence_SaveKeyShare_Nil(t *testing.T) {
 }
 
 func TestBadgerPersistence_DeleteKeyShare(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -124,7 +178,7 @@ func TestBadgerPersistence_DeleteKeyShare(t *testing.T) {
 }
 
 func TestBadgerPersistence_DeleteKeyShare_Idempotent(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -137,7 +191,7 @@ func TestBadgerPersistence_DeleteKeyShare_Idempotent(t *testing.T) {
 }
 
 func TestBadgerPersistence_ListKeyShareVersions(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -170,7 +224,7 @@ func TestBadgerPersistence_ListKeyShareVersions(t *testing.T) {
 }
 
 func TestBadgerPersistence_ListKeyShareVersions_Empty(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -183,7 +237,7 @@ func TestBadgerPersistence_ListKeyShareVersions_Empty(t *testing.T) {
 }
 
 func TestBadgerPersistence_ActiveVersionTracking(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -214,7 +268,7 @@ func TestBadgerPersistence_ActiveVersionTracking(t *testing.T) {
 }
 
 func TestBadgerPersistence_NodeState(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -246,7 +300,7 @@ func TestBadgerPersistence_NodeState(t *testing.T) {
 }
 
 func TestBadgerPersistence_NodeState_Nil(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -259,7 +313,7 @@ func TestBadgerPersistence_NodeState_Nil(t *testing.T) {
 }
 
 func TestBadgerPersistence_ProtocolSessions(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -305,7 +359,7 @@ func TestBadgerPersistence_ProtocolSessions(t *testing.T) {
 }
 
 func TestBadgerPersistence_LoadProtocolSession_NotFound(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -318,7 +372,7 @@ func TestBadgerPersistence_LoadProtocolSession_NotFound(t *testing.T) {
 }
 
 func TestBadgerPersistence_SaveProtocolSession_Nil(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -331,7 +385,7 @@ func TestBadgerPersistence_SaveProtocolSession_Nil(t *testing.T) {
 }
 
 func TestBadgerPersistence_DeleteProtocolSession(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -363,7 +417,7 @@ func TestBadgerPersistence_DeleteProtocolSession(t *testing.T) {
 }
 
 func TestBadgerPersistence_ListProtocolSessions(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -393,7 +447,7 @@ func TestBadgerPersistence_ListProtocolSessions(t *testing.T) {
 }
 
 func TestBadgerPersistence_ListProtocolSessions_Empty(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -406,7 +460,7 @@ func TestBadgerPersistence_ListProtocolSessions_Empty(t *testing.T) {
 }
 
 func TestBadgerPersistence_Close(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -428,7 +482,7 @@ func TestBadgerPersistence_Close(t *testing.T) {
 }
 
 func TestBadgerPersistence_Close_Idempotent(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -443,7 +497,7 @@ func TestBadgerPersistence_Close_Idempotent(t *testing.T) {
 }
 
 func TestBadgerPersistence_HealthCheck(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -462,7 +516,7 @@ func TestBadgerPersistence_HealthCheck(t *testing.T) {
 }
 
 func TestBadgerPersistence_ThreadSafety(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -521,7 +575,7 @@ func TestBadgerPersistence_ThreadSafety(t *testing.T) {
 }
 
 func TestBadgerPersistence_Persistence_AcrossRestarts(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	// First instance - save data
@@ -583,7 +637,7 @@ func TestBadgerPersistence_Persistence_AcrossRestarts(t *testing.T) {
 // JSON null literal is rejected with an explicit error rather than silently
 // returning (nil, nil) — which would be indistinguishable from "not found".
 func TestBadgerPersistence_LoadKeyShareVersion_NullJSON(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -602,7 +656,7 @@ func TestBadgerPersistence_LoadKeyShareVersion_NullJSON(t *testing.T) {
 // TestBadgerPersistence_LoadNodeState_NullJSON verifies the same guard for
 // the NodeState singleton.
 func TestBadgerPersistence_LoadNodeState_NullJSON(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -620,7 +674,7 @@ func TestBadgerPersistence_LoadNodeState_NullJSON(t *testing.T) {
 // TestBadgerPersistence_LoadProtocolSession_NullJSON verifies the same guard
 // for protocol session state.
 func TestBadgerPersistence_LoadProtocolSession_NullJSON(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -639,7 +693,7 @@ func TestBadgerPersistence_LoadProtocolSession_NullJSON(t *testing.T) {
 // TestBadgerPersistence_ListKeyShareVersions_SkipsNull verifies that null
 // entries are skipped with a warning rather than surfacing as nil *types.
 func TestBadgerPersistence_ListKeyShareVersions_SkipsNull(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)
@@ -665,7 +719,7 @@ func TestBadgerPersistence_ListKeyShareVersions_SkipsNull(t *testing.T) {
 // TestBadgerPersistence_ListProtocolSessions_SkipsNull verifies the same
 // skip-with-warning behavior for protocol sessions.
 func TestBadgerPersistence_ListProtocolSessions_SkipsNull(t *testing.T) {
-	tmpDir := t.TempDir()
+	tmpDir := secureTmpDir(t)
 	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 
 	bp, err := NewBadgerPersistence(tmpDir, testLogger)

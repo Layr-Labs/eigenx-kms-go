@@ -169,7 +169,16 @@ func (cc *ContractCaller) RegisterKeyWithOperatorSet(
 		return nil, errors.Wrapf(err, "failed to build transaction options")
 	}
 
-	fmt.Printf("Transaction options: %+v\n", txOpts)
+	cc.logger.Sugar().Infow("Built transaction options for key registration",
+		"from", txOpts.From.Hex(),
+		"nonce", txOpts.Nonce,
+		"value", txOpts.Value,
+		"gas_price", txOpts.GasPrice,
+		"gas_fee_cap", txOpts.GasFeeCap,
+		"gas_tip_cap", txOpts.GasTipCap,
+		"gas_limit", txOpts.GasLimit,
+		"no_send", txOpts.NoSend,
+	)
 	tx, err := cc.keyRegistrar.RegisterKey(
 		txOpts,
 		operatorAddress,

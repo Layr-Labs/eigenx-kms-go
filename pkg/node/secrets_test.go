@@ -14,7 +14,7 @@ import (
 
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation/testhelpers"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller"
@@ -70,7 +70,7 @@ func newTestSecretsFixture(t *testing.T) *testSecretsFixture {
 		t.Fatalf("Failed to create in-memory transport signer: %v", err)
 	}
 
-	mockManager := attestation.NewStubManager()
+	mockManager := testhelpers.NewStubManager()
 	stub := contractCaller.NewTestableContractCallerStub()
 	mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
 
