@@ -389,7 +389,7 @@ func TestMerkleProofVerification_Integration(t *testing.T) {
 	proof, err := tree.GenerateProof(0)
 	require.NoError(t, err)
 
-	valid := merkle.VerifyProof(proof, tree.Root)
+	valid := merkle.VerifyProof(zap.NewNop(), proof, tree.Root)
 	require.True(t, valid, "Proof should be valid")
 
 	// Invalid proof should fail
@@ -397,6 +397,6 @@ func TestMerkleProofVerification_Integration(t *testing.T) {
 		Leaf:  proof.Leaf,
 		Proof: [][32]byte{{99, 99, 99}}, // Wrong proof
 	}
-	invalid := merkle.VerifyProof(invalidProof, tree.Root)
+	invalid := merkle.VerifyProof(zap.NewNop(), invalidProof, tree.Root)
 	require.False(t, invalid, "Invalid proof should fail")
 }

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"testing"
 
+	"go.uber.org/zap"
+
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 )
 
@@ -54,7 +56,7 @@ func BenchmarkMerkleProofVerification(b *testing.B) {
 			b.ResetTimer()
 
 			for i := 0; i < b.N; i++ {
-				_ = VerifyProof(proof, tree.Root)
+				_ = VerifyProof(zap.NewNop(), proof, tree.Root)
 			}
 		})
 	}

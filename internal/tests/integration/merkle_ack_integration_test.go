@@ -11,6 +11,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/testutil"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 // Test_MerkleAckIntegration tests the merkle-based acknowledgement system (Phase 7)
@@ -126,7 +127,7 @@ func testMerkleTreeBuilding(t *testing.T) {
 		require.NotNil(t, proof)
 
 		// Verify proof against root
-		valid := merkle.VerifyProof(proof, tree.Root)
+		valid := merkle.VerifyProof(zap.NewNop(), proof, tree.Root)
 		require.True(t, valid, "Proof %d should be valid", i)
 	}
 

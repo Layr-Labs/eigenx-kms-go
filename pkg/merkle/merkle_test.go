@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
@@ -73,7 +74,7 @@ func TestBuildMerkleTree(t *testing.T) {
 				require.Equal(t, tree.Leaves[i], proof.Leaf)
 
 				// Verify the proof
-				valid := VerifyProof(proof, tree.Root)
+				valid := VerifyProof(zap.NewNop(), proof, tree.Root)
 				require.True(t, valid, "Proof for leaf %d should be valid", i)
 			}
 		})
@@ -97,7 +98,7 @@ func TestMerkleProofVerification(t *testing.T) {
 	t.Run("Valid proof", func(t *testing.T) {
 		proof, err := tree.GenerateProof(0)
 		require.NoError(t, err)
-		require.True(t, VerifyProof(proof, tree.Root))
+		require.True(t, VerifyProof(zap.NewNop(), proof, tree.Root))
 	})
 
 	t.Run("Invalid proof - wrong root", func(t *testing.T) {
@@ -105,7 +106,7 @@ func TestMerkleProofVerification(t *testing.T) {
 		require.NoError(t, err)
 
 		invalidRoot := [32]byte{1, 2, 3, 4, 5}
-		require.False(t, VerifyProof(proof, invalidRoot))
+		require.False(t, VerifyProof(zap.NewNop(), proof, invalidRoot))
 	})
 
 	t.Run("Invalid proof - tampered leaf", func(t *testing.T) {
@@ -114,7 +115,7 @@ func TestMerkleProofVerification(t *testing.T) {
 
 		// Tamper with the leaf
 		proof.Leaf[0] ^= 0xFF
-		require.False(t, VerifyProof(proof, tree.Root))
+		require.False(t, VerifyProof(zap.NewNop(), proof, tree.Root))
 	})
 
 	t.Run("Invalid proof - tampered sibling", func(t *testing.T) {
@@ -124,12 +125,12 @@ func TestMerkleProofVerification(t *testing.T) {
 		// Tamper with a proof element
 		if len(proof.Proof) > 0 {
 			proof.Proof[0][0] ^= 0xFF
-			require.False(t, VerifyProof(proof, tree.Root))
+			require.False(t, VerifyProof(zap.NewNop(), proof, tree.Root))
 		}
 	})
 
 	t.Run("Invalid proof - nil proof", func(t *testing.T) {
-		require.False(t, VerifyProof(nil, tree.Root))
+		require.False(t, VerifyProof(zap.NewNop(), nil, tree.Root))
 	})
 }
 
@@ -290,7 +291,7 @@ func TestMerkleTreeLargeSet(t *testing.T) {
 				if idx < size {
 					proof, err := tree.GenerateProof(idx)
 					require.NoError(t, err)
-					require.True(t, VerifyProof(proof, tree.Root))
+					require.True(t, VerifyProof(zap.NewNop(), proof, tree.Root))
 				}
 			}
 		})
