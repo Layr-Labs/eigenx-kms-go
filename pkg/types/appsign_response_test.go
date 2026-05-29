@@ -19,9 +19,9 @@ import (
 func Test_AppSignResponse_OperatorAddressIsCanonical(t *testing.T) {
 	// Same address, three encodings: lower-case, upper-case (EIP-55-ish), no 0x prefix on inner hex.
 	encodings := []string{
-		`{"OperatorAddress":"0xabcdef1234567890abcdef1234567890abcdef12","PartialSignature":{"compressed_bytes":null}}`,
-		`{"OperatorAddress":"0xABCDEF1234567890ABCDEF1234567890ABCDEF12","PartialSignature":{"compressed_bytes":null}}`,
-		`{"OperatorAddress":"0xAbCdEf1234567890aBcDeF1234567890AbCdEf12","PartialSignature":{"compressed_bytes":null}}`,
+		`{"OperatorAddress":"0xabcdef1234567890abcdef1234567890abcdef12","PartialSignature":{"CompressedBytes":null}}`,
+		`{"OperatorAddress":"0xABCDEF1234567890ABCDEF1234567890ABCDEF12","PartialSignature":{"CompressedBytes":null}}`,
+		`{"OperatorAddress":"0xAbCdEf1234567890aBcDeF1234567890AbCdEf12","PartialSignature":{"CompressedBytes":null}}`,
 	}
 
 	expected := common.HexToAddress("0xabcdef1234567890abcdef1234567890abcdef12")
