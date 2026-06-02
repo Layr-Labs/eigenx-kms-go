@@ -18,15 +18,14 @@ func FuzzValidateAppID(f *testing.F) {
 
 	f.Fuzz(func(t *testing.T, appID string) {
 		err := ValidateAppID(appID)
-		if appID == "" {
+		isEmpty := appID == ""
+		tooLong := len(appID) > 255
+		badChars := len(appID) > 0 && !validAppIDPattern.MatchString(appID)
+		if isEmpty || tooLong || badChars {
 			require.Error(t, err)
-			return
+		} else {
+			require.NoError(t, err)
 		}
-		if len(appID) < 5 {
-			require.Error(t, err)
-			return
-		}
-		require.NoError(t, err)
 	})
 }
 

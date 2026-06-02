@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
 
 // TestBroadcastCommitmentsWithProofs tests the broadcast function (Phase 5)
@@ -26,6 +27,7 @@ func TestBroadcastCommitmentsWithProofs(t *testing.T) {
 func TestBroadcastCommitmentsWithProofs_NilTree(t *testing.T) {
 	client := &Client{
 		operatorAddr: common.HexToAddress("0x1111"),
+		logger:       zap.NewNop(),
 	}
 
 	operators := []*peering.OperatorSetPeer{
@@ -95,6 +97,7 @@ func TestBroadcastCommitmentsWithProofs_SkipsSelf(t *testing.T) {
 	client := &Client{
 		operatorAddr: myAddr,
 		signer:       mockSigner,
+		logger:       zap.NewNop(),
 	}
 
 	// Create operators including self
@@ -150,6 +153,7 @@ func TestBroadcastCommitmentsWithProofs_NoAckForOperator(t *testing.T) {
 	client := &Client{
 		operatorAddr: myAddr,
 		signer:       mockSigner,
+		logger:       zap.NewNop(),
 	}
 
 	operators := []*peering.OperatorSetPeer{

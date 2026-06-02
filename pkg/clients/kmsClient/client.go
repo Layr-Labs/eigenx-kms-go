@@ -24,7 +24,11 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 )
+
+// maxSuccessBodySize limits the size of success response bodies from operators/KMS (1MB).
+const maxSuccessBodySize int64 = 1 << 20
 
 // ContractCaller defines the interface for fetching operator information from the blockchain
 type ContractCaller interface {
@@ -177,7 +181,7 @@ func (c *Client) GetMasterPublicKey(operators *peering.OperatorSetPeers) (*types
 			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, types.MaxErrorBodySize))
 				c.logger.Sugar().Warnw("Operator returned error",
 					"operator_index", idx,
 					"status_code", resp.StatusCode,
@@ -194,7 +198,7 @@ func (c *Client) GetMasterPublicKey(operators *peering.OperatorSetPeers) (*types
 				IsActive        bool            `json:"isActive"`
 			}
 
-			if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			if err := json.NewDecoder(io.LimitReader(resp.Body, maxSuccessBodySize)).Decode(&response); err != nil {
 				c.logger.Sugar().Warnw("Failed to decode response from operator",
 					"operator_index", idx,
 					"error", err,
@@ -299,8 +303,8 @@ func (c *Client) GetMasterPublicKey(operators *peering.OperatorSetPeers) (*types
 
 // Encrypt encrypts data for an application using IBE
 func (c *Client) Encrypt(appID string, data []byte, operators *peering.OperatorSetPeers) ([]byte, error) {
-	if appID == "" {
-		return nil, fmt.Errorf("app ID is required")
+	if err := util.ValidateAppID(appID); err != nil {
+		return nil, fmt.Errorf("invalid app ID: %w", err)
 	}
 	if len(data) == 0 {
 		return nil, fmt.Errorf("data to encrypt is required")
@@ -328,8 +332,8 @@ func (c *Client) Encrypt(appID string, data []byte, operators *peering.OperatorS
 
 // CollectPartialSignatures collects partial signatures from threshold number of operators concurrently
 func (c *Client) CollectPartialSignatures(appID string, operators *peering.OperatorSetPeers, threshold int) (map[common.Address]types.G1Point, error) {
-	if appID == "" {
-		return nil, fmt.Errorf("app ID is required")
+	if err := util.ValidateAppID(appID); err != nil {
+		return nil, fmt.Errorf("invalid app ID: %w", err)
 	}
 	if operators == nil || len(operators.Peers) == 0 {
 		return nil, fmt.Errorf("no operators provided")
@@ -387,7 +391,7 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, types.MaxErrorBodySize))
 				c.logger.Sugar().Warnw("Operator returned error",
 					"operator_index", idx,
 					"status_code", resp.StatusCode,
@@ -397,7 +401,7 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 			}
 
 			var response types.AppSignResponse
-			if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			if err := json.NewDecoder(io.LimitReader(resp.Body, maxSuccessBodySize)).Decode(&response); err != nil {
 				c.logger.Sugar().Warnw("Failed to decode response from operator",
 					"operator_index", idx,
 					"error", err,
@@ -468,8 +472,8 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 
 // Decrypt decrypts data by collecting partial signatures from operators
 func (c *Client) Decrypt(appID string, encryptedData []byte, operators *peering.OperatorSetPeers, threshold int) ([]byte, error) {
-	if appID == "" {
-		return nil, fmt.Errorf("app ID is required")
+	if err := util.ValidateAppID(appID); err != nil {
+		return nil, fmt.Errorf("invalid app ID: %w", err)
 	}
 	if len(encryptedData) == 0 {
 		return nil, fmt.Errorf("encrypted data is required")
@@ -786,12 +790,12 @@ func (c *Client) requestSecretsFromKMS(serverURL string, req types.SecretsReques
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, types.MaxErrorBodySize))
 		return nil, fmt.Errorf("KMS server returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	var response types.SecretsResponseV1
-	if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxSuccessBodySize)).Decode(&response); err != nil {
 		return nil, fmt.Errorf("failed to parse response: %w", err)
 	}
 
@@ -877,6 +881,9 @@ func (c *Client) GetPublicKeyForApp(appID string) (*types.G1Point, *types.G2Poin
 
 // EncryptForApp encrypts data for a specific application using IBE
 func (c *Client) EncryptForApp(appID string, plaintext []byte) ([]byte, error) {
+	if err := util.ValidateAppID(appID); err != nil {
+		return nil, fmt.Errorf("invalid app ID: %w", err)
+	}
 	operators, err := c.GetOperators()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get operators: %w", err)
@@ -892,6 +899,9 @@ func (c *Client) EncryptForApp(appID string, plaintext []byte) ([]byte, error) {
 
 // DecryptForApp decrypts data by collecting partial signatures and recovering app private key
 func (c *Client) DecryptForApp(appID string, ciphertext []byte, attestationTime int64) ([]byte, error) {
+	if err := util.ValidateAppID(appID); err != nil {
+		return nil, fmt.Errorf("invalid app ID: %w", err)
+	}
 	operators, err := c.GetOperators()
 	if err != nil {
 		return nil, fmt.Errorf("failed to get operators: %w", err)
@@ -950,13 +960,13 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, types.MaxErrorBodySize))
 				c.logger.Sugar().Warnw("Operator returned error", "operator_index", idx, "status", resp.StatusCode, "body", string(body))
 				return
 			}
 
 			var response types.AppSignResponse
-			if err := json.NewDecoder(resp.Body).Decode(&response); err != nil {
+			if err := json.NewDecoder(io.LimitReader(resp.Body, maxSuccessBodySize)).Decode(&response); err != nil {
 				c.logger.Sugar().Warnw("Failed to decode response", "operator_index", idx, "error", err)
 				return
 			}

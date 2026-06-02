@@ -11,8 +11,33 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/util"
 	"github.com/ethereum/go-ethereum/common"
 )
+
+// maxAttestationFutureOffset is the maximum amount (in seconds) an attestation timestamp
+// may exceed the current time. Prevents requests for key versions that don't exist yet.
+const maxAttestationFutureOffset int64 = 300 // 5 minutes
+
+// maxAttestationPastAge is the maximum age (in seconds) of an attestation timestamp.
+// Prevents targeting older (potentially weaker or revoked) key versions.
+const maxAttestationPastAge int64 = 86400 // 24 hours
+
+// validateAttestationTime checks that attestationTime is within the acceptable window.
+// A value of 0 means "use current key version" and bypasses time-range checks.
+func validateAttestationTime(attestationTime int64) error {
+	if attestationTime == 0 {
+		return nil // 0 means "use current key version" — skip time-range checks
+	}
+	now := time.Now().Unix()
+	if attestationTime > now+maxAttestationFutureOffset {
+		return fmt.Errorf("attestation time is too far in the future")
+	}
+	if attestationTime < now-maxAttestationPastAge {
+		return fmt.Errorf("attestation time is too far in the past")
+	}
+	return nil
+}
 
 // validateAuthenticatedMessage validates an incoming authenticated message
 func (s *Server) validateAuthenticatedMessage(r *http.Request, expectedRecipient common.Address) (*types.AuthenticatedMessage, *peering.OperatorSetPeer, interface{}, error) {
@@ -21,7 +46,7 @@ func (s *Server) validateAuthenticatedMessage(r *http.Request, expectedRecipient
 	if err := json.NewDecoder(r.Body).Decode(&authMsg); err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to parse authenticated message: %w", err)
 	}
-	s.node.logger.Sugar().Infow("Received authenticated message wrapper", "msg", string(authMsg.Payload))
+	s.node.logger.Sugar().Debugw("Received authenticated message wrapper", "payload_len", len(authMsg.Payload))
 	// First decode payload to get sender address and session timestamp
 	var baseMsg struct {
 		FromOperatorAddress common.Address `json:"fromOperatorAddress"`
@@ -31,7 +56,6 @@ func (s *Server) validateAuthenticatedMessage(r *http.Request, expectedRecipient
 	if err := json.Unmarshal(authMsg.Payload, &baseMsg); err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to parse message addresses: %w", err)
 	}
-	// s.node.logger.Sugar().Infow("received authenticated message", "msg", baseMsg)
 
 	// Verify message is intended for this node
 	if baseMsg.ToOperatorAddress != expectedRecipient {
@@ -87,8 +111,8 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate required fields
-	if req.AppID == "" {
-		http.Error(w, "app_id is required", http.StatusBadRequest)
+	if err := util.ValidateAppID(req.AppID); err != nil {
+		http.Error(w, fmt.Sprintf("invalid app_id: %v", err), http.StatusBadRequest)
 		return
 	}
 	if s.node.appAllowlist != nil && !s.node.appAllowlist[req.AppID] {
@@ -108,6 +132,15 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	}
 	if len(req.ExtraData) > types.MaxExtraDataSize {
 		http.Error(w, fmt.Sprintf("extra_data exceeds 1MB limit (%d bytes)", len(req.ExtraData)), http.StatusBadRequest)
+		return
+	}
+	if err := validateAttestationTime(req.AttestationTime); err != nil {
+		s.node.logger.Sugar().Warnw("Invalid attestation time",
+			"node_id", s.node.OperatorAddress.Hex(),
+			"app_id", req.AppID,
+			"attestation_time", req.AttestationTime,
+			"error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -353,7 +386,12 @@ func (s *Server) handleDKGShare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	senderAddr := senderPeer.OperatorAddress
-	share := types.DeserializeFr(shareMsg.Share)
+	share, err := types.DeserializeFr(shareMsg.Share)
+	if err != nil {
+		s.node.logger.Sugar().Warnw("Invalid share data", "from", senderPeer.OperatorAddress.Hex(), "error", err)
+		http.Error(w, "invalid share data", http.StatusBadRequest)
+		return
+	}
 
 	// Store share in session (handles duplicate detection and completion signaling)
 	if err := session.HandleReceivedShare(senderAddr, share); err != nil {
@@ -525,7 +563,12 @@ func (s *Server) handleReshareShare(w http.ResponseWriter, r *http.Request) {
 	}
 
 	senderAddr := senderPeer.OperatorAddress
-	share := types.DeserializeFr(shareMsg.Share)
+	share, err := types.DeserializeFr(shareMsg.Share)
+	if err != nil {
+		s.node.logger.Sugar().Warnw("Invalid share data", "from", senderPeer.OperatorAddress.Hex(), "error", err)
+		http.Error(w, "invalid share data", http.StatusBadRequest)
+		return
+	}
 
 	// Store share in session
 	if err := session.HandleReceivedShare(senderAddr, share); err != nil {
@@ -655,8 +698,8 @@ func (s *Server) handleAppSign(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.AppID == "" {
-		http.Error(w, "app_id is required", http.StatusBadRequest)
+	if err := util.ValidateAppID(req.AppID); err != nil {
+		http.Error(w, fmt.Sprintf("invalid app_id: %v", err), http.StatusBadRequest)
 		return
 	}
 	if s.node.appAllowlist != nil && !s.node.appAllowlist[req.AppID] {
@@ -664,6 +707,15 @@ func (s *Server) handleAppSign(w http.ResponseWriter, r *http.Request) {
 			"operator_address", s.node.OperatorAddress.Hex(),
 			"app_id", req.AppID)
 		http.Error(w, "app not allowed", http.StatusForbidden)
+		return
+	}
+	if err := validateAttestationTime(req.AttestationTime); err != nil {
+		s.node.logger.Sugar().Warnw("Invalid attestation time",
+			"node_id", s.node.OperatorAddress.Hex(),
+			"app_id", req.AppID,
+			"attestation_time", req.AttestationTime,
+			"error", err)
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 

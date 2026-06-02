@@ -100,7 +100,7 @@ func TestCollectPartialSignatures_ValidationErrors(t *testing.T) {
 			appID:       "",
 			operators:   nil,
 			threshold:   1,
-			expectedErr: "app ID is required",
+			expectedErr: "invalid app ID:",
 		},
 		{
 			name:        "nil operators with positive threshold",
@@ -149,7 +149,7 @@ func TestEncrypt_ValidationErrors(t *testing.T) {
 			name:        "empty app ID",
 			appID:       "",
 			data:        []byte("test data"),
-			expectedErr: "app ID is required",
+			expectedErr: "invalid app ID:",
 		},
 		{
 			name:        "empty data",
@@ -190,7 +190,7 @@ func TestDecrypt_ValidationErrors(t *testing.T) {
 			name:          "empty app ID",
 			appID:         "",
 			encryptedData: []byte("encrypted"),
-			expectedErr:   "app ID is required",
+			expectedErr:   "invalid app ID:",
 		},
 		{
 			name:          "empty encrypted data",

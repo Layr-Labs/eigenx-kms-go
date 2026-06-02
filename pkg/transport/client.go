@@ -14,6 +14,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
+	"go.uber.org/zap"
 )
 
 // RetryConfig configures retry behavior
@@ -37,6 +38,7 @@ type Client struct {
 	operatorAddr common.Address
 	signer       transportSigner.ITransportSigner
 	retryConfig  RetryConfig
+	logger       *zap.Logger
 }
 
 // NewClient creates a new transport client
@@ -45,7 +47,22 @@ func NewClient(operatorAddr common.Address, signer transportSigner.ITransportSig
 		operatorAddr: operatorAddr,
 		signer:       signer,
 		retryConfig:  DefaultRetryConfig,
+		logger:       zap.NewNop(),
 	}
+}
+
+// WithLogger sets the logger on the transport client.
+// A nil logger is ignored (the existing no-op logger is retained).
+func (c *Client) WithLogger(logger *zap.Logger) *Client {
+	if logger != nil {
+		c.logger = logger
+	}
+	return c
+}
+
+// log returns the client's logger.
+func (c *Client) log() *zap.Logger {
+	return c.logger
 }
 
 // buildRequestURL constructs a full URL for an operator endpoint
@@ -200,7 +217,15 @@ func (c *Client) BroadcastDKGCommitments(operators []*peering.OperatorSetPeer, c
 		}
 
 		url := buildRequestURL(op.SocketAddress, "/dkg/commitment")
-		_, _ = http.Post(url, "application/json", bytes.NewReader(data))
+		resp, err := http.Post(url, "application/json", bytes.NewReader(data))
+		if err != nil {
+			c.log().Sugar().Warnw("Failed to send DKG commitment", "peer", op.OperatorAddress.Hex(), "error", err)
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			c.log().Sugar().Warnw("DKG commitment rejected", "peer", op.OperatorAddress.Hex(), "status", resp.StatusCode)
+		}
+		_ = resp.Body.Close()
 	}
 	return nil
 }
@@ -236,7 +261,15 @@ func (c *Client) BroadcastReshareCommitments(operators []*peering.OperatorSetPee
 			return fmt.Errorf("failed to marshal authenticated message: %w", err)
 		}
 		url := buildRequestURL(op.SocketAddress, "/reshare/commitment")
-		_, _ = http.Post(url, "application/json", bytes.NewReader(data))
+		resp, err := http.Post(url, "application/json", bytes.NewReader(data))
+		if err != nil {
+			c.log().Sugar().Warnw("Failed to send reshare commitment", "peer", op.OperatorAddress.Hex(), "error", err)
+			continue
+		}
+		if resp.StatusCode != http.StatusOK {
+			c.log().Sugar().Warnw("Reshare commitment rejected", "peer", op.OperatorAddress.Hex(), "status", resp.StatusCode)
+		}
+		_ = resp.Body.Close()
 	}
 	return nil
 }

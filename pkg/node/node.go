@@ -530,11 +530,12 @@ func (n *Node) RestoreState() error {
 	}
 
 	if nodeState != nil {
-		// Verify operator address matches
-		if nodeState.OperatorAddress != "" && nodeState.OperatorAddress != n.OperatorAddress.Hex() {
-			n.logger.Sugar().Warnw("Operator address mismatch in persisted state",
-				"expected", n.OperatorAddress.Hex(),
-				"persisted", nodeState.OperatorAddress)
+		// Verify operator address matches — refuse to start with mismatched state.
+		// Normalize via HexToAddress to avoid false positives from case differences
+		// (e.g. all-lowercase persisted by older code vs EIP-55 checksummed).
+		if nodeState.OperatorAddress != "" && common.HexToAddress(nodeState.OperatorAddress) != n.OperatorAddress {
+			return fmt.Errorf("operator address mismatch: persisted state has %s but node is configured as %s — use a separate data directory or correct the operator address",
+				common.HexToAddress(nodeState.OperatorAddress).Hex(), n.OperatorAddress.Hex())
 		}
 
 		if nodeState.LastProcessedBoundary > 0 {
@@ -2580,7 +2581,7 @@ func (n *Node) fetchMPKFromPeers(ctx context.Context, operators []*peering.Opera
 			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, types.MaxErrorBodySize))
 				n.logger.Sugar().Warnw("Peer returned error for MPK", "peer", peer.SocketAddress, "status", resp.StatusCode, "body", string(body))
 				return
 			}
