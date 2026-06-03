@@ -219,6 +219,28 @@ This server implements:
 				Value:   false,
 				EnvVars: []string{config.EnvKMSEnableTPMAttestation},
 			},
+			&cli.BoolFlag{
+				Name:    "enable-kbs-attestation",
+				Usage:   "Enable KBS-EAR attestation (CoCo Trustee EAR JWT verification)",
+				Value:   false,
+				EnvVars: []string{config.EnvKMSEnableKBSAttestation},
+			},
+			&cli.StringFlag{
+				Name:    "kbs-jwks-url",
+				Usage:   "URL to fetch KBS attestation-service JWKS (signing certificate)",
+				EnvVars: []string{config.EnvKMSKBSJWKSURL},
+			},
+			&cli.StringFlag{
+				Name:    "kbs-expected-issuer",
+				Usage:   "Expected `iss` claim in KBS-EAR JWTs",
+				Value:   attestation.DefaultKBSExpectedIssuer,
+				EnvVars: []string{config.EnvKMSKBSExpectedIssuer},
+			},
+			&cli.StringFlag{
+				Name:    "kbs-expected-audience",
+				Usage:   "Expected `aud` claim in KBS-EAR JWTs (empty disables audience check)",
+				EnvVars: []string{config.EnvKMSKBSExpectedAudience},
+			},
 			&cli.StringSliceFlag{
 				Name:    "app-allowlist",
 				Usage:   "Restrict /app/sign and /secrets to these app IDs (empty = allow all). Can be specified multiple times.",
@@ -371,10 +393,11 @@ func runKMSServer(c *cli.Context) error {
 	enableGCP := c.Bool("enable-gcp-attestation")
 	enableECDSA := c.Bool("enable-ecdsa-attestation")
 	enableTPM := c.Bool("enable-tpm-attestation")
+	enableKBS := c.Bool("enable-kbs-attestation")
 
 	// Validate at least one method is enabled
-	if !enableGCP && !enableECDSA && !enableTPM {
-		return fmt.Errorf("at least one attestation method must be enabled (--enable-gcp-attestation, --enable-ecdsa-attestation, or --enable-tpm-attestation)")
+	if !enableGCP && !enableECDSA && !enableTPM && !enableKBS {
+		return fmt.Errorf("at least one attestation method must be enabled (--enable-gcp-attestation, --enable-ecdsa-attestation, --enable-tpm-attestation, or --enable-kbs-attestation)")
 	}
 
 	// Create slog logger for attestation
@@ -455,6 +478,36 @@ func runKMSServer(c *cli.Context) error {
 
 		l.Sugar().Infow("TPM attestation method enabled",
 			"method_name", tpmMethod.Name())
+	}
+
+	// Register KBS-EAR attestation if enabled
+	if enableKBS {
+		kbsJWKSURL := c.String("kbs-jwks-url")
+		kbsExpectedIssuer := c.String("kbs-expected-issuer")
+		kbsExpectedAudience := c.String("kbs-expected-audience")
+
+		if kbsJWKSURL == "" {
+			return fmt.Errorf("--kbs-jwks-url is required when --enable-kbs-attestation is set")
+		}
+		if kbsExpectedIssuer == "" {
+			return fmt.Errorf("--kbs-expected-issuer must be non-empty (default: %s)", attestation.DefaultKBSExpectedIssuer)
+		}
+
+		kbsJWKS, err := attestation.NewKBSJWKCache(ctx, kbsJWKSURL, time.Hour)
+		if err != nil {
+			return fmt.Errorf("failed to initialise KBS JWK cache: %w", err)
+		}
+
+		kbsMethod := attestation.NewKBSEARAttestationMethod(kbsJWKS, kbsExpectedIssuer, kbsExpectedAudience, slogger)
+		if err := attestationManager.RegisterMethod(kbsMethod); err != nil {
+			return fmt.Errorf("failed to register KBS-EAR attestation method: %w", err)
+		}
+
+		l.Sugar().Infow("KBS-EAR attestation method enabled",
+			"method_name", kbsMethod.Name(),
+			"kbs_jwks_url", kbsJWKSURL,
+			"expected_issuer", kbsExpectedIssuer,
+			"expected_audience", kbsExpectedAudience)
 	}
 
 	// Log summary of enabled methods

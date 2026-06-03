@@ -44,6 +44,11 @@ const (
 	EnvKMSEnableECDSAAttestation = "KMS_ENABLE_ECDSA_ATTESTATION"
 	EnvKMSEnableTPMAttestation   = "KMS_ENABLE_TPM_ATTESTATION"
 	EnvKMSAppAllowlist           = "KMS_APP_ALLOWLIST"
+	// KBS-EAR (CoCo Trustee) attestation configuration
+	EnvKMSEnableKBSAttestation = "KMS_ENABLE_KBS_ATTESTATION"
+	EnvKMSKBSJWKSURL           = "KMS_KBS_JWKS_URL"
+	EnvKMSKBSExpectedIssuer    = "KMS_KBS_EXPECTED_ISSUER"
+	EnvKMSKBSExpectedAudience  = "KMS_KBS_EXPECTED_AUDIENCE"
 )
 
 type CurveType string
