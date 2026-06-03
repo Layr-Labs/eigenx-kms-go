@@ -60,10 +60,15 @@ type SecretsResult struct {
 	ExtraData       []byte // echoed from KMS response
 }
 
+// maxKBSEARTokenSize is a sanity-check upper bound on the EAR JWT size.
+// EAR tokens carry submods with full appraisals so they are larger than basic
+// JWTs, but 32 KB is well above any realistic case.
+const maxKBSEARTokenSize = 32 * 1024
+
 // SecretsOptions configures secret retrieval behavior
 type SecretsOptions struct {
 	// AttestationMethod specifies which attestation method to use
-	// Options: "gcp" (default), "intel", "ecdsa", "tpm"
+	// Options: "gcp" (default), "intel", "ecdsa", "tpm", "kbs-ear"
 	AttestationMethod string
 
 	// For GCP/Intel attestation (production)
@@ -74,6 +79,12 @@ type SecretsOptions struct {
 
 	// For TPM attestation (raw hardware attestation)
 	TPMAttestationBytes []byte // Raw TPM attestation evidence from the hardware
+
+	// KBSEARToken is the EAR (Entity Attestation Result) JWT issued by CoCo
+	// Trustee KBS. Required when AttestationMethod is "kbs-ear". The KBS
+	// verifies the raw AMD SEV-SNP attestation report and emits this signed
+	// token; the KMS only sees and verifies the JWT.
+	KBSEARToken string
 
 	// RSA key pair for encrypting partial signatures in transit
 	RSAPrivateKeyPEM []byte // Required: RSA private key in PEM format
@@ -547,6 +558,14 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 	if len(opts.ExtraData) > types.MaxExtraDataSize {
 		return nil, fmt.Errorf("extra_data exceeds 1MB limit (%d bytes)", len(opts.ExtraData))
 	}
+	if opts.AttestationMethod == "kbs-ear" {
+		if len(opts.KBSEARToken) == 0 {
+			return nil, fmt.Errorf("KBSEARToken is required for kbs-ear attestation method")
+		}
+		if len(opts.KBSEARToken) > maxKBSEARTokenSize {
+			return nil, fmt.Errorf("KBSEARToken exceeds %d byte limit (%d bytes)", maxKBSEARTokenSize, len(opts.KBSEARToken))
+		}
+	}
 
 	c.logger.Sugar().Infow("Starting secret retrieval",
 		"app_id", appID,
@@ -605,6 +624,9 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 			AttestationTime:   time.Now().Unix(),
 			ExtraData:         opts.ExtraData,
 		}
+
+	case "kbs-ear":
+		req = c.createKBSEARAttestationRequest(appID, opts)
 
 	default:
 		return nil, fmt.Errorf("unsupported attestation method: %s", opts.AttestationMethod)
@@ -873,6 +895,26 @@ func (c *Client) GetPublicKeyForApp(appID string) (*types.G1Point, *types.G2Poin
 	}
 
 	return appPubKey, masterPubKey, nil
+}
+
+// createKBSEARAttestationRequest creates a SecretsRequestV1 carrying the EAR
+// JWT issued by CoCo Trustee KBS. The client does not parse the token; it only
+// forwards the bytes to KMS operators, which verify the JWT signature and
+// extract workload identity from the `init_data` claim.
+func (c *Client) createKBSEARAttestationRequest(appID string, opts *SecretsOptions) types.SecretsRequestV1 {
+	c.logger.Sugar().Debugw("Creating KBS-EAR attestation request",
+		"app_id", appID,
+		"token_size", len(opts.KBSEARToken),
+	)
+
+	return types.SecretsRequestV1{
+		AppID:             appID,
+		AttestationMethod: "kbs-ear",
+		Attestation:       []byte(opts.KBSEARToken),
+		RSAPubKeyTmp:      opts.RSAPublicKeyPEM,
+		AttestationTime:   time.Now().Unix(),
+		ExtraData:         opts.ExtraData,
+	}
 }
 
 // EncryptForApp encrypts data for a specific application using IBE

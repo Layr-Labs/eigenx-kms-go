@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
@@ -603,4 +604,76 @@ func TestRetrieveSecretsWithOptions_ExtraDataTooLarge(t *testing.T) {
 	_, err = c.RetrieveSecretsWithOptions("app-id", opts)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "extra_data exceeds 1MB limit")
+}
+
+func TestRetrieveSecretsWithOptions_KBSEAR_RequestShape(t *testing.T) {
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	c := &Client{
+		logger: logger,
+	}
+
+	opts := &SecretsOptions{
+		AttestationMethod: "kbs-ear",
+		KBSEARToken:       "header.payload.signature", // any non-empty short string
+		RSAPrivateKeyPEM:  []byte("key"),
+		RSAPublicKeyPEM:   []byte("pub"),
+		ExtraData:         []byte("extra"),
+	}
+
+	before := time.Now().Unix()
+	req := c.createKBSEARAttestationRequest("app-id", opts)
+	after := time.Now().Unix()
+
+	assert.Equal(t, "app-id", req.AppID)
+	assert.Equal(t, "kbs-ear", req.AttestationMethod)
+	assert.Equal(t, []byte(opts.KBSEARToken), req.Attestation)
+	assert.Equal(t, opts.RSAPublicKeyPEM, req.RSAPubKeyTmp)
+	assert.Equal(t, opts.ExtraData, req.ExtraData)
+	assert.GreaterOrEqual(t, req.AttestationTime, before)
+	assert.LessOrEqual(t, req.AttestationTime, after)
+	// ECDSA-only fields must remain unset for kbs-ear requests.
+	assert.Nil(t, req.Challenge)
+	assert.Nil(t, req.PublicKey)
+}
+
+func TestRetrieveSecretsWithOptions_KBSEAR_TokenValidation(t *testing.T) {
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	c := &Client{
+		logger: logger,
+	}
+
+	tests := []struct {
+		name        string
+		token       string
+		expectedErr string
+	}{
+		{
+			name:        "empty token",
+			token:       "",
+			expectedErr: "KBSEARToken is required for kbs-ear attestation method",
+		},
+		{
+			name:        "oversized token",
+			token:       string(make([]byte, maxKBSEARTokenSize+1)),
+			expectedErr: "KBSEARToken exceeds",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			opts := &SecretsOptions{
+				AttestationMethod: "kbs-ear",
+				KBSEARToken:       tt.token,
+				RSAPrivateKeyPEM:  []byte("key"),
+				RSAPublicKeyPEM:   []byte("pub"),
+			}
+			_, err := c.RetrieveSecretsWithOptions("app-id", opts)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.expectedErr)
+		})
+	}
 }
