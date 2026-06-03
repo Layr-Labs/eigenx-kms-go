@@ -60,7 +60,7 @@ type IAppControllerRmsRelease struct {
 
 // IAppControllerMetaData contains all meta data concerning the IAppController contract.
 var IAppControllerMetaData = &bind.MetaData{
-	ABI: "[{\"type\":\"function\",\"name\":\"getAppCreator\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAppLatestReleaseBlockNumber\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint32\",\"internalType\":\"uint32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAppOperatorSetId\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint32\",\"internalType\":\"uint32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAppStatus\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"event\",\"name\":\"AppUpgraded\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"rmsReleaseId\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"},{\"name\":\"release\",\"type\":\"tuple\",\"indexed\":false,\"internalType\":\"structIAppController.AppRelease\",\"components\":[{\"name\":\"rmsRelease\",\"type\":\"tuple\",\"internalType\":\"structIAppController.RmsRelease\",\"components\":[{\"name\":\"artifacts\",\"type\":\"tuple[]\",\"internalType\":\"structIAppController.Artifact[]\",\"components\":[{\"name\":\"digest\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}]}]},{\"name\":\"publicEnv\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"encryptedEnv\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"containerPolicy\",\"type\":\"tuple\",\"internalType\":\"structIAppController.ContainerPolicy\",\"components\":[{\"name\":\"args\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"cmdOverride\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"envKeys\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"envValues\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"envOverrideKeys\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"envOverrideValues\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"restartPolicy\",\"type\":\"string\",\"internalType\":\"string\"}]}]}],\"anonymous\":false}]",
+	ABI: "[{\"type\":\"function\",\"name\":\"getAppCreator\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAppLatestReleaseBlockNumber\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint32\",\"internalType\":\"uint32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAppPendingReleaseBlockNumber\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint32\",\"internalType\":\"uint32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAppOperatorSetId\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint32\",\"internalType\":\"uint32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAppStatus\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"event\",\"name\":\"AppUpgraded\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"rmsReleaseId\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"},{\"name\":\"release\",\"type\":\"tuple\",\"indexed\":false,\"internalType\":\"structIAppController.AppRelease\",\"components\":[{\"name\":\"rmsRelease\",\"type\":\"tuple\",\"internalType\":\"structIAppController.RmsRelease\",\"components\":[{\"name\":\"artifacts\",\"type\":\"tuple[]\",\"internalType\":\"structIAppController.Artifact[]\",\"components\":[{\"name\":\"digest\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}]}]},{\"name\":\"publicEnv\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"encryptedEnv\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"containerPolicy\",\"type\":\"tuple\",\"internalType\":\"structIAppController.ContainerPolicy\",\"components\":[{\"name\":\"args\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"cmdOverride\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"envKeys\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"envValues\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"envOverrideKeys\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"envOverrideValues\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"restartPolicy\",\"type\":\"string\",\"internalType\":\"string\"}]}]}],\"anonymous\":false}]",
 }
 
 // IAppControllerABI is the input ABI used to generate the binding from.
@@ -269,6 +269,37 @@ func (_IAppController *IAppControllerSession) GetAppLatestReleaseBlockNumber(app
 // Solidity: function getAppLatestReleaseBlockNumber(address app) view returns(uint32)
 func (_IAppController *IAppControllerCallerSession) GetAppLatestReleaseBlockNumber(app common.Address) (uint32, error) {
 	return _IAppController.Contract.GetAppLatestReleaseBlockNumber(&_IAppController.CallOpts, app)
+}
+
+// GetAppPendingReleaseBlockNumber is a free data retrieval call binding the contract method 0xc3478d14.
+//
+// Solidity: function getAppPendingReleaseBlockNumber(address app) view returns(uint32)
+func (_IAppController *IAppControllerCaller) GetAppPendingReleaseBlockNumber(opts *bind.CallOpts, app common.Address) (uint32, error) {
+	var out []interface{}
+	err := _IAppController.contract.Call(opts, &out, "getAppPendingReleaseBlockNumber", app)
+
+	if err != nil {
+		return *new(uint32), err
+	}
+
+	out0 := *abi.ConvertType(out[0], new(uint32)).(*uint32)
+
+	return out0, err
+
+}
+
+// GetAppPendingReleaseBlockNumber is a free data retrieval call binding the contract method 0xc3478d14.
+//
+// Solidity: function getAppPendingReleaseBlockNumber(address app) view returns(uint32)
+func (_IAppController *IAppControllerSession) GetAppPendingReleaseBlockNumber(app common.Address) (uint32, error) {
+	return _IAppController.Contract.GetAppPendingReleaseBlockNumber(&_IAppController.CallOpts, app)
+}
+
+// GetAppPendingReleaseBlockNumber is a free data retrieval call binding the contract method 0xc3478d14.
+//
+// Solidity: function getAppPendingReleaseBlockNumber(address app) view returns(uint32)
+func (_IAppController *IAppControllerCallerSession) GetAppPendingReleaseBlockNumber(app common.Address) (uint32, error) {
+	return _IAppController.Contract.GetAppPendingReleaseBlockNumber(&_IAppController.CallOpts, app)
 }
 
 // GetAppOperatorSetId is a free data retrieval call binding the contract method 0x6eb2099f.
