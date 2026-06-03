@@ -93,6 +93,11 @@ type IContractCaller interface {
 	// GetAppLatestReleaseBlockNumber returns the block number of the latest CONFIRMED release.
 	GetAppLatestReleaseBlockNumber(app common.Address, opts *bind.CallOpts) (uint32, error)
 
+	// GetAppPendingReleaseBlockNumber returns the block number of the pending (staged) release,
+	// or 0 if no upgrade is pending. Pending releases are written by upgradeApp() and promoted
+	// to latest by confirmUpgrade().
+	GetAppPendingReleaseBlockNumber(app common.Address, opts *bind.CallOpts) (uint32, error)
+
 	GetAppStatus(app common.Address, opts *bind.CallOpts) (uint8, error)
 
 	FilterAppUpgraded(apps []common.Address, filterOpts *bind.FilterOpts) (caller.AppUpgradedIterator, error)
@@ -102,4 +107,9 @@ type IContractCaller interface {
 	// GetLatestReleaseAsRelease returns the confirmed (active) release. This is only updated
 	// after the Coordinator calls confirmUpgrade(), preventing race conditions during upgrades.
 	GetLatestReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error)
+
+	// GetLatestAndPendingReleases returns both the latest (confirmed) release and the pending
+	// release (nil if none). Both are valid attestation targets during the canary overlap
+	// window between upgradeApp() and confirmUpgrade().
+	GetLatestAndPendingReleases(ctx context.Context, appID string) (*types.Release, *types.Release, error)
 }

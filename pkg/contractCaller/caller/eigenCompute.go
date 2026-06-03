@@ -25,6 +25,11 @@ type AppControllerInterface interface {
 	// A release is confirmed only after confirmUpgrade() has been called by the Coordinator,
 	// which prevents race conditions during in-flight requests at upgrade time.
 	GetAppLatestReleaseBlockNumber(opts *bind.CallOpts, app common.Address) (uint32, error)
+	// GetAppPendingReleaseBlockNumber returns the block number of the pending release
+	// staged by upgradeApp() but not yet promoted by confirmUpgrade(). Returns 0 when
+	// no upgrade is pending. Both pending and latest are valid attestation targets
+	// during the canary overlap window.
+	GetAppPendingReleaseBlockNumber(opts *bind.CallOpts, app common.Address) (uint32, error)
 	GetAppStatus(opts *bind.CallOpts, app common.Address) (uint8, error)
 	FilterAppUpgraded(opts *bind.FilterOpts, apps []common.Address) (AppUpgradedIterator, error)
 }
@@ -137,6 +142,21 @@ func (cc *ContractCaller) GetAppLatestReleaseBlockNumber(app common.Address, opt
 	return blockNumber, nil
 }
 
+// GetAppPendingReleaseBlockNumber returns the block number of the pending release for an app
+// (staged by upgradeApp() but not yet promoted by confirmUpgrade()). A return value of 0 means
+// no upgrade is currently pending.
+func (cc *ContractCaller) GetAppPendingReleaseBlockNumber(app common.Address, opts *bind.CallOpts) (uint32, error) {
+	appCtrl, err := cc.getAppController()
+	if err != nil {
+		return 0, err
+	}
+	blockNumber, err := appCtrl.GetAppPendingReleaseBlockNumber(opts, app)
+	if err != nil {
+		return 0, fmt.Errorf("failed to get app pending release block number: %w", err)
+	}
+	return blockNumber, nil
+}
+
 // GetAppStatus returns the status of a given app
 func (cc *ContractCaller) GetAppStatus(app common.Address, opts *bind.CallOpts) (uint8, error) {
 	appCtrl, err := cc.getAppController()
@@ -163,27 +183,18 @@ func (cc *ContractCaller) FilterAppUpgraded(apps []common.Address, filterOpts *b
 	return iterator, nil
 }
 
-// resolveLatestRelease is the internal implementation shared by GetLatestRelease and
-// GetLatestReleaseAsRelease. It also returns the release block number so callers can
-// fetch the authoritative block timestamp.
-func (cc *ContractCaller) resolveLatestRelease(ctx context.Context, appID string) ([32]byte, Env, []byte, types.ContainerPolicy, uint64, error) {
+// resolveReleaseAtBlock filters AppUpgraded events at the given release block number to
+// extract release data. Used by both the latest and pending release paths. The returned
+// uint64 is the on-chain block in which the matching event was emitted (used by callers
+// that need the authoritative block timestamp).
+func (cc *ContractCaller) resolveReleaseAtBlock(ctx context.Context, appID string, blockNumber uint32) ([32]byte, Env, []byte, types.ContainerPolicy, uint64, error) {
 	appCtrl, err := cc.getAppController()
 	if err != nil {
 		return [32]byte{}, Env{}, nil, types.ContainerPolicy{}, 0, err
 	}
 
-	cc.logger.Sugar().Debugw("Getting latest release", "app_id", appID)
-
 	appAddress := common.HexToAddress(appID)
-	cc.logger.Sugar().Debugw("Fetching app latest release block number", "app_address", appAddress)
-
-	latestReleaseBlockNumber, err := cc.GetAppLatestReleaseBlockNumber(appAddress, &bind.CallOpts{Context: ctx})
-	if err != nil {
-		return [32]byte{}, Env{}, nil, types.ContainerPolicy{}, 0, fmt.Errorf("failed to get app latest release block number: %w", err)
-	}
-	cc.logger.Sugar().Debugw("App latest release block number fetched successfully", "block_number", latestReleaseBlockNumber)
-
-	releaseBlockNumberUint64 := uint64(latestReleaseBlockNumber)
+	releaseBlockNumberUint64 := uint64(blockNumber)
 	cc.logger.Sugar().Debug("Filtering app upgraded events", "block_number", releaseBlockNumberUint64, "app_address", appAddress)
 
 	appUpgrades, err := appCtrl.FilterAppUpgraded(&bind.FilterOpts{Context: ctx, Start: releaseBlockNumberUint64, End: &releaseBlockNumberUint64}, []common.Address{appAddress})
@@ -221,28 +232,37 @@ func (cc *ContractCaller) resolveLatestRelease(ctx context.Context, appID string
 	if err = json.Unmarshal(release.PublicEnv, &publicEnv); err != nil {
 		return [32]byte{}, Env{}, nil, types.ContainerPolicy{}, 0, fmt.Errorf("failed to unmarshal env: %w", err)
 	}
-	cc.logger.Sugar().Debug("Latest release data prepared", "app_id", appID, "public_env_vars_count", len(publicEnv))
+	cc.logger.Sugar().Debug("Release data prepared", "app_id", appID, "public_env_vars_count", len(publicEnv))
 
 	return release.RmsRelease.Artifacts[0].Digest, publicEnv, release.EncryptedEnv, contractPolicyToTypes(release.ContainerPolicy), lastAppUpgrade.Raw.BlockNumber, nil
 }
 
-// GetLatestRelease retrieves the latest release information for an app.
-// Returns: image digest, public env, encrypted env, container policy, error
-func (cc *ContractCaller) GetLatestRelease(ctx context.Context, appID string) ([32]byte, Env, []byte, types.ContainerPolicy, error) {
-	digest, env, encrypted, policy, _, err := cc.resolveLatestRelease(ctx, appID)
-	return digest, env, encrypted, policy, err
+// resolveLatestRelease is a thin wrapper that fetches the latest release block number
+// from the AppController and delegates to resolveReleaseAtBlock. It also returns the
+// release block number so callers can fetch the authoritative block timestamp.
+func (cc *ContractCaller) resolveLatestRelease(ctx context.Context, appID string) ([32]byte, Env, []byte, types.ContainerPolicy, uint64, error) {
+	appAddress := common.HexToAddress(appID)
+	cc.logger.Sugar().Debugw("Getting latest release", "app_id", appID, "app_address", appAddress)
+
+	latestReleaseBlockNumber, err := cc.GetAppLatestReleaseBlockNumber(appAddress, &bind.CallOpts{Context: ctx})
+	if err != nil {
+		return [32]byte{}, Env{}, nil, types.ContainerPolicy{}, 0, fmt.Errorf("failed to get app latest release block number: %w", err)
+	}
+	cc.logger.Sugar().Debugw("App latest release block number fetched successfully", "block_number", latestReleaseBlockNumber)
+
+	return cc.resolveReleaseAtBlock(ctx, appID, latestReleaseBlockNumber)
 }
 
-// GetLatestReleaseAsRelease is an adapter that returns release data in the types.Release format.
-// This provides compatibility with the legacy registry.Client interface.
-func (cc *ContractCaller) GetLatestReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error) {
-	digest, publicEnv, encryptedEnv, containerPolicy, blockNumber, err := cc.resolveLatestRelease(ctx, appID)
+// resolveReleaseAsRelease packages the output of resolveReleaseAtBlock as a *types.Release,
+// fetching the authoritative block timestamp from the on-chain header.
+func (cc *ContractCaller) resolveReleaseAsRelease(ctx context.Context, appID string, blockNumber uint32) (*types.Release, error) {
+	digest, publicEnv, encryptedEnv, containerPolicy, eventBlockNumber, err := cc.resolveReleaseAtBlock(ctx, appID, blockNumber)
 	if err != nil {
 		return nil, err
 	}
 
 	// Fetch the block header to get the authoritative release timestamp
-	header, err := cc.ethclient.HeaderByNumber(ctx, new(big.Int).SetUint64(blockNumber))
+	header, err := cc.ethclient.HeaderByNumber(ctx, new(big.Int).SetUint64(eventBlockNumber))
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch block header for timestamp: %w", err)
 	}
@@ -265,4 +285,56 @@ func (cc *ContractCaller) GetLatestReleaseAsRelease(ctx context.Context, appID s
 		Timestamp:       int64(header.Time),
 		ContainerPolicy: containerPolicy,
 	}, nil
+}
+
+// GetLatestRelease retrieves the latest release information for an app.
+// Returns: image digest, public env, encrypted env, container policy, error
+func (cc *ContractCaller) GetLatestRelease(ctx context.Context, appID string) ([32]byte, Env, []byte, types.ContainerPolicy, error) {
+	digest, env, encrypted, policy, _, err := cc.resolveLatestRelease(ctx, appID)
+	return digest, env, encrypted, policy, err
+}
+
+// GetLatestReleaseAsRelease is an adapter that returns release data in the types.Release format.
+// This provides compatibility with the legacy registry.Client interface.
+func (cc *ContractCaller) GetLatestReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error) {
+	appAddress := common.HexToAddress(appID)
+	latestBlockNumber, err := cc.GetAppLatestReleaseBlockNumber(appAddress, &bind.CallOpts{Context: ctx})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get app latest release block number: %w", err)
+	}
+	return cc.resolveReleaseAsRelease(ctx, appID, latestBlockNumber)
+}
+
+// GetLatestAndPendingReleases returns the latest (confirmed) release and the pending
+// release (if any) for the given app. pending is nil when there is no pending upgrade.
+// During the canary overlap window, both are valid attestation targets per the
+// AppController two-slot release design.
+func (cc *ContractCaller) GetLatestAndPendingReleases(ctx context.Context, appID string) (*types.Release, *types.Release, error) {
+	appAddress := common.HexToAddress(appID)
+
+	latestBN, err := cc.GetAppLatestReleaseBlockNumber(appAddress, &bind.CallOpts{Context: ctx})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get latest release block: %w", err)
+	}
+
+	pendingBN, err := cc.GetAppPendingReleaseBlockNumber(appAddress, &bind.CallOpts{Context: ctx})
+	if err != nil {
+		return nil, nil, fmt.Errorf("failed to get pending release block: %w", err)
+	}
+
+	latest, err := cc.resolveReleaseAsRelease(ctx, appID, latestBN)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// pendingBN of 0 means there is no pending upgrade.
+	if pendingBN == 0 {
+		return latest, nil, nil
+	}
+
+	pending, err := cc.resolveReleaseAsRelease(ctx, appID, pendingBN)
+	if err != nil {
+		return latest, nil, fmt.Errorf("failed to resolve pending release: %w", err)
+	}
+	return latest, pending, nil
 }

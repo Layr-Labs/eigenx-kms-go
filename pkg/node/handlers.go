@@ -171,23 +171,47 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Step 3: Query latest release from on-chain AppController
-	release, err := s.node.baseContractCaller.GetLatestReleaseAsRelease(r.Context(), req.AppID)
+	// Step 3: Query latest + pending releases from on-chain AppController.
+	// During a canary upgrade, the AppController stages the new release in a pending slot
+	// while keeping the previously-confirmed release in the latest slot. Both are valid
+	// attestation targets until the app creator calls confirmUpgrade().
+	latest, pending, err := s.node.baseContractCaller.GetLatestAndPendingReleases(r.Context(), req.AppID)
 	if err != nil {
 		s.node.logger.Sugar().Warnw("Failed to get release", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
 		http.Error(w, "Release not found", http.StatusNotFound)
 		return
 	}
 
-	// Step 5: Verify image digest matches
-	if claims.ImageDigest != release.ImageDigest {
-		s.node.logger.Sugar().Warnw("Image digest mismatch", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "expected", release.ImageDigest, "got", claims.ImageDigest)
+	// Step 5: Verify image digest matches latest OR pending release.
+	matchesLatest := claims.ImageDigest == latest.ImageDigest
+	matchesPending := pending != nil && claims.ImageDigest == pending.ImageDigest
+	if !matchesLatest && !matchesPending {
+		pendingDigest := "<none>"
+		if pending != nil {
+			pendingDigest = pending.ImageDigest
+		}
+		s.node.logger.Sugar().Warnw(
+			"Image digest mismatch (neither latest nor pending)",
+			"operator_address", s.node.OperatorAddress.Hex(),
+			"app_id", req.AppID,
+			"latest", latest.ImageDigest,
+			"pending", pendingDigest,
+			"got", claims.ImageDigest,
+		)
 		http.Error(w, "Image digest mismatch - unauthorized image", http.StatusForbidden)
 		return
 	}
 
+	// Use the matched release for downstream policy validation and the secrets payload.
+	// Latest is preferred when both match (defensive — should not happen in practice since
+	// pending is cleared on confirmation).
+	matchedRelease := latest
+	if !matchesLatest && matchesPending {
+		matchedRelease = pending
+	}
+
 	// Step 4b: Verify container execution policy matches on-chain values
-	if err := validateContainerPolicy(claims.ContainerPolicy, release.ContainerPolicy); err != nil {
+	if err := validateContainerPolicy(claims.ContainerPolicy, matchedRelease.ContainerPolicy); err != nil {
 		s.node.logger.Sugar().Warnw("Container policy mismatch", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
 		http.Error(w, "Container policy mismatch", http.StatusForbidden)
 		return
@@ -244,8 +268,8 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Step 10: Create response
 	response := types.SecretsResponseV1{
-		EncryptedEnv:        release.EncryptedEnv,
-		PublicEnv:           release.PublicEnv,
+		EncryptedEnv:        matchedRelease.EncryptedEnv,
+		PublicEnv:           matchedRelease.PublicEnv,
 		EncryptedPartialSig: encryptedPartialSig,
 		ExtraData:           req.ExtraData,
 	}

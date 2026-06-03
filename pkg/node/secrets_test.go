@@ -113,6 +113,8 @@ func Test_SecretsEndpoint(t *testing.T) {
 	t.Run("ContainerPolicyEnvOverrideSuccess", func(t *testing.T) { testSecretsEndpointEnvOverrideSuccess(t) })
 	t.Run("ContainerPolicySuccess", func(t *testing.T) { testSecretsEndpointContainerPolicySuccess(t) })
 	t.Run("TwoPhaseUpgrade", func(t *testing.T) { testSecretsEndpointTwoPhaseUpgrade(t) })
+	t.Run("PendingReleaseAttestation", func(t *testing.T) { testSecretsEndpointPendingReleaseAttestation(t) })
+	t.Run("NeitherReleaseMatches", func(t *testing.T) { testSecretsEndpointNeitherReleaseMatches(t) })
 	t.Run("AllowlistBlocked", func(t *testing.T) { testSecretsEndpointAllowlistBlocked(t) })
 	t.Run("AllowlistAllowed", func(t *testing.T) { testSecretsEndpointAllowlistAllowed(t) })
 	t.Run("AllowlistNilAllowsAll", func(t *testing.T) { testSecretsEndpointAllowlistNilAllowsAll(t) })
@@ -657,20 +659,16 @@ func testSecretsEndpointContainerPolicySuccess(t *testing.T) {
 	}
 }
 
-// testSecretsEndpointTwoPhaseUpgrade verifies Fix 3 for KMS-009: in-flight requests that were
-// issued before an app upgrade completes are not rejected after the developer calls upgradeApp().
+// testSecretsEndpointTwoPhaseUpgrade verifies the canary upgrade flow: during the overlap
+// between upgradeApp() and confirmUpgrade(), BOTH the latest (confirmed) release and the
+// pending release are valid attestation targets. This lets a v1 pod and v2 pod coexist
+// during the overlap window (canary deploy). After the app creator confirms, only the new
+// release is valid.
 //
-// Race scenario without the fix:
-//  1. App is running with image digest A (confirmed on-chain).
-//  2. App sends attestation with digest A and the request enters the KMS pipeline.
-//  3. Developer calls upgradeApp() -> on-chain digest immediately becomes B.
-//  4. KMS processes the request, reads digest B, rejects the legitimate request.
-//
-// With two-phase upgrade:
-//  1. upgradeApp() writes digest B to pendingRelease (confirmed release stays A).
-//  2. In-flight request with digest A -> validated against confirmed release (A) -> succeeds.
-//  3. Coordinator calls confirmUpgrade() -> confirmed release becomes B.
-//  4. Requests with digest A now fail; requests with digest B succeed.
+// Lifecycle:
+//  1. Start: latest=A, pending=none. Only A attests.
+//  2. upgradeApp(B): latest=A, pending=B. Both A and B attest (canary overlap).
+//  3. confirmUpgrade(): latest=B, pending=none. Only B attests; A is cut off.
 func testSecretsEndpointTwoPhaseUpgrade(t *testing.T) {
 	f := newTestSecretsFixture(t)
 
@@ -743,14 +741,12 @@ func testSecretsEndpointTwoPhaseUpgrade(t *testing.T) {
 	}
 	f.contractCallerStub.SetPendingRelease("test-app", pendingRelease)
 
-	// Phase 2: upgrade pending — in-flight request with old digest still succeeds (race condition fixed).
+	// Phase 2: upgrade pending (canary overlap) — both old and new digests succeed.
 	if code := makeRequest(oldDigest); code != http.StatusOK {
-		t.Fatalf("Phase 2: expected 200 for old digest while upgrade is pending, got %d (race condition not fixed)", code)
+		t.Fatalf("Phase 2: expected 200 for old digest while upgrade is pending, got %d", code)
 	}
-
-	// Phase 2: new digest not yet confirmed — should be rejected.
-	if code := makeRequest(newDigest); code != http.StatusForbidden {
-		t.Fatalf("Phase 2: expected 403 for new digest before confirmation, got %d", code)
+	if code := makeRequest(newDigest); code != http.StatusOK {
+		t.Fatalf("Phase 2: expected 200 for new (pending) digest during canary overlap, got %d", code)
 	}
 
 	// Simulate confirmUpgrade(): Coordinator promotes pending release to confirmed.
@@ -764,6 +760,116 @@ func testSecretsEndpointTwoPhaseUpgrade(t *testing.T) {
 	}
 	if code := makeRequest(oldDigest); code != http.StatusForbidden {
 		t.Fatalf("Phase 3: expected 403 for old digest after confirmation, got %d", code)
+	}
+}
+
+// testSecretsEndpointPendingReleaseAttestation verifies that an attestation matching the
+// pending release returns the pending release's secrets (not the latest release's), which
+// is critical for canary deploys where v2 pods need v2 secrets.
+func testSecretsEndpointPendingReleaseAttestation(t *testing.T) {
+	f := newTestSecretsFixture(t)
+
+	latestDigest := "sha256:latest-digest"
+	pendingDigest := "sha256:pending-digest"
+
+	f.contractCallerStub.AddTestRelease("test-app", &kmsTypes.Release{
+		ImageDigest:  latestDigest,
+		EncryptedEnv: "latest-encrypted-env",
+		PublicEnv:    "PUBLIC=latest",
+		Timestamp:    time.Now().Unix(),
+	})
+	f.contractCallerStub.SetPendingRelease("test-app", &kmsTypes.Release{
+		ImageDigest:  pendingDigest,
+		EncryptedEnv: "pending-encrypted-env",
+		PublicEnv:    "PUBLIC=pending",
+		Timestamp:    time.Now().Unix(),
+	})
+
+	_, pubKeyPEM, err := encryption.GenerateKeyPair(2048)
+	if err != nil {
+		t.Fatalf("Failed to generate RSA key pair: %v", err)
+	}
+
+	nonceHash := sha256.Sum256(pubKeyPEM)
+	claims := kmsTypes.AttestationClaims{
+		AppID:       "test-app",
+		ImageDigest: pendingDigest, // attest the pending release
+		Nonce:       hex.EncodeToString(nonceHash[:]),
+		JTI:         "pending-attestation-jti",
+		IssuedAt:    time.Now().Unix(),
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+		PublicKey:   pubKeyPEM,
+	}
+	attestationBytes, _ := json.Marshal(claims)
+
+	reqBody, _ := json.Marshal(kmsTypes.SecretsRequestV1{
+		AppID:             "test-app",
+		AttestationMethod: "gcp",
+		Attestation:       attestationBytes,
+		RSAPubKeyTmp:      pubKeyPEM,
+	})
+	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
+	w := httptest.NewRecorder()
+	f.server.handleSecretsRequest(w, httpReq)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("Expected 200 for pending-release attestation, got %d. Body: %s", w.Code, w.Body.String())
+	}
+
+	var resp kmsTypes.SecretsResponseV1
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("Failed to parse response: %v", err)
+	}
+	// Pending release secrets must be returned (not latest's).
+	if resp.EncryptedEnv != "pending-encrypted-env" {
+		t.Errorf("Expected pending release's encrypted_env, got %q", resp.EncryptedEnv)
+	}
+	if resp.PublicEnv != "PUBLIC=pending" {
+		t.Errorf("Expected pending release's public_env, got %q", resp.PublicEnv)
+	}
+}
+
+// testSecretsEndpointNeitherReleaseMatches verifies that an attestation digest matching
+// neither latest nor pending is rejected with 403 even when both slots are populated.
+func testSecretsEndpointNeitherReleaseMatches(t *testing.T) {
+	f := newTestSecretsFixture(t)
+
+	f.contractCallerStub.AddTestRelease("test-app", &kmsTypes.Release{
+		ImageDigest:  "sha256:latest-digest",
+		EncryptedEnv: "latest-env",
+		PublicEnv:    "PUBLIC=latest",
+		Timestamp:    time.Now().Unix(),
+	})
+	f.contractCallerStub.SetPendingRelease("test-app", &kmsTypes.Release{
+		ImageDigest:  "sha256:pending-digest",
+		EncryptedEnv: "pending-env",
+		PublicEnv:    "PUBLIC=pending",
+		Timestamp:    time.Now().Unix(),
+	})
+
+	rsaKey := []byte("test-key")
+	hn := sha256.Sum256(rsaKey)
+	claims := kmsTypes.AttestationClaims{
+		AppID:       "test-app",
+		ImageDigest: "sha256:rogue-digest", // matches neither
+		Nonce:       hex.EncodeToString(hn[:]),
+		JTI:         "neither-match-jti",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+	}
+	attestationBytes, _ := json.Marshal(claims)
+
+	reqBody, _ := json.Marshal(kmsTypes.SecretsRequestV1{
+		AppID:             "test-app",
+		AttestationMethod: "gcp",
+		Attestation:       attestationBytes,
+		RSAPubKeyTmp:      rsaKey,
+	})
+	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
+	w := httptest.NewRecorder()
+	f.server.handleSecretsRequest(w, httpReq)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("Expected 403 when digest matches neither latest nor pending, got %d. Body: %s", w.Code, w.Body.String())
 	}
 }
 

@@ -78,6 +78,10 @@ func (m *MockContractCallerStub) GetAppLatestReleaseBlockNumber(app common.Addre
 	return 0, nil
 }
 
+func (m *MockContractCallerStub) GetAppPendingReleaseBlockNumber(app common.Address, opts *bind.CallOpts) (uint32, error) {
+	return 0, nil
+}
+
 func (m *MockContractCallerStub) GetAppStatus(app common.Address, opts *bind.CallOpts) (uint8, error) {
 	return 0, nil
 }
@@ -99,6 +103,16 @@ func (m *MockContractCallerStub) GetLatestReleaseAsRelease(ctx context.Context, 
 		PublicEnv:    `{"PUBLIC_VAR":"test-value"}`,
 		Timestamp:    0,
 	}, nil
+}
+
+// GetLatestAndPendingReleases returns the same static release as GetLatestReleaseAsRelease and
+// no pending release. Override on TestableContractCallerStub for tests that need realistic data.
+func (m *MockContractCallerStub) GetLatestAndPendingReleases(ctx context.Context, appID string) (*types.Release, *types.Release, error) {
+	latest, err := m.GetLatestReleaseAsRelease(ctx, appID)
+	if err != nil {
+		return nil, nil, err
+	}
+	return latest, nil, nil
 }
 
 // TestableContractCallerStub extends MockContractCallerStub with test data configuration.
@@ -179,4 +193,20 @@ func (m *TestableContractCallerStub) GetLatestReleaseAsRelease(ctx context.Conte
 	}
 
 	return release, nil
+}
+
+// GetLatestAndPendingReleases returns the confirmed release plus the pending release if one
+// has been staged via SetPendingRelease. Both are valid attestation targets during the
+// canary overlap window between upgradeApp() and confirmUpgrade().
+func (m *TestableContractCallerStub) GetLatestAndPendingReleases(ctx context.Context, appID string) (*types.Release, *types.Release, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	latest, exists := m.releases[appID]
+	if !exists {
+		return nil, nil, fmt.Errorf("no release found for app_id: %s", appID)
+	}
+
+	pending := m.pendingReleases[appID] // nil if not set
+	return latest, pending, nil
 }
