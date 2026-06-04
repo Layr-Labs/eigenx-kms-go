@@ -106,6 +106,12 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "rsa_pubkey_tmp too large", http.StatusBadRequest)
 		return
 	}
+	// Cap matches the largest current attestation method (KBS-EAR JWTs run ~30 KB);
+	// 64 KB leaves headroom for future formats while bounding parse/verify work.
+	if len(req.Attestation) > 65536 {
+		http.Error(w, "attestation too large", http.StatusBadRequest)
+		return
+	}
 	if len(req.ExtraData) > types.MaxExtraDataSize {
 		http.Error(w, fmt.Sprintf("extra_data exceeds 1MB limit (%d bytes)", len(req.ExtraData)), http.StatusBadRequest)
 		return

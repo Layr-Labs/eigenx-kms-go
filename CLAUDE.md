@@ -170,6 +170,20 @@ The KMS server supports multiple attestation methods for verifying application i
 - **Configuration**: Enable with `--enable-ecdsa-attestation=true`
 - **Default**: Disabled by default
 
+### KBS-EAR (CoCo Trustee)
+- **Method Name**: `"kbs-ear"`
+- **Use Case**: AMD SEV-SNP / Intel TDX peer-pods orchestrated via Confidential Containers (CoCo). Trustee performs the AMD/Intel signature verification on the raw TEE report and issues an EAR (Entity Attestation Result) JWT.
+- **Provides**: Proof that a CoCo Trustee KBS verified the underlying TEE quote and that the workload's `init_data` matches the on-chain `ImageDigest`. Nonce binds the JWT to this KMS request.
+- **Format**: ES256-signed EAR JWT with claims `iss`, `aud`, `iat`, `exp`, `jti`, `eat_nonce`, and `submods.cpu0["ear.veraison.annotated-evidence"].init_data`.
+- **Security**: Inherits AMD/Intel chain validation from Trustee — KMS only verifies the Trustee JWT signature against KBS JWKS. Trustee is a centralized verifier; for full decentralization users would need to verify the SNP/TDX chain themselves.
+- **Configuration**:
+  - `--enable-kbs-attestation=true` (default disabled)
+  - `--kbs-jwks-url=https://trustee.example/.well-known/jwks.json`
+  - `--kbs-expected-issuer=CoCo-Attestation-Service` (default; matches `Config::default()`)
+  - `--kbs-expected-audience=` (optional; skipped if empty)
+- **Token size**: capped at 32 KB client-side, 64 KB server-side. Real EAR tokens run ~30 KB.
+- **Tests**: `pkg/attestation/kbs_ear_method_test.go`
+
 ### Attestation Method Selection
 
 Configure at server startup:

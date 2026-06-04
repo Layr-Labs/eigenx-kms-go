@@ -334,7 +334,14 @@ func (cc *ContractCaller) GetLatestAndPendingReleases(ctx context.Context, appID
 
 	pending, err := cc.resolveReleaseAsRelease(ctx, appID, pendingBN)
 	if err != nil {
-		return latest, nil, fmt.Errorf("failed to resolve pending release: %w", err)
+		// Don't propagate: a transient failure to fetch the pending release must
+		// not break attestations against the confirmed latest release. Log and
+		// fall back to latest-only mode; the next request retries the pending
+		// lookup. confirmUpgrade() also clears the pending slot, so a bad
+		// pendingBN heals on its own once the canary is confirmed.
+		cc.logger.Sugar().Warnw("Failed to resolve pending release; falling back to latest-only",
+			"app_id", appID, "pending_block", pendingBN, "error", err)
+		return latest, nil, nil
 	}
 	return latest, pending, nil
 }

@@ -69,8 +69,9 @@ func (env *kbsTestEnv) signEARToken(t *testing.T, claims map[string]any) string 
 	return string(signed)
 }
 
-// validClaims returns a baseline EAR claim map. Per-test overrides can
-// mutate/delete entries before signing.
+// validClaims returns a baseline EAR claim map matching the real Trustee
+// shape: submods.cpu0["ear.veraison.annotated-evidence"].init_data. Per-test
+// overrides can mutate/delete entries before signing.
 func validClaims(initDataHex, eatNonce string) map[string]any {
 	now := time.Now()
 	return map[string]any{
@@ -82,8 +83,10 @@ func validClaims(initDataHex, eatNonce string) map[string]any {
 		"jti":       "test-jti-" + initDataHex[:8],
 		"eat_nonce": eatNonce,
 		"submods": map[string]any{
-			"snp": map[string]any{
-				"init_data": initDataHex,
+			"cpu0": map[string]any{
+				"ear.veraison.annotated-evidence": map[string]any{
+					"init_data": initDataHex,
+				},
 			},
 		},
 	}
@@ -117,7 +120,8 @@ func TestKBSEARVerify_ValidToken(t *testing.T) {
 	extraData := []byte("binding-payload")
 	expectedNonce := nonceFor(rsaKey, extraData)
 
-	initData := hex.EncodeToString(sha256.New().Sum([]byte("init-data-bytes-padded-to-32")))[:64]
+	digest := sha256.Sum256([]byte("init-data-bytes-padded-to-32"))
+	initData := hex.EncodeToString(digest[:])
 
 	token := env.signEARToken(t, validClaims(initData, expectedNonce))
 
@@ -302,9 +306,11 @@ func TestKBSEARVerify_MissingInitData(t *testing.T) {
 		"jti":       "jti-no-init",
 		"eat_nonce": expectedNonce,
 		"submods": map[string]any{
-			"snp": map[string]any{
-				// no init_data here
-				"measurement": "abc",
+			"cpu0": map[string]any{
+				"ear.veraison.annotated-evidence": map[string]any{
+					// no init_data here
+					"measurement": "abc",
+				},
 			},
 		},
 	}
@@ -330,7 +336,11 @@ func TestKBSEARVerify_MissingEatNonce(t *testing.T) {
 		"exp": time.Now().Add(5 * time.Minute).Unix(),
 		"jti": "jti-no-nonce",
 		"submods": map[string]any{
-			"snp": map[string]any{"init_data": "00" + hex.EncodeToString(make([]byte, 31))},
+			"cpu0": map[string]any{
+				"ear.veraison.annotated-evidence": map[string]any{
+					"init_data": "00" + hex.EncodeToString(make([]byte, 31)),
+				},
+			},
 		},
 	}
 	token := env.signEARToken(t, claims)

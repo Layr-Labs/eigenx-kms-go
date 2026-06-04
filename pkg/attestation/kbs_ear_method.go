@@ -3,10 +3,12 @@ package attestation
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"sort"
 	"strings"
 	"time"
 
@@ -213,11 +215,21 @@ func (k *KBSEARAttestationMethod) Verify(request *AttestationRequest) (*types.At
 }
 
 // extractEARInitData walks the EAR payload to find the SEV-SNP HOST_DATA value.
-// Trustee surfaces it as `submods.<tee>.init_data` (e.g. `submods.snp.init_data`)
-// per the EAR profile; we also accept a top-level `init_data` for forward-compat.
+// Real Trustee tokens surface it as
 //
-// Returns the hex string as it appears in the token (lowercased for stable
-// comparison against the on-chain "init-data:<hex>" value).
+//	submods.{tee_class}{idx}["ear.veraison.annotated-evidence"].init_data
+//
+// e.g. `submods.cpu0["ear.veraison.annotated-evidence"].init_data`. Submod names
+// are formed from the tee_class plus a counter (broker.rs:313). We also fall
+// back to a direct `submods.<name>.init_data` for non-Veraison emitters and to a
+// token-top-level `init_data` for forward-compat.
+//
+// When multiple submods carry init_data, the values must agree (they all derive
+// from the same boot-time HOST_DATA). Iteration is in sorted key order so the
+// returned value is deterministic.
+//
+// Returns the lowercase hex string for comparison against the on-chain
+// "init-data:<hex>" value.
 func extractEARInitData(raw map[string]any) (string, error) {
 	// Top-level fallback first — cheapest path.
 	if v, ok := raw["init_data"]; ok {
@@ -238,24 +250,65 @@ func extractEARInitData(raw map[string]any) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("submods claim has unexpected type %T", submodsRaw)
 	}
-	for name, modRaw := range submods {
-		mod, ok := modRaw.(map[string]any)
+
+	// Iterate submods in sorted order so a multi-TEE EAR yields a deterministic
+	// result. If two submods disagree on init_data (shouldn't happen — same boot
+	// context — but the proto allows it), surface as an error rather than picking
+	// silently.
+	names := make([]string, 0, len(submods))
+	for n := range submods {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	var found string
+	var foundIn string
+	for _, name := range names {
+		mod, ok := submods[name].(map[string]any)
 		if !ok {
 			continue
 		}
-		v, ok := mod["init_data"]
-		if !ok {
+		// Real Trustee EAR shape: init_data lives inside the
+		// "ear.veraison.annotated-evidence" wrapper.
+		v, vok := lookupInitDataInSubmod(mod)
+		if !vok {
 			continue
 		}
 		s, err := initDataAsHex(v)
 		if err != nil {
-			return "", fmt.Errorf("invalid submods.%s.init_data: %w", name, err)
+			return "", fmt.Errorf("invalid submods.%s init_data: %w", name, err)
 		}
-		if s != "" {
-			return s, nil
+		if s == "" {
+			continue
 		}
+		if found != "" && found != s {
+			return "", fmt.Errorf("conflicting init_data across submods: %s=%s vs %s=%s",
+				foundIn, found, name, s)
+		}
+		found = s
+		foundIn = name
+	}
+	if found != "" {
+		return found, nil
 	}
 	return "", fmt.Errorf("init_data claim not found in any submod or at token top level")
+}
+
+// lookupInitDataInSubmod returns the init_data value for an EAR submod,
+// preferring the standard "ear.veraison.annotated-evidence" wrapper but
+// falling back to the bare submod for non-Veraison brokers.
+func lookupInitDataInSubmod(mod map[string]any) (any, bool) {
+	if wrapperRaw, ok := mod["ear.veraison.annotated-evidence"]; ok {
+		if wrapper, wok := wrapperRaw.(map[string]any); wok {
+			if v, vok := wrapper["init_data"]; vok {
+				return v, true
+			}
+		}
+	}
+	if v, ok := mod["init_data"]; ok {
+		return v, true
+	}
+	return nil, false
 }
 
 // initDataAsHex normalises an init_data claim value to a lowercase hex string.
@@ -264,7 +317,18 @@ func extractEARInitData(raw map[string]any) (string, error) {
 func initDataAsHex(v any) (string, error) {
 	switch val := v.(type) {
 	case string:
-		return strings.ToLower(val), nil
+		// Trustee's encoding is per-verifier: the pure SEV-SNP verifier emits hex
+		// (deps/verifier/src/snp/mod.rs), but az-snp-vtpm emits standard-base64
+		// (deps/verifier/src/az_snp_vtpm/mod.rs). Try hex first (our primary path),
+		// then base64. Normalize to lowercase hex either way so callers compare
+		// against the on-chain "init-data:<hex>" representation.
+		if b, err := hex.DecodeString(val); err == nil {
+			return hex.EncodeToString(b), nil
+		}
+		if b, err := base64.StdEncoding.DecodeString(val); err == nil {
+			return hex.EncodeToString(b), nil
+		}
+		return "", fmt.Errorf("init_data string is neither hex nor standard-base64")
 	case []any:
 		buf := make([]byte, 0, len(val))
 		for i, b := range val {
