@@ -154,7 +154,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 2b: Ensure attested application identity matches requested app.
+	// Step 3: Ensure attested application identity matches requested app.
 	if claims.AppID != req.AppID {
 		s.node.logger.Sugar().Warnw("App ID mismatch in attestation claims",
 			"operator_address", s.node.OperatorAddress.Hex(),
@@ -164,7 +164,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Reject replayed attestation tokens by tracking JTI claim.
+	// Step 4: Reject replayed attestation tokens by tracking JTI claim.
 	// Any method that sets JTI (GCP, Intel, future providers) gets replay protection automatically.
 	if claims.JTI != "" {
 		if !s.checkAndStoreJTI(claims.JTI, claims.ExpiresAt) {
@@ -177,7 +177,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Step 3: Query latest + pending releases from on-chain AppController.
+	// Step 5: Query latest + pending releases from on-chain AppController.
 	// During a canary upgrade, the AppController stages the new release in a pending slot
 	// while keeping the previously-confirmed release in the latest slot. Both are valid
 	// attestation targets until the app creator calls confirmUpgrade().
@@ -188,7 +188,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 5: Verify image digest matches latest OR pending release.
+	// Step 6: Verify image digest matches latest OR pending release.
 	matchesLatest := claims.ImageDigest == latest.ImageDigest
 	matchesPending := pending != nil && claims.ImageDigest == pending.ImageDigest
 	if !matchesLatest && !matchesPending {
@@ -216,14 +216,14 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		matchedRelease = pending
 	}
 
-	// Step 4b: Verify container execution policy matches on-chain values
+	// Step 7: Verify container execution policy matches on-chain values
 	if err := validateContainerPolicy(claims.ContainerPolicy, matchedRelease.ContainerPolicy); err != nil {
 		s.node.logger.Sugar().Warnw("Container policy mismatch", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
 		http.Error(w, "Container policy mismatch", http.StatusForbidden)
 		return
 	}
 
-	// Step 5: Get appropriate key share based on attestation time
+	// Step 8: Get appropriate key share based on attestation time
 	var keyVersion *types.KeyShareVersion
 	if req.AttestationTime > 0 {
 		// Use key version from the specified time
@@ -245,7 +245,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 7: Generate partial signature for this app using the already-resolved key version
+	// Step 9: Generate partial signature for this app using the already-resolved key version
 	// partial_sig = H(app_id)^{key_share}
 	partialSig, err := s.node.signAppIDWithVersion(req.AppID, keyVersion)
 	if err != nil {
@@ -256,7 +256,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 
 	s.node.logger.Sugar().Infow("Generated partial signature", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID)
 
-	// Step 8: Serialize partial signature for encryption
+	// Step 10: Serialize partial signature for encryption
 	partialSigBytes, err := json.Marshal(partialSig)
 	if err != nil {
 		s.node.logger.Sugar().Errorw("Failed to serialize partial signature", "operator_address", s.node.OperatorAddress.Hex(), "error", err)
@@ -264,7 +264,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 9: Encrypt partial signature with ephemeral RSA public key
+	// Step 11: Encrypt partial signature with ephemeral RSA public key
 	encryptedPartialSig, err := s.node.rsaEncryption.Encrypt(partialSigBytes, req.RSAPubKeyTmp)
 	if err != nil {
 		s.node.logger.Sugar().Errorw("Failed to encrypt partial signature", "operator_address", s.node.OperatorAddress.Hex(), "error", err)
@@ -272,7 +272,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 10: Create response
+	// Step 12: Create response
 	response := types.SecretsResponseV1{
 		EncryptedEnv:        matchedRelease.EncryptedEnv,
 		PublicEnv:           matchedRelease.PublicEnv,

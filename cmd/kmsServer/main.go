@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"net/url"
 	"os"
 	"time"
 
@@ -488,6 +489,17 @@ func runKMSServer(c *cli.Context) error {
 
 		if kbsJWKSURL == "" {
 			return fmt.Errorf("--kbs-jwks-url is required when --enable-kbs-attestation is set")
+		}
+		// Reject http:// JWKS URLs in production: a MITM could substitute the
+		// JWKS, serve their own ECDSA key, and forge EAR JWTs that this KMS
+		// would accept. --attestation-debug-mode is the existing escape hatch
+		// for local Trustee instances that don't terminate TLS.
+		jwksURL, err := url.Parse(kbsJWKSURL)
+		if err != nil {
+			return fmt.Errorf("invalid --kbs-jwks-url %q: %w", kbsJWKSURL, err)
+		}
+		if jwksURL.Scheme != "https" && !c.Bool("attestation-debug-mode") {
+			return fmt.Errorf("--kbs-jwks-url must use https:// (got %q); pass --attestation-debug-mode to allow http:// in testing", kbsJWKSURL)
 		}
 		if kbsExpectedIssuer == "" {
 			return fmt.Errorf("--kbs-expected-issuer must be non-empty (default: %s)", attestation.DefaultKBSExpectedIssuer)

@@ -224,14 +224,66 @@ func (k *KBSEARAttestationMethod) Verify(request *AttestationRequest) (*types.At
 // back to a direct `submods.<name>.init_data` for non-Veraison emitters and to a
 // token-top-level `init_data` for forward-compat.
 //
-// When multiple submods carry init_data, the values must agree (they all derive
-// from the same boot-time HOST_DATA). Iteration is in sorted key order so the
-// returned value is deterministic.
+// Submods are authoritative; the token-top-level `init_data` is consulted only
+// when no submod carries one. When multiple submods carry init_data, the values
+// must agree (they all derive from the same boot-time HOST_DATA). Iteration is
+// in sorted key order so the returned value is deterministic.
 //
 // Returns the lowercase hex string for comparison against the on-chain
 // "init-data:<hex>" value.
 func extractEARInitData(raw map[string]any) (string, error) {
-	// Top-level fallback first — cheapest path.
+	// 1) Try submods first. Submods are the authoritative source per the EAR spec
+	// and Trustee's broker (a misbehaving token claiming a top-level init_data
+	// must not be allowed to bypass the cross-submod conflict check below).
+	if submodsRaw, ok := raw["submods"]; ok {
+		submods, ok := submodsRaw.(map[string]any)
+		if !ok {
+			return "", fmt.Errorf("submods claim has unexpected type %T", submodsRaw)
+		}
+
+		// Iterate submods in sorted key order so a multi-TEE EAR yields a
+		// deterministic result. If two submods disagree on init_data (shouldn't
+		// happen — same boot context — but the proto allows it), surface as an
+		// error rather than picking silently.
+		names := make([]string, 0, len(submods))
+		for n := range submods {
+			names = append(names, n)
+		}
+		sort.Strings(names)
+
+		var found, foundIn string
+		for _, name := range names {
+			mod, ok := submods[name].(map[string]any)
+			if !ok {
+				continue
+			}
+			// Real Trustee EAR shape: init_data lives inside the
+			// "ear.veraison.annotated-evidence" wrapper.
+			v, vok := lookupInitDataInSubmod(mod)
+			if !vok {
+				continue
+			}
+			s, err := initDataAsHex(v)
+			if err != nil {
+				return "", fmt.Errorf("invalid submods.%s init_data: %w", name, err)
+			}
+			if s == "" {
+				continue
+			}
+			if found != "" && found != s {
+				return "", fmt.Errorf("conflicting init_data across submods: %s=%s vs %s=%s",
+					foundIn, found, name, s)
+			}
+			found = s
+			foundIn = name
+		}
+		if found != "" {
+			return found, nil
+		}
+	}
+
+	// 2) Fall back to the token-top-level init_data (forward-compat for non-
+	// Veraison brokers that don't use submods).
 	if v, ok := raw["init_data"]; ok {
 		s, err := initDataAsHex(v)
 		if err != nil {
@@ -242,55 +294,6 @@ func extractEARInitData(raw map[string]any) (string, error) {
 		}
 	}
 
-	submodsRaw, ok := raw["submods"]
-	if !ok {
-		return "", fmt.Errorf("init_data claim not found (no submods, no top-level init_data)")
-	}
-	submods, ok := submodsRaw.(map[string]any)
-	if !ok {
-		return "", fmt.Errorf("submods claim has unexpected type %T", submodsRaw)
-	}
-
-	// Iterate submods in sorted order so a multi-TEE EAR yields a deterministic
-	// result. If two submods disagree on init_data (shouldn't happen — same boot
-	// context — but the proto allows it), surface as an error rather than picking
-	// silently.
-	names := make([]string, 0, len(submods))
-	for n := range submods {
-		names = append(names, n)
-	}
-	sort.Strings(names)
-
-	var found string
-	var foundIn string
-	for _, name := range names {
-		mod, ok := submods[name].(map[string]any)
-		if !ok {
-			continue
-		}
-		// Real Trustee EAR shape: init_data lives inside the
-		// "ear.veraison.annotated-evidence" wrapper.
-		v, vok := lookupInitDataInSubmod(mod)
-		if !vok {
-			continue
-		}
-		s, err := initDataAsHex(v)
-		if err != nil {
-			return "", fmt.Errorf("invalid submods.%s init_data: %w", name, err)
-		}
-		if s == "" {
-			continue
-		}
-		if found != "" && found != s {
-			return "", fmt.Errorf("conflicting init_data across submods: %s=%s vs %s=%s",
-				foundIn, found, name, s)
-		}
-		found = s
-		foundIn = name
-	}
-	if found != "" {
-		return found, nil
-	}
 	return "", fmt.Errorf("init_data claim not found in any submod or at token top level")
 }
 
@@ -318,17 +321,25 @@ func initDataAsHex(v any) (string, error) {
 	switch val := v.(type) {
 	case string:
 		// Trustee's encoding is per-verifier: the pure SEV-SNP verifier emits hex
-		// (deps/verifier/src/snp/mod.rs), but az-snp-vtpm emits standard-base64
-		// (deps/verifier/src/az_snp_vtpm/mod.rs). Try hex first (our primary path),
-		// then base64. Normalize to lowercase hex either way so callers compare
-		// against the on-chain "init-data:<hex>" representation.
-		if b, err := hex.DecodeString(val); err == nil {
-			return hex.EncodeToString(b), nil
+		// (deps/verifier/src/snp/mod.rs), the az-snp-vtpm verifier emits padded
+		// standard-base64 (deps/verifier/src/az_snp_vtpm/mod.rs). Future / third-
+		// party verifiers may emit url-safe or unpadded variants. Try hex first
+		// (our primary path), then each base64 variant. Normalize the result to
+		// lowercase hex so callers compare against the on-chain "init-data:<hex>"
+		// representation regardless of input encoding.
+		decoders := []func(string) ([]byte, error){
+			hex.DecodeString,
+			base64.StdEncoding.DecodeString,
+			base64.RawStdEncoding.DecodeString,
+			base64.URLEncoding.DecodeString,
+			base64.RawURLEncoding.DecodeString,
 		}
-		if b, err := base64.StdEncoding.DecodeString(val); err == nil {
-			return hex.EncodeToString(b), nil
+		for _, dec := range decoders {
+			if b, err := dec(val); err == nil {
+				return hex.EncodeToString(b), nil
+			}
 		}
-		return "", fmt.Errorf("init_data string is neither hex nor standard-base64")
+		return "", fmt.Errorf("init_data string is neither hex nor any recognized base64 variant")
 	case []any:
 		buf := make([]byte, 0, len(val))
 		for i, b := range val {
