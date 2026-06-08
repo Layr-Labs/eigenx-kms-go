@@ -1,0 +1,32 @@
+--- a/confidential-data-hub/kms/src/plugins/mod.rs
++++ b/confidential-data-hub/kms/src/plugins/mod.rs
+@@ -19,6 +19,8 @@ pub mod kbs;
+ #[cfg(feature = "ehsm")]
+ pub mod ehsm;
+
++pub mod eigenx;
++
+ #[derive(AsRefStr, EnumString)]
+ pub enum DecryptorProvider {
+     #[cfg(feature = "aliyun")]
+@@ -58,6 +60,9 @@ pub enum VaultProvider {
+     #[cfg(feature = "aliyun")]
+     #[strum(ascii_case_insensitive)]
+     Aliyun,
++
++    #[strum(ascii_case_insensitive)]
++    Eigenx,
+ }
+
+ /// Create a new [`Getter`] by given provider name and [`ProviderSettings`]
+@@ -73,5 +78,9 @@ pub async fn new_getter(
+         #[cfg(feature = "aliyun")]
+         VaultProvider::Aliyun => Ok(Box::new(
+             aliyun::AliyunKmsClient::from_provider_settings(&_provider_settings).await?,
+         ) as Box<dyn Getter>),
++
++        VaultProvider::Eigenx => Ok(Box::new(
++            eigenx::EigenxKmsClient::from_provider_settings(&_provider_settings).await?,
++        ) as Box<dyn Getter>),
+     }
+ }
