@@ -132,6 +132,8 @@ type SecretsRequestV1 struct {
 	Challenge []byte `json:"challenge,omitempty"`  // Challenge for ECDSA attestation
 	PublicKey []byte `json:"public_key,omitempty"` // Public key for ECDSA attestation
 	ExtraData []byte `json:"extra_data,omitempty"` // optional caller-supplied data bound into attestation nonce (max 1 MB)
+	// eigenx-snp-specific field (only used when attestation_method is "eigenx-snp")
+	CCInitData []byte `json:"cc_init_data,omitempty"` // CoCo init-data document bytes (e.g. /run/peerpod/initdata)
 }
 
 // SecretsResponseV1 represents the response with encrypted secrets
@@ -165,6 +167,13 @@ type AttestationClaims struct {
 	PublicKey       []byte
 	ContainerPolicy ContainerPolicy
 	ExtraData       []byte // caller-supplied data bound into attestation
+	// Registry is the OCI registry+repo (e.g. "ghcr.io/example/app") that the
+	// running workload was launched from. Currently populated only by the
+	// eigenx-snp method (parsed from cc_init_data's policy.rego). Surfaced
+	// here as a defense-in-depth field — the handler does NOT yet enforce
+	// claims.Registry == release.Registry because the IAppController binding
+	// does not expose Artifact.registry. See the TODO in pkg/node/handlers.go.
+	Registry string
 }
 
 // Release represents application release data from on-chain registry

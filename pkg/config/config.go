@@ -44,6 +44,8 @@ const (
 	EnvKMSEnableECDSAAttestation = "KMS_ENABLE_ECDSA_ATTESTATION"
 	EnvKMSEnableTPMAttestation   = "KMS_ENABLE_TPM_ATTESTATION"
 	EnvKMSAppAllowlist           = "KMS_APP_ALLOWLIST"
+	// eigenx-snp (raw AMD SEV-SNP evidence) attestation configuration
+	EnvKMSEnableEigenXSNPAttestation = "KMS_ENABLE_EIGENX_SNP_ATTESTATION"
 )
 
 type CurveType string

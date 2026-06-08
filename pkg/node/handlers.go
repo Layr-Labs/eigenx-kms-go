@@ -129,6 +129,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		PublicKey:    req.PublicKey,
 		RSAPubKeyTmp: req.RSAPubKeyTmp,
 		ExtraData:    req.ExtraData,
+		CCInitData:   req.CCInitData,
 	}
 	// TPM attestation needs the RSA key to compute the hardware-bound challenge
 	if req.AttestationMethod == "tpm" {
@@ -179,7 +180,11 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 5: Verify image digest matches
+	// Step 5: Verify image digest matches.
+	// TODO(eigenx): also enforce claims.Registry == release.Registry once the
+	// IAppController binding exposes Artifact.registry. The eigenx-snp method
+	// already populates claims.Registry from cc_init_data's policy.rego, but
+	// the on-chain Release struct currently only carries the digest.
 	if claims.ImageDigest != release.ImageDigest {
 		s.node.logger.Sugar().Warnw("Image digest mismatch", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "expected", release.ImageDigest, "got", claims.ImageDigest)
 		http.Error(w, "Image digest mismatch - unauthorized image", http.StatusForbidden)

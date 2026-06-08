@@ -219,6 +219,12 @@ This server implements:
 				Value:   false,
 				EnvVars: []string{config.EnvKMSEnableTPMAttestation},
 			},
+			&cli.BoolFlag{
+				Name:    "enable-eigenx-snp-attestation",
+				Usage:   "Enable raw AMD SEV-SNP evidence attestation (verifies AMD chain + cc_init_data)",
+				Value:   false,
+				EnvVars: []string{config.EnvKMSEnableEigenXSNPAttestation},
+			},
 			&cli.StringSliceFlag{
 				Name:    "app-allowlist",
 				Usage:   "Restrict /app/sign and /secrets to these app IDs (empty = allow all). Can be specified multiple times.",
@@ -371,10 +377,11 @@ func runKMSServer(c *cli.Context) error {
 	enableGCP := c.Bool("enable-gcp-attestation")
 	enableECDSA := c.Bool("enable-ecdsa-attestation")
 	enableTPM := c.Bool("enable-tpm-attestation")
+	enableEigenXSNP := c.Bool("enable-eigenx-snp-attestation")
 
 	// Validate at least one method is enabled
-	if !enableGCP && !enableECDSA && !enableTPM {
-		return fmt.Errorf("at least one attestation method must be enabled (--enable-gcp-attestation, --enable-ecdsa-attestation, or --enable-tpm-attestation)")
+	if !enableGCP && !enableECDSA && !enableTPM && !enableEigenXSNP {
+		return fmt.Errorf("at least one attestation method must be enabled (--enable-gcp-attestation, --enable-ecdsa-attestation, --enable-tpm-attestation, or --enable-eigenx-snp-attestation)")
 	}
 
 	// Create slog logger for attestation
@@ -456,6 +463,23 @@ func runKMSServer(c *cli.Context) error {
 		l.Sugar().Infow("TPM attestation method enabled",
 			"method_name", tpmMethod.Name())
 	}
+
+	// Register eigenx-snp attestation if enabled
+	if enableEigenXSNP {
+		// Pass nil options so verify.SnpAttestation falls back to its
+		// DefaultOptions: embedded AMD root certs, KDS-fetched VCEK certs,
+		// and CRL revocation off. Air-gapped operators that need pinned
+		// roots / DisableCertFetching=true should construct the method via
+		// the package-level constructor in their own wiring.
+		eigenXSNPMethod := attestation.NewEigenXSNPAttestationMethod(nil, slogger)
+		if err := attestationManager.RegisterMethod(eigenXSNPMethod); err != nil {
+			return fmt.Errorf("failed to register eigenx-snp attestation method: %w", err)
+		}
+
+		l.Sugar().Infow("eigenx-snp attestation method enabled",
+			"method_name", eigenXSNPMethod.Name())
+	}
+
 
 	// Log summary of enabled methods
 	enabledMethods := attestationManager.ListMethods()
