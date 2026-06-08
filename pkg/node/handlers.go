@@ -114,6 +114,10 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("cc_init_data exceeds 1MB limit (%d bytes)", len(req.CCInitData)), http.StatusBadRequest)
 		return
 	}
+	if len(req.Attestation) > types.MaxAttestationSize {
+		http.Error(w, fmt.Sprintf("attestation exceeds %d byte limit (%d bytes)", types.MaxAttestationSize, len(req.Attestation)), http.StatusBadRequest)
+		return
+	}
 
 	s.node.logger.Sugar().Infow("Processing secrets request", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "attestation_method", req.AttestationMethod)
 

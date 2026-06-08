@@ -106,9 +106,14 @@ func TestBuildReportData_Composition(t *testing.T) {
 	// must be exactly 64 bytes (the SEV-SNP REPORT_DATA field width)
 	assert.Equal(t, 64, len(got))
 
-	// lower 32 = SHA-256(rsaPub || extraData)
-	want := sha256.Sum256(append(append([]byte{}, rsaPub...), extraData...))
-	assert.Equal(t, want[:], got[:32])
+	// lower 32 = SHA-256(rsaPub || extraData). Hash incrementally to keep
+	// parity with buildReportData (which avoids the pre-allocation pattern
+	// flagged by CodeQL).
+	h := sha256.New()
+	h.Write(rsaPub)
+	h.Write(extraData)
+	want := h.Sum(nil)
+	assert.Equal(t, want, got[:32])
 
 	// upper 32 = SHA-384(initData)[:32]
 	full := sha512.Sum384(initData)

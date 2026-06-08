@@ -11,15 +11,26 @@
 //! the helper's stdin and returns its stdout as plaintext.
 
 use std::process::Stdio;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
+use tokio::time::timeout;
 
 use crate::{Annotations, Error, Getter, ProviderSettings, Result};
 
 const HELPER_BIN: &str = "/usr/local/bin/eigenx-cdh-helper";
+
+// Hard ceiling on the helper's wall-clock time. The helper internally enforces
+// a 30s AA evidence timeout, but a stalled Ethereum RPC or an operator that
+// drops the /secrets connection without RST can hang it indefinitely. Without
+// this cap a single misbehaving call would block CDH's plugin runtime — and
+// therefore every subsequent unseal — for the lifetime of the pod. 120s is
+// generous enough for the slowest legitimate flow (operator discovery + key
+// share recovery) without stalling the data plane.
+const HELPER_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Clone, Debug)]
 pub struct EigenxKmsClient {
@@ -48,7 +59,7 @@ impl Getter for EigenxKmsClient {
         let request = json!({
             "kms_url": ps.get("kms_url").and_then(Value::as_str).ok_or_else(|| missing("kms_url"))?,
             "avs_address": ps.get("avs_address").and_then(Value::as_str).ok_or_else(|| missing("avs_address"))?,
-            "operator_set_id": ps.get("operator_set_id").and_then(Value::as_i64).ok_or_else(|| missing("operator_set_id"))?,
+            "operator_set_id": ps.get("operator_set_id").and_then(Value::as_u64).ok_or_else(|| missing("operator_set_id"))?,
             "rpc_url": ps.get("rpc_url").and_then(Value::as_str).ok_or_else(|| missing("rpc_url"))?,
             "app_id": name,
             "ciphertext_hex": annotations.get("ciphertext_hex").and_then(Value::as_str).ok_or_else(|| missing("ciphertext_hex"))?,
@@ -79,9 +90,20 @@ impl Getter for EigenxKmsClient {
             })?;
         }
 
-        let output = child.wait_with_output().await.map_err(|e| {
-            Error::KbsClientError(format!("eigenx: wait for helper failed: {e:?}"))
-        })?;
+        let output = match timeout(HELPER_TIMEOUT, child.wait_with_output()).await {
+            Ok(Ok(out)) => out,
+            Ok(Err(e)) => {
+                return Err(Error::KbsClientError(format!(
+                    "eigenx: wait for helper failed: {e:?}"
+                )));
+            }
+            Err(_) => {
+                return Err(Error::KbsClientError(format!(
+                    "eigenx: helper timed out after {}s",
+                    HELPER_TIMEOUT.as_secs()
+                )));
+            }
+        };
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();

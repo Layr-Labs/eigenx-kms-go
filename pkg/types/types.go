@@ -14,6 +14,13 @@ const KMSJWTAudience = "EigenX KMS"
 
 const MaxExtraDataSize = 1_048_576 // 1 MB
 
+// MaxAttestationSize caps the per-request size of the Attestation field. JWT
+// tokens (GCP, Intel) sit comfortably under 64 KB; a full SEV-SNP evidence
+// document (one report + ~4 PEM-encoded certs) lands around ~10 KB. 256 KB
+// leaves a generous margin while still bounding the JSON-base64 decode cost
+// before any validation runs.
+const MaxAttestationSize = 256 * 1024 // 256 KB
+
 // KeyShareVersion represents a versioned set of key shares
 type KeyShareVersion struct {
 	Version         int64            // Unix timestamp (seconds) of the block that triggered this key version

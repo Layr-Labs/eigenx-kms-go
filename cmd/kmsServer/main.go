@@ -466,11 +466,13 @@ func runKMSServer(c *cli.Context) error {
 
 	// Register eigenx-snp attestation if enabled
 	if enableEigenXSNP {
-		// Pass nil options so verify.SnpAttestation falls back to its
-		// DefaultOptions: embedded AMD root certs, KDS-fetched VCEK certs,
-		// and CRL revocation off. Air-gapped operators that need pinned
-		// roots / DisableCertFetching=true should construct the method via
-		// the package-level constructor in their own wiring.
+		// Pass nil options so the constructor falls back to its hardened
+		// defaults: verify.DefaultOptions() with DisableCertFetching=true.
+		// This means callers MUST ship a complete AMD certificate chain
+		// (ARK + ASK + VCEK or VLEK) inside the evidence; KDS lookup is
+		// disabled to avoid a per-request goroutine flood blocked on AMD
+		// network round-trips. Operators that need KDS lookup (e.g. for
+		// testing) can wire up an explicit verify.Options instead.
 		eigenXSNPMethod := attestation.NewEigenXSNPAttestationMethod(nil, slogger)
 		if err := attestationManager.RegisterMethod(eigenXSNPMethod); err != nil {
 			return fmt.Errorf("failed to register eigenx-snp attestation method: %w", err)

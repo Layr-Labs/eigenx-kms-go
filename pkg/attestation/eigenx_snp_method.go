@@ -167,9 +167,15 @@ func (m *EigenXSNPAttestationMethod) Verify(request *AttestationRequest) (*types
 	if err != nil {
 		return nil, fmt.Errorf("parse SEV-SNP report: %w", err)
 	}
-	certChain, err := buildCertChain(ev.CertChain)
+	certChain, droppedCNs, err := buildCertChain(ev.CertChain)
 	if err != nil {
 		return nil, fmt.Errorf("parse cert_chain: %w", err)
+	}
+	if len(droppedCNs) > 0 {
+		m.logger.Warn("dropped cert_chain entries with unrecognised AMD CN",
+			"dropped_cns", droppedCNs,
+			"app_id", request.AppID,
+		)
 	}
 	att := &spb.Attestation{
 		Report:           reportProto,
@@ -259,19 +265,24 @@ type rawSNPEvidence struct {
 // attempt to exhaust CPU in x509.ParseCertificate before the AMD verifier runs.
 const maxCertChainLen = 10
 
-func buildCertChain(pemCerts []string) (*spb.CertificateChain, error) {
+// buildCertChain returns the parsed chain plus the list of cert CNs that
+// were dropped because they didn't match any AMD pattern. Caller logs the
+// dropped CNs so a future AMD product whose CN convention we don't yet
+// recognise produces a diagnostic instead of a silent verification failure.
+func buildCertChain(pemCerts []string) (*spb.CertificateChain, []string, error) {
 	if len(pemCerts) > maxCertChainLen {
-		return nil, fmt.Errorf("cert_chain too long: %d (max %d)", len(pemCerts), maxCertChainLen)
+		return nil, nil, fmt.Errorf("cert_chain too long: %d (max %d)", len(pemCerts), maxCertChainLen)
 	}
 	chain := &spb.CertificateChain{}
+	var droppedCNs []string
 	for i, raw := range pemCerts {
 		der, err := decodeCert(raw)
 		if err != nil {
-			return nil, fmt.Errorf("cert_chain[%d]: %w", i, err)
+			return nil, nil, fmt.Errorf("cert_chain[%d]: %w", i, err)
 		}
 		cert, err := x509.ParseCertificate(der)
 		if err != nil {
-			return nil, fmt.Errorf("cert_chain[%d]: parse x509: %w", i, err)
+			return nil, nil, fmt.Errorf("cert_chain[%d]: parse x509: %w", i, err)
 		}
 		cn := cert.Subject.CommonName
 		switch {
@@ -297,9 +308,14 @@ func buildCertChain(pemCerts []string) (*spb.CertificateChain, error) {
 			if chain.AskCert == nil {
 				chain.AskCert = der
 			}
+		default:
+			// Unknown CN — don't fail (forward-compatibility with future AMD
+			// product CNs) but surface it so the operator can investigate
+			// rather than scratch their head over an opaque chain failure.
+			droppedCNs = append(droppedCNs, cn)
 		}
 	}
-	return chain, nil
+	return chain, droppedCNs, nil
 }
 
 // decodeCert tolerates either PEM-wrapped or bare base64-encoded DER. AA's
@@ -330,11 +346,29 @@ func decodeCert(raw string) ([]byte, error) {
 }
 
 // decodeBase64Lenient decodes data tolerating standard/url-safe and
-// padded/unpadded variants. As a last resort it returns the input unchanged
-// (the brief locks "<base64 of raw SNP evidence JSON>" but legacy/test
-// callers occasionally hand us the JSON directly).
+// padded/unpadded variants.
+//
+// Disambiguation: the brief locks the wire format to base64-of-JSON, but a
+// few legitimate callers (kmsClient round-trips, tests) hand us the JSON
+// directly because Go's encoding/json marshals []byte as standard base64
+// already. We pick a path up front based on the first byte rather than
+// trying decoders in turn — silently dropping a successful base64 decode
+// because it doesn't start with '{' would be a confusion attack surface.
 func decodeBase64Lenient(data []byte) ([]byte, error) {
 	s := strings.TrimSpace(string(data))
+	if len(s) == 0 {
+		return nil, fmt.Errorf("attestation evidence is empty")
+	}
+	// Raw-JSON path: input starts with '{' or '['. Return as-is; a JSON
+	// document is never a valid base64 string in practice (the '{'/'}' and
+	// '['/']' chars aren't in any base64 alphabet).
+	if s[0] == '{' || s[0] == '[' {
+		return []byte(s), nil
+	}
+	// Otherwise try base64 variants in priority order. First successful
+	// decode wins — we don't second-guess content. If a caller hands us
+	// base64 of non-JSON bytes, the JSON parser downstream will fail with
+	// a clear error; we don't try to mask that here.
 	for _, dec := range []func(string) ([]byte, error){
 		base64.StdEncoding.DecodeString,
 		base64.RawStdEncoding.DecodeString,
@@ -342,16 +376,8 @@ func decodeBase64Lenient(data []byte) ([]byte, error) {
 		base64.RawURLEncoding.DecodeString,
 	} {
 		if b, err := dec(s); err == nil {
-			// A double-base64 corner case: if the decoded bytes don't look
-			// like JSON ('{' or '[') but the input did, prefer the input.
-			if len(b) > 0 && (b[0] == '{' || b[0] == '[') {
-				return b, nil
-			}
+			return b, nil
 		}
-	}
-	// Fall back to the input bytes if they already parse as JSON.
-	if len(s) > 0 && (s[0] == '{' || s[0] == '[') {
-		return []byte(s), nil
 	}
 	return nil, fmt.Errorf("attestation evidence is neither base64 nor raw JSON")
 }
