@@ -25,7 +25,7 @@ import (
 // integration with verify.SnpAttestation is exercised by go-sev-guest's own
 // test suite — duplicating it here would just couple us to AMD's KDS.
 type fakeSNPVerifier struct {
-	err     error      // non-nil to simulate AMD chain failure
+	err     error // non-nil to simulate AMD chain failure
 	gotAtt  *spb.Attestation
 	gotOpts *verify.Options
 }
@@ -43,10 +43,10 @@ func (f *fakeSNPVerifier) SnpAttestation(att *spb.Attestation, opts *verify.Opti
 // so we don't pull go-sev-guest's testing package as a runtime dep.
 func buildSNPReport(reportData [64]byte) []byte {
 	r := make([]byte, abi.ReportSize)
-	binary.LittleEndian.PutUint32(r[0x00:0x04], 2)                                          // version
+	binary.LittleEndian.PutUint32(r[0x00:0x04], 2)                                                // version
 	binary.LittleEndian.PutUint64(r[0x08:0x10], abi.SnpPolicyToBytes(abi.SnpPolicy{Debug: true})) // policy
-	binary.LittleEndian.PutUint32(r[0x34:0x38], 1)                                          // signature_algo (ECDSA P-384 SHA-384)
-	copy(r[0x50:0x90], reportData[:])                                                       // report_data
+	binary.LittleEndian.PutUint32(r[0x34:0x38], 1)                                                // signature_algo (ECDSA P-384 SHA-384)
+	copy(r[0x50:0x90], reportData[:])                                                             // report_data
 	return r
 }
 

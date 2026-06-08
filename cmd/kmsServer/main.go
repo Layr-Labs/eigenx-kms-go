@@ -480,7 +480,6 @@ func runKMSServer(c *cli.Context) error {
 			"method_name", eigenXSNPMethod.Name())
 	}
 
-
 	// Log summary of enabled methods
 	enabledMethods := attestationManager.ListMethods()
 	l.Sugar().Infow("Attestation manager initialized",

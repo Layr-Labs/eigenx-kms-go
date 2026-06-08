@@ -244,7 +244,16 @@ type rawSNPEvidence struct {
 // "SEV-VLEK". Anything else is dropped; missing certs are left empty and
 // fillInAttestation will fetch them from KDS unless DisableCertFetching is
 // set.
+// maxCertChainLen caps how many PEM/base64 entries we'll parse out of a single
+// AA evidence document. Real AMD chains carry at most 4 certs (ARK + ASK + VCEK
+// or VLEK + optional ASVK); anything beyond that is either client error or an
+// attempt to exhaust CPU in x509.ParseCertificate before the AMD verifier runs.
+const maxCertChainLen = 10
+
 func buildCertChain(pemCerts []string) (*spb.CertificateChain, error) {
+	if len(pemCerts) > maxCertChainLen {
+		return nil, fmt.Errorf("cert_chain too long: %d (max %d)", len(pemCerts), maxCertChainLen)
+	}
 	chain := &spb.CertificateChain{}
 	for i, raw := range pemCerts {
 		der, err := decodeCert(raw)

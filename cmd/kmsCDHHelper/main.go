@@ -165,15 +165,18 @@ func generateRSAKeypair() (*rsa.PrivateKey, []byte, error) {
 // Both halves are bound into the AMD-signed report so KMS operators can verify
 // nonce freshness AND that the in-pod init-data matches what was attested.
 func buildReportData(rsaPubPEM, extraData, ccInitData []byte) [reportDataLength]byte {
-	nonceInput := make([]byte, 0, len(rsaPubPEM)+len(extraData))
-	nonceInput = append(nonceInput, rsaPubPEM...)
-	nonceInput = append(nonceInput, extraData...)
-	lower := sha256.Sum256(nonceInput)
+	// Hash incrementally to avoid materializing rsaPubPEM||extraData in a single
+	// slice (and to sidestep the int-overflow flagged by CodeQL on the precomputed
+	// capacity).
+	h := sha256.New()
+	h.Write(rsaPubPEM)
+	h.Write(extraData)
+	lower := h.Sum(nil)
 
 	upperFull := sha512.Sum384(ccInitData)
 
 	var out [reportDataLength]byte
-	copy(out[:32], lower[:])
+	copy(out[:32], lower)
 	copy(out[32:], upperFull[:32])
 	return out
 }

@@ -79,7 +79,6 @@ type SecretsOptions struct {
 	RawSNPEvidence []byte // Raw AA evidence JSON (attestation_report + cert_chain) — wire-encoded as base64 by Go's []byte JSON marshalling
 	CCInitData     []byte // CoCo init-data document bytes (e.g. /run/peerpod/initdata)
 
-
 	// RSA key pair for encrypting partial signatures in transit
 	RSAPrivateKeyPEM []byte // Required: RSA private key in PEM format
 	RSAPublicKeyPEM  []byte // Required: RSA public key in PEM format
@@ -622,7 +621,6 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 	case "eigenx-snp":
 		req = c.createEigenXSNPAttestationRequest(appID, opts)
 
-
 	default:
 		return nil, fmt.Errorf("unsupported attestation method: %s", opts.AttestationMethod)
 	}
@@ -918,7 +916,6 @@ func (c *Client) createEigenXSNPAttestationRequest(appID string, opts *SecretsOp
 		CCInitData:        opts.CCInitData,
 	}
 }
-
 
 // EncryptForApp encrypts data for a specific application using IBE
 func (c *Client) EncryptForApp(appID string, plaintext []byte) ([]byte, error) {
