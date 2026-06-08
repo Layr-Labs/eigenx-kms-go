@@ -75,6 +75,11 @@ type SecretsOptions struct {
 	// For TPM attestation (raw hardware attestation)
 	TPMAttestationBytes []byte // Raw TPM attestation evidence from the hardware
 
+	// For eigenx-snp attestation
+	RawSNPEvidence []byte // Raw AA evidence JSON (attestation_report + cert_chain) — wire-encoded as base64 by Go's []byte JSON marshalling
+	CCInitData     []byte // CoCo init-data document bytes (e.g. /run/peerpod/initdata)
+
+
 	// RSA key pair for encrypting partial signatures in transit
 	RSAPrivateKeyPEM []byte // Required: RSA private key in PEM format
 	RSAPublicKeyPEM  []byte // Required: RSA public key in PEM format
@@ -547,6 +552,14 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 	if len(opts.ExtraData) > types.MaxExtraDataSize {
 		return nil, fmt.Errorf("extra_data exceeds 1MB limit (%d bytes)", len(opts.ExtraData))
 	}
+	if opts.AttestationMethod == "eigenx-snp" {
+		if len(opts.RawSNPEvidence) == 0 {
+			return nil, fmt.Errorf("RawSNPEvidence is required for eigenx-snp attestation method")
+		}
+		if len(opts.CCInitData) == 0 {
+			return nil, fmt.Errorf("CCInitData is required for eigenx-snp attestation method")
+		}
+	}
 
 	c.logger.Sugar().Infow("Starting secret retrieval",
 		"app_id", appID,
@@ -605,6 +618,10 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 			AttestationTime:   time.Now().Unix(),
 			ExtraData:         opts.ExtraData,
 		}
+
+	case "eigenx-snp":
+		req = c.createEigenXSNPAttestationRequest(appID, opts)
+
 
 	default:
 		return nil, fmt.Errorf("unsupported attestation method: %s", opts.AttestationMethod)
@@ -874,6 +891,34 @@ func (c *Client) GetPublicKeyForApp(appID string) (*types.G1Point, *types.G2Poin
 
 	return appPubKey, masterPubKey, nil
 }
+
+// createEigenXSNPAttestationRequest creates a SecretsRequestV1 carrying raw
+// AMD SEV-SNP evidence collected from the in-pod Attestation Agent (AA). The
+// KMS server-side eigenx-snp method verifies the AMD certificate chain and
+// the SEV-SNP report signature directly, then enforces nonce binding and
+// matches HOST_DATA against SHA-384(cc_init_data) for workload identity.
+//
+// Wire encoding note: Go's encoding/json marshals []byte as base64, so
+// SecretsRequestV1.Attestation (the raw AA evidence JSON bytes) and CCInitData
+// land on the wire as base64 strings without any explicit double-encoding.
+func (c *Client) createEigenXSNPAttestationRequest(appID string, opts *SecretsOptions) types.SecretsRequestV1 {
+	c.logger.Sugar().Debugw("Creating eigenx-snp attestation request",
+		"app_id", appID,
+		"evidence_size", len(opts.RawSNPEvidence),
+		"cc_init_data_size", len(opts.CCInitData),
+	)
+
+	return types.SecretsRequestV1{
+		AppID:             appID,
+		AttestationMethod: "eigenx-snp",
+		Attestation:       opts.RawSNPEvidence,
+		RSAPubKeyTmp:      opts.RSAPublicKeyPEM,
+		AttestationTime:   time.Now().Unix(),
+		ExtraData:         opts.ExtraData,
+		CCInitData:        opts.CCInitData,
+	}
+}
+
 
 // EncryptForApp encrypts data for a specific application using IBE
 func (c *Client) EncryptForApp(appID string, plaintext []byte) ([]byte, error) {
