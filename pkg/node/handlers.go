@@ -184,7 +184,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 5: Verify image digest matches.
+	// Step 4: Verify image digest matches.
 	// TODO(eigenx): also enforce claims.Registry == release.Registry once the
 	// IAppController binding exposes Artifact.registry. The eigenx-snp method
 	// already populates claims.Registry from cc_init_data's policy.rego, but
@@ -195,14 +195,31 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 4b: Verify container execution policy matches on-chain values
+	// Step 5: Verify container execution policy matches on-chain values.
+	//
+	// eigenx-snp does not surface ContainerPolicy in claims (the policy lives
+	// in cc_init_data's aa.toml / cdh.toml, which we don't parse yet). If a
+	// release pins a non-empty ContainerPolicy and the request authenticates
+	// via eigenx-snp, validateContainerPolicy will return successfully because
+	// claims.ContainerPolicy is the zero value — the policy is silently
+	// unenforced. Log a prominent warning so operators can detect this.
+	// TODO(eigenx): parse aa.toml/cdh.toml from cc_init_data into
+	// claims.ContainerPolicy so this gap closes.
+	if req.AttestationMethod == "eigenx-snp" && hasContainerPolicy(release.ContainerPolicy) {
+		s.node.logger.Sugar().Warnw(
+			"SECURITY: container policy is NOT enforced for eigenx-snp attestations — release pins a policy that this method does not surface in claims",
+			"operator_address", s.node.OperatorAddress.Hex(),
+			"app_id", req.AppID,
+			"release_policy", release.ContainerPolicy,
+		)
+	}
 	if err := validateContainerPolicy(claims.ContainerPolicy, release.ContainerPolicy); err != nil {
 		s.node.logger.Sugar().Warnw("Container policy mismatch", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
 		http.Error(w, "Container policy mismatch", http.StatusForbidden)
 		return
 	}
 
-	// Step 5: Get appropriate key share based on attestation time
+	// Step 6: Get appropriate key share based on attestation time
 	var keyVersion *types.KeyShareVersion
 	if req.AttestationTime > 0 {
 		// Use key version from the specified time
@@ -609,6 +626,14 @@ func (s *Server) handleReshareAck(w http.ResponseWriter, r *http.Request) {
 		"for_dealer", thisAddr.Hex())
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// hasContainerPolicy reports whether the on-chain ContainerPolicy pins any
+// non-empty field. Used to detect releases that rely on policy enforcement
+// when the request authenticates via a method (e.g. eigenx-snp) that does not
+// surface ContainerPolicy in its claims.
+func hasContainerPolicy(p types.ContainerPolicy) bool {
+	return len(p.Args) > 0 || len(p.CmdOverride) > 0 || len(p.Env) > 0 || len(p.EnvOverride) > 0 || p.RestartPolicy != ""
 }
 
 // validateContainerPolicy checks that the container execution fields in the JWT claims

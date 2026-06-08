@@ -80,10 +80,16 @@ type EigenXSNPAttestationMethod struct {
 }
 
 // NewEigenXSNPAttestationMethod constructs the eigenx-snp method using the
-// default verify.SnpAttestation entrypoint. Pass options==nil to use
-// verify.DefaultOptions(), which fetches missing AMD certs from KDS over the
-// network. For air-gapped operators, supply a pre-populated Options with
-// TrustedRoots set and DisableCertFetching=true.
+// default verify.SnpAttestation entrypoint.
+//
+// When options==nil, we default to verify.DefaultOptions() with
+// DisableCertFetching=true. This is deliberate: callers MUST ship a complete
+// AMD certificate chain (ARK + ASK + VCEK or VLEK) inside the evidence JSON.
+// Letting go-sev-guest fetch missing certs from AMD KDS would expose this
+// handler to a goroutine-flood DoS — every /secrets request with an empty
+// cert_chain would block on the AMD network round-trip with no per-request
+// timeout. Operators that genuinely need KDS lookup (e.g. testing) can pass
+// an Options with DisableCertFetching=false explicitly.
 func NewEigenXSNPAttestationMethod(options *verify.Options, logger *slog.Logger) *EigenXSNPAttestationMethod {
 	return newEigenXSNPMethod(snpAttestationVerifierFunc(verify.SnpAttestation), options, logger)
 }
@@ -93,6 +99,7 @@ func NewEigenXSNPAttestationMethod(options *verify.Options, logger *slog.Logger)
 func newEigenXSNPMethod(v SnpAttestationVerifier, options *verify.Options, logger *slog.Logger) *EigenXSNPAttestationMethod {
 	if options == nil {
 		options = verify.DefaultOptions()
+		options.DisableCertFetching = true
 	}
 	return &EigenXSNPAttestationMethod{
 		verifier: v,
@@ -181,11 +188,13 @@ func (m *EigenXSNPAttestationMethod) Verify(request *AttestationRequest) (*types
 		return nil, fmt.Errorf("unexpected REPORT_DATA size: got %d, want %d", len(reportData), snpReportDataSize)
 	}
 
-	// Lower 32: nonce binding mirrors KBS-EAR / GCP.
-	nonceInput := make([]byte, 0, len(request.RSAPubKeyTmp)+len(request.ExtraData))
-	nonceInput = append(nonceInput, request.RSAPubKeyTmp...)
-	nonceInput = append(nonceInput, request.ExtraData...)
-	nonceLower := sha256.Sum256(nonceInput)
+	// Lower 32: nonce binding mirrors KBS-EAR / GCP. Hash incrementally to keep
+	// parity with cmd/kmsCDHHelper/buildReportData (CodeQL flags the
+	// pre-allocation pattern as a potential int overflow on len(a)+len(b)).
+	nonceHash := sha256.New()
+	nonceHash.Write(request.RSAPubKeyTmp)
+	nonceHash.Write(request.ExtraData)
+	nonceLower := nonceHash.Sum(nil)
 
 	// Upper 32: SHA-384(cc_init_data)[:32]. SEV-SNP HOST_DATA is 32 bytes, so
 	// the upper half of REPORT_DATA carries the truncated SHA-384 of the
@@ -281,7 +290,13 @@ func buildCertChain(pemCerts []string) (*spb.CertificateChain, error) {
 			chain.AskCert = der
 		case strings.HasPrefix(cn, "SEV-"):
 			// Intermediate ASK (signs VCEKs): SEV-Milan, SEV-Genoa, SEV-Turin, ...
-			chain.AskCert = der
+			// Don't overwrite an ASVK already placed in AskCert by the
+			// SEV-VLEK- branch above — both prefixes target the same field
+			// in spb.CertificateChain, so a mixed chain would silently lose
+			// the first cert otherwise.
+			if chain.AskCert == nil {
+				chain.AskCert = der
+			}
 		}
 	}
 	return chain, nil

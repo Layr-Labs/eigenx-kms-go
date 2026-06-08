@@ -558,6 +558,11 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 		if len(opts.CCInitData) == 0 {
 			return nil, fmt.Errorf("CCInitData is required for eigenx-snp attestation method")
 		}
+		// Mirror the server-side cap in handlers.go so we don't waste bandwidth
+		// marshalling a payload the operator will reject.
+		if len(opts.CCInitData) > types.MaxExtraDataSize {
+			return nil, fmt.Errorf("CCInitData exceeds 1MB limit (%d bytes)", len(opts.CCInitData))
+		}
 	}
 
 	c.logger.Sugar().Infow("Starting secret retrieval",

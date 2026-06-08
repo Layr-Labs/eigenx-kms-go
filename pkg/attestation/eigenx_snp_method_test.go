@@ -79,14 +79,14 @@ func b64(b []byte) []byte {
 // whole point of this test is to assert that the server recomputes the
 // exact same value from the AttestationRequest fields.
 func expectedReportData(rsaPubKey, extraData, ccInitData []byte) [64]byte {
-	nonceInput := make([]byte, 0, len(rsaPubKey)+len(extraData))
-	nonceInput = append(nonceInput, rsaPubKey...)
-	nonceInput = append(nonceInput, extraData...)
-	lower := sha256.Sum256(nonceInput)
+	h := sha256.New()
+	h.Write(rsaPubKey)
+	h.Write(extraData)
+	lower := h.Sum(nil)
 	upperFull := sha512.Sum384(ccInitData)
 
 	var out [64]byte
-	copy(out[:32], lower[:])
+	copy(out[:32], lower)
 	copy(out[32:], upperFull[:32])
 	return out
 }
