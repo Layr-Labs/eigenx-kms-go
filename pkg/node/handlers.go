@@ -189,13 +189,30 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Step 4: Verify image digest matches.
-	// TODO(eigenx): also enforce claims.Registry == release.Registry once the
-	// IAppController binding exposes Artifact.registry. The eigenx-snp method
-	// already populates claims.Registry from cc_init_data's policy.rego, but
-	// the on-chain Release struct currently only carries the digest.
 	if claims.ImageDigest != release.ImageDigest {
 		s.node.logger.Sugar().Warnw("Image digest mismatch", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "expected", release.ImageDigest, "got", claims.ImageDigest)
 		http.Error(w, "Image digest mismatch - unauthorized image", http.StatusForbidden)
+		return
+	}
+
+	// Step 4b: Verify registry matches when claims surface one.
+	//
+	// eigenx-snp populates claims.Registry from cc_init_data's policy.rego
+	// (e.g. "ghcr.io/example/app"); the on-chain Release.Registry is the
+	// same shape — what AgentKit publishes via extractRegistryNameNoDocker
+	// (registry + repo path, sans tag/digest). Other attestation methods
+	// (kbs-ear, gcp/intel) leave claims.Registry empty; in that case we
+	// don't enforce — those methods either don't surface the registry yet
+	// or cover environments where the on-chain Registry is absent. When
+	// release.Registry is empty (older releases pre-Registry-field) we
+	// also skip — fail-open here is safe because the digest check above
+	// already pinned identity.
+	if claims.Registry != "" && release.Registry != "" && claims.Registry != release.Registry {
+		s.node.logger.Sugar().Warnw("Registry mismatch",
+			"operator_address", s.node.OperatorAddress.Hex(),
+			"app_id", req.AppID,
+			"expected", release.Registry, "got", claims.Registry)
+		http.Error(w, "Registry mismatch - unauthorized image source", http.StatusForbidden)
 		return
 	}
 

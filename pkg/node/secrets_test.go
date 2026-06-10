@@ -103,6 +103,8 @@ func Test_SecretsEndpoint(t *testing.T) {
 	t.Run("Flow", func(t *testing.T) { testSecretsEndpointFlow(t) })
 	t.Run("Validation", func(t *testing.T) { testSecretsEndpointValidation(t) })
 	t.Run("ImageDigestMismatch", func(t *testing.T) { testSecretsEndpointImageDigestMismatch(t) })
+	t.Run("RegistryMismatch", func(t *testing.T) { testSecretsEndpointRegistryMismatch(t) })
+	t.Run("RegistrySkipsWhenClaimEmpty", func(t *testing.T) { testSecretsEndpointRegistrySkipsWhenClaimEmpty(t) })
 	t.Run("AppIDMismatch", func(t *testing.T) { testSecretsEndpointAppIDMismatch(t) })
 	// NonceMismatch, IntelNonceMismatch, EmptyNonce tests removed — nonce binding
 	// now lives inside GCPAttestationMethod.Verify() and is tested in pkg/attestation.
@@ -309,6 +311,107 @@ func testSecretsEndpointImageDigestMismatch(t *testing.T) {
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("Expected status 403 for image digest mismatch, got %d", w.Code)
+	}
+}
+
+// testSecretsEndpointRegistryMismatch covers the eigenx-snp registry-binding
+// check added when IAppController.Artifact got the registry field. When
+// claims.Registry is set (eigenx-snp populates it from cc_init_data's
+// policy.rego) AND release.Registry is set, the two MUST match — even
+// when the digest is identical, a registry mismatch points to a workload
+// pulled from an unauthorized source.
+func testSecretsEndpointRegistryMismatch(t *testing.T) {
+	f := newTestSecretsFixture(t)
+
+	digestHex := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	f.contractCallerStub.AddTestRelease("test-app", &kmsTypes.Release{
+		ImageDigest:  "sha256:" + digestHex,
+		Registry:     "ghcr.io/expected/app",
+		EncryptedEnv: "env-data",
+		PublicEnv:    "PUBLIC=value",
+		Timestamp:    time.Now().Unix(),
+	})
+
+	rsaKey := []byte("test-key")
+	hd := sha256.Sum256(rsaKey)
+	testClaims := kmsTypes.AttestationClaims{
+		AppID:       "test-app",
+		ImageDigest: "sha256:" + digestHex,    // digest matches
+		Registry:    "ghcr.io/attacker/app",   // registry does NOT
+		IssuedAt:    time.Now().Unix(),
+		PublicKey:   []byte("dummy-key"),
+		Nonce:       hex.EncodeToString(hd[:]),
+		JTI:         "registry-mismatch-jti",
+		ExpiresAt:   time.Now().Add(time.Hour).Unix(),
+	}
+	attestationBytes, _ := json.Marshal(testClaims)
+	req := kmsTypes.SecretsRequestV1{
+		AppID:             "test-app",
+		AttestationMethod: "gcp",
+		Attestation:       attestationBytes,
+		RSAPubKeyTmp:      rsaKey,
+	}
+	reqBody, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
+	w := httptest.NewRecorder()
+
+	f.server.handleSecretsRequest(w, httpReq)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("Expected status 403 for registry mismatch, got %d", w.Code)
+	}
+	if !strings.Contains(w.Body.String(), "Registry mismatch") {
+		t.Errorf("Expected body to mention 'Registry mismatch', got %q", w.Body.String())
+	}
+}
+
+// testSecretsEndpointRegistrySkipsWhenClaimEmpty pins the fail-open
+// behavior for attestation methods that don't surface a Registry. Older
+// methods (kbs-ear, gcp/intel) leave claims.Registry == "", which must
+// not block the request — digest-only enforcement is the prior contract.
+func testSecretsEndpointRegistrySkipsWhenClaimEmpty(t *testing.T) {
+	f := newTestSecretsFixture(t)
+
+	digestHex := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	f.contractCallerStub.AddTestRelease("test-app", &kmsTypes.Release{
+		ImageDigest:  "sha256:" + digestHex,
+		Registry:     "ghcr.io/expected/app", // on-chain registry set
+		EncryptedEnv: "env-data",
+		PublicEnv:    "PUBLIC=value",
+		Timestamp:    time.Now().Unix(),
+	})
+
+	rsaKey := []byte("test-key")
+	hd := sha256.Sum256(rsaKey)
+	testClaims := kmsTypes.AttestationClaims{
+		AppID:       "test-app",
+		ImageDigest: "sha256:" + digestHex,
+		// Registry intentionally empty — simulates kbs-ear / gcp claims.
+		IssuedAt:  time.Now().Unix(),
+		PublicKey: []byte("dummy-key"),
+		Nonce:     hex.EncodeToString(hd[:]),
+		JTI:       "registry-skip-jti",
+		ExpiresAt: time.Now().Add(time.Hour).Unix(),
+	}
+	attestationBytes, _ := json.Marshal(testClaims)
+	req := kmsTypes.SecretsRequestV1{
+		AppID:             "test-app",
+		AttestationMethod: "gcp",
+		Attestation:       attestationBytes,
+		RSAPubKeyTmp:      rsaKey,
+	}
+	reqBody, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
+	w := httptest.NewRecorder()
+
+	f.server.handleSecretsRequest(w, httpReq)
+
+	// 403 Registry mismatch must NOT fire — request should proceed past
+	// step 4b to whatever the next gate is. We don't assert success here
+	// (subsequent steps need encryption + threshold sigs we don't set
+	// up), only that the registry guard didn't reject.
+	if w.Code == http.StatusForbidden && strings.Contains(w.Body.String(), "Registry mismatch") {
+		t.Errorf("expected the registry guard to skip when claims.Registry is empty, got: %s", w.Body.String())
 	}
 }
 

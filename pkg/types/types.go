@@ -176,16 +176,16 @@ type AttestationClaims struct {
 	ExtraData       []byte // caller-supplied data bound into attestation
 	// Registry is the OCI registry+repo (e.g. "ghcr.io/example/app") that the
 	// running workload was launched from. Currently populated only by the
-	// eigenx-snp method (parsed from cc_init_data's policy.rego). Surfaced
-	// here as a defense-in-depth field — the handler does NOT yet enforce
-	// claims.Registry == release.Registry because the IAppController binding
-	// does not expose Artifact.registry. See the TODO in pkg/node/handlers.go.
+	// eigenx-snp method (parsed from cc_init_data's policy.rego); other
+	// methods leave it empty, in which case the handler skips the
+	// registry-binding check and falls back to digest-only enforcement.
 	Registry string
 }
 
 // Release represents application release data from on-chain registry
 type Release struct {
 	ImageDigest     string          `json:"image_digest"`
+	Registry        string          `json:"registry"`
 	EncryptedEnv    string          `json:"encrypted_env"`
 	PublicEnv       string          `json:"public_env"`
 	Timestamp       int64           `json:"timestamp"`
