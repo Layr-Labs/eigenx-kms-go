@@ -78,6 +78,11 @@ func b64(b []byte) []byte {
 // helper writes (kmsCDHHelper.buildReportData). Must be kept in sync — the
 // whole point of this test is to assert that the server recomputes the
 // exact same value from the AttestationRequest fields.
+//
+// Format: 64 ASCII hex characters,
+//
+//	bytes  0..32 = hex(SHA-256(rsaPubKey || extraData)[:16])
+//	bytes 32..64 = hex(SHA-384(ccInitData)[:16])
 func expectedReportData(rsaPubKey, extraData, ccInitData []byte) [64]byte {
 	h := sha256.New()
 	h.Write(rsaPubKey)
@@ -85,9 +90,12 @@ func expectedReportData(rsaPubKey, extraData, ccInitData []byte) [64]byte {
 	lower := h.Sum(nil)
 	upperFull := sha512.Sum384(ccInitData)
 
+	lowerHex := hex.EncodeToString(lower[:16])
+	upperHex := hex.EncodeToString(upperFull[:16])
+
 	var out [64]byte
-	copy(out[:32], lower)
-	copy(out[32:], upperFull[:32])
+	copy(out[:32], lowerHex)
+	copy(out[32:], upperHex)
 	return out
 }
 
@@ -154,9 +162,10 @@ func TestEigenXSNPVerify_ValidEvidence(t *testing.T) {
 	assert.Equal(t, "my-app", claims.AppID, "AppID must come from the request, not the SNP report")
 	assert.Equal(t, "sha256:"+digestHex, claims.ImageDigest)
 	assert.Equal(t, registry, claims.Registry)
-	// Lower-32 of REPORT_DATA = SHA-256(rsa || extra) — surface as hex Nonce
-	// so callers can correlate logs with the workload-side helper output.
-	expectedNonce := hex.EncodeToString(rd[:32])
+	// Lower 32 of REPORT_DATA = hex(SHA-256(rsa || extra)[:16]). claims.Nonce
+	// surfaces that hex string directly (no double encoding) so logs on both
+	// sides correlate.
+	expectedNonce := string(rd[:32])
 	assert.Equal(t, expectedNonce, claims.Nonce)
 	assert.Equal(t, extraData, claims.ExtraData)
 	// SNP attestations carry no JTI; replay protection comes from the

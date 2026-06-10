@@ -14,7 +14,7 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use serde_json::{json, Value};
+use serde_json::Value;
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::time::timeout;
@@ -55,15 +55,39 @@ fn missing(key: &str) -> Error {
 #[async_trait]
 impl Getter for EigenxKmsClient {
     async fn get_secret(&self, name: &str, annotations: &Annotations) -> Result<Vec<u8>> {
+        // KMS coordinates (kms_url, avs_address, operator_set_id, rpc_url) are
+        // sourced from cc_init_data's [data]."eigenx.toml" by the helper itself
+        // (SNP-bound config). They MAY still be supplied via provider_settings
+        // here as a backwards-compat override; the helper merges, with stdin
+        // values winning over initdata. New deployments should leave
+        // provider_settings empty for these fields.
+        //
+        // Per-secret fields (app_id, ciphertext_hex) MUST come through here
+        // because they're per-call: app_id = vault `name`, ciphertext_hex =
+        // an annotation on the sealed envelope.
         let ps = &self.provider_settings;
-        let request = json!({
-            "kms_url": ps.get("kms_url").and_then(Value::as_str).ok_or_else(|| missing("kms_url"))?,
-            "avs_address": ps.get("avs_address").and_then(Value::as_str).ok_or_else(|| missing("avs_address"))?,
-            "operator_set_id": ps.get("operator_set_id").and_then(Value::as_u64).ok_or_else(|| missing("operator_set_id"))?,
-            "rpc_url": ps.get("rpc_url").and_then(Value::as_str).ok_or_else(|| missing("rpc_url"))?,
-            "app_id": name,
-            "ciphertext_hex": annotations.get("ciphertext_hex").and_then(Value::as_str).ok_or_else(|| missing("ciphertext_hex"))?,
-        });
+        let mut request = serde_json::Map::new();
+        request.insert("app_id".to_string(), Value::String(name.to_string()));
+        request.insert(
+            "ciphertext_hex".to_string(),
+            Value::String(
+                annotations
+                    .get("ciphertext_hex")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| missing("ciphertext_hex"))?
+                    .to_string(),
+            ),
+        );
+        // Optional pass-through; absent → helper falls back to cc_init_data.
+        for key in ["kms_url", "avs_address", "rpc_url"] {
+            if let Some(s) = ps.get(key).and_then(Value::as_str) {
+                request.insert(key.to_string(), Value::String(s.to_string()));
+            }
+        }
+        if let Some(n) = ps.get("operator_set_id").and_then(Value::as_u64) {
+            request.insert("operator_set_id".to_string(), Value::Number(n.into()));
+        }
+        let request = Value::Object(request);
         let payload = serde_json::to_vec(&request).map_err(|e| {
             Error::KbsClientError(format!("eigenx: serialize helper request failed: {e:?}"))
         })?;

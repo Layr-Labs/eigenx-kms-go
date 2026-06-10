@@ -185,30 +185,37 @@ func (m *EigenXSNPAttestationMethod) Verify(request *AttestationRequest) (*types
 		return nil, fmt.Errorf("AMD SEV-SNP attestation verification failed: %w", err)
 	}
 
-	// Step 3: enforce REPORT_DATA bindings. AMD specifies REPORT_DATA as a
-	// 64-byte field; we split it into a SHA-256 nonce half and a SHA-384[:32]
-	// init-data half exactly the way kmsCDHHelper composes it on the workload
-	// side (see cmd/kmsCDHHelper/main.go::buildReportData).
+	// Step 3: enforce REPORT_DATA bindings. AMD's REPORT_DATA is a 64-byte
+	// slot; we encode it as 64 ASCII hex characters split in half to keep the
+	// content UTF-8 safe (see cmd/kmsCDHHelper/main.go::buildReportData for
+	// the upstream-pin transport constraint that motivates this).
+	//
+	//   bytes  0..32 = hex(SHA-256(rsaPubKeyTmp || extraData)[:16])
+	//   bytes 32..64 = hex(SHA-384(cc_init_data)[:16])
 	reportData := reportProto.GetReportData()
 	if len(reportData) != snpReportDataSize {
 		return nil, fmt.Errorf("unexpected REPORT_DATA size: got %d, want %d", len(reportData), snpReportDataSize)
 	}
 
-	// Lower 32: nonce binding mirrors KBS-EAR / GCP. Hash incrementally to keep
-	// parity with cmd/kmsCDHHelper/buildReportData (CodeQL flags the
-	// pre-allocation pattern as a potential int overflow on len(a)+len(b)).
+	// Lower half: nonce binding (mirrors KBS-EAR / GCP). Incremental hash
+	// matches the helper to keep the two implementations aligned and to
+	// sidestep the CodeQL warning about len(a)+len(b) on pre-allocation.
 	nonceHash := sha256.New()
 	nonceHash.Write(request.RSAPubKeyTmp)
 	nonceHash.Write(request.ExtraData)
-	nonceLower := nonceHash.Sum(nil)
+	nonceFull := nonceHash.Sum(nil)
+	nonceLowerHex := hex.EncodeToString(nonceFull[:16])
 
-	// Upper 32: SHA-384(cc_init_data)[:32]. SEV-SNP HOST_DATA is 32 bytes, so
-	// the upper half of REPORT_DATA carries the truncated SHA-384 of the
-	// init-data document — the workload-identity binding.
+	// Upper half: SHA-384(cc_init_data)[:16] hex-encoded. The full 32-byte
+	// SHA-384 still binds cc_init_data to SEV-SNP's HOST_DATA upper field
+	// (see go-sev-guest invariants); the hex restriction here is purely
+	// about REPORT_DATA wire transport via api-server-rest.
 	initDigest := sha512.Sum384(request.CCInitData)
+	upperHex := hex.EncodeToString(initDigest[:16])
+
 	var expected [snpReportDataSize]byte
-	copy(expected[0:32], nonceLower[:])
-	copy(expected[32:64], initDigest[:32])
+	copy(expected[0:32], nonceLowerHex)
+	copy(expected[32:64], upperHex)
 
 	if subtle.ConstantTimeCompare(reportData, expected[:]) != 1 {
 		return nil, fmt.Errorf("REPORT_DATA mismatch: rsa_pubkey/extra_data/cc_init_data not bound to attestation report")
@@ -227,7 +234,7 @@ func (m *EigenXSNPAttestationMethod) Verify(request *AttestationRequest) (*types
 		AppID:       request.AppID,
 		ImageDigest: "sha256:" + digestHex,
 		Registry:    registry,
-		Nonce:       hex.EncodeToString(nonceLower[:]),
+		Nonce:       nonceLowerHex,
 		ExtraData:   request.ExtraData,
 		// SEV-SNP reports do not carry iat/exp/jti — the freshness guarantee
 		// comes from the random ephemeral RSA key bound into REPORT_DATA, not
