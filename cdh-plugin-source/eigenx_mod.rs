@@ -57,10 +57,15 @@ impl Getter for EigenxKmsClient {
     async fn get_secret(&self, name: &str, annotations: &Annotations) -> Result<Vec<u8>> {
         // KMS coordinates (kms_url, avs_address, operator_set_id, rpc_url) are
         // sourced from cc_init_data's [data]."eigenx.toml" by the helper itself
-        // (SNP-bound config). They MAY still be supplied via provider_settings
-        // here as a backwards-compat override; the helper merges, with stdin
-        // values winning over initdata. New deployments should leave
-        // provider_settings empty for these fields.
+        // — they're SNP-bound (folded into REPORT_DATA upper 16 bytes via
+        // SHA-384(cc_init_data)[:16]). The helper IGNORES any matching values
+        // in provider_settings; stdin overrides would create an SSRF/operator-
+        // redirect surface where a compromised CDH plugin could redirect the
+        // workload to an attacker-controlled KMS without invalidating the
+        // attestation. This plugin still forwards provider_settings values for
+        // diagnostic / forward-compat reasons (the helper logs and drops them),
+        // but new deployments should leave provider_settings empty for these
+        // fields.
         //
         // Per-secret fields (app_id, ciphertext_hex) MUST come through here
         // because they're per-call: app_id = vault `name`, ciphertext_hex =
