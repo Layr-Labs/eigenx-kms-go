@@ -1,6 +1,8 @@
 package attestation
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
@@ -10,6 +12,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/google/go-sev-guest/abi"
@@ -404,4 +407,115 @@ input.image == "ghcr.io/second/app@sha256:%s"
 	require.NoError(t, err)
 	assert.Equal(t, "ghcr.io/first/app", registry)
 	assert.Equal(t, digest1, digest)
+}
+
+// gzipBase64 is the production wire format for /run/peerpod/initdata —
+// what kata-shim writes from the cc_init_data pod annotation, what
+// CAA's process-user-data.service reads, and what the helper forwards
+// verbatim to the KMS. Tests below exercise the full Verify path
+// through this shape, which is otherwise only exercised in cluster
+// smoke tests.
+func gzipBase64(t *testing.T, raw []byte, encoding *base64.Encoding) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := gzip.NewWriter(&buf)
+	_, err := w.Write(raw)
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+	return []byte(encoding.EncodeToString(buf.Bytes()))
+}
+
+// TestParseInitDataPolicy_GzipBase64 covers the production wire shape:
+// raw cc_init_data → gzip → base64. Both StdEncoding (padded) and
+// RawStdEncoding (unpadded) must round-trip. Without this test, a
+// regression in decodeInitDataWire (wrong base64 alphabet, missing
+// gzip path, size limit too tight) ships green and only surfaces on
+// the cluster.
+func TestParseInitDataPolicy_GzipBase64(t *testing.T) {
+	digestHex := "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	rawTOML := validInitDataTOML(t, "ghcr.io/example/app", digestHex)
+
+	for _, tc := range []struct {
+		name string
+		enc  *base64.Encoding
+	}{
+		{"padded", base64.StdEncoding},
+		{"raw_unpadded", base64.RawStdEncoding},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wire := gzipBase64(t, rawTOML, tc.enc)
+			require.True(t, bytes.HasPrefix(wire, []byte("H4sI")),
+				"gzip+base64 must start with H4sI; if this fails the heuristic is wrong")
+
+			registry, digest, err := parseInitDataPolicy(wire)
+			require.NoError(t, err)
+			assert.Equal(t, "ghcr.io/example/app", registry)
+			assert.Equal(t, digestHex, digest)
+		})
+	}
+}
+
+// TestParseInitDataPolicy_GzipBomb covers the decompression-bomb
+// guard. A small gzip blob expanding to >maxDecompressedInitData must
+// be rejected before tomlv2.Unmarshal sees the bytes — otherwise a
+// caller can OOM the KMS node with a few hundred KB of gzip payload.
+func TestParseInitDataPolicy_GzipBomb(t *testing.T) {
+	// 16 MiB of zeros compresses to ~16 KiB. The decoder caps decompressed
+	// output at 8 MiB; this should be rejected.
+	bomb := make([]byte, 16<<20)
+	wire := gzipBase64(t, bomb, base64.StdEncoding)
+
+	_, _, err := parseInitDataPolicy(wire)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds")
+}
+
+// TestParseInitDataPolicy_RegoCommentBypass guards against the
+// stale-image-in-comment attack: if the regex picks the first match
+// in the rego string, a deprecated digest in a `#`-prefixed line
+// outranks the active rule's ref. stripRegoComments must drop those
+// lines so the active rule wins.
+func TestParseInitDataPolicy_RegoCommentBypass(t *testing.T) {
+	staleDigest := "1111111111111111111111111111111111111111111111111111111111111111"
+	activeDigest := "2222222222222222222222222222222222222222222222222222222222222222"
+	doc := []byte(fmt.Sprintf(`algorithm = "sha384"
+version = "0.1.0"
+
+[data]
+"policy.rego" = """
+package agent_policy
+
+# OLD: registry.internal/deprecated/app@sha256:%s
+default allow = false
+allow {
+  input.image == "ghcr.io/real/app@sha256:%s"
+}
+"""
+`, staleDigest, activeDigest))
+
+	registry, digest, err := parseInitDataPolicy(doc)
+	require.NoError(t, err)
+	assert.Equal(t, "ghcr.io/real/app", registry,
+		"image binding must come from the active rule, not the # comment")
+	assert.Equal(t, activeDigest, digest)
+}
+
+// TestStripRegoComments documents the contract: only whole-line `#`
+// comments are stripped, and only when `#` is the first non-whitespace
+// character. Inline trailing comments are preserved (the active OCI
+// ref always appears before any trailing `#` on the same line, so the
+// regex picks the right one anyway).
+func TestStripRegoComments(t *testing.T) {
+	in := strings.Join([]string{
+		`# top-level comment line`,
+		`  # indented comment line`,
+		`allow {`,
+		`  input.image == "ghcr.io/x/y@sha256:abc"  # trailing comment`,
+		`}`,
+	}, "\n")
+	out := stripRegoComments(in)
+	assert.NotContains(t, out, "top-level comment line")
+	assert.NotContains(t, out, "indented comment line")
+	assert.Contains(t, out, `input.image == "ghcr.io/x/y@sha256:abc"`)
+	assert.Contains(t, out, "# trailing comment", "inline comments preserved")
 }

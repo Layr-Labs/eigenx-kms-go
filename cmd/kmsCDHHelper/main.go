@@ -254,13 +254,33 @@ func decodeInitdata(in []byte) ([]byte, error) {
 	// Quick heuristic: a valid base64(gzip(...)) blob starts with 'H4sI'
 	// (the magic 0x1f 0x8b for gzip → base64). Raw TOML doesn't.
 	if bytes.HasPrefix(trimmed, []byte("H4sI")) {
-		b64Reader := base64.NewDecoder(base64.StdEncoding, bytes.NewReader(trimmed))
+		// Tolerate base64 with or without `=` padding. kata-shim emits
+		// unpadded in some cloud-provider configurations (GKE, AKS); the
+		// AWS-shaped CAA path uses padded. Strip trailing `=` and use
+		// RawStdEncoding so both shapes round-trip — see the matching
+		// logic in pkg/attestation/eigenx_snp_method.go::decodeInitDataWire.
+		stripped := bytes.TrimRight(trimmed, "=")
+		b64Reader := base64.NewDecoder(base64.RawStdEncoding, bytes.NewReader(stripped))
 		gzipReader, err := gzip.NewReader(b64Reader)
 		if err != nil {
 			return nil, fmt.Errorf("gzip reader: %w", err)
 		}
 		defer gzipReader.Close()
-		return io.ReadAll(gzipReader)
+		// Bound decompressed size to defend against gzip bombs even on
+		// the helper side (the helper runs in the workload's TEE, but a
+		// compromised CAA could still feed it a malicious initdata
+		// blob). 8 MiB is generous headroom over real CoCo init-data
+		// documents (kilobytes).
+		const maxDecompressedInitData = 8 << 20
+		limited := io.LimitReader(gzipReader, maxDecompressedInitData+1)
+		out, err := io.ReadAll(limited)
+		if err != nil {
+			return nil, fmt.Errorf("read decompressed initdata: %w", err)
+		}
+		if len(out) > maxDecompressedInitData {
+			return nil, fmt.Errorf("decompressed initdata exceeds %d bytes", maxDecompressedInitData)
+		}
+		return out, nil
 	}
 	// Treat as raw TOML.
 	return trimmed, nil

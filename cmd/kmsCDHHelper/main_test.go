@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"crypto/sha512"
 	"encoding/base64"
@@ -333,4 +334,69 @@ func TestTransformAAEvidence_CertChainPEM(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, expected, got)
 	}
+}
+
+// gzipBase64Helper produces the production wire shape of
+// /run/peerpod/initdata: gzip(toml) → base64. Used to exercise
+// decodeInitdata's gzip path through parseInitdataKMSConfig — the
+// shape kata-shim writes from the cc_init_data pod annotation, which
+// the unit tests otherwise never exercise.
+func gzipBase64Helper(t *testing.T, raw []byte, encoding *base64.Encoding) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	w := gzip.NewWriter(&buf)
+	_, err := w.Write(raw)
+	require.NoError(t, err)
+	require.NoError(t, w.Close())
+	return []byte(encoding.EncodeToString(buf.Bytes()))
+}
+
+// TestParseInitdataKMSConfig_GzipBase64 covers the production wire
+// format path: parseInitdataKMSConfig must handle base64(gzip(toml)),
+// not just raw TOML. Both padded and unpadded base64 must round-trip
+// (kata-shim emits unpadded in some cloud-provider configurations).
+func TestParseInitdataKMSConfig_GzipBase64(t *testing.T) {
+	rawTOML := []byte(`algorithm = "sha384"
+version = "0.1.0"
+
+[data]
+"eigenx.toml" = '''
+kms_url = "http://kms.example:8000"
+avs_address = "0xabc"
+operator_set_id = 7
+rpc_url = "http://rpc.example"
+'''
+`)
+	for _, tc := range []struct {
+		name string
+		enc  *base64.Encoding
+	}{
+		{"padded", base64.StdEncoding},
+		{"raw_unpadded", base64.RawStdEncoding},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			wire := gzipBase64Helper(t, rawTOML, tc.enc)
+			require.True(t, bytes.HasPrefix(wire, []byte("H4sI")))
+			cfg, err := parseInitdataKMSConfig(wire)
+			require.NoError(t, err)
+			require.NotNil(t, cfg)
+			assert.Equal(t, "http://kms.example:8000", cfg.KMSURL)
+			assert.Equal(t, "0xabc", cfg.AVSAddress)
+			assert.Equal(t, uint32(7), cfg.OperatorSetID)
+			assert.Equal(t, "http://rpc.example", cfg.RPCURL)
+		})
+	}
+}
+
+// TestParseInitdataKMSConfig_GzipBomb defends the helper against an
+// initdata blob that decompresses to a memory-exhaustion size. The
+// helper runs in the workload's TEE but a compromised K8s control
+// plane could feed it a malicious initdata; failing closed beats
+// OOMing the kata-agent host process.
+func TestParseInitdataKMSConfig_GzipBomb(t *testing.T) {
+	bomb := make([]byte, 16<<20)
+	wire := gzipBase64Helper(t, bomb, base64.StdEncoding)
+	_, err := parseInitdataKMSConfig(wire)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "exceeds")
 }

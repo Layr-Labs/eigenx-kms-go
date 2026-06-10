@@ -491,7 +491,14 @@ func parseInitDataPolicy(ccInitData []byte) (string, string, error) {
 	if !ok {
 		return "", "", fmt.Errorf("[data].%q is %T, want string", initDataPolicyKey, rawRego)
 	}
-	match := imageRefRegex.FindStringSubmatch(regoStr)
+	// Strip rego comment lines before matching the image ref. Rego uses
+	// `#` for line comments. Without this filter, a stale OCI ref left
+	// in a `# OLD: ...` comment matches before the active rule's ref —
+	// silently binding the workload's identity to the deprecated image.
+	// Strip whole-line comments; an inline `# ...` after a rule still
+	// has the active ref ahead of it, so the regex picks the right one.
+	stripped := stripRegoComments(regoStr)
+	match := imageRefRegex.FindStringSubmatch(stripped)
 	if match == nil {
 		return "", "", fmt.Errorf("no `<registry>@sha256:<hex>` reference found in policy.rego")
 	}
@@ -503,6 +510,26 @@ func parseInitDataPolicy(ccInitData []byte) (string, string, error) {
 		// against backtick/single-quote rego variants.
 		return r == '"' || r == '\'' || r == '`'
 	}), match[2], nil
+}
+
+// stripRegoComments returns rego with all whole-line `#` comments
+// removed. This is intentionally narrow — only lines whose first
+// non-whitespace character is `#`. We do NOT try to strip inline
+// trailing `# ...` comments because the active OCI ref always appears
+// before any trailing comment on the same line, so the regex picks the
+// right one anyway, and writing a regex-safe inline-comment stripper
+// requires understanding rego string-literal escaping (which we
+// don't).
+func stripRegoComments(rego string) string {
+	lines := strings.Split(rego, "\n")
+	kept := lines[:0]
+	for _, l := range lines {
+		if strings.HasPrefix(strings.TrimLeft(l, " \t"), "#") {
+			continue
+		}
+		kept = append(kept, l)
+	}
+	return strings.Join(kept, "\n")
 }
 
 // decodeInitDataWire accepts cc_init_data in either of two shapes — raw TOML
@@ -524,11 +551,34 @@ func decodeInitDataWire(in []byte) ([]byte, error) {
 	if !bytes.HasPrefix(trimmed, []byte("H4sI")) {
 		return trimmed, nil
 	}
-	b64Reader := base64.NewDecoder(base64.StdEncoding, bytes.NewReader(trimmed))
+	// Tolerate base64 with or without `=` padding. kata-shim emits
+	// unpadded base64 in some cloud-provider configurations (GKE, AKS);
+	// the AWS-shaped CAA path uses padded. base64.StdEncoding rejects
+	// the unpadded form (`unexpected EOF` mid-stream once gzip starts
+	// reading), and base64.RawStdEncoding rejects the padded form. Strip
+	// the trailing `=` and always use RawStdEncoding — both shapes
+	// round-trip.
+	stripped := bytes.TrimRight(trimmed, "=")
+	b64Reader := base64.NewDecoder(base64.RawStdEncoding, bytes.NewReader(stripped))
 	gzReader, err := gzip.NewReader(b64Reader)
 	if err != nil {
 		return nil, fmt.Errorf("gzip reader: %w", err)
 	}
 	defer func() { _ = gzReader.Close() }()
-	return io.ReadAll(gzReader)
+	// Cap the decompressed size to bound memory regardless of how large
+	// a gzip bomb is wrapped in the H4sI prefix. The handler caps
+	// cc_init_data at 1 MiB compressed; valid CoCo init-data documents
+	// are kilobytes, so 8 MiB decompressed is generous headroom while
+	// still preventing a multi-GB bomb. Returns an explicit error
+	// instead of silently truncating.
+	const maxDecompressedInitData = 8 << 20 // 8 MiB
+	limited := io.LimitReader(gzReader, maxDecompressedInitData+1)
+	out, err := io.ReadAll(limited)
+	if err != nil {
+		return nil, fmt.Errorf("read decompressed cc_init_data: %w", err)
+	}
+	if len(out) > maxDecompressedInitData {
+		return nil, fmt.Errorf("decompressed cc_init_data exceeds %d bytes", maxDecompressedInitData)
+	}
+	return out, nil
 }
