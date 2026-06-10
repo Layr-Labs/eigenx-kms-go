@@ -265,7 +265,7 @@ func decodeInitdata(in []byte) ([]byte, error) {
 		if err != nil {
 			return nil, fmt.Errorf("gzip reader: %w", err)
 		}
-		defer gzipReader.Close()
+		defer func() { _ = gzipReader.Close() }()
 		// Bound decompressed size to defend against gzip bombs even on
 		// the helper side (the helper runs in the workload's TEE, but a
 		// compromised CAA could still feed it a malicious initdata
