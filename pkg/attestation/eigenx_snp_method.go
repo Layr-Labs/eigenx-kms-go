@@ -1,6 +1,8 @@
 package attestation
 
 import (
+	"bytes"
+	"compress/gzip"
 	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/subtle"
@@ -10,6 +12,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"io"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -18,6 +21,7 @@ import (
 	"github.com/google/go-sev-guest/abi"
 	spb "github.com/google/go-sev-guest/proto/sevsnp"
 	"github.com/google/go-sev-guest/verify"
+	"github.com/google/go-sev-guest/verify/trust"
 	tomlv2 "github.com/pelletier/go-toml/v2"
 )
 
@@ -101,11 +105,77 @@ func newEigenXSNPMethod(v SnpAttestationVerifier, options *verify.Options, logge
 		options = verify.DefaultOptions()
 		options.DisableCertFetching = true
 	}
+	// Always pre-load the embedded VLEK ASVK chain for every supported
+	// AMD product line when the caller didn't supply trusted roots.
+	// go-sev-guest's embedded DefaultRootCerts only carry the VCEK ASK
+	// chain (init() in trust.go), so VLEK-signed reports fail closed
+	// with "missing intermediate certificate authority". CSPs (AWS,
+	// GCP, Azure) sign with VLEK on shared instances. Done outside the
+	// `options == nil` branch so callers passing a custom Options
+	// (e.g. fakeKMS with --snp-allow-amd-kds-fetch) still get the VLEK
+	// roots without having to know to populate TrustedRoots themselves.
+	if options.TrustedRoots == nil {
+		options.TrustedRoots = embeddedVLEKTrustedRoots(logger)
+	}
 	return &EigenXSNPAttestationMethod{
 		verifier: v,
 		options:  options,
 		logger:   logger.With("component", "eigenx_snp_attestation"),
 	}
+}
+
+// embeddedVLEKTrustedRoots loads go-sev-guest's `//go:embed`'d ASVK+ARK
+// bundles for every AMD product line we expect to see on cloud SEV-SNP
+// hosts. The map is keyed by productLine ("Milan", "Genoa", "Turin")
+// matching kds.ProductLineFromFms. decodeCerts() picks the entry by
+// product line at verify time, so an unknown line falls through to
+// "no roots" → fall back to GetDefaultRootCerts (which is VCEK-only and
+// will still fail closed for VLEK on that line — but that's a host we
+// don't recognise yet, and adding a new line is one constant away).
+func embeddedVLEKTrustedRoots(logger *slog.Logger) map[string][]*trust.AMDRootCerts {
+	roots := map[string][]*trust.AMDRootCerts{}
+	for _, line := range []struct {
+		product string
+		bundle  []byte
+	}{
+		{"Milan", trust.AskArkMilanVlekBytes},
+		{"Genoa", trust.AskArkGenoaVlekBytes},
+		{"Turin", trust.AskArkTurinVlekBytes},
+	} {
+		if len(line.bundle) == 0 {
+			continue
+		}
+		root := trust.AMDRootCertsProduct(line.product)
+		if err := root.FromKDSCertBytes(line.bundle); err != nil {
+			// trust.go's init() panics on equivalent failures for VCEK; we
+			// log+skip here so a single broken bundle (release regression)
+			// doesn't take the whole KMS down.
+			logger.Warn("failed to load embedded VLEK trusted root",
+				"product_line", line.product, "error", err)
+			continue
+		}
+		// Diagnostic: confirm Asvk is what got parsed (Decode routes by
+		// CN prefix). If the embedded bundle is regenerated as a VCEK
+		// chain by mistake the cert lands in r.ProductCerts.Ask and
+		// VLEK verification still fails closed — surface that here.
+		var asvkCN, askCN, arkCN string
+		if root.ProductCerts != nil {
+			if root.ProductCerts.Asvk != nil {
+				asvkCN = root.ProductCerts.Asvk.Subject.CommonName
+			}
+			if root.ProductCerts.Ask != nil {
+				askCN = root.ProductCerts.Ask.Subject.CommonName
+			}
+			if root.ProductCerts.Ark != nil {
+				arkCN = root.ProductCerts.Ark.Subject.CommonName
+			}
+		}
+		logger.Info("loaded VLEK trusted root",
+			"product_line", line.product,
+			"asvk_cn", asvkCN, "ask_cn", askCN, "ark_cn", arkCN)
+		roots[line.product] = append(roots[line.product], root)
+	}
+	return roots
 }
 
 // Name returns the identifier for this attestation method.
@@ -405,8 +475,12 @@ type initDataDoc struct {
 // this is fail-closed: a workload that doesn't pin its image in the rego must
 // not pass the workload-identity check.
 func parseInitDataPolicy(ccInitData []byte) (string, string, error) {
+	tomlBytes, err := decodeInitDataWire(ccInitData)
+	if err != nil {
+		return "", "", fmt.Errorf("decode wire format: %w", err)
+	}
 	var doc initDataDoc
-	if err := tomlv2.Unmarshal(ccInitData, &doc); err != nil {
+	if err := tomlv2.Unmarshal(tomlBytes, &doc); err != nil {
 		return "", "", fmt.Errorf("decode TOML: %w", err)
 	}
 	rawRego, ok := doc.Data[initDataPolicyKey]
@@ -429,4 +503,32 @@ func parseInitDataPolicy(ccInitData []byte) (string, string, error) {
 		// against backtick/single-quote rego variants.
 		return r == '"' || r == '\'' || r == '`'
 	}), match[2], nil
+}
+
+// decodeInitDataWire accepts cc_init_data in either of two shapes — raw TOML
+// (the legacy wire and what unit tests use) or base64(gzip(toml)) (production:
+// what kata-shim writes from the cc_init_data pod annotation, what
+// CAA's process-user-data.service reads inside the podVM, and what the
+// helper reads from /run/peerpod/initdata and forwards verbatim to us).
+//
+// Sniff by magic prefix: a base64-encoded gzip blob starts with "H4sI" (gzip's
+// 0x1f 0x8b base64-encoded). Raw TOML never does. SHA-384(ccInitData) on the
+// REPORT_DATA upper half is computed over the bytes-as-received in both
+// cases, so the integrity binding is independent of which shape we get —
+// this helper is purely about getting at the parseable TOML inside.
+func decodeInitDataWire(in []byte) ([]byte, error) {
+	trimmed := bytes.TrimSpace(in)
+	if len(trimmed) == 0 {
+		return nil, fmt.Errorf("empty cc_init_data")
+	}
+	if !bytes.HasPrefix(trimmed, []byte("H4sI")) {
+		return trimmed, nil
+	}
+	b64Reader := base64.NewDecoder(base64.StdEncoding, bytes.NewReader(trimmed))
+	gzReader, err := gzip.NewReader(b64Reader)
+	if err != nil {
+		return nil, fmt.Errorf("gzip reader: %w", err)
+	}
+	defer func() { _ = gzReader.Close() }()
+	return io.ReadAll(gzReader)
 }

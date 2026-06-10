@@ -14,7 +14,7 @@ require (
 	github.com/consensys/gnark-crypto v0.19.2
 	github.com/dgraph-io/badger/v3 v3.2103.5
 	github.com/ethereum/go-ethereum v1.17.2
-	github.com/google/go-sev-guest v0.14.1
+	github.com/google/go-sev-guest v0.15.0
 	github.com/google/uuid v1.6.0
 	github.com/lestrrat-go/httprc/v3 v3.0.2
 	github.com/lestrrat-go/jwx/v3 v3.0.12
