@@ -117,6 +117,7 @@ const (
 	aaMaxBodyBytes   = 1 << 20 // 1 MiB cap on AA response body
 	rsaKeyBits       = 2048
 	reportDataLength = 64
+	initDataPath     = "/run/peerpod/initdata"
 )
 
 func main() {
@@ -139,10 +140,22 @@ func run() error {
 
 	// CDH plugin loads /run/peerpod/initdata before spawning us; the bytes are
 	// supplied via stdin in a future revision. For now we read it here so the
-	// helper is self-contained.
-	ccInitData, err := os.ReadFile("/run/peerpod/initdata")
+	// helper is self-contained. Stat first to bound memory: /run/peerpod is
+	// host-controlled and a malicious CAA could plant a multi-GB file. Real
+	// CoCo init-data is base64(gzip(toml)) — kilobytes — so 1 MiB is a
+	// generous compressed-size cap that matches the KMS handler's wire-side
+	// cc_init_data limit.
+	const maxInitDataFileSize = 1 << 20 // 1 MiB
+	info, err := os.Stat(initDataPath)
 	if err != nil {
-		return fmt.Errorf("read /run/peerpod/initdata: %w", err)
+		return fmt.Errorf("stat %s: %w", initDataPath, err)
+	}
+	if info.Size() > maxInitDataFileSize {
+		return fmt.Errorf("%s is %d bytes; refusing to read (cap %d)", initDataPath, info.Size(), maxInitDataFileSize)
+	}
+	ccInitData, err := os.ReadFile(initDataPath)
+	if err != nil {
+		return fmt.Errorf("read %s: %w", initDataPath, err)
 	}
 
 	// Pull KMS coordinates (kms_url/avs_address/operator_set_id/rpc_url) from
@@ -195,7 +208,13 @@ func run() error {
 func readRequest(r io.Reader) (*Request, error) {
 	var req Request
 	dec := json.NewDecoder(r)
-	dec.DisallowUnknownFields()
+	// Tolerate unknown fields rather than DisallowUnknownFields(): the CDH
+	// plugin and the helper are versioned independently (the plugin lives
+	// in the podVM AMI, the helper is a sideloaded binary in the same
+	// image but bumped on different cadences). A new plugin field —
+	// extra context, telemetry, future provider_settings pass-through —
+	// must not break older helpers; struct tags ignore unknown keys
+	// silently, which is the contract we want.
 	if err := dec.Decode(&req); err != nil {
 		return nil, fmt.Errorf("decode JSON: %w", err)
 	}
@@ -286,30 +305,83 @@ func decodeInitdata(in []byte) ([]byte, error) {
 	return trimmed, nil
 }
 
-// applyInitdataKMSConfig fills request KMS-coord fields from cc_init_data
-// when stdin didn't already carry them. Stdin values win for backwards
-// compatibility with legacy callers; new callers leave them empty and rely
-// on the SNP-bound initdata values exclusively.
+// applyInitdataKMSConfig overwrites the per-call Request's KMS-coord
+// fields with the SNP-bound values from cc_init_data's [data]."eigenx.toml".
+//
+// initdata wins unconditionally — stdin values are dropped on the floor
+// (with a non-fatal warning logged) when initdata also pins the field.
+// Reason: kms_url, avs_address, operator_set_id, and rpc_url all control
+// where the helper sends evidence and which on-chain operator set
+// authenticates the response. A compromised K8s control plane can rewrite
+// the CDH plugin's stdin payload (it spawns the helper); only cc_init_data
+// is SNP-bound (folded into REPORT_DATA via SHA-384). Letting stdin
+// override creates an SSRF/operator-redirect surface where an attacker can
+// point the workload at a malicious KMS without invalidating the
+// attestation.
+//
+// stdin remains the ONLY source for the per-secret fields (app_id,
+// ciphertext_hex) — those don't carry a redirect-the-world risk.
 func applyInitdataKMSConfig(req *Request, cfg *initdataKMSConfig) error {
-	if cfg != nil {
-		if req.KMSURL == "" {
-			req.KMSURL = cfg.KMSURL
-		}
-		if req.AVSAddress == "" {
-			req.AVSAddress = cfg.AVSAddress
-		}
-		if req.OperatorSetID == 0 {
-			req.OperatorSetID = cfg.OperatorSetID
-		}
-		if req.RPCURL == "" {
-			req.RPCURL = cfg.RPCURL
+	if cfg == nil {
+		return fmt.Errorf("cc_init_data missing [data].\"eigenx.toml\"; KMS coords cannot be sourced safely")
+	}
+	if cfg.KMSURL == "" && cfg.RPCURL == "" {
+		return fmt.Errorf("[data].\"eigenx.toml\" must set kms_url or rpc_url")
+	}
+	if cfg.AVSAddress == "" {
+		return fmt.Errorf("[data].\"eigenx.toml\" must set avs_address")
+	}
+	// Validate URL schemes — both kms_url and rpc_url must be http(s).
+	// initdata is SNP-bound, but defense-in-depth: a misconfigured initdata
+	// pointing at file://, ftp://, etc. would otherwise reach url.Parse +
+	// http.Client and produce confusing failures or hit unintended fetchers.
+	if cfg.KMSURL != "" {
+		if err := validateHTTPURL(cfg.KMSURL, "kms_url"); err != nil {
+			return err
 		}
 	}
-	if req.AVSAddress == "" {
-		return fmt.Errorf("avs_address must be set on stdin or in cc_init_data [data].\"eigenx.toml\"")
+	if cfg.RPCURL != "" {
+		if err := validateHTTPURL(cfg.RPCURL, "rpc_url"); err != nil {
+			return err
+		}
 	}
-	if req.RPCURL == "" && req.KMSURL == "" {
-		return fmt.Errorf("rpc_url or kms_url must be set on stdin or in cc_init_data [data].\"eigenx.toml\"")
+	stdinOverridden := (req.KMSURL != "" && req.KMSURL != cfg.KMSURL) ||
+		(req.AVSAddress != "" && req.AVSAddress != cfg.AVSAddress) ||
+		(req.OperatorSetID != 0 && req.OperatorSetID != cfg.OperatorSetID) ||
+		(req.RPCURL != "" && req.RPCURL != cfg.RPCURL)
+	if stdinOverridden {
+		// Log to stderr — the CDH plugin pipes stderr to journal so
+		// operators can audit whether a workload is trying to bypass the
+		// SNP-bound config. Continue with initdata values regardless.
+		log.Printf("kmsCDHHelper: ignoring stdin KMS-coord overrides; SNP-bound initdata wins")
+	}
+	req.KMSURL = cfg.KMSURL
+	req.AVSAddress = cfg.AVSAddress
+	req.OperatorSetID = cfg.OperatorSetID
+	req.RPCURL = cfg.RPCURL
+	return nil
+}
+
+// validateHTTPURL rejects anything that isn't http:// or https://. We do
+// NOT enforce a host allowlist here — initdata is SNP-bound so the host is
+// already pinned by the AMD-signed REPORT_DATA. The check is just a
+// scheme-shape sanity rail: file://, ftp://, gopher://, etc. should never
+// appear in production initdata, and rejecting them up front beats the
+// confusing failure mode further down (gopher:// in particular has been a
+// recurring SSRF gadget in Go's stdlib net/url).
+func validateHTTPURL(raw, field string) error {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return fmt.Errorf("%s: parse: %w", field, err)
+	}
+	switch u.Scheme {
+	case "http", "https":
+		// fine
+	default:
+		return fmt.Errorf("%s: scheme %q not allowed (must be http or https)", field, u.Scheme)
+	}
+	if u.Host == "" {
+		return fmt.Errorf("%s: missing host", field)
 	}
 	return nil
 }
@@ -652,6 +724,19 @@ func transformAAEvidence(raw []byte) ([]byte, error) {
 // fields are absent in the Rust struct (Option::None) and we leave the
 // proto field zero (matching abi.ReportToAbiBytes behavior).
 func aaReportToProto(r *aaAttestationReport) (*spb.Report, error) {
+	// Refuse Turin/Venice TCB layouts. virtee/sev's TcbVersion struct
+	// only populates `fmc` (FMC fw version) on Turin/Venice — Milan/Genoa
+	// leave it None. packLegacyTcb hard-codes the Milan/Genoa byte
+	// layout (bootloader/tee at bytes 0,1; snp/microcode at 6,7); on
+	// Turin the layout is different and silently mis-encoding it would
+	// produce a `pb.Report` whose bytes don't match the AMD-signed
+	// region, which fails verification with an opaque signature error.
+	// Fail loud here instead. TODO(eigenx): generation-aware packing
+	// when we boot Turin instances.
+	if r.CurrentTcb.Fmc != nil || r.ReportedTcb.Fmc != nil ||
+		r.CommittedTcb.Fmc != nil || r.LaunchTcb.Fmc != nil {
+		return nil, fmt.Errorf("TCB version sets fmc — Turin/Venice not yet supported (only Milan/Genoa); see TODO(eigenx) in helper")
+	}
 	if len(r.ReportData) != 64 {
 		return nil, fmt.Errorf("report_data: got %d bytes, want 64", len(r.ReportData))
 	}

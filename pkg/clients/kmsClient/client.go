@@ -181,7 +181,11 @@ func (c *Client) GetMasterPublicKey(operators *peering.OperatorSetPeers) (*types
 			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
+				// Cap the error-body read: the helper runs in a memory-
+				// constrained peer-pod, and a misbehaving operator returning
+				// gigabytes of bytes on a non-200 response shouldn't OOM us.
+				// 64 KiB is enough to surface any reasonable error message.
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 				c.logger.Sugar().Warnw("Operator returned error",
 					"operator_index", idx,
 					"status_code", resp.StatusCode,
@@ -391,7 +395,11 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
+				// Cap the error-body read: the helper runs in a memory-
+				// constrained peer-pod, and a misbehaving operator returning
+				// gigabytes of bytes on a non-200 response shouldn't OOM us.
+				// 64 KiB is enough to surface any reasonable error message.
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 				c.logger.Sugar().Warnw("Operator returned error",
 					"operator_index", idx,
 					"status_code", resp.StatusCode,
@@ -436,7 +444,7 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 			c.logger.Sugar().Debugw("Collected partial signature from operator",
 				"operator_index", idx,
 				"operator_address", operatorAddr.Hex(),
-				"operator_address", response.OperatorAddress)
+				"response_operator_address", response.OperatorAddress)
 
 			resultChan <- result{operatorAddr: operatorAddr, signature: response.PartialSignature, opAddress: response.OperatorAddress}
 		}(i, operator)
@@ -1031,7 +1039,7 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 			}
 			operatorAddr := op.OperatorAddress
 
-			c.logger.Sugar().Debugw("Collected partial signature", "operator_index", idx, "operator_address", operatorAddr.Hex(), "operator_address", response.OperatorAddress)
+			c.logger.Sugar().Debugw("Collected partial signature", "operator_index", idx, "operator_address", operatorAddr.Hex(), "response_operator_address", response.OperatorAddress)
 			resultChan <- result{operatorAddr: operatorAddr, signature: response.PartialSignature, opAddress: response.OperatorAddress}
 		}(i, peer)
 	}

@@ -78,11 +78,11 @@ func TestReadRequest_MissingFields(t *testing.T) {
 	}
 }
 
-// TestApplyInitdataKMSConfig covers the two valid sources of KMS coords:
-// stdin-supplied (legacy) and cc_init_data-supplied (preferred). Stdin wins
-// when both are present.
+// TestApplyInitdataKMSConfig pins the SNP-bound contract: KMS coords
+// MUST come from cc_init_data, stdin overrides are ignored. See the
+// SSRF rationale in applyInitdataKMSConfig's comment.
 func TestApplyInitdataKMSConfig(t *testing.T) {
-	t.Run("initdata fills empty fields", func(t *testing.T) {
+	t.Run("initdata populates empty request", func(t *testing.T) {
 		req := &Request{AppID: "x", CiphertextHex: "00"}
 		cfg := &initdataKMSConfig{
 			KMSURL: "http://kms.example", AVSAddress: "0xabc",
@@ -94,27 +94,71 @@ func TestApplyInitdataKMSConfig(t *testing.T) {
 		assert.Equal(t, uint32(7), req.OperatorSetID)
 		assert.Equal(t, "http://rpc.example", req.RPCURL)
 	})
-	t.Run("stdin wins over initdata", func(t *testing.T) {
+	t.Run("initdata wins over stdin (SSRF guard)", func(t *testing.T) {
+		// stdin pretends to redirect to an attacker-controlled KMS;
+		// initdata is SNP-bound and authoritative.
 		req := &Request{
 			AppID: "x", CiphertextHex: "00",
-			AVSAddress: "0xstdin", RPCURL: "http://stdin",
+			KMSURL:        "http://attacker.example",
+			AVSAddress:    "0xattacker",
+			OperatorSetID: 99,
+			RPCURL:        "http://attacker.example",
 		}
-		cfg := &initdataKMSConfig{AVSAddress: "0xinit", RPCURL: "http://init"}
+		cfg := &initdataKMSConfig{
+			KMSURL: "http://kms.example", AVSAddress: "0xabc",
+			OperatorSetID: 7, RPCURL: "http://rpc.example",
+		}
 		require.NoError(t, applyInitdataKMSConfig(req, cfg))
-		assert.Equal(t, "0xstdin", req.AVSAddress)
-		assert.Equal(t, "http://stdin", req.RPCURL)
+		assert.Equal(t, "http://kms.example", req.KMSURL,
+			"stdin must NOT override initdata kms_url")
+		assert.Equal(t, "0xabc", req.AVSAddress,
+			"stdin must NOT override initdata avs_address")
+		assert.Equal(t, uint32(7), req.OperatorSetID,
+			"stdin must NOT override initdata operator_set_id")
+		assert.Equal(t, "http://rpc.example", req.RPCURL,
+			"stdin must NOT override initdata rpc_url")
 	})
-	t.Run("missing avs_address fails", func(t *testing.T) {
+	t.Run("nil cfg fails closed", func(t *testing.T) {
 		req := &Request{AppID: "x", CiphertextHex: "00"}
 		err := applyInitdataKMSConfig(req, nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "eigenx.toml")
+	})
+	t.Run("missing avs_address fails", func(t *testing.T) {
+		cfg := &initdataKMSConfig{KMSURL: "http://kms.example"}
+		err := applyInitdataKMSConfig(&Request{AppID: "x", CiphertextHex: "00"}, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "avs_address")
 	})
 	t.Run("missing rpc_url and kms_url fails", func(t *testing.T) {
-		req := &Request{AppID: "x", CiphertextHex: "00", AVSAddress: "0xabc"}
-		err := applyInitdataKMSConfig(req, nil)
+		cfg := &initdataKMSConfig{AVSAddress: "0xabc"}
+		err := applyInitdataKMSConfig(&Request{AppID: "x", CiphertextHex: "00"}, cfg)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "rpc_url or kms_url")
+		assert.Contains(t, err.Error(), "kms_url or rpc_url")
+	})
+	t.Run("non-http kms_url scheme rejected", func(t *testing.T) {
+		cfg := &initdataKMSConfig{
+			KMSURL: "file:///etc/passwd", AVSAddress: "0xabc",
+		}
+		err := applyInitdataKMSConfig(&Request{AppID: "x", CiphertextHex: "00"}, cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "scheme")
+	})
+	t.Run("gopher rpc_url scheme rejected", func(t *testing.T) {
+		cfg := &initdataKMSConfig{
+			AVSAddress: "0xabc", RPCURL: "gopher://internal.example/",
+		}
+		err := applyInitdataKMSConfig(&Request{AppID: "x", CiphertextHex: "00"}, cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "scheme")
+	})
+	t.Run("missing host rejected", func(t *testing.T) {
+		cfg := &initdataKMSConfig{
+			KMSURL: "http:///path", AVSAddress: "0xabc",
+		}
+		err := applyInitdataKMSConfig(&Request{AppID: "x", CiphertextHex: "00"}, cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "host")
 	})
 }
 

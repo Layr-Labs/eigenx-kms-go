@@ -38,6 +38,12 @@ const snpReportDataSize = 64
 // initDataPolicyKey is the TOML key under [data] that carries the rego policy
 // document. CoCo's init-data convention places the rego under
 // [data]."policy.rego" — see confidential-containers/guest-components.
+//
+// Note for operators authoring init-data documents: TOML treats `.` as a
+// path separator in bare keys, so the key MUST be double-quoted in the
+// document (`"policy.rego" = """..."""`). We avoid the issue on the parse
+// side by using `map[string]any` for [data], which preserves the literal
+// string "policy.rego" as-is regardless of how the document quoted it.
 const initDataPolicyKey = "policy.rego"
 
 // imageRefRegex matches the first OCI image reference inside a rego policy
@@ -364,18 +370,31 @@ func buildCertChain(pemCerts []string) (*spb.CertificateChain, []string, error) 
 		cn := cert.Subject.CommonName
 		switch {
 		case strings.HasPrefix(cn, "ARK-"):
-			chain.ArkCert = der
+			// Don't overwrite an ARK cert already placed by an earlier
+			// chain entry. A crafted chain with two ARK-<product> certs
+			// could otherwise swap out the trusted root after the first
+			// is set; first-wins keeps the originally-presented root.
+			if chain.ArkCert == nil {
+				chain.ArkCert = der
+			}
 		case cn == "SEV-VCEK":
-			chain.VcekCert = der
+			if chain.VcekCert == nil {
+				chain.VcekCert = der
+			}
 		case cn == "SEV-VLEK":
-			chain.VlekCert = der
+			if chain.VlekCert == nil {
+				chain.VlekCert = der
+			}
 		case strings.HasPrefix(cn, "SEV-VLEK-"):
 			// Intermediate ASVK (signs VLEKs).
 			// go-sev-guest looks at chain.AskCert for both VCEK and VLEK paths
 			// when ASVK isn't present; for VLEK paths the same field is
 			// repurposed via the ASVK lookup. Set ArkCert/AskCert per CN
 			// prefix and let fillInAttestation route by SignerInfo.
-			chain.AskCert = der
+			// First-wins (same reason as ARK above).
+			if chain.AskCert == nil {
+				chain.AskCert = der
+			}
 		case strings.HasPrefix(cn, "SEV-"):
 			// Intermediate ASK (signs VCEKs): SEV-Milan, SEV-Genoa, SEV-Turin, ...
 			// Don't overwrite an ASVK already placed in AskCert by the

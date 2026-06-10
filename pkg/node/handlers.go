@@ -204,18 +204,21 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	// eigenx-snp does not surface ContainerPolicy in claims (the policy lives
 	// in cc_init_data's aa.toml / cdh.toml, which we don't parse yet). If a
 	// release pins a non-empty ContainerPolicy and the request authenticates
-	// via eigenx-snp, validateContainerPolicy will return successfully because
-	// claims.ContainerPolicy is the zero value — the policy is silently
-	// unenforced. Log a prominent warning so operators can detect this.
+	// via eigenx-snp, validateContainerPolicy would silently succeed against
+	// claims.ContainerPolicy's zero value — the policy would not be enforced.
+	// Fail closed instead: workloads that don't pin a ContainerPolicy still
+	// work over eigenx-snp; workloads that do pin one cannot use eigenx-snp
+	// until the SEV-SNP path surfaces the running container's policy claims.
 	// TODO(eigenx): parse aa.toml/cdh.toml from cc_init_data into
-	// claims.ContainerPolicy so this gap closes.
+	// claims.ContainerPolicy so this gap closes and this branch can drop.
 	if req.AttestationMethod == "eigenx-snp" && hasContainerPolicy(release.ContainerPolicy) {
 		s.node.logger.Sugar().Warnw(
-			"SECURITY: container policy is NOT enforced for eigenx-snp attestations — release pins a policy that this method does not surface in claims",
+			"refusing eigenx-snp request: release pins ContainerPolicy that this method does not yet surface in claims",
 			"operator_address", s.node.OperatorAddress.Hex(),
 			"app_id", req.AppID,
-			"release_policy", release.ContainerPolicy,
 		)
+		http.Error(w, "eigenx-snp attestation does not yet enforce ContainerPolicy; release requires it", http.StatusForbidden)
+		return
 	}
 	if err := validateContainerPolicy(claims.ContainerPolicy, release.ContainerPolicy); err != nil {
 		s.node.logger.Sugar().Warnw("Container policy mismatch", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
