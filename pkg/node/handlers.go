@@ -235,8 +235,10 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	// Fail closed instead: workloads that don't pin a ContainerPolicy still
 	// work over eigenx-snp; workloads that do pin one cannot use eigenx-snp
 	// until the SEV-SNP path surfaces the running container's policy claims.
-	// TODO(eigenx): parse aa.toml/cdh.toml from cc_init_data into
+	// TODO(eigenx): surface the running container's launch spec into
 	// claims.ContainerPolicy so this gap closes and this branch can drop.
+	// Design + recommended approach: docs/009_eigenxSnpAttestation.md
+	// ("Follow-up 1: ContainerPolicy enforcement").
 	if req.AttestationMethod == "eigenx-snp" && hasContainerPolicy(release.ContainerPolicy) {
 		s.node.logger.Sugar().Warnw(
 			"refusing eigenx-snp request: release pins ContainerPolicy that this method does not yet surface in claims",

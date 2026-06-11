@@ -763,7 +763,9 @@ func aaReportToProto(r *aaAttestationReport) (*spb.Report, error) {
 	// produce a `pb.Report` whose bytes don't match the AMD-signed
 	// region, which fails verification with an opaque signature error.
 	// Fail loud here instead. TODO(eigenx): generation-aware packing
-	// when we boot Turin instances.
+	// when we boot Turin instances — see
+	// docs/009_eigenxSnpAttestation.md ("Follow-up 2: Turin/Venice TCB
+	// packing").
 	if r.CurrentTcb.Fmc != nil || r.ReportedTcb.Fmc != nil ||
 		r.CommittedTcb.Fmc != nil || r.LaunchTcb.Fmc != nil {
 		return nil, fmt.Errorf("TCB version sets fmc — Turin/Venice not yet supported (only Milan/Genoa); see TODO(eigenx) in helper")
