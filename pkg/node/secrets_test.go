@@ -336,8 +336,8 @@ func testSecretsEndpointRegistryMismatch(t *testing.T) {
 	hd := sha256.Sum256(rsaKey)
 	testClaims := kmsTypes.AttestationClaims{
 		AppID:       "test-app",
-		ImageDigest: "sha256:" + digestHex,    // digest matches
-		Registry:    "ghcr.io/attacker/app",   // registry does NOT
+		ImageDigest: "sha256:" + digestHex,  // digest matches
+		Registry:    "ghcr.io/attacker/app", // registry does NOT
 		IssuedAt:    time.Now().Unix(),
 		PublicKey:   []byte("dummy-key"),
 		Nonce:       hex.EncodeToString(hd[:]),
