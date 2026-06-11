@@ -5,12 +5,15 @@ import (
 	"compress/gzip"
 	"crypto/sha256"
 	"crypto/sha512"
+	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"strings"
 	"testing"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
 	"github.com/google/go-sev-guest/abi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -443,4 +446,32 @@ func TestParseInitdataKMSConfig_GzipBomb(t *testing.T) {
 	_, err := parseInitdataKMSConfig(wire)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "exceeds")
+}
+
+// TestRSAKeypairRoundTripsThroughEncryption locks the PEM-format contract
+// between the helper and the KMS client's RSA layer. generateRSAKeypair
+// emits the public key as PKIX/"PUBLIC KEY" and retrieveAndDecrypt marshals
+// the private key as PKCS#1/"RSA PRIVATE KEY". pkg/encryption.RSAEncryption
+// must accept both, or the eigenx-snp flow fails at runtime with an opaque
+// key-format error instead of here. This catches a future regression in
+// either marshaler without standing up the full e2e.
+func TestRSAKeypairRoundTripsThroughEncryption(t *testing.T) {
+	priv, pubPEM, err := generateRSAKeypair()
+	require.NoError(t, err)
+
+	// Private key PEM exactly as retrieveAndDecrypt builds it (PKCS#1).
+	privPEM := pem.EncodeToMemory(&pem.Block{
+		Type:  "RSA PRIVATE KEY",
+		Bytes: x509.MarshalPKCS1PrivateKey(priv),
+	})
+
+	rsaEnc := encryption.NewRSAEncryption()
+	plaintext := []byte("partial-signature-blob-stand-in")
+
+	ciphertext, err := rsaEnc.Encrypt(plaintext, pubPEM)
+	require.NoError(t, err, "Encrypt must accept the PKIX PUBLIC KEY PEM generateRSAKeypair emits")
+
+	got, err := rsaEnc.Decrypt(ciphertext, privPEM)
+	require.NoError(t, err, "Decrypt must accept the PKCS#1 RSA PRIVATE KEY PEM the helper hands the client")
+	assert.Equal(t, plaintext, got)
 }

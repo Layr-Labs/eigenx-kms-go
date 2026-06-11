@@ -54,27 +54,41 @@ import (
 	tomlv2 "github.com/pelletier/go-toml/v2"
 )
 
+// defaultSingleOperatorAddress is the operator address fakeKMS advertises
+// in its /pubkey responses by default. The single-operator shim must list
+// the SAME address as the peer, or kmsClient's CollectPartialSignatures
+// silently drops the (otherwise valid) partial sig on an address-mismatch
+// check and surfaces a confusing "collected 0, needed 1". Overridable via
+// cc_init_data's operator_address for non-canonical fakeKMS deployments
+// (or a real single-node KMS at a known address).
+const defaultSingleOperatorAddress = "0x0000000000000000000000000000000000000001"
+
 // singleOperatorContractCaller is a stub kmsClient.ContractCaller that
 // advertises exactly one operator at a fixed URL — used for the fakeKMS
 // e2e shim where the helper bypasses on-chain operator discovery. See
 // retrieveAndDecrypt for the activation condition (kms_url non-empty).
 type singleOperatorContractCaller struct {
-	socketAddress string
+	socketAddress   string
+	operatorAddress string
 }
 
-func newSingleOperatorContractCaller(socketAddress string) *singleOperatorContractCaller {
-	return &singleOperatorContractCaller{socketAddress: socketAddress}
+func newSingleOperatorContractCaller(socketAddress, operatorAddress string) *singleOperatorContractCaller {
+	if strings.TrimSpace(operatorAddress) == "" {
+		operatorAddress = defaultSingleOperatorAddress
+	}
+	return &singleOperatorContractCaller{socketAddress: socketAddress, operatorAddress: operatorAddress}
 }
 
 func (s *singleOperatorContractCaller) GetOperatorSetMembersWithPeering(avsAddress string, operatorSetID uint32) (*peering.OperatorSetPeers, error) {
-	// Operator address must match what fakeKMS advertises in /pubkey
-	// responses. Both sides default to 0x...0001 in the fakeKMS deployment.
+	// OperatorAddress must match what the target KMS advertises in /pubkey
+	// responses, else CollectPartialSignatures drops the sig on the
+	// address-mismatch check. Defaults to 0x...0001 (fakeKMS default).
 	return &peering.OperatorSetPeers{
 		OperatorSetId: operatorSetID,
 		AVSAddress:    common.HexToAddress(avsAddress),
 		Peers: []*peering.OperatorSetPeer{
 			{
-				OperatorAddress: common.HexToAddress("0x0000000000000000000000000000000000000001"),
+				OperatorAddress: common.HexToAddress(s.operatorAddress),
 				SocketAddress:   s.socketAddress,
 			},
 		},
@@ -96,8 +110,11 @@ type Request struct {
 	AVSAddress    string `json:"avs_address,omitempty"`
 	OperatorSetID uint32 `json:"operator_set_id,omitempty"`
 	RPCURL        string `json:"rpc_url,omitempty"`
-	AppID         string `json:"app_id"`
-	CiphertextHex string `json:"ciphertext_hex"`
+	// OperatorAddress is only consulted on the single-operator (kms_url)
+	// override path; empty falls back to defaultSingleOperatorAddress.
+	OperatorAddress string `json:"operator_address,omitempty"`
+	AppID           string `json:"app_id"`
+	CiphertextHex   string `json:"ciphertext_hex"`
 }
 
 // initdataKMSConfig is the schema we expect under cc_init_data's
@@ -109,6 +126,9 @@ type initdataKMSConfig struct {
 	AVSAddress    string `toml:"avs_address"`
 	OperatorSetID uint32 `toml:"operator_set_id"`
 	RPCURL        string `toml:"rpc_url"`
+	// OperatorAddress pins the single-operator shim's peer address when
+	// kms_url is set; optional, defaults to defaultSingleOperatorAddress.
+	OperatorAddress string `toml:"operator_address"`
 }
 
 const (
@@ -359,6 +379,7 @@ func applyInitdataKMSConfig(req *Request, cfg *initdataKMSConfig) error {
 	req.AVSAddress = cfg.AVSAddress
 	req.OperatorSetID = cfg.OperatorSetID
 	req.RPCURL = cfg.RPCURL
+	req.OperatorAddress = cfg.OperatorAddress
 	return nil
 }
 
@@ -507,9 +528,19 @@ func retrieveAndDecrypt(
 	// shim during end-to-end testing of the eigenx-snp flow without standing
 	// up Ethereum + IAppController. Production sealed envelopes leave kms_url
 	// empty and discovery happens via the on-chain operator set.
+	//
+	// req.KMSURL reaches here only from cc_init_data (applyInitdataKMSConfig
+	// overwrites it with the SNP-bound value; stdin can't win), so it's
+	// already integrity-protected. Re-validate the scheme right at the
+	// consumption site anyway — defense-in-depth so this remains an http(s)
+	// POST target even if a future refactor changes how req.KMSURL is set,
+	// closing any SSRF-to-IMDS (169.254.169.254) regression at the source.
 	var contractCaller kmsClient.ContractCaller
 	if strings.TrimSpace(req.KMSURL) != "" {
-		contractCaller = newSingleOperatorContractCaller(req.KMSURL)
+		if err := validateHTTPURL(req.KMSURL, "kms_url"); err != nil {
+			return nil, err
+		}
+		contractCaller = newSingleOperatorContractCaller(req.KMSURL, req.OperatorAddress)
 	} else {
 		ethClient := ethereum.NewEthereumClient(&ethereum.EthereumClientConfig{
 			BaseUrl:   req.RPCURL,

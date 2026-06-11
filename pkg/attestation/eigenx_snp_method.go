@@ -403,6 +403,11 @@ func buildCertChain(pemCerts []string) (*spb.CertificateChain, []string, error) 
 			// the first cert otherwise.
 			if chain.AskCert == nil {
 				chain.AskCert = der
+			} else {
+				// A second ASK/ASVK cert for the same field — first-wins, but
+				// surface it (consistent with droppedCNs) so a malformed or
+				// mixed CA set doesn't silently lose a cert.
+				droppedCNs = append(droppedCNs, cn)
 			}
 		default:
 			// Unknown CN — don't fail (forward-compatibility with future AMD

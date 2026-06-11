@@ -79,6 +79,15 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Cap the request body before decoding. The per-field guards below
+	// (RSAPubKeyTmp, ExtraData, CCInitData, Attestation) only fire after
+	// json.Decode has already fully allocated the body, so an oversized
+	// POST would balloon memory before any check runs. Bound it up front
+	// at the sum of the field caps plus JSON/base64 overhead slack.
+	// MaxBytesReader makes Decode return an error past the limit.
+	const maxSecretsBodyBytes = 2*types.MaxAttestationSize + 2*types.MaxExtraDataSize + 64*1024
+	r.Body = http.MaxBytesReader(w, r.Body, int64(maxSecretsBodyBytes))
+
 	// Parse request
 	var req types.SecretsRequestV1
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
