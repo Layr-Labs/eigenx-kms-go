@@ -434,14 +434,23 @@ func generateRSAKeypair() (*rsa.PrivateKey, []byte, error) {
 //
 // Why hex instead of raw 64 bytes:
 //
-// AA's evidence endpoint at the upstream guest-components pin shipped in our
-// AMI (f1561038...) routes through api-server-rest which puts the
-// runtime_data query value into a Rust String, then ships
-// String::into_bytes() to the SNP attester. Random raw bytes aren't valid
-// UTF-8, so form_urlencoded::parse replaces invalid sequences with U+FFFD
-// (3 UTF-8 bytes each) and the result blows past the 64-byte SNP REPORT_DATA
-// limit. Restricting REPORT_DATA to 64 printable ASCII characters keeps the
-// transport lossless.
+// We send REPORT_DATA to AA via api-server-rest's `runtime_data` query
+// param WITHOUT an `encoding` param (see fetchAAEvidence). On that path
+// api-server-rest takes the query value's bytes verbatim
+// (`runtime_data.as_bytes()` — the documented "legacy" behavior, stable
+// across guest-components revisions) and hands them to the SNP attester,
+// which requires exactly 64 bytes. Routing arbitrary bytes through a URL
+// query string is lossy: non-UTF-8 / non-ASCII sequences get mangled
+// (percent-decode + UTF-8 replacement) and the result no longer matches
+// the original 64 bytes. Restricting REPORT_DATA to 64 printable ASCII
+// characters keeps the round-trip lossless regardless of the api-server
+// version.
+//
+// (api-server-rest also supports `encoding=base64` — base64url-decode of
+// runtime_data — which would let us send full 32-byte hashes instead of
+// truncating to 16. That's a tracked simplification; see
+// docs/009_eigenxSnpAttestation.md. Until then we use the version-agnostic
+// ASCII-hex path.)
 //
 // Each half holds 16 bytes (128 bits) of hash output, which is plenty for
 // nonce freshness and image-binding integrity. Both halves are bound into
@@ -469,16 +478,17 @@ func buildReportData(rsaPubPEM, extraData, ccInitData []byte) [reportDataLength]
 // as-is into the KMS request — the wire encoding to base64 is handled by Go's
 // []byte JSON marshalling.
 func fetchAAEvidence(reportData [reportDataLength]byte) ([]byte, error) {
-	// api-server-rest at the guest-components pin shipped in our AMI
-	// (f1561038...) treats the runtime_data query value as raw bytes —
-	// runtime_data.clone().into_bytes() — and SNP Attester demands the
-	// resulting bytes be exactly 64 long. Newer guest-components revisions
-	// added a `decode_runtime_data` step that decodes base64url when
-	// `encoding=base64` is present, but our pin predates that. So we
-	// percent-encode the 64 raw report-data bytes and let url.Values.Encode
-	// produce e.g. %A2%5C... — Go's net/http URL parsing on the AA side
-	// decodes these back to 64 raw bytes before stuffing them into
-	// into_bytes(), giving the SNP Attester exactly the 64 bytes it wants.
+	// We pass runtime_data WITHOUT an `encoding` param, so api-server-rest
+	// takes the query value's bytes verbatim (its "legacy" no-encoding path:
+	// `runtime_data.as_bytes()`) and the SNP attester demands exactly 64
+	// bytes. REPORT_DATA is therefore 64 printable-ASCII hex chars (see
+	// buildReportData) so it survives the URL query round-trip losslessly.
+	// url.Values.Encode percent-encodes as needed and net/http on the AA
+	// side decodes back to the same 64 ASCII bytes.
+	//
+	// (api-server-rest also accepts `encoding=base64` — base64url — which
+	// would avoid the ASCII-hex constraint and let us bind full 32-byte
+	// hashes. Tracked follow-up: docs/009_eigenxSnpAttestation.md.)
 	u, err := url.Parse(aaEvidenceURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse AA URL: %w", err)
@@ -604,12 +614,11 @@ func retrieveAndDecrypt(
 	return plaintext, nil
 }
 
-// aaSnpEvidence mirrors the AA-emitted SNP evidence shape at our pinned
-// guest-components revision (f1561038...). The Rust source is
-// attestation-agent/attester/src/snp/mod.rs::SnpEvidence — Rust's
-// serde-derive on sev::AttestationReport produces a nested JSON object whose
-// field names are the struct's Rust field names (snake_case) and whose
-// fixed-size byte arrays serialize as JSON arrays of integers.
+// aaSnpEvidence mirrors the AA-emitted SNP evidence shape. The Rust source
+// is guest-components attestation-agent/attester/src/snp/mod.rs::SnpEvidence
+// — serde-derive on sev::AttestationReport produces a nested JSON object
+// whose field names are the struct's Rust field names (snake_case) and
+// whose fixed-size byte arrays serialize as JSON arrays of integers.
 //
 // We only deserialize the fields go-sev-guest's pb.Report carries (the AMD
 // signed-component fields). pb.Report has no slot for fields that aren't on
@@ -878,9 +887,11 @@ func aaReportToProto(r *aaAttestationReport) (*spb.Report, error) {
 // byte 0, tee at byte 1, bytes 2-5 reserved zero, snp at byte 6, microcode
 // at byte 7 — into the little-endian u64 pb.Report carries. Turin/Venice
 // have a different layout that abi.ReportToAbiBytes routes via its own
-// generation detection; we pin to the legacy form here because our cluster
-// runs Milan/Genoa hosts. If we ever boot Turin instances this will need
-// generation-aware packing (as the Rust side does in TcbVersion::encode).
+// generation detection; we pin to the legacy form here because the
+// supported hosts are Milan/Genoa. Turin/Venice hosts need generation-aware
+// packing (as the Rust side does in TcbVersion::encode) — aaReportToProto
+// fails loud on the Turin `fmc` field until then. See
+// docs/009_eigenxSnpAttestation.md ("Follow-up 2").
 func packLegacyTcb(t aaTcbVersion) uint64 {
 	var b [8]byte
 	b[0] = t.Bootloader

@@ -183,7 +183,34 @@ silently mis-encoding — a wrong packing would produce a `pb.Report` whose
 bytes don't match the AMD-signed region, failing verification with an opaque
 signature error.
 
-The fix when we boot Turin instances: generation-aware packing matching
+The fix when Turin hosts are in scope: generation-aware packing matching
 `virtee/sev`'s `TcbVersion::encode` (Milan/Genoa legacy layout vs
 Turin/Venice layout). Until then the loud failure is the correct posture —
-our cluster runs Milan/Genoa (m6a) only.
+the supported hosts are Milan/Genoa (e.g. AWS m6a) only.
+
+## Follow-up 3: drop the ASCII-hex REPORT_DATA constraint
+
+`buildReportData` encodes REPORT_DATA as 64 printable-ASCII hex characters
+and truncates each hash half to 16 bytes (128 bits). The reason is purely
+transport: the helper sends `runtime_data` to api-server-rest **without** an
+`encoding` query param, so api-server-rest takes the query value's bytes
+verbatim (its documented "legacy" no-encoding path,
+`runtime_data.as_bytes()`), and arbitrary bytes don't survive a URL query
+string round-trip — hence ASCII-hex.
+
+api-server-rest (in the guest-components revision the AMI builds from, and
+upstream generally) also supports `?encoding=base64`, which base64url-decodes
+`runtime_data` before handing it to the attester. Switching the helper to
+send `encoding=base64` with base64url-encoded REPORT_DATA would:
+
+- remove the printable-ASCII constraint entirely, and
+- let us bind the **full 32-byte** hashes (`SHA-256(rsa‖extra)` and
+  `SHA-384(cc_init_data)[:32]`) instead of truncating each to 16 bytes —
+  strictly stronger nonce/workload binding.
+
+This is a behaviour change on both the helper (`fetchAAEvidence` +
+`buildReportData`) and the server-side recompute
+(`pkg/attestation/eigenx_snp_method.go`), so it needs a coordinated
+helper-AMI + KMS roll and a re-test cycle. Deferred — the current
+version-agnostic ASCII-hex path works on every api-server-rest revision and
+the 128-bit halves are ample for freshness + image-binding integrity.

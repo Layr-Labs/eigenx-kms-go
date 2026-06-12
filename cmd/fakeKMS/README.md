@@ -85,8 +85,7 @@ public_env    = ""                            # optional, JSON; echoed in /secre
 
 ## Cluster deployment
 
-The cluster manifest + the operational notes for running fakeKMS in
-`eigencompute-testnet-coco` (NodePort, apps ConfigMap, KDS-fetch flag) live in
-the `ecloud-platform-infra` repo, not here — fakeKMS's ECR repo is
-deliberately excluded from that repo's terraform for the same reason this is
-a harness, not infra.
+Deploying fakeKMS into a test cluster (Service/NodePort, the apps ConfigMap,
+the KDS-fetch flag) is an infra concern and lives outside this repo — it is a
+test harness, not a managed component, so its image repository and manifests
+are kept with the cluster tooling rather than under this repo's build/IaC.
