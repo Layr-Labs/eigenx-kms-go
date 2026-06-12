@@ -41,8 +41,11 @@
 //	  --operator-address 0x0000...01 \
 //	  --enable-eigenx-snp-attestation
 //
-// Generate a master key with `fakeKMS gen-key` (writes hex to stdout); seal it
-// into the workload's encrypted_env separately.
+// Generate a master key with `fakeKMS gen-key` (writes hex to stdout), then
+// IBE-encrypt the app's secret to it with `fakeKMS encrypt-env` and put the
+// resulting hex in apps.toml's encrypted_env. The KMS serves that
+// encrypted_env back in /secrets; the attested workload IBE-decrypts it with
+// the threshold-recovered app_private_key (docs/references/new_kms.md).
 package main
 
 import (
@@ -84,6 +87,40 @@ func main() {
 					}
 					b := s.Bytes()
 					fmt.Println(hex.EncodeToString(b[:]))
+					return nil
+				},
+			},
+			{
+				Name: "encrypt-env",
+				Usage: "IBE-encrypt a secret to an app under the master key; prints hex for " +
+					"apps.toml's encrypted_env. Mirrors how a real release's encrypted_env " +
+					"is produced (docs/references/new_kms.md).",
+				Flags: []cli.Flag{
+					&cli.StringFlag{Name: "master-key-hex", Required: true, Usage: "BLS-12-381 master scalar (hex)"},
+					&cli.StringFlag{Name: "app-id", Required: true, Usage: "App ID the secret is encrypted to (IBE identity)"},
+					&cli.StringFlag{Name: "plaintext", Required: true, Usage: "The secret value to encrypt"},
+				},
+				Action: func(c *cli.Context) error {
+					mb, err := hex.DecodeString(strings.TrimPrefix(c.String("master-key-hex"), "0x"))
+					if err != nil {
+						return fmt.Errorf("decode master-key-hex: %w", err)
+					}
+					var s fr.Element
+					s.SetBytes(mb)
+					if s.IsZero() {
+						return fmt.Errorf("master key is zero")
+					}
+					mpk, err := crypto.ScalarMulG2(crypto.G2Generator, &s)
+					if err != nil {
+						return fmt.Errorf("derive master pubkey: %w", err)
+					}
+					ct, err := crypto.EncryptForApp(c.String("app-id"), *mpk, []byte(c.String("plaintext")))
+					if err != nil {
+						return fmt.Errorf("EncryptForApp: %w", err)
+					}
+					// Hex — apps.toml's encrypted_env is surfaced verbatim and the
+					// helper's decodeEncryptedEnv accepts hex.
+					fmt.Println(hex.EncodeToString(ct))
 					return nil
 				},
 			},
@@ -214,7 +251,7 @@ type appEntry struct {
 	AppID         string            `toml:"app_id"`
 	ImageDigest   string            `toml:"image_digest"`            // "sha256:<64hex>" — must match attestation claims
 	Registry      string            `toml:"registry,omitempty"`      // OCI registry+repo (e.g. "ghcr.io/example/app"); when set, KMS step 4b binds claims.Registry to it
-	EncryptedEnv  string            `toml:"encrypted_env,omitempty"` // base64 — surfaced verbatim in /secrets response
+	EncryptedEnv  string            `toml:"encrypted_env,omitempty"` // hex IBE ciphertext (see `fakeKMS encrypt-env`) — surfaced verbatim in /secrets; the workload IBE-decrypts it with app_private_key
 	PublicEnv     string            `toml:"public_env,omitempty"`    // JSON-shape — surfaced verbatim
 	ContainerArgs []string          `toml:"container_args,omitempty"`
 	Env           map[string]string `toml:"env,omitempty"`

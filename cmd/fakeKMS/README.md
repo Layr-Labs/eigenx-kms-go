@@ -36,7 +36,16 @@ docker build -t fakekms -f cmd/fakeKMS/Dockerfile .
 # 1. Mint a master key
 MASTER=$(./fakeKMS gen-key)
 
-# 2. Serve
+# 2. IBE-encrypt the app's secret to the master key — this mirrors how a real
+#    release's encrypted_env is produced. Put the printed hex in apps.toml's
+#    encrypted_env for the matching app_id.
+./fakeKMS encrypt-env \
+  --master-key-hex "$MASTER" \
+  --app-id example-app \
+  --plaintext "the-secret-from-fakekms-e2e"
+# -> 49424501...   (prefix 494245 = "IBE"; this is the IBE ciphertext)
+
+# 3. Serve
 ./fakeKMS \
   --port 8000 \
   --master-key-hex "$MASTER" \
@@ -44,6 +53,12 @@ MASTER=$(./fakeKMS gen-key)
   --operator-address 0x0000000000000000000000000000000000000001 \
   --enable-eigenx-snp-attestation
 ```
+
+The KMS serves that `encrypted_env` verbatim in its `/secrets` response. The
+attested workload IBE-decrypts it inside the TEE with the threshold-recovered
+`app_private_key` (see `docs/references/new_kms.md`). The plaintext never
+leaves the enclave and is never carried in the pod spec — fakeKMS holds only
+the ciphertext.
 
 ### Flags
 
@@ -69,12 +84,17 @@ production handler runs).
 app_id        = "example-app"
 image_digest  = "sha256:b58899f069c47216f6002a6850143dc6fae0d35eb8b0df9300bbe6327b9c2171"
 registry      = "docker.io/library/alpine"   # optional; enables registry binding
-encrypted_env = ""                            # optional, base64; echoed in /secrets
+encrypted_env = "49424501..."                 # hex IBE ciphertext from `fakeKMS encrypt-env`; served in /secrets, IBE-decrypted in-TEE
 public_env    = ""                            # optional, JSON; echoed in /secrets
 # Optional container-policy fields (args / env / env_override / restart_policy):
 # container_args = ["sh", "-c", "..."]
 # restart_policy = "Always"
 ```
+
+`encrypted_env` is the IBE ciphertext for this `app_id` (hex; produced by
+`fakeKMS encrypt-env` above) and is how the secret reaches the workload: per
+`docs/references/new_kms.md` it is served in `/secrets` and decrypted in-TEE
+with the recovered app private key.
 
 ## Endpoints
 

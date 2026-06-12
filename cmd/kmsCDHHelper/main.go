@@ -16,8 +16,11 @@
 //     KBS-EAR nonce so KMS server-side nonce binding is identical.
 //  3. Fetches raw SEV-SNP evidence from the in-pod AA at 127.0.0.1:8006.
 //  4. Calls RetrieveSecretsWithOptions with attestation_method=eigenx-snp; the
-//     KMS client returns the recovered AppPrivateKey (no IBE-decrypt on its own).
-//  5. IBE-decrypts the user-supplied ciphertext_hex with crypto.DecryptForApp.
+//     KMS client recovers the AppPrivateKey and returns the release's
+//     encrypted_env (no IBE-decrypt on its own).
+//  5. IBE-decrypts the KMS-returned encrypted_env with crypto.DecryptForApp,
+//     using the recovered AppPrivateKey — so the plaintext only exists inside
+//     this attested TEE (docs/references/new_kms.md).
 package main
 
 import (
@@ -97,14 +100,16 @@ func (s *singleOperatorContractCaller) GetOperatorSetMembersWithPeering(avsAddre
 
 // Request is the JSON payload read from stdin from CDH's eigenx plugin.
 //
-// As of the cc_init_data-binding refactor, KMS coordinates (kms_url,
+// app_id is the only field the caller supplies. The KMS coordinates (kms_url,
 // avs_address, operator_set_id, rpc_url) are sourced from the SNP-bound
-// /run/peerpod/initdata document instead of the per-call request, so they
-// carry the same integrity guarantees as the policy.rego image-digest
-// binding. The plugin and downstream callers should pass only the per-secret
-// fields (app_id, ciphertext_hex). Legacy callers that still send the KMS
-// fields on stdin override the initdata-sourced values for backwards
-// compatibility, but new code should not rely on this.
+// /run/peerpod/initdata document, so they carry the same integrity guarantees
+// as the policy.rego image-digest binding; values for those keys on stdin are
+// ignored in favour of initdata (see applyInitdataKMSConfig). The struct tags
+// remain so a request carrying them still parses.
+//
+// The secret is the on-chain release's encrypted_env, returned by the KMS and
+// IBE-decrypted with the threshold-recovered app_private_key inside this TEE
+// (docs/references/new_kms.md) — it is not carried in the request.
 type Request struct {
 	KMSURL        string `json:"kms_url,omitempty"`
 	AVSAddress    string `json:"avs_address,omitempty"`
@@ -114,7 +119,6 @@ type Request struct {
 	// override path; empty falls back to defaultSingleOperatorAddress.
 	OperatorAddress string `json:"operator_address,omitempty"`
 	AppID           string `json:"app_id"`
-	CiphertextHex   string `json:"ciphertext_hex"`
 }
 
 // initdataKMSConfig is the schema we expect under cc_init_data's
@@ -223,26 +227,22 @@ func run() error {
 
 // readRequest parses the stdin JSON request. KMS-coord fields are NOT
 // validated here; they're filled in from cc_init_data later (see
-// applyInitdataKMSConfig). app_id + ciphertext_hex must be present in the
-// stdin request — those are per-secret and travel with the call.
+// applyInitdataKMSConfig). app_id is the only required field; the secret
+// comes from the KMS's encrypted_env, not the caller (see Request).
 func readRequest(r io.Reader) (*Request, error) {
 	var req Request
 	dec := json.NewDecoder(r)
 	// Tolerate unknown fields rather than DisallowUnknownFields(): the CDH
 	// plugin and the helper are versioned independently (the plugin lives
 	// in the podVM AMI, the helper is a sideloaded binary in the same
-	// image but bumped on different cadences). A new plugin field —
-	// extra context, telemetry, future provider_settings pass-through —
-	// must not break older helpers; struct tags ignore unknown keys
-	// silently, which is the contract we want.
+	// image but bumped on different cadences). A new plugin field — extra
+	// context, telemetry — must not break the helper; struct tags ignore
+	// unknown keys silently, which is the contract we want.
 	if err := dec.Decode(&req); err != nil {
 		return nil, fmt.Errorf("decode JSON: %w", err)
 	}
 	if req.AppID == "" {
 		return nil, fmt.Errorf("app_id is required")
-	}
-	if req.CiphertextHex == "" {
-		return nil, fmt.Errorf("ciphertext_hex is required")
 	}
 	return &req, nil
 }
@@ -518,11 +518,12 @@ func fetchAAEvidence(reportData [reportDataLength]byte) ([]byte, error) {
 }
 
 // retrieveAndDecrypt drives the on-chain operator discovery, the eigenx-snp
-// secret-retrieval flow, and the IBE-decrypt of the caller-supplied ciphertext.
+// secret-retrieval flow, and the IBE-decrypt of the KMS-returned encrypted_env.
 //
-// Note: RetrieveSecretsWithOptions does NOT IBE-decrypt — it returns the
-// recovered AppPrivateKey and the still-encrypted EncryptedEnv. The IBE-decrypt
-// of the user-supplied ciphertext_hex happens here via crypto.DecryptForApp.
+// Note: RetrieveSecretsWithOptions does NOT IBE-decrypt — it recovers the
+// AppPrivateKey from the threshold partial sigs and returns the still-encrypted
+// EncryptedEnv. The IBE-decrypt of that encrypted_env happens here via
+// crypto.DecryptForApp(appID, AppPrivateKey, ...).
 func retrieveAndDecrypt(
 	req *Request,
 	evidence, ccInitData, rsaPubPEM []byte,
@@ -596,22 +597,49 @@ func retrieveAndDecrypt(
 		return nil, fmt.Errorf("RetrieveSecretsWithOptions: %w", err)
 	}
 
-	ciphertext, err := hex.DecodeString(req.CiphertextHex)
+	// Per the KMS design (docs/references/new_kms.md, "Application Decryption"):
+	// the secret is the on-chain release's encrypted_env, returned in the
+	// /secrets response and IBE-decrypted here with the threshold-recovered
+	// app_private_key. Because app_private_key can only be reconstructed from
+	// a quorum of operator partial signatures over an accepted attestation,
+	// the plaintext is only ever visible inside this attested TEE.
+	if result.EncryptedEnv == "" {
+		return nil, fmt.Errorf("KMS returned empty encrypted_env for app %q; nothing to decrypt", req.AppID)
+	}
+	ciphertext, err := decodeEncryptedEnv(result.EncryptedEnv)
 	if err != nil {
-		// Tolerate 0x prefix to match the kmsClient CLI's hexutil.Decode behaviour.
-		if len(req.CiphertextHex) > 2 && (req.CiphertextHex[0:2] == "0x" || req.CiphertextHex[0:2] == "0X") {
-			ciphertext, err = hex.DecodeString(req.CiphertextHex[2:])
-		}
-		if err != nil {
-			return nil, fmt.Errorf("decode ciphertext_hex: %w", err)
-		}
+		return nil, fmt.Errorf("decode encrypted_env: %w", err)
 	}
 
 	plaintext, err := crypto.DecryptForApp(req.AppID, result.AppPrivateKey, ciphertext)
 	if err != nil {
-		return nil, fmt.Errorf("DecryptForApp: %w", err)
+		return nil, fmt.Errorf("decrypt encrypted_env with app_private_key: %w", err)
 	}
 	return plaintext, nil
+}
+
+// decodeEncryptedEnv turns the KMS /secrets response's encrypted_env string
+// into the raw IBE ciphertext bytes that crypto.DecryptForApp expects.
+// encrypted_env is transported as a string; accept hex (optionally 0x-
+// prefixed) or base64, sniffed by content, since the wire encoding isn't
+// pinned by the spec. The decoded bytes are the IBE "magic||version||C1||
+// nonce||ct+tag" envelope (see pkg/crypto/bls.go).
+func decodeEncryptedEnv(s string) ([]byte, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return nil, fmt.Errorf("empty")
+	}
+	hexStr := strings.TrimPrefix(strings.TrimPrefix(s, "0x"), "0X")
+	if b, err := hex.DecodeString(hexStr); err == nil {
+		return b, nil
+	}
+	if b, err := base64.StdEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	if b, err := base64.RawStdEncoding.DecodeString(s); err == nil {
+		return b, nil
+	}
+	return nil, fmt.Errorf("encrypted_env is neither hex nor base64")
 }
 
 // aaSnpEvidence mirrors the AA-emitted SNP evidence shape. The Rust source

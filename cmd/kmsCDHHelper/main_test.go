@@ -26,7 +26,6 @@ func TestReadRequest_HappyPath(t *testing.T) {
 		OperatorSetID: 0,
 		RPCURL:        "https://eth.example/v2/key",
 		AppID:         "app-id",
-		CiphertextHex: "deadbeef",
 	}
 	body, err := json.Marshal(in)
 	require.NoError(t, err)
@@ -38,13 +37,22 @@ func TestReadRequest_HappyPath(t *testing.T) {
 	assert.Equal(t, in.OperatorSetID, got.OperatorSetID)
 	assert.Equal(t, in.RPCURL, got.RPCURL)
 	assert.Equal(t, in.AppID, got.AppID)
-	assert.Equal(t, in.CiphertextHex, got.CiphertextHex)
+}
+
+func TestReadRequest_IgnoresUnknownFields(t *testing.T) {
+	// The CDH plugin and helper are versioned independently, so readRequest
+	// must tolerate stdin keys it doesn't model (no DisallowUnknownFields)
+	// and still parse app_id.
+	body := []byte(`{"app_id":"x","some_future_field":"deadbeef"}`)
+	got, err := readRequest(bytes.NewReader(body))
+	require.NoError(t, err)
+	assert.Equal(t, "x", got.AppID)
 }
 
 func TestReadRequest_MissingFields(t *testing.T) {
-	// Per-secret fields stay required at stdin parse time. KMS-coord fields
-	// (avs_address, rpc_url, kms_url, operator_set_id) used to be enforced
-	// here; they're now validated against cc_init_data in applyInitdataKMSConfig.
+	// app_id is the only required stdin field; the secret comes from the
+	// KMS's encrypted_env, not the caller. KMS-coord fields are validated
+	// against cc_init_data in applyInitdataKMSConfig.
 	tests := []struct {
 		name        string
 		req         Request
@@ -53,20 +61,10 @@ func TestReadRequest_MissingFields(t *testing.T) {
 		{
 			name: "missing app_id",
 			req: Request{
-				AVSAddress:    "0xabc",
-				RPCURL:        "https://eth.example",
-				CiphertextHex: "00",
-			},
-			expectedErr: "app_id is required",
-		},
-		{
-			name: "missing ciphertext_hex",
-			req: Request{
 				AVSAddress: "0xabc",
 				RPCURL:     "https://eth.example",
-				AppID:      "x",
 			},
-			expectedErr: "ciphertext_hex is required",
+			expectedErr: "app_id is required",
 		},
 	}
 
@@ -86,7 +84,7 @@ func TestReadRequest_MissingFields(t *testing.T) {
 // SSRF rationale in applyInitdataKMSConfig's comment.
 func TestApplyInitdataKMSConfig(t *testing.T) {
 	t.Run("initdata populates empty request", func(t *testing.T) {
-		req := &Request{AppID: "x", CiphertextHex: "00"}
+		req := &Request{AppID: "x"}
 		cfg := &initdataKMSConfig{
 			KMSURL: "http://kms.example", AVSAddress: "0xabc",
 			OperatorSetID: 7, RPCURL: "http://rpc.example",
@@ -101,7 +99,7 @@ func TestApplyInitdataKMSConfig(t *testing.T) {
 		// stdin pretends to redirect to an attacker-controlled KMS;
 		// initdata is SNP-bound and authoritative.
 		req := &Request{
-			AppID: "x", CiphertextHex: "00",
+			AppID:         "x",
 			KMSURL:        "http://attacker.example",
 			AVSAddress:    "0xattacker",
 			OperatorSetID: 99,
@@ -122,20 +120,20 @@ func TestApplyInitdataKMSConfig(t *testing.T) {
 			"stdin must NOT override initdata rpc_url")
 	})
 	t.Run("nil cfg fails closed", func(t *testing.T) {
-		req := &Request{AppID: "x", CiphertextHex: "00"}
+		req := &Request{AppID: "x"}
 		err := applyInitdataKMSConfig(req, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "eigenx.toml")
 	})
 	t.Run("missing avs_address fails", func(t *testing.T) {
 		cfg := &initdataKMSConfig{KMSURL: "http://kms.example"}
-		err := applyInitdataKMSConfig(&Request{AppID: "x", CiphertextHex: "00"}, cfg)
+		err := applyInitdataKMSConfig(&Request{AppID: "x"}, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "avs_address")
 	})
 	t.Run("missing rpc_url and kms_url fails", func(t *testing.T) {
 		cfg := &initdataKMSConfig{AVSAddress: "0xabc"}
-		err := applyInitdataKMSConfig(&Request{AppID: "x", CiphertextHex: "00"}, cfg)
+		err := applyInitdataKMSConfig(&Request{AppID: "x"}, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "kms_url or rpc_url")
 	})
@@ -143,7 +141,7 @@ func TestApplyInitdataKMSConfig(t *testing.T) {
 		cfg := &initdataKMSConfig{
 			KMSURL: "file:///etc/passwd", AVSAddress: "0xabc",
 		}
-		err := applyInitdataKMSConfig(&Request{AppID: "x", CiphertextHex: "00"}, cfg)
+		err := applyInitdataKMSConfig(&Request{AppID: "x"}, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "scheme")
 	})
@@ -151,7 +149,7 @@ func TestApplyInitdataKMSConfig(t *testing.T) {
 		cfg := &initdataKMSConfig{
 			AVSAddress: "0xabc", RPCURL: "gopher://internal.example/",
 		}
-		err := applyInitdataKMSConfig(&Request{AppID: "x", CiphertextHex: "00"}, cfg)
+		err := applyInitdataKMSConfig(&Request{AppID: "x"}, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "scheme")
 	})
@@ -159,7 +157,7 @@ func TestApplyInitdataKMSConfig(t *testing.T) {
 		cfg := &initdataKMSConfig{
 			KMSURL: "http:///path", AVSAddress: "0xabc",
 		}
-		err := applyInitdataKMSConfig(&Request{AppID: "x", CiphertextHex: "00"}, cfg)
+		err := applyInitdataKMSConfig(&Request{AppID: "x"}, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "host")
 	})
