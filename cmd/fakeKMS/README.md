@@ -36,14 +36,18 @@ docker build -t fakekms -f cmd/fakeKMS/Dockerfile .
 # 1. Mint a master key
 MASTER=$(./fakeKMS gen-key)
 
-# 2. IBE-encrypt the app's secret to the master key — this mirrors how a real
-#    release's encrypted_env is produced. Put the printed hex in apps.toml's
+# 2. IBE-encrypt the app's secret env to the master key — this mirrors how a
+#    real release's encrypted_env is produced. The secret env is a KEY=VALUE
+#    map (repeat --kv); the plaintext is a JSON object so the workload can
+#    address each variable by name. Put the printed hex in apps.toml's
 #    encrypted_env for the matching app_id.
 ./fakeKMS encrypt-env \
   --master-key-hex "$MASTER" \
   --app-id example-app \
-  --plaintext "the-secret-from-fakekms-e2e"
-# -> 49424501...   (prefix 494245 = "IBE"; this is the IBE ciphertext)
+  --kv DB_PASSWORD=hunter2 \
+  --kv API_KEY=sk-xyz
+# -> 49424501...   (prefix 494245 = "IBE"; this is the IBE ciphertext of
+#                   {"DB_PASSWORD":"hunter2","API_KEY":"sk-xyz"})
 
 # 3. Serve
 ./fakeKMS \
@@ -56,9 +60,11 @@ MASTER=$(./fakeKMS gen-key)
 
 The KMS serves that `encrypted_env` verbatim in its `/secrets` response. The
 attested workload IBE-decrypts it inside the TEE with the threshold-recovered
-`app_private_key` (see `docs/references/new_kms.md`). The plaintext never
-leaves the enclave and is never carried in the pod spec — fakeKMS holds only
-the ciphertext.
+`app_private_key` (see `docs/references/new_kms.md`), then the eigenx CDH
+helper merges it with the release's plaintext `public_env` (secret keys win)
+and serves each variable by name to the pod's sealed env vars. The secret
+plaintext never leaves the enclave and is never carried in the pod spec —
+fakeKMS holds only the ciphertext.
 
 ### Flags
 
@@ -84,17 +90,20 @@ production handler runs).
 app_id        = "example-app"
 image_digest  = "sha256:b58899f069c47216f6002a6850143dc6fae0d35eb8b0df9300bbe6327b9c2171"
 registry      = "docker.io/library/alpine"   # optional; enables registry binding
-encrypted_env = "49424501..."                 # hex IBE ciphertext from `fakeKMS encrypt-env`; served in /secrets, IBE-decrypted in-TEE
-public_env    = ""                            # optional, JSON; echoed in /secrets
+encrypted_env = "49424501..."                 # hex IBE ciphertext of {"KEY":"VALUE",...} from `fakeKMS encrypt-env`
+public_env    = '{"LOG_LEVEL":"info"}'        # optional, plaintext JSON {"KEY":"VALUE"}; merged under the secrets
 # Optional container-policy fields (args / env / env_override / restart_policy):
 # container_args = ["sh", "-c", "..."]
 # restart_policy = "Always"
 ```
 
-`encrypted_env` is the IBE ciphertext for this `app_id` (hex; produced by
-`fakeKMS encrypt-env` above) and is how the secret reaches the workload: per
-`docs/references/new_kms.md` it is served in `/secrets` and decrypted in-TEE
-with the recovered app private key.
+The app's environment is a flat key→value map. `encrypted_env` is the IBE
+ciphertext of the **secret** env as a JSON object (produced by `fakeKMS
+encrypt-env` above); `public_env` is the **plaintext** env as a JSON object.
+The helper merges them (secret keys win on collision) and serves each variable
+by name — one sealed env var in the pod spec per key. Per
+`docs/references/new_kms.md`, `encrypted_env` is decrypted in-TEE with the
+recovered app private key; `public_env` is surfaced verbatim.
 
 ## Endpoints
 

@@ -92,15 +92,35 @@ func main() {
 			},
 			{
 				Name: "encrypt-env",
-				Usage: "IBE-encrypt a secret to an app under the master key; prints hex for " +
-					"apps.toml's encrypted_env. Mirrors how a real release's encrypted_env " +
-					"is produced (docs/references/new_kms.md).",
+				Usage: "IBE-encrypt an app's secret env (a KEY=VALUE map) under the master key; " +
+					"prints hex for apps.toml's encrypted_env. The plaintext is a JSON object so " +
+					"the workload can address each variable by name (docs/references/new_kms.md).",
 				Flags: []cli.Flag{
 					&cli.StringFlag{Name: "master-key-hex", Required: true, Usage: "BLS-12-381 master scalar (hex)"},
 					&cli.StringFlag{Name: "app-id", Required: true, Usage: "App ID the secret is encrypted to (IBE identity)"},
-					&cli.StringFlag{Name: "plaintext", Required: true, Usage: "The secret value to encrypt"},
+					&cli.StringSliceFlag{Name: "kv", Usage: "Secret env var as KEY=VALUE (repeatable)"},
 				},
 				Action: func(c *cli.Context) error {
+					// Build the secret env map from repeated --kv KEY=VALUE flags.
+					// The decrypted blob is a JSON {KEY:VALUE} object: the helper
+					// indexes it by key so each sealed env var in the pod spec
+					// resolves to one variable.
+					env := map[string]string{}
+					for _, kv := range c.StringSlice("kv") {
+						k, v, ok := strings.Cut(kv, "=")
+						if !ok || k == "" {
+							return fmt.Errorf("invalid --kv %q: want KEY=VALUE", kv)
+						}
+						env[k] = v
+					}
+					if len(env) == 0 {
+						return fmt.Errorf("at least one --kv KEY=VALUE is required")
+					}
+					plaintext, err := json.Marshal(env)
+					if err != nil {
+						return fmt.Errorf("marshal env: %w", err)
+					}
+
 					mb, err := hex.DecodeString(strings.TrimPrefix(c.String("master-key-hex"), "0x"))
 					if err != nil {
 						return fmt.Errorf("decode master-key-hex: %w", err)
@@ -114,7 +134,7 @@ func main() {
 					if err != nil {
 						return fmt.Errorf("derive master pubkey: %w", err)
 					}
-					ct, err := crypto.EncryptForApp(c.String("app-id"), *mpk, []byte(c.String("plaintext")))
+					ct, err := crypto.EncryptForApp(c.String("app-id"), *mpk, plaintext)
 					if err != nil {
 						return fmt.Errorf("EncryptForApp: %w", err)
 					}

@@ -110,6 +110,14 @@ func (s *singleOperatorContractCaller) GetOperatorSetMembersWithPeering(avsAddre
 // The secret is the on-chain release's encrypted_env, returned by the KMS and
 // IBE-decrypted with the threshold-recovered app_private_key inside this TEE
 // (docs/references/new_kms.md) — it is not carried in the request.
+//
+// Key selects which environment variable to return. The app's environment is a
+// flat key→value map assembled from the release's public_env (plaintext) and
+// the IBE-decrypted encrypted_env (secret); secret keys win on collision. CDH
+// calls the helper once per sealed env var in the pod spec, each carrying the
+// Key it wants. The first call attests + fetches and caches the whole merged
+// map to tmpfs; later calls for the same app read the cache (one attestation
+// per pod, not per key). See env_cache.go.
 type Request struct {
 	KMSURL        string `json:"kms_url,omitempty"`
 	AVSAddress    string `json:"avs_address,omitempty"`
@@ -119,6 +127,8 @@ type Request struct {
 	// override path; empty falls back to defaultSingleOperatorAddress.
 	OperatorAddress string `json:"operator_address,omitempty"`
 	AppID           string `json:"app_id"`
+	// Key is the environment-variable name to return from the merged app env.
+	Key string `json:"key"`
 }
 
 // initdataKMSConfig is the schema we expect under cc_init_data's
@@ -155,6 +165,18 @@ func run() error {
 	req, err := readRequest(os.Stdin)
 	if err != nil {
 		return fmt.Errorf("read request: %w", err)
+	}
+
+	// Fast path: another sealed env var for this same app already attested and
+	// cached the full merged env this pod boot. Serve the requested key from
+	// the cache and skip attestation + the KMS round trip entirely. The lock
+	// is held across the read so we don't race a concurrent first-call writer
+	// (kata-agent unseals sequentially today, but a multi-container pod shares
+	// the podVM). See env_cache.go.
+	if env, ok, cerr := loadCachedEnv(req.AppID); cerr != nil {
+		return fmt.Errorf("read env cache: %w", cerr)
+	} else if ok {
+		return emitKey(env, req.Key)
 	}
 
 	rsaPriv, rsaPubPEM, err := generateRSAKeypair()
@@ -214,21 +236,25 @@ func run() error {
 		return fmt.Errorf("transform AA evidence: %w", err)
 	}
 
-	plaintext, err := retrieveAndDecrypt(req, evidence, ccInitData, rsaPubPEM, rsaPriv)
+	env, err := retrieveAndDecrypt(req, evidence, ccInitData, rsaPubPEM, rsaPriv)
 	if err != nil {
 		return fmt.Errorf("retrieve and decrypt: %w", err)
 	}
 
-	if _, err := os.Stdout.Write(plaintext); err != nil {
-		return fmt.Errorf("write stdout: %w", err)
+	// Cache the whole merged env so sibling sealed vars for this app this pod
+	// boot hit the fast path above. Best-effort: a cache write failure must not
+	// fail the unseal — we already have the value in hand.
+	if cerr := storeCachedEnv(req.AppID, env); cerr != nil {
+		log.Printf("warning: cache merged env for app %q: %v", req.AppID, cerr)
 	}
-	return nil
+
+	return emitKey(env, req.Key)
 }
 
 // readRequest parses the stdin JSON request. KMS-coord fields are NOT
 // validated here; they're filled in from cc_init_data later (see
-// applyInitdataKMSConfig). app_id is the only required field; the secret
-// comes from the KMS's encrypted_env, not the caller (see Request).
+// applyInitdataKMSConfig). app_id and key are required; the values come from
+// the KMS's release env (public_env + encrypted_env), not the caller.
 func readRequest(r io.Reader) (*Request, error) {
 	var req Request
 	dec := json.NewDecoder(r)
@@ -243,6 +269,9 @@ func readRequest(r io.Reader) (*Request, error) {
 	}
 	if req.AppID == "" {
 		return nil, fmt.Errorf("app_id is required")
+	}
+	if req.Key == "" {
+		return nil, fmt.Errorf("key is required")
 	}
 	return &req, nil
 }
@@ -519,6 +548,9 @@ func fetchAAEvidence(reportData [reportDataLength]byte) ([]byte, error) {
 
 // retrieveAndDecrypt drives the on-chain operator discovery, the eigenx-snp
 // secret-retrieval flow, and the IBE-decrypt of the KMS-returned encrypted_env.
+// It returns the app's full environment as a merged key→value map:
+// release.public_env (plaintext) overlaid with the decrypted encrypted_env
+// (secret), secret keys winning on collision.
 //
 // Note: RetrieveSecretsWithOptions does NOT IBE-decrypt — it recovers the
 // AppPrivateKey from the threshold partial sigs and returns the still-encrypted
@@ -528,7 +560,7 @@ func retrieveAndDecrypt(
 	req *Request,
 	evidence, ccInitData, rsaPubPEM []byte,
 	rsaPriv *rsa.PrivateKey,
-) ([]byte, error) {
+) (map[string]string, error) {
 	zapLogger, err := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 	if err != nil {
 		return nil, fmt.Errorf("create logger: %w", err)
@@ -611,11 +643,18 @@ func retrieveAndDecrypt(
 		return nil, fmt.Errorf("decode encrypted_env: %w", err)
 	}
 
-	plaintext, err := crypto.DecryptForApp(req.AppID, result.AppPrivateKey, ciphertext)
+	secretPlaintext, err := crypto.DecryptForApp(req.AppID, result.AppPrivateKey, ciphertext)
 	if err != nil {
 		return nil, fmt.Errorf("decrypt encrypted_env with app_private_key: %w", err)
 	}
-	return plaintext, nil
+
+	// Merge public_env (plaintext, on-chain) under the decrypted secret env;
+	// secret keys win on collision so a public default can't shadow a secret.
+	env, err := mergeEnv(result.PublicEnv, secretPlaintext)
+	if err != nil {
+		return nil, fmt.Errorf("merge release env for app %q: %w", req.AppID, err)
+	}
+	return env, nil
 }
 
 // decodeEncryptedEnv turns the KMS /secrets response's encrypted_env string

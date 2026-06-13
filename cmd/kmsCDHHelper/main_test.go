@@ -26,6 +26,7 @@ func TestReadRequest_HappyPath(t *testing.T) {
 		OperatorSetID: 0,
 		RPCURL:        "https://eth.example/v2/key",
 		AppID:         "app-id",
+		Key:           "DB_PASSWORD",
 	}
 	body, err := json.Marshal(in)
 	require.NoError(t, err)
@@ -37,21 +38,23 @@ func TestReadRequest_HappyPath(t *testing.T) {
 	assert.Equal(t, in.OperatorSetID, got.OperatorSetID)
 	assert.Equal(t, in.RPCURL, got.RPCURL)
 	assert.Equal(t, in.AppID, got.AppID)
+	assert.Equal(t, in.Key, got.Key)
 }
 
 func TestReadRequest_IgnoresUnknownFields(t *testing.T) {
 	// The CDH plugin and helper are versioned independently, so readRequest
 	// must tolerate stdin keys it doesn't model (no DisallowUnknownFields)
-	// and still parse app_id.
-	body := []byte(`{"app_id":"x","some_future_field":"deadbeef"}`)
+	// and still parse the fields it needs.
+	body := []byte(`{"app_id":"x","key":"K","some_future_field":"deadbeef"}`)
 	got, err := readRequest(bytes.NewReader(body))
 	require.NoError(t, err)
 	assert.Equal(t, "x", got.AppID)
+	assert.Equal(t, "K", got.Key)
 }
 
 func TestReadRequest_MissingFields(t *testing.T) {
-	// app_id is the only required stdin field; the secret comes from the
-	// KMS's encrypted_env, not the caller. KMS-coord fields are validated
+	// app_id and key are the required stdin fields; the values come from the
+	// KMS's release env, not the caller. KMS-coord fields are validated
 	// against cc_init_data in applyInitdataKMSConfig.
 	tests := []struct {
 		name        string
@@ -63,8 +66,16 @@ func TestReadRequest_MissingFields(t *testing.T) {
 			req: Request{
 				AVSAddress: "0xabc",
 				RPCURL:     "https://eth.example",
+				Key:        "K",
 			},
 			expectedErr: "app_id is required",
+		},
+		{
+			name: "missing key",
+			req: Request{
+				AppID: "app-id",
+			},
+			expectedErr: "key is required",
 		},
 	}
 
