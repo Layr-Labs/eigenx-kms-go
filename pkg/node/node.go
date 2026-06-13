@@ -25,6 +25,7 @@ import (
 
 	"github.com/Layr-Labs/crypto-libs/pkg/bn254"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/auth"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/bls"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller"
@@ -86,6 +87,10 @@ type Node struct {
 
 	// Access control
 	appAllowlist map[string]bool // nil means all apps allowed
+
+	// JWT attestation (/auth/attest endpoint)
+	jwtSigner   *auth.JWTSigner                            // nil when /auth/attest is not enabled
+	tpmVerifier attestation.BoundAttestationEvidenceVerifier // for /auth/attest TPM verification
 }
 
 // ProtocolSession tracks state for a DKG or reshare session
@@ -278,7 +283,8 @@ type Config struct {
 	AppAllowlist    []string       // Optional: restrict /app/sign and /secrets to these app IDs (empty = allow all)
 }
 
-// NewNode creates a new node instance with dependency injection
+// NewNode creates a new node instance with dependency injection.
+// jwtSigner is optional — when non-nil, the /auth/attest endpoint is enabled.
 func NewNode(
 	cfg Config,
 	pdf peering.IPeeringDataFetcher,
@@ -290,6 +296,7 @@ func NewNode(
 	commitmentRegistryAddress common.Address,
 	p persistence.INodePersistence,
 	l *zap.Logger,
+	jwtSigner *auth.JWTSigner,
 ) (*Node, error) {
 	// Validate required dependencies
 	if attestationManager == nil {
@@ -327,6 +334,8 @@ func NewNode(
 		baseContractCaller:        baseContractCaller,
 		commitmentRegistryAddress: commitmentRegistryAddress,
 		persistence:               p,
+		jwtSigner:                 jwtSigner,
+		tpmVerifier:               attestation.NewBoundAttestationEvidenceVerifier(),
 	}
 
 	// Build app allowlist if configured

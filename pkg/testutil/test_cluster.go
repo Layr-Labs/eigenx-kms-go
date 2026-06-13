@@ -129,7 +129,7 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 		// Create in-memory persistence for each test node
 		persistence := memory.NewMemoryPersistence()
 
-		n, err := node.NewNode(cfg, peeringDataFetcher, nodeBlockHandlers[i], cluster.MockPoller, imts, mockManager, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
+		n, err := node.NewNode(cfg, peeringDataFetcher, nodeBlockHandlers[i], cluster.MockPoller, imts, mockManager, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger, nil)
 		if err != nil {
 			t.Fatalf("Failed to create node %d: %v", i+1, err)
 		}

@@ -176,6 +176,20 @@ type Release struct {
 	ContainerPolicy ContainerPolicy `json:"container_policy"`
 }
 
+// AttestRequest represents a request to the /auth/attest endpoint for JWT attestation.
+type AttestRequest struct {
+	Version     int    `json:"version"`
+	Attestation string `json:"attestation,omitempty"` // V3: base64-encoded raw attestation
+	RSAKeyPEM   string `json:"rsaKey,omitempty"`      // V3: RSA public key PEM
+	Audience    string `json:"audience,omitempty"`     // JWT audience claim
+	ExtraData   string `json:"extra_data,omitempty"`   // base64-encoded extra data (max 1MB; go-tpm-tools hashes before binding into hardware nonce)
+}
+
+// AttestResponse contains the encrypted JWT token from the /auth/attest endpoint.
+type AttestResponse struct {
+	EncryptedToken string `json:"encryptedToken"`
+}
+
 // CommitmentBroadcast represents a broadcast of commitments with acknowledgements and merkle proofs (Phase 3)
 type CommitmentBroadcast struct {
 	FromOperatorAddress common.Address     // Operator sending the broadcast

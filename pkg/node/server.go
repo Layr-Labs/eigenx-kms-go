@@ -182,6 +182,11 @@ func NewServer(node *Node, port int) *Server {
 	// Public key endpoint for clients
 	mux.HandleFunc("/pubkey", s.handleGetCommitments)
 
+	// Attestation JWT endpoint (conditionally registered when JWT signer is configured)
+	if node != nil && node.jwtSigner != nil {
+		mux.HandleFunc("/auth/attest", rateLimited(10, 20, concurrencyLimit(10, maxBodySize(2<<20, s.handleAttestRequest))))
+	}
+
 	s.httpServer = &http.Server{
 		Addr:              fmt.Sprintf(":%d", port),
 		Handler:           mux,

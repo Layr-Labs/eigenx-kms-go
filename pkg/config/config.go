@@ -44,6 +44,11 @@ const (
 	EnvKMSEnableECDSAAttestation = "KMS_ENABLE_ECDSA_ATTESTATION"
 	EnvKMSEnableTPMAttestation   = "KMS_ENABLE_TPM_ATTESTATION"
 	EnvKMSAppAllowlist           = "KMS_APP_ALLOWLIST"
+	// Attestation JWT signing configuration (enables /auth/attest endpoint)
+	EnvKMSAttestJWTSigningKey       = "KMS_ATTEST_JWT_SIGNING_KEY"
+	EnvKMSAttestJWTExpiration       = "KMS_ATTEST_JWT_EXPIRATION"
+	EnvKMSAttestJWTSigningKeySource = "KMS_ATTEST_JWT_SIGNING_KEY_SOURCE"
+	EnvKMSAttestJWTSigningKeySecret = "KMS_ATTEST_JWT_SIGNING_KEY_SECRET"
 )
 
 type CurveType string
@@ -367,6 +372,12 @@ type KMSServerConfig struct {
 	CoreContracts *CoreContractAddresses `json:"core_contracts,omitempty"`
 
 	OperatorConfig *OperatorConfig `json:"operator_config,omitempty"`
+
+	// Attestation JWT signing configuration (enables /auth/attest endpoint when signing key is set)
+	AttestJWTSigningKeyPEM    string        `json:"attest_jwt_signing_key_pem"`
+	AttestJWTExpiration       time.Duration `json:"attest_jwt_expiration"`
+	AttestJWTSigningKeySource string        `json:"attest_jwt_signing_key_source"`
+	AttestJWTSigningKeySecret string        `json:"attest_jwt_signing_key_secret"`
 }
 
 // Validate validates the KMS server configuration
@@ -413,6 +424,18 @@ func (c *KMSServerConfig) Validate() error {
 		return fmt.Errorf("invalid persistence config: %w", err)
 	}
 
+	// Validate attestation JWT signing key source
+	switch c.AttestJWTSigningKeySource {
+	case "", "direct":
+		// valid, no additional validation needed
+	case "secret-manager":
+		if c.AttestJWTSigningKeySecret == "" {
+			return fmt.Errorf("attest-jwt-signing-key-secret is required when attest-jwt-signing-key-source is 'secret-manager'")
+		}
+	default:
+		return fmt.Errorf("unknown attest-jwt-signing-key-source: %q (must be 'direct' or 'secret-manager')", c.AttestJWTSigningKeySource)
+	}
+
 	return nil
 }
 
@@ -429,6 +452,20 @@ func GetSupportedChainIDs() []ChainId {
 func GetSupportedChainIDsString() string {
 	return fmt.Sprintf("%d (mainnet), %d (sepolia), %d (anvil)",
 		ChainId_EthereumMainnet, ChainId_EthereumSepolia, ChainId_EthereumAnvil)
+}
+
+// ResolveAttestJWTSigningKey resolves the attestation JWT signing key based on the
+// configured source. For "direct" (or empty), the PEM value is used as-is.
+// "secret-manager" is validated at config time but not yet implemented.
+func (c *KMSServerConfig) ResolveAttestJWTSigningKey() error {
+	switch c.AttestJWTSigningKeySource {
+	case "", "direct":
+		return nil
+	case "secret-manager":
+		return fmt.Errorf("secret-manager source for attestation JWT signing key is not yet supported in eigenx-kms-go")
+	default:
+		return fmt.Errorf("unknown attest-jwt-signing-key-source: %q", c.AttestJWTSigningKeySource)
+	}
 }
 
 type RemoteSignerConfig struct {

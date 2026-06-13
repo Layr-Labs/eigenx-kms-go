@@ -566,7 +566,7 @@ func TestInstanceNameParsing(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			appID, err := extractAppIDFromInstanceName(tc.instanceName)
+			appID, err := ExtractAppIDFromInstanceName(tc.instanceName)
 			if tc.expectError {
 				require.Error(t, err)
 			} else {

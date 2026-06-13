@@ -138,6 +138,7 @@ func testNodeRestart_CleanShutdown(t *testing.T) {
 		mockRegistryAddr,
 		persistence1,
 		testLogger,
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -210,6 +211,7 @@ func testNodeRestart_CleanShutdown(t *testing.T) {
 		mockRegistryAddr2,
 		persistence2,
 		testLogger,
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -308,6 +310,7 @@ func testNodeRestart_BlockBoundaryTracking(t *testing.T) {
 		mockRegistryAddr,
 		persistence1,
 		testLogger,
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -372,6 +375,7 @@ func testNodeRestart_BlockBoundaryTracking(t *testing.T) {
 		mockRegistryAddr2,
 		persistence2,
 		testLogger,
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -467,6 +471,7 @@ func testNodeRestart_MultipleKeyVersions(t *testing.T) {
 		mockRegistryAddr,
 		persistence1,
 		testLogger,
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -541,6 +546,7 @@ func testNodeRestart_MultipleKeyVersions(t *testing.T) {
 		mockRegistryAddr2,
 		persistence2,
 		testLogger,
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -654,6 +660,7 @@ func testNodeRestart_EmptyState(t *testing.T) {
 		mockRegistryAddr,
 		persistence,
 		testLogger,
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -783,6 +790,7 @@ func testNodeRestart_IncompleteSessions(t *testing.T) {
 		mockRegistryAddr,
 		persistence2,
 		testLogger,
+		nil,
 	)
 	require.NoError(t, err)
 
@@ -986,6 +994,7 @@ func testSessionPersistence_ExpirationCleanup(t *testing.T) {
 		mockRegistryAddr,
 		persistence2,
 		testLogger,
+		nil,
 	)
 	require.NoError(t, err)
 

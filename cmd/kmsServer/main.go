@@ -15,6 +15,7 @@ import (
 	"github.com/Layr-Labs/chain-indexer/pkg/contractStore/inMemoryContractStore"
 	"github.com/Layr-Labs/chain-indexer/pkg/transactionLogParser"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/auth"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/web3signer"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
@@ -224,6 +225,29 @@ This server implements:
 				Usage:   "Restrict /app/sign and /secrets to these app IDs (empty = allow all). Can be specified multiple times.",
 				EnvVars: []string{config.EnvKMSAppAllowlist},
 			},
+			// Attestation JWT signing configuration (enables /auth/attest endpoint)
+			&cli.StringFlag{
+				Name:    "attest-jwt-signing-key",
+				Usage:   "PEM-encoded RSA private key for signing attestation JWTs (enables /auth/attest endpoint)",
+				EnvVars: []string{config.EnvKMSAttestJWTSigningKey},
+			},
+			&cli.DurationFlag{
+				Name:    "attest-jwt-expiration",
+				Value:   8760 * time.Hour,
+				Usage:   "Expiration duration for attestation JWTs",
+				EnvVars: []string{config.EnvKMSAttestJWTExpiration},
+			},
+			&cli.StringFlag{
+				Name:    "attest-jwt-signing-key-source",
+				Value:   "direct",
+				Usage:   "Source for attestation JWT signing key: 'direct' (from env/flag) or 'secret-manager'",
+				EnvVars: []string{config.EnvKMSAttestJWTSigningKeySource},
+			},
+			&cli.StringFlag{
+				Name:    "attest-jwt-signing-key-secret",
+				Usage:   "GCP Secret Manager resource name for attestation JWT signing key",
+				EnvVars: []string{config.EnvKMSAttestJWTSigningKeySecret},
+			},
 		},
 		Action: runKMSServer,
 	}
@@ -253,6 +277,22 @@ func runKMSServer(c *cli.Context) error {
 	// Validate configuration
 	if err := kmsConfig.Validate(); err != nil {
 		return fmt.Errorf("invalid configuration: %w", err)
+	}
+
+	// Resolve attestation JWT signing key (e.g. from Secret Manager)
+	if err := kmsConfig.ResolveAttestJWTSigningKey(); err != nil {
+		return fmt.Errorf("failed to resolve attestation JWT signing key: %w", err)
+	}
+
+	// Create JWT signer if signing key is configured (enables /auth/attest endpoint)
+	var jwtSigner *auth.JWTSigner
+	if kmsConfig.AttestJWTSigningKeyPEM != "" {
+		var err error
+		jwtSigner, err = auth.NewJWTSigner(kmsConfig.AttestJWTSigningKeyPEM, kmsConfig.AttestJWTExpiration)
+		if err != nil {
+			return fmt.Errorf("failed to initialize JWT signer: %w", err)
+		}
+		l.Sugar().Infow("Attestation JWT signing enabled", "expiration", kmsConfig.AttestJWTExpiration)
 	}
 
 	l.Sugar().Infow("Using chain", "name", kmsConfig.ChainName, "chain_id", kmsConfig.ChainID)
@@ -543,6 +583,7 @@ func runKMSServer(c *cli.Context) error {
 		commitmentRegistryAddr,
 		nodePersistence,
 		l,
+		jwtSigner,
 	)
 	if err != nil {
 		l.Sugar().Fatalw("Failed to create node", "error", err)
@@ -639,5 +680,9 @@ func parseKMSConfig(c *cli.Context) (*config.KMSServerConfig, error) {
 		OperatorConfig:            operatorConfig,
 		PersistenceConfig:         persistenceConfig,
 		AppAllowlist:              c.StringSlice("app-allowlist"),
+		AttestJWTSigningKeyPEM:    c.String("attest-jwt-signing-key"),
+		AttestJWTExpiration:       c.Duration("attest-jwt-expiration"),
+		AttestJWTSigningKeySource: c.String("attest-jwt-signing-key-source"),
+		AttestJWTSigningKeySecret: c.String("attest-jwt-signing-key-secret"),
 	}, nil
 }
