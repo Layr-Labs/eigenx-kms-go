@@ -243,6 +243,32 @@ func (m *EigenXSNPAttestationMethod) Verify(request *AttestationRequest) (*types
 	if err != nil {
 		return nil, fmt.Errorf("parse SEV-SNP report: %w", err)
 	}
+
+	// Diagnostic: surface the launch-set / launch-measured report fields. This
+	// is how we confirm empirically that HOST_DATA is all-zero on managed-CSP
+	// (AWS) SEV-SNP — the launch chain that would set HOST_DATA=digest(initdata)
+	// lives in the QEMU/SNP_LAUNCH_FINISH path, which AWS does not use, so the
+	// field stays zero. That is why cc_init_data is bound via guest-chosen
+	// REPORT_DATA below rather than HOST_DATA. MEASUREMENT (launch-measured by
+	// AMD-SP, guest-immutable) IS populated and is the field that must be
+	// allowlisted to anchor the guest to authorized code.
+	hostData := reportProto.GetHostData()
+	hostDataZero := true
+	for _, b := range hostData {
+		if b != 0 {
+			hostDataZero = false
+			break
+		}
+	}
+	m.logger.Info("eigenx-snp report fields",
+		"app_id", request.AppID,
+		"host_data_hex", hex.EncodeToString(hostData),
+		"host_data_all_zero", hostDataZero,
+		"measurement_hex", hex.EncodeToString(reportProto.GetMeasurement()),
+		"policy", reportProto.GetPolicy(),
+		"vmpl", reportProto.GetVmpl(),
+	)
+
 	certChain, droppedCNs, err := buildCertChain(ev.CertChain)
 	if err != nil {
 		return nil, fmt.Errorf("parse cert_chain: %w", err)
