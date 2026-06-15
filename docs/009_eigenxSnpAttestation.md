@@ -183,12 +183,20 @@ silently mis-encoding — a wrong packing would produce a `pb.Report` whose
 bytes don't match the AMD-signed region, failing verification with an opaque
 signature error.
 
-The fix when Turin hosts are in scope: generation-aware packing matching
-`virtee/sev`'s `TcbVersion::encode` (Milan/Genoa legacy layout vs
-Turin/Venice layout). Until then the loud failure is the correct posture —
-the supported hosts are Milan/Genoa only (AWS m6a is Milan; Genoa shares the
-same legacy layout). The product line is read from the report's FMS, not the
-instance name, so both pack identically.
+This is gated on hardware availability, not just our choice to boot Turin.
+As of this writing AWS exposes SEV-SNP **only** on the 6a generation
+(`c6a`/`m6a`/`r6a`, AMD Milan) — `m7a` (Genoa) and newer families do not
+advertise `amd-sev-snp` in any region. So there is no Turin/Venice SEV-SNP
+instance to run on AWS today; this follow-up unblocks only when AWS ships
+Turin SEV-SNP hardware (or we run Turin elsewhere — bare metal / another CSP).
+
+The fix at that point: generation-aware packing matching `virtee/sev`'s
+`TcbVersion::encode` (Milan/Genoa legacy layout vs Turin/Venice layout),
+selected by the report's product line. Until then the loud failure is the
+correct posture — the supported (and only available) SEV-SNP hosts are
+Milan/Genoa, which share the legacy layout (AWS m6a is Milan). The product
+line is read from the report's FMS, not the instance name, so Milan and Genoa
+pack identically.
 
 ## Follow-up 3: drop the ASCII-hex REPORT_DATA constraint
 
