@@ -94,6 +94,11 @@ func TestReadRequest_MissingFields(t *testing.T) {
 // MUST come from cc_init_data, stdin overrides are ignored. See the
 // SSRF rationale in applyInitdataKMSConfig's comment.
 func TestApplyInitdataKMSConfig(t *testing.T) {
+	// These subtests exercise URL validation + the SSRF guard with a kms_url
+	// present, which is the single-operator path. Opt into it for the whole
+	// function; the gate itself is covered separately below.
+	t.Setenv(envAllowSingleOperatorKMS, "1")
+
 	t.Run("initdata populates empty request", func(t *testing.T) {
 		req := &Request{AppID: "x"}
 		cfg := &initdataKMSConfig{
@@ -171,6 +176,53 @@ func TestApplyInitdataKMSConfig(t *testing.T) {
 		err := applyInitdataKMSConfig(&Request{AppID: "x"}, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "host")
+	})
+}
+
+// TestApplyInitdataKMSConfig_SingleOperatorGate pins that the single-operator
+// (threshold-1) path a kms_url selects is OFF unless explicitly opted in,
+// while the production on-chain path (rpc_url, no kms_url) is unaffected.
+func TestApplyInitdataKMSConfig_SingleOperatorGate(t *testing.T) {
+	t.Run("kms_url without opt-in fails closed", func(t *testing.T) {
+		// env var unset (default production posture)
+		cfg := &initdataKMSConfig{
+			KMSURL: "http://kms.example", AVSAddress: "0xabc",
+		}
+		err := applyInitdataKMSConfig(&Request{AppID: "x"}, cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), envAllowSingleOperatorKMS)
+		assert.Contains(t, err.Error(), "trust downgrade")
+	})
+
+	t.Run("kms_url with opt-in succeeds", func(t *testing.T) {
+		t.Setenv(envAllowSingleOperatorKMS, "1")
+		req := &Request{AppID: "x"}
+		cfg := &initdataKMSConfig{
+			KMSURL: "http://kms.example", AVSAddress: "0xabc",
+		}
+		require.NoError(t, applyInitdataKMSConfig(req, cfg))
+		assert.Equal(t, "http://kms.example", req.KMSURL)
+	})
+
+	t.Run("production rpc_url path needs no opt-in", func(t *testing.T) {
+		// env var unset; rpc_url only, no kms_url → on-chain discovery path.
+		req := &Request{AppID: "x"}
+		cfg := &initdataKMSConfig{
+			RPCURL: "http://rpc.example", AVSAddress: "0xabc",
+		}
+		require.NoError(t, applyInitdataKMSConfig(req, cfg))
+		assert.Equal(t, "http://rpc.example", req.RPCURL)
+		assert.Empty(t, req.KMSURL)
+	})
+
+	t.Run("opt-in set to something other than 1 still fails closed", func(t *testing.T) {
+		t.Setenv(envAllowSingleOperatorKMS, "true")
+		cfg := &initdataKMSConfig{
+			KMSURL: "http://kms.example", AVSAddress: "0xabc",
+		}
+		err := applyInitdataKMSConfig(&Request{AppID: "x"}, cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), envAllowSingleOperatorKMS)
 	})
 }
 

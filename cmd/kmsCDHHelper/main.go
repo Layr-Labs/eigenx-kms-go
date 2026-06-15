@@ -66,6 +66,13 @@ import (
 // (or a real single-node KMS at a known address).
 const defaultSingleOperatorAddress = "0x0000000000000000000000000000000000000001"
 
+// envAllowSingleOperatorKMS opts the helper into the single-operator
+// (threshold-1) KMS path that a non-empty cc_init_data kms_url selects. It is
+// a deliberate trust downgrade for fakeKMS end-to-end testing and is OFF by
+// default: production AMIs leave it unset so a kms_url fails closed. fakeKMS
+// test images set it to "1". See applyInitdataKMSConfig.
+const envAllowSingleOperatorKMS = "EIGENX_ALLOW_SINGLE_OPERATOR_KMS"
+
 // singleOperatorContractCaller is a stub kmsClient.ContractCaller that
 // advertises exactly one operator at a fixed URL — used for the fakeKMS
 // e2e shim where the helper bypasses on-chain operator discovery. See
@@ -393,6 +400,23 @@ func applyInitdataKMSConfig(req *Request, cfg *initdataKMSConfig) error {
 		if err := validateHTTPURL(cfg.RPCURL, "rpc_url"); err != nil {
 			return err
 		}
+	}
+	// Gate the single-operator path. A non-empty kms_url skips on-chain
+	// operator discovery and the threshold model entirely, talking to one URL
+	// as a single advertised operator (threshold-1). That's a deliberate trust
+	// downgrade for fakeKMS end-to-end testing — it MUST NOT silently activate
+	// in production. cc_init_data is SNP-bound (a compromised control plane
+	// can't inject kms_url without invalidating attestation), but that only
+	// proves the value is authentic, not that it's *intended* — a
+	// misconfigured release could still pin a kms_url and drop the workload
+	// onto the no-threshold path. So require an explicit opt-in baked into the
+	// AMI's helper environment, mirroring fakeKMS's --snp-allow-amd-kds-fetch:
+	// test images set EIGENX_ALLOW_SINGLE_OPERATOR_KMS=1; production images
+	// don't, and a kms_url then fails loud here instead of downgrading trust.
+	if cfg.KMSURL != "" && os.Getenv(envAllowSingleOperatorKMS) != "1" {
+		return fmt.Errorf("cc_init_data sets kms_url (single-operator/threshold-1 path) "+
+			"but %s is not enabled; refusing trust downgrade — production must use on-chain "+
+			"operator discovery (set rpc_url, leave kms_url empty)", envAllowSingleOperatorKMS)
 	}
 	stdinOverridden := (req.KMSURL != "" && req.KMSURL != cfg.KMSURL) ||
 		(req.AVSAddress != "" && req.AVSAddress != cfg.AVSAddress) ||
