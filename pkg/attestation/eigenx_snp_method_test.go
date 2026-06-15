@@ -17,6 +17,7 @@ import (
 
 	"github.com/google/go-sev-guest/abi"
 	spb "github.com/google/go-sev-guest/proto/sevsnp"
+	"github.com/google/go-sev-guest/validate"
 	"github.com/google/go-sev-guest/verify"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -39,6 +40,22 @@ func (f *fakeSNPVerifier) SnpAttestation(att *spb.Attestation, opts *verify.Opti
 	return f.err
 }
 
+// fakeSNPValidator stubs validate.SnpAttestation. The real one parses signer
+// info + cert-extension TCB and needs a genuine AMD cert chain, which these
+// unit tests don't fabricate; we capture the options it was called with so we
+// can assert the policy/VMPL contract, and let tests inject a failure.
+type fakeSNPValidator struct {
+	err     error
+	gotAtt  *spb.Attestation
+	gotOpts *validate.Options
+}
+
+func (f *fakeSNPValidator) SnpAttestation(att *spb.Attestation, opts *validate.Options) error {
+	f.gotAtt = att
+	f.gotOpts = opts
+	return f.err
+}
+
 // buildSNPReport returns a 0x4A0-byte SEV-SNP report with the requested
 // REPORT_DATA. Other report fields are left zero — go-sev-guest will reject
 // signatures, but we replace the verifier with fakeSNPVerifier so it never
@@ -46,10 +63,10 @@ func (f *fakeSNPVerifier) SnpAttestation(att *spb.Attestation, opts *verify.Opti
 // so we don't pull go-sev-guest's testing package as a runtime dep.
 func buildSNPReport(reportData [64]byte) []byte {
 	r := make([]byte, abi.ReportSize)
-	binary.LittleEndian.PutUint32(r[0x00:0x04], 2)                                                // version
-	binary.LittleEndian.PutUint64(r[0x08:0x10], abi.SnpPolicyToBytes(abi.SnpPolicy{Debug: true})) // policy
-	binary.LittleEndian.PutUint32(r[0x34:0x38], 1)                                                // signature_algo (ECDSA P-384 SHA-384)
-	copy(r[0x50:0x90], reportData[:])                                                             // report_data
+	binary.LittleEndian.PutUint32(r[0x00:0x04], 2)                                              // version
+	binary.LittleEndian.PutUint64(r[0x08:0x10], abi.SnpPolicyToBytes(abi.SnpPolicy{SMT: true})) // policy (Debug=false, as real AWS m6a reports)
+	binary.LittleEndian.PutUint32(r[0x34:0x38], 1)                                              // signature_algo (ECDSA P-384 SHA-384)
+	copy(r[0x50:0x90], reportData[:])                                                           // report_data
 	return r
 }
 
@@ -126,10 +143,19 @@ allow {
 
 func newSNPMethodWithFake(t *testing.T, fake *fakeSNPVerifier) *EigenXSNPAttestationMethod {
 	t.Helper()
+	m, _ := newSNPMethodWithFakes(t, fake, &fakeSNPValidator{})
+	return m
+}
+
+// newSNPMethodWithFakes wires both a fake verifier and a fake validator and
+// returns the validator too, so tests can assert the validate.Options it
+// received (Debug=false, VMPL=0) and inject validation failures.
+func newSNPMethodWithFakes(t *testing.T, fv *fakeSNPVerifier, vd *fakeSNPValidator) (*EigenXSNPAttestationMethod, *fakeSNPValidator) {
+	t.Helper()
 	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelError}))
 	// Pass nil options — they're forwarded to fakeSNPVerifier and inspected,
 	// not used. NewEigenXSNPAttestationMethod's default fills them in.
-	return newEigenXSNPMethod(fake, nil, logger)
+	return newEigenXSNPMethod(fv, vd, nil, logger), vd
 }
 
 func TestEigenXSNPMethodName(t *testing.T) {
@@ -269,6 +295,89 @@ func TestEigenXSNPVerify_AMDChainFailure(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "AMD SEV-SNP attestation verification failed")
 	assert.Contains(t, err.Error(), "synthetic VCEK chain failure")
+}
+
+// helper: a fully-valid request whose REPORT_DATA/cc_init_data line up, used by
+// the validate-step tests below.
+func validSNPRequest(t *testing.T) (*AttestationRequest, []byte) {
+	t.Helper()
+	rsaKey := []byte("rsa")
+	digestHex := "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+	ccInitData := validInitDataTOML(t, "ghcr.io/x/y", digestHex)
+	rd := expectedReportData(rsaKey, nil, ccInitData)
+	report := buildSNPReport(rd)
+	evidence := buildEvidenceJSON(t, report, nil)
+	return &AttestationRequest{
+		AppID:        "app",
+		Attestation:  b64(evidence),
+		RSAPubKeyTmp: rsaKey,
+		CCInitData:   ccInitData,
+	}, report
+}
+
+// TestEigenXSNPVerify_ValidatePolicyContract pins that the report-field
+// validation step runs with the hardened policy: DEBUG forbidden + VMPL 0.
+// (Finding 16/19: verify.SnpAttestation alone never checks these.)
+func TestEigenXSNPVerify_ValidatePolicyContract(t *testing.T) {
+	req, _ := validSNPRequest(t)
+	m, vd := newSNPMethodWithFakes(t, &fakeSNPVerifier{}, &fakeSNPValidator{})
+
+	_, err := m.Verify(req)
+	require.NoError(t, err)
+
+	require.NotNil(t, vd.gotOpts, "validate.SnpAttestation must be invoked")
+	assert.False(t, vd.gotOpts.GuestPolicy.Debug, "DEBUG must be forbidden (max policy Debug=false)")
+	assert.False(t, vd.gotOpts.GuestPolicy.MigrateMA, "migration agent must be forbidden")
+	require.NotNil(t, vd.gotOpts.VMPL, "VMPL must be pinned")
+	assert.Equal(t, 0, *vd.gotOpts.VMPL, "VMPL must be pinned to 0")
+}
+
+// TestEigenXSNPVerify_ValidationFailureRejected ensures a field-validation
+// failure (e.g. the real validator rejecting a DEBUG=1 guest) fails the whole
+// Verify — the report is genuine AMD silicon but not an authorized guest.
+func TestEigenXSNPVerify_ValidationFailureRejected(t *testing.T) {
+	req, _ := validSNPRequest(t)
+	m, _ := newSNPMethodWithFakes(t, &fakeSNPVerifier{},
+		&fakeSNPValidator{err: fmt.Errorf("found unauthorized debug capability")})
+
+	_, err := m.Verify(req)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "report field validation failed")
+	assert.Contains(t, err.Error(), "debug")
+}
+
+// TestEigenXSNPVerify_MeasurementAllowlist covers the MEASUREMENT anchor: a
+// report whose measurement isn't allowlisted is rejected; one that is passes.
+func TestEigenXSNPVerify_MeasurementAllowlist(t *testing.T) {
+	req, report := validSNPRequest(t)
+	// MEASUREMENT lives at 0x90..0xC0 (48 bytes). buildSNPReport leaves it zero.
+	reportMeasurement := make([]byte, abi.MeasurementSize) // all-zero, matches fixture
+
+	t.Run("mismatch rejected", func(t *testing.T) {
+		m := newSNPMethodWithFake(t, &fakeSNPVerifier{})
+		other := make([]byte, abi.MeasurementSize)
+		other[0] = 0xAA // not the report's (zero) measurement
+		require.NoError(t, m.SetMeasurementAllowlist([][]byte{other}))
+		_, err := m.Verify(req)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "not in the allowlist")
+	})
+
+	t.Run("match accepted", func(t *testing.T) {
+		m := newSNPMethodWithFake(t, &fakeSNPVerifier{})
+		require.NoError(t, m.SetMeasurementAllowlist([][]byte{reportMeasurement}))
+		_, err := m.Verify(req)
+		require.NoError(t, err)
+	})
+
+	_ = report
+}
+
+func TestSetMeasurementAllowlist_RejectsWrongSize(t *testing.T) {
+	m := newSNPMethodWithFake(t, &fakeSNPVerifier{})
+	err := m.SetMeasurementAllowlist([][]byte{make([]byte, 47)})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "48")
 }
 
 func TestEigenXSNPVerify_NonceMismatch(t *testing.T) {

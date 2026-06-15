@@ -20,6 +20,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/google/go-sev-guest/abi"
 	spb "github.com/google/go-sev-guest/proto/sevsnp"
+	"github.com/google/go-sev-guest/validate"
 	"github.com/google/go-sev-guest/verify"
 	"github.com/google/go-sev-guest/verify/trust"
 	tomlv2 "github.com/pelletier/go-toml/v2"
@@ -66,6 +67,23 @@ type SnpAttestationVerifier interface {
 // validating the AMD chain and the report's ECDSA-P384/SHA-384 signature.
 type snpAttestationVerifierFunc func(attestation *spb.Attestation, options *verify.Options) error
 
+// SnpAttestationValidator abstracts the go-sev-guest validate.SnpAttestation
+// entrypoint that checks report FIELDS (guest policy, VMPL, measurement, TCB)
+// against expectations. Separate interface from the verifier so tests can stub
+// it: validate.SnpAttestation parses signer info + cert-extension TCB and so
+// needs a real AMD cert chain, which unit tests don't fabricate. Production
+// wires the real validate.SnpAttestation; the policy/VMPL/measurement contract
+// it enforces is exercised by the e2e and by go-sev-guest's own tests.
+type SnpAttestationValidator interface {
+	SnpAttestation(attestation *spb.Attestation, options *validate.Options) error
+}
+
+type snpAttestationValidatorFunc func(attestation *spb.Attestation, options *validate.Options) error
+
+func (f snpAttestationValidatorFunc) SnpAttestation(a *spb.Attestation, o *validate.Options) error {
+	return f(a, o)
+}
+
 func (f snpAttestationVerifierFunc) SnpAttestation(a *spb.Attestation, o *verify.Options) error {
 	return f(a, o)
 }
@@ -84,9 +102,24 @@ func (f snpAttestationVerifierFunc) SnpAttestation(a *spb.Attestation, o *verify
 //     claims.ImageDigest = "sha256:<hex>" for the existing release-match check
 //     in pkg/node/handlers.go.
 type EigenXSNPAttestationMethod struct {
-	verifier SnpAttestationVerifier
-	options  *verify.Options
-	logger   *slog.Logger
+	verifier  SnpAttestationVerifier
+	validator SnpAttestationValidator
+	options   *verify.Options
+	// validateOptions pins report-field expectations enforced AFTER the AMD
+	// chain+signature check: max guest policy (DEBUG forbidden), VMPL, and —
+	// when set — the MEASUREMENT allowlist. verify.SnpAttestation proves the
+	// report is genuine AMD silicon; validate.SnpAttestation proves it's the
+	// guest we authorized. Both are required: without the policy/VMPL/measurement
+	// checks, any genuine SEV-SNP guest (incl. an attacker's own VM running
+	// arbitrary code, or a DEBUG=1 guest whose memory the host can read) passes.
+	validateOptions *validate.Options
+	// measurementAllowlist holds the accepted podVM launch measurements (48-byte
+	// MEASUREMENT values). Empty means MEASUREMENT is NOT yet enforced — the
+	// method logs a loud warning per request in that case, because without it
+	// the cc_init_data carried in guest-chosen REPORT_DATA is unanchored. See
+	// docs/010_hostDataAndReportData.md.
+	measurementAllowlist [][]byte
+	logger               *slog.Logger
 }
 
 // NewEigenXSNPAttestationMethod constructs the eigenx-snp method using the
@@ -101,12 +134,15 @@ type EigenXSNPAttestationMethod struct {
 // timeout. Operators that genuinely need KDS lookup (e.g. testing) can pass
 // an Options with DisableCertFetching=false explicitly.
 func NewEigenXSNPAttestationMethod(options *verify.Options, logger *slog.Logger) *EigenXSNPAttestationMethod {
-	return newEigenXSNPMethod(snpAttestationVerifierFunc(verify.SnpAttestation), options, logger)
+	return newEigenXSNPMethod(
+		snpAttestationVerifierFunc(verify.SnpAttestation),
+		snpAttestationValidatorFunc(validate.SnpAttestation),
+		options, logger)
 }
 
 // newEigenXSNPMethod is the internal constructor used by tests to inject a
 // fake verifier. Production callers should use NewEigenXSNPAttestationMethod.
-func newEigenXSNPMethod(v SnpAttestationVerifier, options *verify.Options, logger *slog.Logger) *EigenXSNPAttestationMethod {
+func newEigenXSNPMethod(v SnpAttestationVerifier, vd SnpAttestationValidator, options *verify.Options, logger *slog.Logger) *EigenXSNPAttestationMethod {
 	if options == nil {
 		options = verify.DefaultOptions()
 		options.DisableCertFetching = true
@@ -124,10 +160,66 @@ func newEigenXSNPMethod(v SnpAttestationVerifier, options *verify.Options, logge
 		options.TrustedRoots = embeddedVLEKTrustedRoots(logger)
 	}
 	return &EigenXSNPAttestationMethod{
-		verifier: v,
-		options:  options,
-		logger:   logger.With("component", "eigenx_snp_attestation"),
+		verifier:        v,
+		validator:       vd,
+		options:         options,
+		validateOptions: defaultValidateOptions(),
+		logger:          logger.With("component", "eigenx_snp_attestation"),
 	}
+}
+
+// vmpl0 is the privilege level the workload must run at. Addressable so it can
+// be assigned to validate.Options.VMPL (a *int).
+var vmpl0 = 0
+
+// defaultValidateOptions is the report-field policy enforced after the AMD
+// chain check. GuestPolicy is a *maximum*: a report whose policy exceeds any
+// of these (e.g. Debug=true) is rejected. We forbid DEBUG (a debuggable guest
+// lets the host read guest memory and exfiltrate the recovered app_private_key)
+// and MIGRATE_MA / CXL (unneeded capabilities), while permitting SMT (set on
+// AWS m6a) and leaving the ABI version floor at 0.0. VMPL is pinned to 0.
+// Measurement is intentionally left unset here and populated separately via
+// SetMeasurementAllowlist once a reproducible podVM measurement is available.
+func defaultValidateOptions() *validate.Options {
+	return &validate.Options{
+		GuestPolicy: abi.SnpPolicy{
+			Debug:     false, // forbid host-debuggable guests (memory readable → key leak)
+			MigrateMA: false, // no migration agent
+			SMT:       true,  // permitted: AWS m6a reports SMT=1
+		},
+		VMPL: &vmpl0,
+	}
+}
+
+// SetMeasurementAllowlist enables MEASUREMENT enforcement against the given set
+// of accepted 48-byte podVM launch measurements. Until this is called the
+// method runs without a measurement anchor and warns on every request — see
+// the security note on measurementAllowlist. Each entry must be 48 bytes.
+func (m *EigenXSNPAttestationMethod) SetMeasurementAllowlist(measurements [][]byte) error {
+	for i, ms := range measurements {
+		if len(ms) != abi.MeasurementSize {
+			return fmt.Errorf("measurement[%d] is %d bytes, want %d", i, len(ms), abi.MeasurementSize)
+		}
+	}
+	m.measurementAllowlist = measurements
+	return nil
+}
+
+// checkMeasurementAllowed enforces set-membership of the report's MEASUREMENT
+// against the allowlist (constant-time per candidate). We do this here rather
+// than via validate.Options.Measurement because that field accepts only a
+// single expected value, whereas a fleet may run more than one authorized
+// podVM measurement (e.g. during an AMI rollout). Caller guarantees the
+// allowlist is non-empty.
+func (m *EigenXSNPAttestationMethod) checkMeasurementAllowed(measurement []byte) error {
+	for _, allowed := range m.measurementAllowlist {
+		if subtle.ConstantTimeCompare(measurement, allowed) == 1 {
+			return nil
+		}
+	}
+	return fmt.Errorf("report MEASUREMENT %s is not in the allowlist (%d entries) — "+
+		"guest is not running an authorized podVM image",
+		hex.EncodeToString(measurement), len(m.measurementAllowlist))
 }
 
 // embeddedVLEKTrustedRoots loads go-sev-guest's `//go:embed`'d ASVK+ARK
@@ -287,6 +379,31 @@ func (m *EigenXSNPAttestationMethod) Verify(request *AttestationRequest) (*types
 		return nil, fmt.Errorf("AMD SEV-SNP attestation verification failed: %w", err)
 	}
 
+	// Step 2b: validate report FIELDS against policy. verify.SnpAttestation
+	// above proved the report is genuine AMD-signed silicon; this proves it's a
+	// guest we authorized. Enforces the max guest policy (DEBUG forbidden — a
+	// debuggable guest's memory is host-readable, leaking the recovered
+	// app_private_key), the VMPL pin, and — when configured — the MEASUREMENT
+	// allowlist. Without these, ANY genuine SEV-SNP box (e.g. an attacker's own
+	// VM running arbitrary code) passes. See docs/010_hostDataAndReportData.md.
+	vopts := *m.validateOptions // shallow copy; per-request Measurement set below
+	if len(m.measurementAllowlist) == 0 {
+		// No measurement anchor yet: cc_init_data rides in guest-chosen
+		// REPORT_DATA, so without MEASUREMENT the workload-identity binding is
+		// unauthenticated. Fail-open is a deliberate, LOUD interim posture until
+		// the reproducible podVM measurement pipeline lands; never silent.
+		m.logger.Warn("MEASUREMENT not enforced — workload identity is UNANCHORED; "+
+			"set a measurement allowlist (docs/010, PR #105 review)",
+			"app_id", request.AppID,
+			"measurement_hex", hex.EncodeToString(reportProto.GetMeasurement()),
+		)
+	} else if err := m.checkMeasurementAllowed(reportProto.GetMeasurement()); err != nil {
+		return nil, err
+	}
+	if err := m.validator.SnpAttestation(att, &vopts); err != nil {
+		return nil, fmt.Errorf("SEV-SNP report field validation failed (policy/VMPL): %w", err)
+	}
+
 	// Step 3: enforce REPORT_DATA bindings. AMD's REPORT_DATA is a 64-byte
 	// slot; we encode it as 64 ASCII hex characters split in half to keep the
 	// content UTF-8 safe (see cmd/kmsCDHHelper/main.go::buildReportData for
@@ -308,10 +425,15 @@ func (m *EigenXSNPAttestationMethod) Verify(request *AttestationRequest) (*types
 	nonceFull := nonceHash.Sum(nil)
 	nonceLowerHex := hex.EncodeToString(nonceFull[:16])
 
-	// Upper half: SHA-384(cc_init_data)[:16] hex-encoded. The full 32-byte
-	// SHA-384 still binds cc_init_data to SEV-SNP's HOST_DATA upper field
-	// (see go-sev-guest invariants); the hex restriction here is purely
-	// about REPORT_DATA wire transport via api-server-rest.
+	// Upper half: SHA-384(cc_init_data)[:16] hex-encoded, placed in the upper
+	// 32 bytes of the guest-chosen REPORT_DATA. NOTE: this binds cc_init_data
+	// into REPORT_DATA, NOT HOST_DATA — HOST_DATA is all-zero on managed-CSP
+	// (AWS) SEV-SNP because the launch path that would set it (QEMU/
+	// SNP_LAUNCH_FINISH) isn't used there (docs/010_hostDataAndReportData.md).
+	// Because REPORT_DATA is guest-chosen, this binding is only trustworthy
+	// once MEASUREMENT is allowlisted (step 2b) — that's what proves the guest
+	// that chose this REPORT_DATA is our authorized podVM. The hex restriction
+	// is purely about REPORT_DATA wire transport via api-server-rest.
 	initDigest := sha512.Sum384(request.CCInitData)
 	upperHex := hex.EncodeToString(initDigest[:16])
 
@@ -324,9 +446,14 @@ func (m *EigenXSNPAttestationMethod) Verify(request *AttestationRequest) (*types
 	}
 
 	// Step 4: parse cc_init_data TOML and extract registry+digest from the
-	// embedded rego. The rego is the workload-identity policy that CoCo's
-	// agent enforces on the running container; matching the OCI ref here is
-	// what lets the KMS link the AMD-attested HOST_DATA to a concrete image.
+	// embedded rego. The rego is the workload-identity policy that CoCo's agent
+	// enforces on the running container; matching the OCI ref here links the
+	// attested cc_init_data to a concrete image. This link is only as strong as
+	// the MEASUREMENT check (step 2b): the rego is scraped from cc_init_data,
+	// which is self-asserted by the guest via REPORT_DATA — only MEASUREMENT
+	// proves the guest actually runs (and enforces) this policy. See PR #105
+	// review (finding M1) and docs/009 Follow-up 1 for the structured-channel
+	// alternative to rego-scraping.
 	registry, digestHex, err := parseInitDataPolicy(request.CCInitData)
 	if err != nil {
 		return nil, fmt.Errorf("parse cc_init_data: %w", err)

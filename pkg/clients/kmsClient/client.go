@@ -905,9 +905,12 @@ func (c *Client) GetPublicKeyForApp(appID string) (*types.G1Point, *types.G2Poin
 
 // createEigenXSNPAttestationRequest creates a SecretsRequestV1 carrying raw
 // AMD SEV-SNP evidence collected from the in-pod Attestation Agent (AA). The
-// KMS server-side eigenx-snp method verifies the AMD certificate chain and
-// the SEV-SNP report signature directly, then enforces nonce binding and
-// matches HOST_DATA against SHA-384(cc_init_data) for workload identity.
+// KMS server-side eigenx-snp method verifies the AMD certificate chain and the
+// SEV-SNP report signature, validates report fields (guest policy/VMPL, and —
+// once configured — the MEASUREMENT allowlist), then enforces the nonce +
+// cc_init_data binding via the guest-chosen REPORT_DATA field. NOTE: it does
+// NOT use HOST_DATA — that field is all-zero on managed-CSP (AWS) SEV-SNP; see
+// docs/010_hostDataAndReportData.md.
 //
 // Wire encoding note: Go's encoding/json marshals []byte as base64, so
 // SecretsRequestV1.Attestation (the raw AA evidence JSON bytes) and CCInitData
