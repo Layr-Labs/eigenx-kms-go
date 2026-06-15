@@ -138,13 +138,95 @@ image-identity anchor. The `SetMeasurementAllowlist` plumbing (shipped) is
 retained for that genuineness use and for non-AWS platforms, but it must not be
 mistaken for image attestation on AWS.
 
-### What would actually anchor image identity on AWS
+### Why the GCP TDX demo (coco-peerpods-demo) anchored image identity and we can't
 
-The established Confidential Containers path on AWS is **SEV-SNP + vTPM
-(measured boot)**: the SNP report roots a vTPM, and kernel/initrd/rootfs are
-bound via vTPM PCRs. That is a materially larger architecture than this method
-currently implements and is the real remediation for the PR #105 critical
-finding on AWS. Tracked as an open design item — see PR #105 review thread.
+A natural objection: a sibling project (`coco-peerpods-demo`) ran attested
+CoCo peer-pods "nicely" with image pinning. It did — but on a different
+platform **and TEE**, and via a register SEV-SNP does not have. The distinction
+matters and a common misconception (that the *boot measurement* covers the
+image) is wrong on **both** platforms:
+
+- That demo is **GCP + Intel TDX**, not AWS + AMD SEV-SNP.
+- **TDX MRTD does NOT cover the app image** — same as AWS MEASUREMENT. The
+  demo's own data proves it: MRTD stayed `feb748…` **unchanged across coordinator
+  versions v6→v21** because "base TDVF+kernel identical" (its CLAUDE.md). MRTD
+  measures the TD virtual firmware + kernel base; the coordinator/agents live in
+  the rootfs, which MRTD does not cover. So "the boot measurement folds in the
+  whole image" is false for TDX too.
+- What anchored the **image** there was **RTMR[3]** — a TDX *runtime-extendable*
+  measurement register. The CoCo launcher extends RTMR[3] with the pulled
+  container's digest (`RTMR_new = SHA384(RTMR_old || SHA384(content))`), and the
+  verifier pins RTMR[3]. Image identity came from RTMR[3], not MRTD.
+- **SEV-SNP has no RTMR equivalent** — there is no runtime-extendable measurement
+  register in the SNP report. So even the mechanism that worked on TDX is
+  unavailable to us.
+
+Corrected comparison:
+
+| | GCP TDX (demo) | AWS SEV-SNP (this method) |
+|---|---|---|
+| Boot-base measurement | MRTD = TDVF + kernel | MEASUREMENT = AWS OVMF + vCPU |
+| Boot measurement covers app image? | **No** (MRTD unchanged v6→v21) | No (AMI chain-loaded post-launch) |
+| Runtime image-digest measurement | **RTMR[3]** (extendable) ✅ | **none** ❌ |
+| On-report image-identity anchor | RTMR[3] | nothing |
+| HOST_DATA usable | (TDX uses `mr_config_id`) | no — all-zero on AWS |
+
+The honest takeaway: the limitation is not "SEV-SNP vs TDX" alone — it's that
+SEV-SNP lacks runtime measurement registers, and AWS's managed launch exposes
+no image-covering field. The GCP demo worked because TDX *has* RTMRs and the
+launcher used them. The eigenx-snp method on AWS has neither an image-covering
+boot measurement nor RTMRs.
+
+### Every image-identity anchor on AWS SEV-SNP — exhaustively checked
+
+We investigated whether *any* mechanism can prove "the guest is running our
+authorized podVM image" from the SNP report on AWS. All are closed. The matrix,
+with how each was established:
+
+| Anchor mechanism | Works on AWS? | How established |
+|---|---|---|
+| MEASUREMENT covers the image | ❌ | EMPIRICAL: two AMIs, different baked binaries, same shape → identical measurement `507e82d2…`. + AWS docs/`sev-snp-measure --vmm-type=ec2` (OVMF+vCPU only, no kernel/initrd). |
+| HOST_DATA = digest(cc_init_data) | ❌ | EMPIRICAL: live report HOST_DATA = 32 zero bytes. AWS launch path sets no host-data (QEMU-only feature). |
+| RTMR runtime-extension (TDX-style) | ❌ | VERIFIED: SEV-SNP report proto has no RTMR/PCR fields — the register type does not exist in SNP. |
+| vTPM rooted in the SNP report | ❌ | VERIFIED: NitroTPM is Nitro-host-provided (outside the SNP boundary); AWS has no paravisor; no `aws_snp_vtpm` verifier in Trustee; CAA `TEE_PLATFORM` has no AWS option; AWS provider sets only `AmdSevSnp=enabled`. (Azure's `az_snp_vtpm` works because its paravisor binds the vTPM AK into REPORT_DATA — AWS has no equivalent.) |
+| Custom OVMF / UefiData / Secure Boot in report | ❌ | EMPIRICAL: decoded our live podVM's UEFI varstore with AWS's `python-uefivars` — **no PK enrolled, Secure Boot is OFF**. + OVMF is AWS-fixed (only reproducible, not replaceable); the varstore is not an input to AWS's documented measurement reproduction, so changing it would not move MEASUREMENT (strong inference). |
+| SNP ID block (id_key_digest/author_key_digest) | ❌ | VERIFIED: EC2 exposes no launch-config/ID-block API — only `CpuOptions.AmdSevSnp=enabled`. |
+
+The trust chain on AWS SNP is **hardware → AWS OVMF, and stops there.** It cannot
+be extended to cover our image because (a) nothing we control enters the launch
+measurement, (b) there is no report-bound register (no RTMR/PCR) to record an
+extension, and (c) the one local boot-gating mechanism that could help (UEFI
+Secure Boot) is both disabled in our image and unmeasured anyway.
+
+### What it would actually take
+
+Image attestation requires a platform that measures the image *into the
+attestation report*. None of these is achievable by code we write on AWS:
+
+1. **GCP TDX** — MRTD (firmware/kernel) + RTMR[3] (runtime container-digest
+   extension). This is the path `coco-peerpods-demo` used successfully, and our
+   existing `tpm` attestation method already supports `PlatformIntelTDX` /
+   `PlatformGCPShieldedVM`.
+2. **Azure CVM** — SEV-SNP + paravisor-bound vTPM (Trustee `az_snp_vtpm`).
+3. **Bare-metal SEV-SNP** — you run the QEMU/launch stack, so measured direct
+   boot folds kernel/initrd/cmdline into MEASUREMENT and/or you set HOST_DATA
+   and an ID block.
+4. **AWS exposing** a measured paravisor+bound vTPM, an image-covering launch
+   measurement, or a report-bound NitroTPM — none exist today.
+
+### Consequence for eigenx-snp on AWS (the honest scope)
+
+On AWS today, the eigenx-snp method proves: *genuine AMD SEV-SNP silicon on AWS,
+running AWS's OVMF, with DEBUG off and VMPL 0* (the Tier-1 `validate` checks),
+and that the request's `rsa_pubkey`/`cc_init_data` are bound into REPORT_DATA.
+It does **not** prove the guest is running the authorized podVM image — the
+cc_init_data (and the image digest scraped from its policy.rego) is
+self-asserted by the guest via guest-chosen REPORT_DATA, with no measured
+anchor. This is the open item from the PR #105 review (finding M1 / the
+critical): it is **not closeable on AWS** by any in-report mechanism, only by a
+platform that measures the image (above). The `SetMeasurementAllowlist` plumbing
+is retained for firmware-genuineness and for those platforms, but is not image
+attestation on AWS.
 
 ## References
 
@@ -162,8 +244,38 @@ finding on AWS. Tracked as an open design item — see PR #105 review thread.
   guest memory + vCPU state): `docs.aws.amazon.com/AWSEC2/latest/UserGuide/sev-snp.html`,
   `.../snp-attestation.html`. `aws/uefi` (reproducible OVMF). `virtee/sev-snp-measure`
   PR #13 (AWS EC2 measurement: OVMF + vCPUs only, no kernel/initrd input).
-- Confidential Containers Trustee #699 — SEV-SNP+vTPM mode in use on AWS m6a
-  (the image-identity anchor AWS deployments actually use).
+- vTPM: Trustee `deps/verifier/src/az_snp_vtpm` binds the vTPM AK into the SNP
+  report's REPORT_DATA (Azure paravisor) — the construction that makes SNP+vTPM
+  image attestation work, and which AWS lacks. Trustee verifier list has no
+  `aws_snp_vtpm`. AWS NitroTPM is Nitro-System-provided
+  (`docs.aws.amazon.com/AWSEC2/latest/UserGuide/nitrotpm.html`) — outside the
+  SNP boundary, with no documented binding to the SNP report.
+- CAA `src/cloud-api-adaptor/Makefile.defaults`: `TEE_PLATFORM` ∈
+  {none, az-cvm-vtpm, tdx, se, cca} — no AWS/SNP-vTPM platform. Azure provider
+  sets `SecurityType: ConfidentialVM` + `VTpmEnabled: true`; AWS provider sets
+  none. CAA `podvm-mkosi/README.md`: measured boot + immutable rootfs are a
+  stated future goal, not current.
+- UEFI Secure Boot: EMPIRICAL — decoding the live podVM's UEFI varstore with
+  awslabs/`python-uefivars` reports "No PK … SecureBoot will not be enabled"
+  (no PK/KEK/db/dbx enrolled). AWS `uefi-variables` / `create-ami-with-uefi-
+  secure-boot` docs (UefiData is the NV varstore set at register-image); OVMF
+  is AWS-fixed per `aws/uefi`. EC2 SNP launch exposes only `AmdSevSnp=enabled`
+  (`snp-work-launch.html`) — no ID-block API.
+- coco-peerpods-demo (GCP TDX): MRTD covers TDVF+kernel only (unchanged across
+  coordinator v6→v21 per its CLAUDE.md); image identity bound via RTMR[3]
+  runtime extension (its docs/coco-kata-overview.md). Demonstrates the
+  TDX-RTMR mechanism SEV-SNP lacks.
 - This repo: `cmd/kmsCDHHelper/main.go` (`buildReportData` — cc_init_data →
   REPORT_DATA[32:64]); `pkg/attestation/eigenx_snp_method.go` (`Verify` — checks
-  REPORT_DATA, logs report fields).
+  REPORT_DATA, runs validate.SnpAttestation, logs report fields).
+
+## Verification status of claims in this doc
+
+- VERIFIED EMPIRICALLY (our infra): MEASUREMENT identical across two
+  different-content AMIs; HOST_DATA all-zero; UEFI Secure Boot off (no PK).
+- VERIFIED IN SOURCE: no RTMR in SNP proto; CAA TEE_PLATFORM/provider wiring;
+  az_snp_vtpm binding; AWS docs on OVMF/measurement/launch options.
+- STRONG INFERENCE (not a single vendor sentence): AWS never states "HOST_DATA
+  is unsettable" or "UefiData does not affect MEASUREMENT" or "NitroTPM is
+  unbound from the SNP report" verbatim — each is composed from the
+  reproduction recipe + threat model + empirical results. Flagged as such.
