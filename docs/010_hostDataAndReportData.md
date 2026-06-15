@@ -87,8 +87,9 @@ vmpl               = 0
 Readout:
 - **HOST_DATA = 32 zero bytes** — confirms the claim. cc_init_data cannot be
   anchored via HOST_DATA on this platform.
-- **MEASUREMENT = non-zero 48-byte launch digest** — present and usable; this is
-  the field that must be allowlisted to anchor the guest to authorized code.
+- **MEASUREMENT = non-zero 48-byte launch digest** — present, but see the
+  critical caveat below: on AWS it does NOT bind the AMI content, so it cannot
+  anchor "our image."
 - **policy = 0x2030000**: DEBUG (bit 19) = 0, SMT (bit 16) = 1,
   PAGE_SWAP_DISABLE (bit 25) = 1 on a legitimately-launched pod. Note DEBUG=0
   here is *this* pod's choice — an attacker can launch with DEBUG=1, so it must
@@ -105,14 +106,45 @@ logs `host_data_hex` / `host_data_all_zero` / `measurement_hex` / `policy` /
 Because the cc_init_data digest rides in guest-chosen REPORT_DATA (not in a
 launch-anchored field), the REPORT_DATA match alone proves only *"some genuine
 SEV-SNP guest chose this cc_init_data"* — not *"our authorized podVM did."* The
-missing link is supplied by **MEASUREMENT**: pinning the report's MEASUREMENT to
-an allowlist of authorized podVM launch digests proves the guest is running our
-image, which is the trusted kata/helper stack that honestly reflects the real
-cc_init_data into REPORT_DATA and enforces `policy.rego`.
+honest conclusion: today the method authenticates *"real AMD SEV-SNP silicon on
+AWS"* but **not** *"authorized code."* DEBUG==0 / VMPL pinning (shipped) close
+the debug-leak and privilege holes, but they do not anchor image identity.
 
-Until MEASUREMENT (and DEBUG==0 / VMPL) are enforced, the method authenticates
-"real AMD silicon" but not "authorized code" — see the PR #105 review findings
-and the hardening work tracked alongside Follow-up 1.
+### MEASUREMENT does NOT anchor the image on AWS (verified)
+
+The intuitive fix — allowlist the report's MEASUREMENT — **does not work on
+AWS**, established two ways:
+
+1. **Empirical.** Two podVM AMIs with genuinely different baked content
+   (different `eigenx-cdh-helper` binaries: `ami-0897315fa1dd04d8d` vs
+   `ami-0d13ceeb180a1f6a1`), same instance type (m6a.large, 2 vCPU), same
+   region, produced the **identical** MEASUREMENT
+   `507e82d27ea5b951dd765a3eb31ba5f582673b301d6983ded482d3feb066cb68979f1f11fede97687374d3a25002a15f`.
+
+2. **Architectural (AWS docs + AWS-authored tooling).** AWS SEV-SNP measures
+   only AWS's OVMF firmware + the initial vCPU state (VMSAs). OVMF chain-loads
+   the AMI's bootloader/kernel/rootfs from EBS **after** `SNP_LAUNCH_FINISH`, so
+   AMI content is outside the measured window. `sev-snp-measure --vmm-type=ec2`
+   (authored by AWS) takes **no `--kernel/--initrd`** input — only OVMF + vCPU
+   count. So MEASUREMENT is firmware+vCPU only, identical across all AMIs on a
+   given OVMF version / instance shape. (AWS EC2 SEV-SNP docs; `aws/uefi`;
+   `virtee/sev-snp-measure` PR #13.)
+
+**Therefore:** allowlisting MEASUREMENT on AWS gates only on *"genuine AMD SNP +
+AWS OVMF version + vCPU count"* — a value every AWS customer on that shape
+shares. An attacker running arbitrary code in their own AWS m6a guest produces
+the same MEASUREMENT. It is a useful firmware-genuineness check, **not** an
+image-identity anchor. The `SetMeasurementAllowlist` plumbing (shipped) is
+retained for that genuineness use and for non-AWS platforms, but it must not be
+mistaken for image attestation on AWS.
+
+### What would actually anchor image identity on AWS
+
+The established Confidential Containers path on AWS is **SEV-SNP + vTPM
+(measured boot)**: the SNP report roots a vTPM, and kernel/initrd/rootfs are
+bound via vTPM PCRs. That is a materially larger architecture than this method
+currently implements and is the real remediation for the PR #105 critical
+finding on AWS. Tracked as an open design item — see PR #105 review thread.
 
 ## References
 
@@ -126,6 +158,12 @@ and the hardening work tracked alongside Follow-up 1.
   digest = hash(initdata).
 - cloud-api-adaptor `src/cloud-providers/aws/provider.go`: native `RunInstances` +
   `CpuOptions.AmdSevSnp=Enabled`, no host-data plumbing.
+- AWS EC2 SEV-SNP docs (OVMF runs before / loads the AMI; MEASUREMENT = initial
+  guest memory + vCPU state): `docs.aws.amazon.com/AWSEC2/latest/UserGuide/sev-snp.html`,
+  `.../snp-attestation.html`. `aws/uefi` (reproducible OVMF). `virtee/sev-snp-measure`
+  PR #13 (AWS EC2 measurement: OVMF + vCPUs only, no kernel/initrd input).
+- Confidential Containers Trustee #699 — SEV-SNP+vTPM mode in use on AWS m6a
+  (the image-identity anchor AWS deployments actually use).
 - This repo: `cmd/kmsCDHHelper/main.go` (`buildReportData` — cc_init_data →
   REPORT_DATA[32:64]); `pkg/attestation/eigenx_snp_method.go` (`Verify` — checks
   REPORT_DATA, logs report fields).
