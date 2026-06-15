@@ -186,7 +186,9 @@ signature error.
 The fix when Turin hosts are in scope: generation-aware packing matching
 `virtee/sev`'s `TcbVersion::encode` (Milan/Genoa legacy layout vs
 Turin/Venice layout). Until then the loud failure is the correct posture —
-the supported hosts are Milan/Genoa (e.g. AWS m6a) only.
+the supported hosts are Milan/Genoa only (AWS m6a is Milan; Genoa shares the
+same legacy layout). The product line is read from the report's FMS, not the
+instance name, so both pack identically.
 
 ## Follow-up 3: drop the ASCII-hex REPORT_DATA constraint
 
