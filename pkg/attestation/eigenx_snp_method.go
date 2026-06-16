@@ -108,16 +108,27 @@ type EigenXSNPAttestationMethod struct {
 	// validateOptions pins report-field expectations enforced AFTER the AMD
 	// chain+signature check: max guest policy (DEBUG forbidden), VMPL, and —
 	// when set — the MEASUREMENT allowlist. verify.SnpAttestation proves the
-	// report is genuine AMD silicon; validate.SnpAttestation proves it's the
-	// guest we authorized. Both are required: without the policy/VMPL/measurement
-	// checks, any genuine SEV-SNP guest (incl. an attacker's own VM running
-	// arbitrary code, or a DEBUG=1 guest whose memory the host can read) passes.
+	// report is genuine AMD silicon; validate.SnpAttestation enforces the guest
+	// policy (DEBUG off) + VMPL. Without these, any genuine SEV-SNP guest (incl.
+	// a DEBUG=1 guest whose memory the host can read) passes.
 	validateOptions *validate.Options
-	// measurementAllowlist holds the accepted podVM launch measurements (48-byte
-	// MEASUREMENT values). Empty means MEASUREMENT is NOT yet enforced — the
-	// method logs a loud warning per request in that case, because without it
-	// the cc_init_data carried in guest-chosen REPORT_DATA is unanchored. See
-	// docs/010_hostDataAndReportData.md.
+	// measurementAllowlist holds the accepted 48-byte MEASUREMENT values.
+	//
+	// IMPORTANT — on AWS this is a FIRMWARE + vCPU-SHAPE pin, NOT image identity.
+	// AWS SEV-SNP MEASUREMENT = hash(AWS OVMF firmware + initial vCPU/VMSA state)
+	// only; the AMI/rootfs is chain-loaded after the measurement is sealed, so
+	// MEASUREMENT is identical across all AMIs on a given (OVMF version, vCPU
+	// count) and reveals nothing about the workload image. Pinning it therefore
+	// proves: genuine AMD SEV-SNP, the expected AWS OVMF version, and the
+	// expected vCPU count/topology (e.g. m6a.large = 2 vCPUs) — and rejects a
+	// guest reshaped to a different vCPU count or booted on a different firmware
+	// version. It does NOT prove the running image. (On a measured-boot platform
+	// like GCP TDX or bare-metal SNP, image identity comes from RTMRs / a
+	// dm-verity roothash on the measured cmdline — see
+	// docs/010_hostDataAndReportData.md. That anchor does not exist on AWS.)
+	//
+	// Empty = not enforced; the method logs a loud per-request warning so the
+	// firmware/shape pin isn't silently absent.
 	measurementAllowlist [][]byte
 	logger               *slog.Logger
 }
@@ -179,7 +190,7 @@ var vmpl0 = 0
 // and MIGRATE_MA / CXL (unneeded capabilities), while permitting SMT (set on
 // AWS m6a) and leaving the ABI version floor at 0.0. VMPL is pinned to 0.
 // Measurement is intentionally left unset here and populated separately via
-// SetMeasurementAllowlist once a reproducible podVM measurement is available.
+// SetMeasurementAllowlist (the firmware/vCPU-shape pin — see that field).
 func defaultValidateOptions() *validate.Options {
 	return &validate.Options{
 		GuestPolicy: abi.SnpPolicy{
@@ -191,10 +202,12 @@ func defaultValidateOptions() *validate.Options {
 	}
 }
 
-// SetMeasurementAllowlist enables MEASUREMENT enforcement against the given set
-// of accepted 48-byte podVM launch measurements. Until this is called the
-// method runs without a measurement anchor and warns on every request — see
-// the security note on measurementAllowlist. Each entry must be 48 bytes.
+// SetMeasurementAllowlist enables the MEASUREMENT (firmware + vCPU-shape) pin
+// against the given set of accepted 48-byte values. Multiple entries support a
+// firmware-version rollout (the value changes when AWS rotates OVMF). Until
+// called, the pin is not enforced and the method warns per request. Each entry
+// must be 48 bytes. See the security note on measurementAllowlist: on AWS this
+// pins firmware version + vCPU count, NOT the workload image.
 func (m *EigenXSNPAttestationMethod) SetMeasurementAllowlist(measurements [][]byte) error {
 	for i, ms := range measurements {
 		if len(ms) != abi.MeasurementSize {
@@ -379,21 +392,25 @@ func (m *EigenXSNPAttestationMethod) Verify(request *AttestationRequest) (*types
 		return nil, fmt.Errorf("AMD SEV-SNP attestation verification failed: %w", err)
 	}
 
-	// Step 2b: validate report FIELDS against policy. verify.SnpAttestation
-	// above proved the report is genuine AMD-signed silicon; this proves it's a
-	// guest we authorized. Enforces the max guest policy (DEBUG forbidden — a
-	// debuggable guest's memory is host-readable, leaking the recovered
-	// app_private_key), the VMPL pin, and — when configured — the MEASUREMENT
-	// allowlist. Without these, ANY genuine SEV-SNP box (e.g. an attacker's own
-	// VM running arbitrary code) passes. See docs/010_hostDataAndReportData.md.
-	vopts := *m.validateOptions // shallow copy; per-request Measurement set below
+	// Step 2b: validate report FIELDS. verify.SnpAttestation above proved the
+	// report is genuine AMD-signed silicon; this enforces the guest policy
+	// (DEBUG forbidden — a debuggable guest's memory is host-readable, leaking
+	// the recovered app_private_key), the VMPL pin, and — when configured — the
+	// MEASUREMENT pin (firmware version + vCPU shape). NOTE: on AWS these do NOT
+	// establish image identity (no measured anchor exists; the image is
+	// chain-loaded after MEASUREMENT is sealed). They harden the platform:
+	// reject debug guests, wrong privilege level, wrong firmware/vCPU shape.
+	// See docs/010_hostDataAndReportData.md.
+	vopts := *m.validateOptions
 	if len(m.measurementAllowlist) == 0 {
-		// No measurement anchor yet: cc_init_data rides in guest-chosen
-		// REPORT_DATA, so without MEASUREMENT the workload-identity binding is
-		// unauthenticated. Fail-open is a deliberate, LOUD interim posture until
-		// the reproducible podVM measurement pipeline lands; never silent.
-		m.logger.Warn("MEASUREMENT not enforced — workload identity is UNANCHORED; "+
-			"set a measurement allowlist (docs/010, PR #105 review)",
+		// Firmware/vCPU-shape pin not configured. On AWS this pin proves only
+		// the OVMF version + vCPU count (not the image), but it is still a
+		// meaningful platform-shape assertion (rejects a reshaped guest / a
+		// rotated firmware). Warn loudly so its absence isn't silent. (Note:
+		// this is NOT the missing image anchor — that doesn't exist on AWS SNP;
+		// see docs/010_hostDataAndReportData.md.)
+		m.logger.Warn("MEASUREMENT pin not set — firmware/vCPU-shape is not enforced; "+
+			"set a measurement allowlist to pin OVMF version + vCPU count",
 			"app_id", request.AppID,
 			"measurement_hex", hex.EncodeToString(reportProto.GetMeasurement()),
 		)

@@ -46,6 +46,10 @@ const (
 	EnvKMSAppAllowlist           = "KMS_APP_ALLOWLIST"
 	// eigenx-snp (raw AMD SEV-SNP evidence) attestation configuration
 	EnvKMSEnableEigenXSNPAttestation = "KMS_ENABLE_EIGENX_SNP_ATTESTATION"
+	// EnvKMSEigenXSNPMeasurements is a comma-separated list of accepted 48-byte
+	// (96-hex) SEV-SNP MEASUREMENT values. On AWS this pins the OVMF firmware
+	// version + vCPU shape (NOT image identity). Empty = not enforced.
+	EnvKMSEigenXSNPMeasurements = "KMS_EIGENX_SNP_MEASUREMENTS"
 )
 
 type CurveType string

@@ -152,6 +152,7 @@ func main() {
 			&cli.StringFlag{Name: "operator-address", Value: "0x0000000000000000000000000000000000000001", Usage: "Ethereum-shaped operator address advertised in /pubkey responses"},
 			&cli.BoolFlag{Name: "enable-eigenx-snp-attestation", Value: true, Usage: "Register the eigenx-snp method (default true)"},
 			&cli.BoolFlag{Name: "snp-allow-amd-kds-fetch", Value: false, Usage: "Allow go-sev-guest to fetch missing AMD intermediates from KDS at verify time. NEVER enable in production — opens a goroutine-flood DoS surface. Test-only flag for fakeKMS where the AA evidence may omit the ASVK."},
+			&cli.StringSliceFlag{Name: "snp-measurement", Usage: "Accepted SEV-SNP MEASUREMENT (48-byte hex) to pin (firmware/vCPU-shape, not image). Repeatable; empty = not enforced."},
 			&cli.BoolFlag{Name: "verbose", Usage: "Verbose / debug logging"},
 		},
 		Action: run,
@@ -221,6 +222,20 @@ func run(c *cli.Context) error {
 			slogger.Warn("AMD KDS cert fetching enabled — DO NOT use this in production")
 		}
 		method := attestation.NewEigenXSNPAttestationMethod(snpOptions, slogger)
+		if msHex := c.StringSlice("snp-measurement"); len(msHex) > 0 {
+			measurements := make([][]byte, 0, len(msHex))
+			for _, h := range msHex {
+				b, derr := hex.DecodeString(strings.TrimPrefix(strings.TrimSpace(h), "0x"))
+				if derr != nil {
+					return fmt.Errorf("invalid --snp-measurement %q: %w", h, derr)
+				}
+				measurements = append(measurements, b)
+			}
+			if serr := method.SetMeasurementAllowlist(measurements); serr != nil {
+				return fmt.Errorf("set snp measurement allowlist: %w", serr)
+			}
+			slogger.Info("eigenx-snp MEASUREMENT pin enabled (firmware/vCPU-shape, not image)", "count", len(measurements))
+		}
 		if err := attestationManager.RegisterMethod(method); err != nil {
 			return fmt.Errorf("register eigenx-snp: %w", err)
 		}

@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	EVMChainPoller "github.com/Layr-Labs/chain-indexer/pkg/chainPollers/evm"
@@ -224,6 +226,11 @@ This server implements:
 				Usage:   "Enable raw AMD SEV-SNP evidence attestation (verifies AMD chain + cc_init_data)",
 				Value:   false,
 				EnvVars: []string{config.EnvKMSEnableEigenXSNPAttestation},
+			},
+			&cli.StringSliceFlag{
+				Name:    "eigenx-snp-measurement",
+				Usage:   "Accepted SEV-SNP MEASUREMENT (48-byte hex) to pin. On AWS this pins OVMF firmware version + vCPU shape, NOT image identity. Repeatable; empty = not enforced.",
+				EnvVars: []string{config.EnvKMSEigenXSNPMeasurements},
 			},
 			&cli.StringSliceFlag{
 				Name:    "app-allowlist",
@@ -474,6 +481,26 @@ func runKMSServer(c *cli.Context) error {
 		// network round-trips. Operators that need KDS lookup (e.g. for
 		// testing) can wire up an explicit verify.Options instead.
 		eigenXSNPMethod := attestation.NewEigenXSNPAttestationMethod(nil, slogger)
+
+		// Optional MEASUREMENT pin (firmware version + vCPU shape; not image
+		// identity on AWS — see the method's measurementAllowlist note). Each
+		// flag value is a 48-byte (96-hex) MEASUREMENT.
+		if msHex := c.StringSlice("eigenx-snp-measurement"); len(msHex) > 0 {
+			measurements := make([][]byte, 0, len(msHex))
+			for _, h := range msHex {
+				b, err := hex.DecodeString(strings.TrimPrefix(strings.TrimSpace(h), "0x"))
+				if err != nil {
+					return fmt.Errorf("invalid --eigenx-snp-measurement %q: %w", h, err)
+				}
+				measurements = append(measurements, b)
+			}
+			if err := eigenXSNPMethod.SetMeasurementAllowlist(measurements); err != nil {
+				return fmt.Errorf("set eigenx-snp measurement allowlist: %w", err)
+			}
+			l.Sugar().Infow("eigenx-snp MEASUREMENT pin enabled (firmware/vCPU-shape, not image)",
+				"count", len(measurements))
+		}
+
 		if err := attestationManager.RegisterMethod(eigenXSNPMethod); err != nil {
 			return fmt.Errorf("failed to register eigenx-snp attestation method: %w", err)
 		}
