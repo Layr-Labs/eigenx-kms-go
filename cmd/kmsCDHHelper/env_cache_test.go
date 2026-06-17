@@ -28,6 +28,24 @@ func TestMergeEnv_EmptyPublic(t *testing.T) {
 	assert.Equal(t, map[string]string{"A": "1", "B": "2"}, env)
 }
 
+func TestMergeEnv_PublicOnly_EmptySecret(t *testing.T) {
+	// A public-only release (no encrypted_env) passes an empty secretPlaintext.
+	// The public env must come through and there must be no JSON-parse error.
+	env, err := mergeEnv(`{"LOG_LEVEL":"info","ENVIRONMENT":"prod"}`, nil)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"LOG_LEVEL": "info", "ENVIRONMENT": "prod"}, env)
+
+	env, err = mergeEnv(`{"LOG_LEVEL":"info"}`, []byte{})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"LOG_LEVEL": "info"}, env)
+}
+
+func TestMergeEnv_BothEmpty(t *testing.T) {
+	env, err := mergeEnv("", nil)
+	require.NoError(t, err)
+	assert.Empty(t, env)
+}
+
 func TestMergeEnv_RejectsNonObjectSecret(t *testing.T) {
 	// A bare string (the old single-secret shape) is no longer valid — the
 	// decrypted blob must be a JSON object so keys are addressable.

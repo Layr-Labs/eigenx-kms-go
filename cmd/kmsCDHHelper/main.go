@@ -659,17 +659,22 @@ func retrieveAndDecrypt(
 	// app_private_key. Because app_private_key can only be reconstructed from
 	// a quorum of operator partial signatures over an accepted attestation,
 	// the plaintext is only ever visible inside this attested TEE.
-	if result.EncryptedEnv == "" {
-		return nil, fmt.Errorf("KMS returned empty encrypted_env for app %q; nothing to decrypt", req.AppID)
-	}
-	ciphertext, err := decodeEncryptedEnv(result.EncryptedEnv)
-	if err != nil {
-		return nil, fmt.Errorf("decode encrypted_env: %w", err)
-	}
+	//
+	// encrypted_env may legitimately be empty: a public-only release (e.g. just
+	// LOG_LEVEL / ENVIRONMENT in public_env, no IBE secrets) has nothing to
+	// decrypt. In that case skip the IBE-decrypt and merge public_env alone —
+	// emitKey still fails loud if the requested key isn't present anywhere.
+	var secretPlaintext []byte
+	if result.EncryptedEnv != "" {
+		ciphertext, err := decodeEncryptedEnv(result.EncryptedEnv)
+		if err != nil {
+			return nil, fmt.Errorf("decode encrypted_env: %w", err)
+		}
 
-	secretPlaintext, err := crypto.DecryptForApp(req.AppID, result.AppPrivateKey, ciphertext)
-	if err != nil {
-		return nil, fmt.Errorf("decrypt encrypted_env with app_private_key: %w", err)
+		secretPlaintext, err = crypto.DecryptForApp(req.AppID, result.AppPrivateKey, ciphertext)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt encrypted_env with app_private_key: %w", err)
+		}
 	}
 
 	// Merge public_env (plaintext, on-chain) under the decrypted secret env;

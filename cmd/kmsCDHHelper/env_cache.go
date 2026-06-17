@@ -44,9 +44,11 @@ const (
 // from the on-chain release; secretPlaintext is the IBE-decrypted encrypted_env.
 // Secret keys win on collision so a public default can never shadow a secret.
 //
-// publicEnvJSON may be empty (no public env in the release). secretPlaintext
-// must be a JSON object: the env is a flat key→value map, which is what lets
-// CDH address individual variables by name.
+// Either side may be empty. publicEnvJSON is "" when the release pins no public
+// env; secretPlaintext is empty when the release has no encrypted_env (a
+// public-only release). A release with neither yields an empty map. When
+// present, each side must be a JSON object: the env is a flat key→value map,
+// which is what lets CDH address individual variables by name.
 func mergeEnv(publicEnvJSON string, secretPlaintext []byte) (map[string]string, error) {
 	env := map[string]string{}
 
@@ -60,12 +62,14 @@ func mergeEnv(publicEnvJSON string, secretPlaintext []byte) (map[string]string, 
 		}
 	}
 
-	var sec map[string]string
-	if err := json.Unmarshal(secretPlaintext, &sec); err != nil {
-		return nil, fmt.Errorf("decrypted encrypted_env is not a JSON string map: %w", err)
-	}
-	for k, v := range sec { // secret overrides public
-		env[k] = v
+	if len(secretPlaintext) > 0 {
+		var sec map[string]string
+		if err := json.Unmarshal(secretPlaintext, &sec); err != nil {
+			return nil, fmt.Errorf("decrypted encrypted_env is not a JSON string map: %w", err)
+		}
+		for k, v := range sec { // secret overrides public
+			env[k] = v
+		}
 	}
 
 	return env, nil
