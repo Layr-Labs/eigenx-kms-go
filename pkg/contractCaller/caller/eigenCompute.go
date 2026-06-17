@@ -163,13 +163,26 @@ func (cc *ContractCaller) FilterAppUpgraded(apps []common.Address, filterOpts *b
 	return iterator, nil
 }
 
+// resolvedRelease bundles the on-chain release fields surfaced by
+// resolveLatestRelease. Returning a struct keeps the call sites readable
+// as fields are added to the Artifact / AppRelease bindings (e.g.
+// Registry, added when the IAppController.Artifact ABI was extended).
+type resolvedRelease struct {
+	Digest          [32]byte
+	Registry        string
+	PublicEnv       Env
+	EncryptedEnv    []byte
+	ContainerPolicy types.ContainerPolicy
+	BlockNumber     uint64
+}
+
 // resolveLatestRelease is the internal implementation shared by GetLatestRelease and
 // GetLatestReleaseAsRelease. It also returns the release block number so callers can
 // fetch the authoritative block timestamp.
-func (cc *ContractCaller) resolveLatestRelease(ctx context.Context, appID string) ([32]byte, Env, []byte, types.ContainerPolicy, uint64, error) {
+func (cc *ContractCaller) resolveLatestRelease(ctx context.Context, appID string) (resolvedRelease, error) {
 	appCtrl, err := cc.getAppController()
 	if err != nil {
-		return [32]byte{}, Env{}, nil, types.ContainerPolicy{}, 0, err
+		return resolvedRelease{}, err
 	}
 
 	cc.logger.Sugar().Debugw("Getting latest release", "app_id", appID)
@@ -179,7 +192,7 @@ func (cc *ContractCaller) resolveLatestRelease(ctx context.Context, appID string
 
 	latestReleaseBlockNumber, err := cc.GetAppLatestReleaseBlockNumber(appAddress, &bind.CallOpts{Context: ctx})
 	if err != nil {
-		return [32]byte{}, Env{}, nil, types.ContainerPolicy{}, 0, fmt.Errorf("failed to get app latest release block number: %w", err)
+		return resolvedRelease{}, fmt.Errorf("failed to get app latest release block number: %w", err)
 	}
 	cc.logger.Sugar().Debugw("App latest release block number fetched successfully", "block_number", latestReleaseBlockNumber)
 
@@ -188,7 +201,7 @@ func (cc *ContractCaller) resolveLatestRelease(ctx context.Context, appID string
 
 	appUpgrades, err := appCtrl.FilterAppUpgraded(&bind.FilterOpts{Context: ctx, Start: releaseBlockNumberUint64, End: &releaseBlockNumberUint64}, []common.Address{appAddress})
 	if err != nil {
-		return [32]byte{}, Env{}, nil, types.ContainerPolicy{}, 0, fmt.Errorf("failed to filter app upgraded: %w", err)
+		return resolvedRelease{}, fmt.Errorf("failed to filter app upgraded: %w", err)
 	}
 	cc.logger.Sugar().Debug("App upgraded events filtered successfully")
 	defer func() { _ = appUpgrades.Close() }()
@@ -203,55 +216,69 @@ func (cc *ContractCaller) resolveLatestRelease(ctx context.Context, appID string
 		}
 	}
 	if appUpgrades.Error() != nil {
-		return [32]byte{}, Env{}, nil, types.ContainerPolicy{}, 0, fmt.Errorf("error iterating app upgrades: %w", appUpgrades.Error())
+		return resolvedRelease{}, fmt.Errorf("error iterating app upgrades: %w", appUpgrades.Error())
 	}
 	if lastAppUpgrade == nil {
-		return [32]byte{}, Env{}, nil, types.ContainerPolicy{}, 0, fmt.Errorf("no app upgrade found for app %s at block %d", appID, releaseBlockNumberUint64)
+		return resolvedRelease{}, fmt.Errorf("no app upgrade found for app %s at block %d", appID, releaseBlockNumberUint64)
 	}
 
 	release := lastAppUpgrade.Release
 	cc.logger.Sugar().Debug("Found app upgraded event", "app_id", appID, "release_id", fmt.Sprintf("%x", lastAppUpgrade.RmsReleaseId), "block", lastAppUpgrade.Raw.BlockNumber)
 
 	if len(release.RmsRelease.Artifacts) != 1 {
-		return [32]byte{}, Env{}, nil, types.ContainerPolicy{}, 0, fmt.Errorf("expected 1 artifact, got %d", len(release.RmsRelease.Artifacts))
+		return resolvedRelease{}, fmt.Errorf("expected 1 artifact, got %d", len(release.RmsRelease.Artifacts))
 	}
-	cc.logger.Sugar().Debug("Release retrieved successfully", "app_id", appID, "artifact_digest", fmt.Sprintf("%x", release.RmsRelease.Artifacts[0].Digest))
+	artifact := release.RmsRelease.Artifacts[0]
+	cc.logger.Sugar().Debug("Release retrieved successfully", "app_id", appID, "artifact_digest", fmt.Sprintf("%x", artifact.Digest), "registry", artifact.Registry)
 
 	publicEnv := Env{}
 	if err = json.Unmarshal(release.PublicEnv, &publicEnv); err != nil {
-		return [32]byte{}, Env{}, nil, types.ContainerPolicy{}, 0, fmt.Errorf("failed to unmarshal env: %w", err)
+		return resolvedRelease{}, fmt.Errorf("failed to unmarshal env: %w", err)
 	}
 	cc.logger.Sugar().Debug("Latest release data prepared", "app_id", appID, "public_env_vars_count", len(publicEnv))
 
-	return release.RmsRelease.Artifacts[0].Digest, publicEnv, release.EncryptedEnv, contractPolicyToTypes(release.ContainerPolicy), lastAppUpgrade.Raw.BlockNumber, nil
+	return resolvedRelease{
+		Digest:          artifact.Digest,
+		Registry:        artifact.Registry,
+		PublicEnv:       publicEnv,
+		EncryptedEnv:    release.EncryptedEnv,
+		ContainerPolicy: contractPolicyToTypes(release.ContainerPolicy),
+		BlockNumber:     lastAppUpgrade.Raw.BlockNumber,
+	}, nil
 }
 
 // GetLatestRelease retrieves the latest release information for an app.
-// Returns: image digest, public env, encrypted env, container policy, error
+// Returns: image digest, public env, encrypted env, container policy, error.
+// Note: callers needing the artifact's registry should use
+// GetLatestReleaseAsRelease — this signature is preserved for the legacy
+// flow that doesn't yet care about the registry.
 func (cc *ContractCaller) GetLatestRelease(ctx context.Context, appID string) ([32]byte, Env, []byte, types.ContainerPolicy, error) {
-	digest, env, encrypted, policy, _, err := cc.resolveLatestRelease(ctx, appID)
-	return digest, env, encrypted, policy, err
+	r, err := cc.resolveLatestRelease(ctx, appID)
+	if err != nil {
+		return [32]byte{}, Env{}, nil, types.ContainerPolicy{}, err
+	}
+	return r.Digest, r.PublicEnv, r.EncryptedEnv, r.ContainerPolicy, nil
 }
 
 // GetLatestReleaseAsRelease is an adapter that returns release data in the types.Release format.
 // This provides compatibility with the legacy registry.Client interface.
 func (cc *ContractCaller) GetLatestReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error) {
-	digest, publicEnv, encryptedEnv, containerPolicy, blockNumber, err := cc.resolveLatestRelease(ctx, appID)
+	r, err := cc.resolveLatestRelease(ctx, appID)
 	if err != nil {
 		return nil, err
 	}
 
 	// Fetch the block header to get the authoritative release timestamp
-	header, err := cc.ethclient.HeaderByNumber(ctx, new(big.Int).SetUint64(blockNumber))
+	header, err := cc.ethclient.HeaderByNumber(ctx, new(big.Int).SetUint64(r.BlockNumber))
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch block header for timestamp: %w", err)
 	}
 
-	imageDigest := fmt.Sprintf("sha256:%x", digest)
+	imageDigest := fmt.Sprintf("sha256:%x", r.Digest)
 
 	var publicEnvStr string
-	if len(publicEnv) > 0 {
-		envBytes, err := json.Marshal(publicEnv)
+	if len(r.PublicEnv) > 0 {
+		envBytes, err := json.Marshal(r.PublicEnv)
 		if err != nil {
 			return nil, fmt.Errorf("failed to marshal public env: %w", err)
 		}
@@ -260,9 +287,10 @@ func (cc *ContractCaller) GetLatestReleaseAsRelease(ctx context.Context, appID s
 
 	return &types.Release{
 		ImageDigest:     imageDigest,
-		EncryptedEnv:    string(encryptedEnv),
+		Registry:        r.Registry,
+		EncryptedEnv:    string(r.EncryptedEnv),
 		PublicEnv:       publicEnvStr,
 		Timestamp:       int64(header.Time),
-		ContainerPolicy: containerPolicy,
+		ContainerPolicy: r.ContainerPolicy,
 	}, nil
 }

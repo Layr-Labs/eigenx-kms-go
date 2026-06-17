@@ -1,11 +1,13 @@
 package kmsClient
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/dkg"
@@ -603,4 +605,124 @@ func TestRetrieveSecretsWithOptions_ExtraDataTooLarge(t *testing.T) {
 	_, err = c.RetrieveSecretsWithOptions("app-id", opts)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "extra_data exceeds 1MB limit")
+}
+
+func TestRetrieveSecretsWithOptions_EigenXSNP_RequestShape(t *testing.T) {
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	c := &Client{
+		logger: logger,
+	}
+
+	opts := &SecretsOptions{
+		AttestationMethod: "eigenx-snp",
+		RawSNPEvidence:    []byte(`{"attestation_report":{},"cert_chain":[]}`),
+		CCInitData:        []byte("initdata-doc"),
+		RSAPrivateKeyPEM:  []byte("key"),
+		RSAPublicKeyPEM:   []byte("pub"),
+		ExtraData:         []byte("extra"),
+	}
+
+	before := time.Now().Unix()
+	req := c.createEigenXSNPAttestationRequest("app-id", opts)
+	after := time.Now().Unix()
+
+	assert.Equal(t, "app-id", req.AppID)
+	assert.Equal(t, "eigenx-snp", req.AttestationMethod)
+	// Raw evidence bytes are passed through unchanged. Wire-encoding to base64
+	// is handled by Go's []byte JSON marshalling at the transport layer.
+	assert.Equal(t, opts.RawSNPEvidence, req.Attestation)
+	assert.Equal(t, opts.CCInitData, req.CCInitData)
+	assert.Equal(t, opts.RSAPublicKeyPEM, req.RSAPubKeyTmp)
+	assert.Equal(t, opts.ExtraData, req.ExtraData)
+	assert.GreaterOrEqual(t, req.AttestationTime, before)
+	assert.LessOrEqual(t, req.AttestationTime, after)
+	// ECDSA-only fields must remain unset for eigenx-snp requests.
+	assert.Nil(t, req.Challenge)
+	assert.Nil(t, req.PublicKey)
+}
+
+func TestRetrieveSecretsWithOptions_EigenXSNP_Validation(t *testing.T) {
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	c := &Client{
+		logger: logger,
+	}
+
+	tests := []struct {
+		name        string
+		opts        *SecretsOptions
+		expectedErr string
+	}{
+		{
+			name: "missing evidence",
+			opts: &SecretsOptions{
+				AttestationMethod: "eigenx-snp",
+				CCInitData:        []byte("initdata"),
+				RSAPrivateKeyPEM:  []byte("key"),
+				RSAPublicKeyPEM:   []byte("pub"),
+			},
+			expectedErr: "RawSNPEvidence is required for eigenx-snp attestation method",
+		},
+		{
+			name: "missing cc_init_data",
+			opts: &SecretsOptions{
+				AttestationMethod: "eigenx-snp",
+				RawSNPEvidence:    []byte("{}"),
+				RSAPrivateKeyPEM:  []byte("key"),
+				RSAPublicKeyPEM:   []byte("pub"),
+			},
+			expectedErr: "CCInitData is required for eigenx-snp attestation method",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := c.RetrieveSecretsWithOptions("app-id", tt.opts)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), tt.expectedErr)
+		})
+	}
+}
+
+// TestEigenXSNP_WireFormat verifies the raw-SNP evidence is base64-encoded on
+// the wire (per the brief's "<base64 of raw-SNP evidence JSON>" contract) by
+// virtue of Go's []byte JSON marshalling — no explicit double-encoding.
+func TestEigenXSNP_WireFormat(t *testing.T) {
+	logger, err := zap.NewDevelopment()
+	require.NoError(t, err)
+
+	c := &Client{logger: logger}
+
+	rawEvidence := []byte(`{"attestation_report":{"version":1},"cert_chain":["ca"]}`)
+	ccInitData := []byte("init-data-document-bytes")
+
+	req := c.createEigenXSNPAttestationRequest("app-id", &SecretsOptions{
+		AttestationMethod: "eigenx-snp",
+		RawSNPEvidence:    rawEvidence,
+		CCInitData:        ccInitData,
+		RSAPublicKeyPEM:   []byte("pub"),
+	})
+
+	wire, err := json.Marshal(req)
+	require.NoError(t, err)
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal(wire, &parsed))
+
+	// Go's encoding/json emits []byte as standard base64. Decoding the wire
+	// value should reproduce the original raw evidence bytes.
+	attestationStr, ok := parsed["attestation"].(string)
+	require.True(t, ok, "attestation field should marshal as base64 string")
+	decoded, err := base64.StdEncoding.DecodeString(attestationStr)
+	require.NoError(t, err)
+	assert.Equal(t, rawEvidence, decoded)
+
+	ccInitStr, ok := parsed["cc_init_data"].(string)
+	require.True(t, ok, "cc_init_data field should marshal as base64 string")
+	decodedInit, err := base64.StdEncoding.DecodeString(ccInitStr)
+	require.NoError(t, err)
+	assert.Equal(t, ccInitData, decodedInit)
 }

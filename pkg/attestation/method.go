@@ -40,4 +40,10 @@ type AttestationRequest struct {
 
 	// ExtraData is optional caller-supplied data for binding verification
 	ExtraData []byte
+
+	// CCInitData is the CoCo init-data document (TOML) bound into the SEV-SNP
+	// HOST_DATA upper-32 bytes of REPORT_DATA. Used by the eigenx-snp method
+	// to enforce workload-identity binding and to extract the OCI registry +
+	// image digest from the embedded policy.rego.
+	CCInitData []byte
 }

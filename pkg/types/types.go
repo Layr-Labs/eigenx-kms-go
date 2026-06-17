@@ -14,6 +14,13 @@ const KMSJWTAudience = "EigenX KMS"
 
 const MaxExtraDataSize = 1_048_576 // 1 MB
 
+// MaxAttestationSize caps the per-request size of the Attestation field. JWT
+// tokens (GCP, Intel) sit comfortably under 64 KB; a full SEV-SNP evidence
+// document (one report + ~4 PEM-encoded certs) lands around ~10 KB. 256 KB
+// leaves a generous margin while still bounding the JSON-base64 decode cost
+// before any validation runs.
+const MaxAttestationSize = 256 * 1024 // 256 KB
+
 // KeyShareVersion represents a versioned set of key shares
 type KeyShareVersion struct {
 	Version         int64            // Unix timestamp (seconds) of the block that triggered this key version
@@ -132,6 +139,8 @@ type SecretsRequestV1 struct {
 	Challenge []byte `json:"challenge,omitempty"`  // Challenge for ECDSA attestation
 	PublicKey []byte `json:"public_key,omitempty"` // Public key for ECDSA attestation
 	ExtraData []byte `json:"extra_data,omitempty"` // optional caller-supplied data bound into attestation nonce (max 1 MB)
+	// eigenx-snp-specific field (only used when attestation_method is "eigenx-snp")
+	CCInitData []byte `json:"cc_init_data,omitempty"` // CoCo init-data document bytes (e.g. /run/peerpod/initdata)
 }
 
 // SecretsResponseV1 represents the response with encrypted secrets
@@ -165,11 +174,18 @@ type AttestationClaims struct {
 	PublicKey       []byte
 	ContainerPolicy ContainerPolicy
 	ExtraData       []byte // caller-supplied data bound into attestation
+	// Registry is the OCI registry+repo (e.g. "ghcr.io/example/app") that the
+	// running workload was launched from. Currently populated only by the
+	// eigenx-snp method (parsed from cc_init_data's policy.rego); other
+	// methods leave it empty, in which case the handler skips the
+	// registry-binding check and falls back to digest-only enforcement.
+	Registry string
 }
 
 // Release represents application release data from on-chain registry
 type Release struct {
 	ImageDigest     string          `json:"image_digest"`
+	Registry        string          `json:"registry"`
 	EncryptedEnv    string          `json:"encrypted_env"`
 	PublicEnv       string          `json:"public_env"`
 	Timestamp       int64           `json:"timestamp"`

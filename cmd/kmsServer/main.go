@@ -2,10 +2,12 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	EVMChainPoller "github.com/Layr-Labs/chain-indexer/pkg/chainPollers/evm"
@@ -219,6 +221,17 @@ This server implements:
 				Value:   false,
 				EnvVars: []string{config.EnvKMSEnableTPMAttestation},
 			},
+			&cli.BoolFlag{
+				Name:    "enable-eigenx-snp-attestation",
+				Usage:   "Enable raw AMD SEV-SNP evidence attestation (verifies AMD chain + cc_init_data)",
+				Value:   false,
+				EnvVars: []string{config.EnvKMSEnableEigenXSNPAttestation},
+			},
+			&cli.StringSliceFlag{
+				Name:    "eigenx-snp-measurement",
+				Usage:   "Accepted SEV-SNP MEASUREMENT (48-byte hex) to pin. On AWS this pins OVMF firmware version + vCPU shape, NOT image identity. Repeatable; empty = not enforced.",
+				EnvVars: []string{config.EnvKMSEigenXSNPMeasurements},
+			},
 			&cli.StringSliceFlag{
 				Name:    "app-allowlist",
 				Usage:   "Restrict /app/sign and /secrets to these app IDs (empty = allow all). Can be specified multiple times.",
@@ -371,10 +384,11 @@ func runKMSServer(c *cli.Context) error {
 	enableGCP := c.Bool("enable-gcp-attestation")
 	enableECDSA := c.Bool("enable-ecdsa-attestation")
 	enableTPM := c.Bool("enable-tpm-attestation")
+	enableEigenXSNP := c.Bool("enable-eigenx-snp-attestation")
 
 	// Validate at least one method is enabled
-	if !enableGCP && !enableECDSA && !enableTPM {
-		return fmt.Errorf("at least one attestation method must be enabled (--enable-gcp-attestation, --enable-ecdsa-attestation, or --enable-tpm-attestation)")
+	if !enableGCP && !enableECDSA && !enableTPM && !enableEigenXSNP {
+		return fmt.Errorf("at least one attestation method must be enabled (--enable-gcp-attestation, --enable-ecdsa-attestation, --enable-tpm-attestation, or --enable-eigenx-snp-attestation)")
 	}
 
 	// Create slog logger for attestation
@@ -455,6 +469,44 @@ func runKMSServer(c *cli.Context) error {
 
 		l.Sugar().Infow("TPM attestation method enabled",
 			"method_name", tpmMethod.Name())
+	}
+
+	// Register eigenx-snp attestation if enabled
+	if enableEigenXSNP {
+		// Pass nil options so the constructor falls back to its hardened
+		// defaults: verify.DefaultOptions() with DisableCertFetching=true.
+		// This means callers MUST ship a complete AMD certificate chain
+		// (ARK + ASK + VCEK or VLEK) inside the evidence; KDS lookup is
+		// disabled to avoid a per-request goroutine flood blocked on AMD
+		// network round-trips. Operators that need KDS lookup (e.g. for
+		// testing) can wire up an explicit verify.Options instead.
+		eigenXSNPMethod := attestation.NewEigenXSNPAttestationMethod(nil, slogger)
+
+		// Optional MEASUREMENT pin (firmware version + vCPU shape; not image
+		// identity on AWS — see the method's measurementAllowlist note). Each
+		// flag value is a 48-byte (96-hex) MEASUREMENT.
+		if msHex := c.StringSlice("eigenx-snp-measurement"); len(msHex) > 0 {
+			measurements := make([][]byte, 0, len(msHex))
+			for _, h := range msHex {
+				b, err := hex.DecodeString(strings.TrimPrefix(strings.TrimSpace(h), "0x"))
+				if err != nil {
+					return fmt.Errorf("invalid --eigenx-snp-measurement %q: %w", h, err)
+				}
+				measurements = append(measurements, b)
+			}
+			if err := eigenXSNPMethod.SetMeasurementAllowlist(measurements); err != nil {
+				return fmt.Errorf("set eigenx-snp measurement allowlist: %w", err)
+			}
+			l.Sugar().Infow("eigenx-snp MEASUREMENT pin enabled (firmware/vCPU-shape, not image)",
+				"count", len(measurements))
+		}
+
+		if err := attestationManager.RegisterMethod(eigenXSNPMethod); err != nil {
+			return fmt.Errorf("failed to register eigenx-snp attestation method: %w", err)
+		}
+
+		l.Sugar().Infow("eigenx-snp attestation method enabled",
+			"method_name", eigenXSNPMethod.Name())
 	}
 
 	// Log summary of enabled methods

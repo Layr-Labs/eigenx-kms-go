@@ -1,5 +1,14 @@
 // Code generated - DO NOT EDIT.
 // This file is a generated binding and any manual changes will be lost.
+//
+// MAINTENANCE NOTE: This file is intentionally a hand-trimmed subset of
+// abigen's output (the full --type IAppController generation produces
+// ~3200 lines of getters/transactors we do not call). When the
+// IAppController ABI changes, the workflow is:
+//   1) Regenerate with abigen against the latest ABI in eigenx-contracts.
+//   2) Diff against this file and copy ONLY the relevant struct + ABI
+//      changes over — do not replace wholesale.
+// Manual edits below the auto-generated header are explicitly load-bearing.
 
 package IAppController
 
@@ -39,7 +48,8 @@ type IAppControllerAppRelease struct {
 
 // IAppControllerArtifact is an auto generated low-level Go binding around an user-defined struct.
 type IAppControllerArtifact struct {
-	Digest [32]byte
+	Digest   [32]byte
+	Registry string
 }
 
 // IAppControllerContainerPolicy is an auto generated low-level Go binding around an user-defined struct.
@@ -60,7 +70,7 @@ type IAppControllerRmsRelease struct {
 
 // IAppControllerMetaData contains all meta data concerning the IAppController contract.
 var IAppControllerMetaData = &bind.MetaData{
-	ABI: "[{\"type\":\"function\",\"name\":\"getAppCreator\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAppLatestReleaseBlockNumber\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint32\",\"internalType\":\"uint32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAppOperatorSetId\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint32\",\"internalType\":\"uint32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAppStatus\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"event\",\"name\":\"AppUpgraded\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"rmsReleaseId\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"},{\"name\":\"release\",\"type\":\"tuple\",\"indexed\":false,\"internalType\":\"structIAppController.AppRelease\",\"components\":[{\"name\":\"rmsRelease\",\"type\":\"tuple\",\"internalType\":\"structIAppController.RmsRelease\",\"components\":[{\"name\":\"artifacts\",\"type\":\"tuple[]\",\"internalType\":\"structIAppController.Artifact[]\",\"components\":[{\"name\":\"digest\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"}]}]},{\"name\":\"publicEnv\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"encryptedEnv\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"containerPolicy\",\"type\":\"tuple\",\"internalType\":\"structIAppController.ContainerPolicy\",\"components\":[{\"name\":\"args\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"cmdOverride\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"envKeys\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"envValues\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"envOverrideKeys\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"envOverrideValues\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"restartPolicy\",\"type\":\"string\",\"internalType\":\"string\"}]}]}],\"anonymous\":false}]",
+	ABI: "[{\"type\":\"function\",\"name\":\"getAppCreator\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAppLatestReleaseBlockNumber\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint32\",\"internalType\":\"uint32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAppOperatorSetId\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint32\",\"internalType\":\"uint32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAppStatus\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"event\",\"name\":\"AppUpgraded\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"rmsReleaseId\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"},{\"name\":\"release\",\"type\":\"tuple\",\"indexed\":false,\"internalType\":\"structIAppController.AppRelease\",\"components\":[{\"name\":\"rmsRelease\",\"type\":\"tuple\",\"internalType\":\"structIAppController.RmsRelease\",\"components\":[{\"name\":\"artifacts\",\"type\":\"tuple[]\",\"internalType\":\"structIAppController.Artifact[]\",\"components\":[{\"name\":\"digest\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"registry\",\"type\":\"string\",\"internalType\":\"string\"}]}]},{\"name\":\"publicEnv\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"encryptedEnv\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"containerPolicy\",\"type\":\"tuple\",\"internalType\":\"structIAppController.ContainerPolicy\",\"components\":[{\"name\":\"args\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"cmdOverride\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"envKeys\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"envValues\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"envOverrideKeys\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"envOverrideValues\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"restartPolicy\",\"type\":\"string\",\"internalType\":\"string\"}]}]}],\"anonymous\":false}]",
 }
 
 // IAppControllerABI is the input ABI used to generate the binding from.

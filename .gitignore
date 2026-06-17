@@ -7,3 +7,11 @@
 .idea
 pkg/crypto/testdata/
 /debugging
+
+# Locally-built helper/harness binaries (cross-compiled into AMIs / images,
+# never committed). The sources live in cmd/{fakeKMS,kmsCDHHelper}.
+/fakeKMS
+/kmsCDHHelper
+
+# Throwaway scratch used during eigenx-snp e2e bring-up.
+/internal/tests/_scratch_encrypt/

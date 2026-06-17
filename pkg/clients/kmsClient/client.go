@@ -75,6 +75,10 @@ type SecretsOptions struct {
 	// For TPM attestation (raw hardware attestation)
 	TPMAttestationBytes []byte // Raw TPM attestation evidence from the hardware
 
+	// For eigenx-snp attestation
+	RawSNPEvidence []byte // Raw AA evidence JSON (attestation_report + cert_chain) — wire-encoded as base64 by Go's []byte JSON marshalling
+	CCInitData     []byte // CoCo init-data document bytes (e.g. /run/peerpod/initdata)
+
 	// RSA key pair for encrypting partial signatures in transit
 	RSAPrivateKeyPEM []byte // Required: RSA private key in PEM format
 	RSAPublicKeyPEM  []byte // Required: RSA public key in PEM format
@@ -177,7 +181,11 @@ func (c *Client) GetMasterPublicKey(operators *peering.OperatorSetPeers) (*types
 			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
+				// Cap the error-body read: the helper runs in a memory-
+				// constrained peer-pod, and a misbehaving operator returning
+				// gigabytes of bytes on a non-200 response shouldn't OOM us.
+				// 64 KiB is enough to surface any reasonable error message.
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 				c.logger.Sugar().Warnw("Operator returned error",
 					"operator_index", idx,
 					"status_code", resp.StatusCode,
@@ -387,7 +395,11 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
+				// Cap the error-body read: the helper runs in a memory-
+				// constrained peer-pod, and a misbehaving operator returning
+				// gigabytes of bytes on a non-200 response shouldn't OOM us.
+				// 64 KiB is enough to surface any reasonable error message.
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 				c.logger.Sugar().Warnw("Operator returned error",
 					"operator_index", idx,
 					"status_code", resp.StatusCode,
@@ -432,7 +444,7 @@ func (c *Client) CollectPartialSignatures(appID string, operators *peering.Opera
 			c.logger.Sugar().Debugw("Collected partial signature from operator",
 				"operator_index", idx,
 				"operator_address", operatorAddr.Hex(),
-				"operator_address", response.OperatorAddress)
+				"response_operator_address", response.OperatorAddress)
 
 			resultChan <- result{operatorAddr: operatorAddr, signature: response.PartialSignature, opAddress: response.OperatorAddress}
 		}(i, operator)
@@ -547,6 +559,19 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 	if len(opts.ExtraData) > types.MaxExtraDataSize {
 		return nil, fmt.Errorf("extra_data exceeds 1MB limit (%d bytes)", len(opts.ExtraData))
 	}
+	if opts.AttestationMethod == "eigenx-snp" {
+		if len(opts.RawSNPEvidence) == 0 {
+			return nil, fmt.Errorf("RawSNPEvidence is required for eigenx-snp attestation method")
+		}
+		if len(opts.CCInitData) == 0 {
+			return nil, fmt.Errorf("CCInitData is required for eigenx-snp attestation method")
+		}
+		// Mirror the server-side cap in handlers.go so we don't waste bandwidth
+		// marshalling a payload the operator will reject.
+		if len(opts.CCInitData) > types.MaxExtraDataSize {
+			return nil, fmt.Errorf("CCInitData exceeds 1MB limit (%d bytes)", len(opts.CCInitData))
+		}
+	}
 
 	c.logger.Sugar().Infow("Starting secret retrieval",
 		"app_id", appID,
@@ -605,6 +630,9 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 			AttestationTime:   time.Now().Unix(),
 			ExtraData:         opts.ExtraData,
 		}
+
+	case "eigenx-snp":
+		req = c.createEigenXSNPAttestationRequest(appID, opts)
 
 	default:
 		return nil, fmt.Errorf("unsupported attestation method: %s", opts.AttestationMethod)
@@ -875,6 +903,36 @@ func (c *Client) GetPublicKeyForApp(appID string) (*types.G1Point, *types.G2Poin
 	return appPubKey, masterPubKey, nil
 }
 
+// createEigenXSNPAttestationRequest creates a SecretsRequestV1 carrying raw
+// AMD SEV-SNP evidence collected from the in-pod Attestation Agent (AA). The
+// KMS server-side eigenx-snp method verifies the AMD certificate chain and the
+// SEV-SNP report signature, validates report fields (guest policy/VMPL, and —
+// once configured — the MEASUREMENT allowlist), then enforces the nonce +
+// cc_init_data binding via the guest-chosen REPORT_DATA field. NOTE: it does
+// NOT use HOST_DATA — that field is all-zero on managed-CSP (AWS) SEV-SNP; see
+// docs/010_hostDataAndReportData.md.
+//
+// Wire encoding note: Go's encoding/json marshals []byte as base64, so
+// SecretsRequestV1.Attestation (the raw AA evidence JSON bytes) and CCInitData
+// land on the wire as base64 strings without any explicit double-encoding.
+func (c *Client) createEigenXSNPAttestationRequest(appID string, opts *SecretsOptions) types.SecretsRequestV1 {
+	c.logger.Sugar().Debugw("Creating eigenx-snp attestation request",
+		"app_id", appID,
+		"evidence_size", len(opts.RawSNPEvidence),
+		"cc_init_data_size", len(opts.CCInitData),
+	)
+
+	return types.SecretsRequestV1{
+		AppID:             appID,
+		AttestationMethod: "eigenx-snp",
+		Attestation:       opts.RawSNPEvidence,
+		RSAPubKeyTmp:      opts.RSAPublicKeyPEM,
+		AttestationTime:   time.Now().Unix(),
+		ExtraData:         opts.ExtraData,
+		CCInitData:        opts.CCInitData,
+	}
+}
+
 // EncryptForApp encrypts data for a specific application using IBE
 func (c *Client) EncryptForApp(appID string, plaintext []byte) ([]byte, error) {
 	operators, err := c.GetOperators()
@@ -984,7 +1042,7 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 			}
 			operatorAddr := op.OperatorAddress
 
-			c.logger.Sugar().Debugw("Collected partial signature", "operator_index", idx, "operator_address", operatorAddr.Hex(), "operator_address", response.OperatorAddress)
+			c.logger.Sugar().Debugw("Collected partial signature", "operator_index", idx, "operator_address", operatorAddr.Hex(), "response_operator_address", response.OperatorAddress)
 			resultChan <- result{operatorAddr: operatorAddr, signature: response.PartialSignature, opAddress: response.OperatorAddress}
 		}(i, peer)
 	}

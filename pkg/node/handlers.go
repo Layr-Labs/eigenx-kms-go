@@ -79,6 +79,15 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Cap the request body before decoding. The per-field guards below
+	// (RSAPubKeyTmp, ExtraData, CCInitData, Attestation) only fire after
+	// json.Decode has already fully allocated the body, so an oversized
+	// POST would balloon memory before any check runs. Bound it up front
+	// at the sum of the field caps plus JSON/base64 overhead slack.
+	// MaxBytesReader makes Decode return an error past the limit.
+	const maxSecretsBodyBytes = 2*types.MaxAttestationSize + 2*types.MaxExtraDataSize + 64*1024
+	r.Body = http.MaxBytesReader(w, r.Body, int64(maxSecretsBodyBytes))
+
 	// Parse request
 	var req types.SecretsRequestV1
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -110,6 +119,14 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf("extra_data exceeds 1MB limit (%d bytes)", len(req.ExtraData)), http.StatusBadRequest)
 		return
 	}
+	if len(req.CCInitData) > types.MaxExtraDataSize {
+		http.Error(w, fmt.Sprintf("cc_init_data exceeds 1MB limit (%d bytes)", len(req.CCInitData)), http.StatusBadRequest)
+		return
+	}
+	if len(req.Attestation) > types.MaxAttestationSize {
+		http.Error(w, fmt.Sprintf("attestation exceeds %d byte limit (%d bytes)", types.MaxAttestationSize, len(req.Attestation)), http.StatusBadRequest)
+		return
+	}
 
 	s.node.logger.Sugar().Infow("Processing secrets request", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "attestation_method", req.AttestationMethod)
 
@@ -129,6 +146,7 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		PublicKey:    req.PublicKey,
 		RSAPubKeyTmp: req.RSAPubKeyTmp,
 		ExtraData:    req.ExtraData,
+		CCInitData:   req.CCInitData,
 	}
 	// TPM attestation needs the RSA key to compute the hardware-bound challenge
 	if req.AttestationMethod == "tpm" {
@@ -179,21 +197,64 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Step 5: Verify image digest matches
+	// Step 4: Verify image digest matches.
 	if claims.ImageDigest != release.ImageDigest {
 		s.node.logger.Sugar().Warnw("Image digest mismatch", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "expected", release.ImageDigest, "got", claims.ImageDigest)
 		http.Error(w, "Image digest mismatch - unauthorized image", http.StatusForbidden)
 		return
 	}
 
-	// Step 4b: Verify container execution policy matches on-chain values
+	// Step 4b: Verify registry matches when claims surface one.
+	//
+	// eigenx-snp populates claims.Registry from cc_init_data's policy.rego
+	// (e.g. "ghcr.io/example/app"); the on-chain Release.Registry is the
+	// same shape — what AgentKit publishes via extractRegistryNameNoDocker
+	// (registry + repo path, sans tag/digest). Other attestation methods
+	// (kbs-ear, gcp/intel) leave claims.Registry empty; in that case we
+	// don't enforce — those methods either don't surface the registry yet
+	// or cover environments where the on-chain Registry is absent. When
+	// release.Registry is empty (older releases pre-Registry-field) we
+	// also skip — fail-open here is safe because the digest check above
+	// already pinned identity.
+	if claims.Registry != "" && release.Registry != "" && claims.Registry != release.Registry {
+		s.node.logger.Sugar().Warnw("Registry mismatch",
+			"operator_address", s.node.OperatorAddress.Hex(),
+			"app_id", req.AppID,
+			"expected", release.Registry, "got", claims.Registry)
+		http.Error(w, "Registry mismatch - unauthorized image source", http.StatusForbidden)
+		return
+	}
+
+	// Step 5: Verify container execution policy matches on-chain values.
+	//
+	// eigenx-snp does not surface ContainerPolicy in claims (the policy lives
+	// in cc_init_data's aa.toml / cdh.toml, which we don't parse yet). If a
+	// release pins a non-empty ContainerPolicy and the request authenticates
+	// via eigenx-snp, validateContainerPolicy would silently succeed against
+	// claims.ContainerPolicy's zero value — the policy would not be enforced.
+	// Fail closed instead: workloads that don't pin a ContainerPolicy still
+	// work over eigenx-snp; workloads that do pin one cannot use eigenx-snp
+	// until the SEV-SNP path surfaces the running container's policy claims.
+	// TODO(eigenx): surface the running container's launch spec into
+	// claims.ContainerPolicy so this gap closes and this branch can drop.
+	// Design + recommended approach: docs/009_eigenxSnpAttestation.md
+	// ("Follow-up 1: ContainerPolicy enforcement").
+	if req.AttestationMethod == "eigenx-snp" && hasContainerPolicy(release.ContainerPolicy) {
+		s.node.logger.Sugar().Warnw(
+			"refusing eigenx-snp request: release pins ContainerPolicy that this method does not yet surface in claims",
+			"operator_address", s.node.OperatorAddress.Hex(),
+			"app_id", req.AppID,
+		)
+		http.Error(w, "eigenx-snp attestation does not yet enforce ContainerPolicy; release requires it", http.StatusForbidden)
+		return
+	}
 	if err := validateContainerPolicy(claims.ContainerPolicy, release.ContainerPolicy); err != nil {
 		s.node.logger.Sugar().Warnw("Container policy mismatch", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
 		http.Error(w, "Container policy mismatch", http.StatusForbidden)
 		return
 	}
 
-	// Step 5: Get appropriate key share based on attestation time
+	// Step 6: Get appropriate key share based on attestation time
 	var keyVersion *types.KeyShareVersion
 	if req.AttestationTime > 0 {
 		// Use key version from the specified time
@@ -600,6 +661,14 @@ func (s *Server) handleReshareAck(w http.ResponseWriter, r *http.Request) {
 		"for_dealer", thisAddr.Hex())
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// hasContainerPolicy reports whether the on-chain ContainerPolicy pins any
+// non-empty field. Used to detect releases that rely on policy enforcement
+// when the request authenticates via a method (e.g. eigenx-snp) that does not
+// surface ContainerPolicy in its claims.
+func hasContainerPolicy(p types.ContainerPolicy) bool {
+	return len(p.Args) > 0 || len(p.CmdOverride) > 0 || len(p.Env) > 0 || len(p.EnvOverride) > 0 || p.RestartPolicy != ""
 }
 
 // validateContainerPolicy checks that the container execution fields in the JWT claims

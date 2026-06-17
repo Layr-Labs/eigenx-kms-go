@@ -128,6 +128,31 @@ The KMS server supports multiple attestation methods for verifying application i
   --enable-gcp-attestation=true ...
 ```
 
+#### AMD SEV-SNP (Production, CoCo peer-pods)
+- **Method**: `"eigenx-snp"`
+- **Security**: Hardware TEE attestation with raw AMD-signed SEV-SNP report —
+  no Trustee/KBS in the verification path
+- **Use**: Confidential Containers peer-pod deployments on SEV-SNP hosts
+  (AWS m6a, GCP c3d, Azure DCa)
+- **Setup**: Enable with `--enable-eigenx-snp-attestation=true`. The KMS
+  pre-loads the embedded VLEK ASVK chain for Milan/Genoa/Turin so no
+  network round-trip to AMD KDS is needed at verify time
+
+```bash
+./bin/kms-server --enable-eigenx-snp-attestation=true ...
+```
+
+The workload side runs the `kmsCDHHelper` binary (`cmd/kmsCDHHelper`)
+inside the peer-pod; CDH dispatches to it on `provider="eigenx"` in the
+sealed-secret envelope. The helper builds a 64-byte REPORT_DATA binding
+the ephemeral RSA pubkey to `cc_init_data`'s SHA-384, fetches AMD-signed
+evidence from the Attestation Agent, and exchanges it with the KMS for
+the threshold-recovered AppPrivateKey.
+
+Trust chain: AMD HW → SNP report → `cc_init_data` (REPORT_DATA upper 16
+bytes = SHA-384(initdata)[:16]) → `policy.rego` image ref → on-chain
+`Release` digest + registry. See PR #105 for the end-to-end design.
+
 #### ECDSA Signature-Based (Development)
 - **Method**: `"ecdsa"`
 - **Security**: Proves ECDSA key ownership (no TEE proof)
