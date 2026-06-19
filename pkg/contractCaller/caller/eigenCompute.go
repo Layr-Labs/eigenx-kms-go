@@ -40,7 +40,7 @@ type AppUpgradedIterator interface {
 // AppUpgradedEvent represents an AppUpgraded event
 type AppUpgradedEvent struct {
 	App          common.Address
-	RmsReleaseId [32]byte
+	RmsReleaseId *big.Int
 	Release      AppRelease
 	Raw          ethTypes.Log
 }
@@ -54,20 +54,17 @@ type RmsRelease = iappctl.IAppControllerRmsRelease
 // Artifact is an alias for the generated ABI binding type.
 type Artifact = iappctl.IAppControllerArtifact
 
-// contractPolicyToTypes converts the ABI-encoded ContainerPolicy (parallel string arrays
-// for env maps) to the domain types.ContainerPolicy (map[string]string).
+// contractPolicyToTypes converts the ABI-encoded ContainerPolicy (env as
+// (key,value) tuple arrays, per the v1.5.x AppController) to the domain
+// types.ContainerPolicy (map[string]string).
 func contractPolicyToTypes(p iappctl.IAppControllerContainerPolicy) types.ContainerPolicy {
-	env := make(map[string]string, len(p.EnvKeys))
-	for i, k := range p.EnvKeys {
-		if i < len(p.EnvValues) {
-			env[k] = p.EnvValues[i]
-		}
+	env := make(map[string]string, len(p.Env))
+	for _, kv := range p.Env {
+		env[kv.Key] = kv.Value
 	}
-	envOverride := make(map[string]string, len(p.EnvOverrideKeys))
-	for i, k := range p.EnvOverrideKeys {
-		if i < len(p.EnvOverrideValues) {
-			envOverride[k] = p.EnvOverrideValues[i]
-		}
+	envOverride := make(map[string]string, len(p.EnvOverride))
+	for _, kv := range p.EnvOverride {
+		envOverride[kv.Key] = kv.Value
 	}
 	return types.ContainerPolicy{
 		Args:          p.Args,
