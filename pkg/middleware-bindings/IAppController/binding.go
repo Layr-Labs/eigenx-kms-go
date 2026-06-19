@@ -54,23 +54,28 @@ type IAppControllerArtifact struct {
 
 // IAppControllerContainerPolicy is an auto generated low-level Go binding around an user-defined struct.
 type IAppControllerContainerPolicy struct {
-	Args              []string
-	CmdOverride       []string
-	EnvKeys           []string
-	EnvValues         []string
-	EnvOverrideKeys   []string
-	EnvOverrideValues []string
-	RestartPolicy     string
+	Args          []string
+	CmdOverride   []string
+	Env           []IAppControllerEnvVar
+	EnvOverride   []IAppControllerEnvVar
+	RestartPolicy string
+}
+
+// IAppControllerEnvVar is an auto generated low-level Go binding around an user-defined struct.
+type IAppControllerEnvVar struct {
+	Key   string
+	Value string
 }
 
 // IAppControllerRmsRelease is an auto generated low-level Go binding around an user-defined struct.
 type IAppControllerRmsRelease struct {
-	Artifacts []IAppControllerArtifact
+	Artifacts     []IAppControllerArtifact
+	UpgradeByTime uint32
 }
 
 // IAppControllerMetaData contains all meta data concerning the IAppController contract.
 var IAppControllerMetaData = &bind.MetaData{
-	ABI: "[{\"type\":\"function\",\"name\":\"getAppCreator\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAppLatestReleaseBlockNumber\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint32\",\"internalType\":\"uint32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAppOperatorSetId\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint32\",\"internalType\":\"uint32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAppStatus\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"event\",\"name\":\"AppUpgraded\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"rmsReleaseId\",\"type\":\"bytes32\",\"indexed\":false,\"internalType\":\"bytes32\"},{\"name\":\"release\",\"type\":\"tuple\",\"indexed\":false,\"internalType\":\"structIAppController.AppRelease\",\"components\":[{\"name\":\"rmsRelease\",\"type\":\"tuple\",\"internalType\":\"structIAppController.RmsRelease\",\"components\":[{\"name\":\"artifacts\",\"type\":\"tuple[]\",\"internalType\":\"structIAppController.Artifact[]\",\"components\":[{\"name\":\"digest\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"registry\",\"type\":\"string\",\"internalType\":\"string\"}]}]},{\"name\":\"publicEnv\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"encryptedEnv\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"containerPolicy\",\"type\":\"tuple\",\"internalType\":\"structIAppController.ContainerPolicy\",\"components\":[{\"name\":\"args\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"cmdOverride\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"envKeys\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"envValues\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"envOverrideKeys\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"envOverrideValues\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"restartPolicy\",\"type\":\"string\",\"internalType\":\"string\"}]}]}],\"anonymous\":false}]",
+	ABI: "[{\"type\":\"function\",\"name\":\"getAppCreator\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"address\",\"internalType\":\"address\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAppLatestReleaseBlockNumber\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint32\",\"internalType\":\"uint32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAppOperatorSetId\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint32\",\"internalType\":\"uint32\"}],\"stateMutability\":\"view\"},{\"type\":\"function\",\"name\":\"getAppStatus\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"internalType\":\"address\"}],\"outputs\":[{\"name\":\"\",\"type\":\"uint8\",\"internalType\":\"uint8\"}],\"stateMutability\":\"view\"},{\"type\":\"event\",\"name\":\"AppUpgraded\",\"inputs\":[{\"name\":\"app\",\"type\":\"address\",\"indexed\":true,\"internalType\":\"address\"},{\"name\":\"rmsReleaseId\",\"type\":\"uint256\",\"indexed\":false,\"internalType\":\"uint256\"},{\"name\":\"release\",\"type\":\"tuple\",\"indexed\":false,\"internalType\":\"structIAppController.AppRelease\",\"components\":[{\"name\":\"rmsRelease\",\"type\":\"tuple\",\"internalType\":\"structIAppController.RmsRelease\",\"components\":[{\"name\":\"artifacts\",\"type\":\"tuple[]\",\"internalType\":\"structIAppController.Artifact[]\",\"components\":[{\"name\":\"digest\",\"type\":\"bytes32\",\"internalType\":\"bytes32\"},{\"name\":\"registry\",\"type\":\"string\",\"internalType\":\"string\"}]},{\"name\":\"upgradeByTime\",\"type\":\"uint32\",\"internalType\":\"uint32\"}]},{\"name\":\"publicEnv\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"encryptedEnv\",\"type\":\"bytes\",\"internalType\":\"bytes\"},{\"name\":\"containerPolicy\",\"type\":\"tuple\",\"internalType\":\"structIAppController.ContainerPolicy\",\"components\":[{\"name\":\"args\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"cmdOverride\",\"type\":\"string[]\",\"internalType\":\"string[]\"},{\"name\":\"env\",\"type\":\"tuple[]\",\"internalType\":\"structIAppController.EnvVar[]\",\"components\":[{\"name\":\"key\",\"type\":\"string\",\"internalType\":\"string\"},{\"name\":\"value\",\"type\":\"string\",\"internalType\":\"string\"}]},{\"name\":\"envOverride\",\"type\":\"tuple[]\",\"internalType\":\"structIAppController.EnvVar[]\",\"components\":[{\"name\":\"key\",\"type\":\"string\",\"internalType\":\"string\"},{\"name\":\"value\",\"type\":\"string\",\"internalType\":\"string\"}]},{\"name\":\"restartPolicy\",\"type\":\"string\",\"internalType\":\"string\"}]}]}],\"anonymous\":false}]",
 }
 
 // IAppControllerABI is the input ABI used to generate the binding from.
@@ -413,12 +418,12 @@ func (it *IAppControllerAppUpgradedIterator) Close() error {
 // IAppControllerAppUpgraded represents a AppUpgraded event raised by the IAppController contract.
 type IAppControllerAppUpgraded struct {
 	App          common.Address
-	RmsReleaseId [32]byte
+	RmsReleaseId *big.Int
 	Release      IAppControllerAppRelease
 	Raw          types.Log // Blockchain specific contextual infos
 }
 
-// FilterAppUpgraded is a free log retrieval operation binding the contract event 0x04f54fa9cd66cebd05b2cf1840dbd941d04e00ecd339e4f2067272520957d052.
+// FilterAppUpgraded is a free log retrieval operation binding the contract event 0x5e69c7a791a6bb49176e938952d5ebf7b706e399ca57a98ea0de48d5ed248408.
 //
 // Solidity: event AppUpgraded(address indexed app, bytes32 rmsReleaseId, (((bytes32)[]),bytes,bytes,(string[],string[],string[],string[],string[],string[],string)) release)
 func (_IAppController *IAppControllerFilterer) FilterAppUpgraded(opts *bind.FilterOpts, app []common.Address) (*IAppControllerAppUpgradedIterator, error) {
@@ -435,7 +440,7 @@ func (_IAppController *IAppControllerFilterer) FilterAppUpgraded(opts *bind.Filt
 	return &IAppControllerAppUpgradedIterator{contract: _IAppController.contract, event: "AppUpgraded", logs: logs, sub: sub}, nil
 }
 
-// WatchAppUpgraded is a free log subscription operation binding the contract event 0x04f54fa9cd66cebd05b2cf1840dbd941d04e00ecd339e4f2067272520957d052.
+// WatchAppUpgraded is a free log subscription operation binding the contract event 0x5e69c7a791a6bb49176e938952d5ebf7b706e399ca57a98ea0de48d5ed248408.
 //
 // Solidity: event AppUpgraded(address indexed app, bytes32 rmsReleaseId, (((bytes32)[]),bytes,bytes,(string[],string[],string[],string[],string[],string[],string)) release)
 func (_IAppController *IAppControllerFilterer) WatchAppUpgraded(opts *bind.WatchOpts, sink chan<- *IAppControllerAppUpgraded, app []common.Address) (event.Subscription, error) {
@@ -477,7 +482,7 @@ func (_IAppController *IAppControllerFilterer) WatchAppUpgraded(opts *bind.Watch
 	}), nil
 }
 
-// ParseAppUpgraded is a log parse operation binding the contract event 0x04f54fa9cd66cebd05b2cf1840dbd941d04e00ecd339e4f2067272520957d052.
+// ParseAppUpgraded is a log parse operation binding the contract event 0x5e69c7a791a6bb49176e938952d5ebf7b706e399ca57a98ea0de48d5ed248408.
 //
 // Solidity: event AppUpgraded(address indexed app, bytes32 rmsReleaseId, (((bytes32)[]),bytes,bytes,(string[],string[],string[],string[],string[],string[],string)) release)
 func (_IAppController *IAppControllerFilterer) ParseAppUpgraded(log types.Log) (*IAppControllerAppUpgraded, error) {
