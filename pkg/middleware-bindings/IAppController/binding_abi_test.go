@@ -56,4 +56,9 @@ func TestDecodeRealAppUpgradedEvent(t *testing.T) {
 	if _, ok := out["release"]; !ok {
 		t.Fatal("decoded event missing release field")
 	}
+	// rmsReleaseId is uint256 in v1.5.x (was bytes32); confirm it round-trips
+	// (the real fixture's value is 0, a valid production case).
+	if _, ok := out["rmsReleaseId"]; !ok {
+		t.Fatal("decoded event missing rmsReleaseId field")
+	}
 }

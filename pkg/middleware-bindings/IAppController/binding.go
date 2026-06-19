@@ -425,7 +425,7 @@ type IAppControllerAppUpgraded struct {
 
 // FilterAppUpgraded is a free log retrieval operation binding the contract event 0x5e69c7a791a6bb49176e938952d5ebf7b706e399ca57a98ea0de48d5ed248408.
 //
-// Solidity: event AppUpgraded(address indexed app, bytes32 rmsReleaseId, (((bytes32)[]),bytes,bytes,(string[],string[],string[],string[],string[],string[],string)) release)
+// Solidity: event AppUpgraded(address indexed app, uint256 rmsReleaseId, (((bytes32,string)[],uint32),bytes,bytes,(string[],string[],(string,string)[],(string,string)[],string)) release)
 func (_IAppController *IAppControllerFilterer) FilterAppUpgraded(opts *bind.FilterOpts, app []common.Address) (*IAppControllerAppUpgradedIterator, error) {
 
 	var appRule []interface{}
@@ -442,7 +442,7 @@ func (_IAppController *IAppControllerFilterer) FilterAppUpgraded(opts *bind.Filt
 
 // WatchAppUpgraded is a free log subscription operation binding the contract event 0x5e69c7a791a6bb49176e938952d5ebf7b706e399ca57a98ea0de48d5ed248408.
 //
-// Solidity: event AppUpgraded(address indexed app, bytes32 rmsReleaseId, (((bytes32)[]),bytes,bytes,(string[],string[],string[],string[],string[],string[],string)) release)
+// Solidity: event AppUpgraded(address indexed app, uint256 rmsReleaseId, (((bytes32,string)[],uint32),bytes,bytes,(string[],string[],(string,string)[],(string,string)[],string)) release)
 func (_IAppController *IAppControllerFilterer) WatchAppUpgraded(opts *bind.WatchOpts, sink chan<- *IAppControllerAppUpgraded, app []common.Address) (event.Subscription, error) {
 
 	var appRule []interface{}
@@ -484,7 +484,7 @@ func (_IAppController *IAppControllerFilterer) WatchAppUpgraded(opts *bind.Watch
 
 // ParseAppUpgraded is a log parse operation binding the contract event 0x5e69c7a791a6bb49176e938952d5ebf7b706e399ca57a98ea0de48d5ed248408.
 //
-// Solidity: event AppUpgraded(address indexed app, bytes32 rmsReleaseId, (((bytes32)[]),bytes,bytes,(string[],string[],string[],string[],string[],string[],string)) release)
+// Solidity: event AppUpgraded(address indexed app, uint256 rmsReleaseId, (((bytes32,string)[],uint32),bytes,bytes,(string[],string[],(string,string)[],(string,string)[],string)) release)
 func (_IAppController *IAppControllerFilterer) ParseAppUpgraded(log types.Log) (*IAppControllerAppUpgraded, error) {
 	event := new(IAppControllerAppUpgraded)
 	if err := _IAppController.contract.UnpackLog(event, "AppUpgraded", log); err != nil {
