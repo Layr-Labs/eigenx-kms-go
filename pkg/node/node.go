@@ -1691,25 +1691,35 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	// MPK provably consistent with the shares/commitments the operators serve.
 	//
 	// Dealer i broadcasts Feldman commitments C_i with C_i[0] = x_i·G2 (x_i = its
-	// pre-reshare share). The shares lie on a degree-(t-1) polynomial, so the
-	// secret is the Lagrange interpolation at 0 over the dealer set D, giving
-	// MPK = S·G2 = Σ_{i∈D} λ_i(D)·C_i[0]. This matches Σ(served commitments[0]).
+	// pre-reshare share). The new shares are x'_j = Σ_{i∈D} λ_i(D)·s'_{ij}, so they
+	// lie on a polynomial whose constant term is Σ_{i∈D} λ_i(D)·x_i = S, giving
+	// MPK = S·G2 = Σ_{i∈D} λ_i(D)·C_i[0]. Both the new shares and this MPK derive
+	// from the SAME dealer commitments, so the recomputed MPK is, by construction,
+	// consistent with the shares the operators will serve — unlike the previously
+	// persisted MPK, which is the value that can be stale.
 	recomputedMPK, mpkErr := n.recomputeReshareMPK(session, participantIDsForFinalize)
 	if mpkErr != nil {
 		return fmt.Errorf("failed to recompute master public key during reshare: %w", mpkErr)
 	}
 	newKeyVersion.MasterPublicKey = recomputedMPK
 
-	// Consistency guard: reshare must not change the master public key. If the
-	// recomputed MPK diverges from the previous active version's MPK, the reshare
-	// is corrupt (it would render every app's secrets undecryptable) — fail loud
-	// rather than persist an inconsistent key version.
-	if currentVersion := n.keyStore.GetActiveVersion(); currentVersion != nil && currentVersion.MasterPublicKey != nil {
-		if !bytes.Equal(recomputedMPK.CompressedBytes, currentVersion.MasterPublicKey.CompressedBytes) {
-			return fmt.Errorf("reshare produced a master public key that differs from the active version "+
-				"(recomputed %x, active %x) — refusing to finalize a reshare that changes the master secret",
-				recomputedMPK.CompressedBytes, currentVersion.MasterPublicKey.CompressedBytes)
-		}
+	// Self-heal rather than block: if the recomputed MPK diverges from the
+	// previously active MPK, the previously served MPK was stale (it had drifted
+	// from the shares — the bug this fixes). Serving the recomputed value repairs
+	// that on this reshare. We must NOT reject here: on an already-affected
+	// cluster every reshare would diverge from the stale stored value, and
+	// rejecting would block all future reshares permanently (recoverable only by
+	// re-DKG). Log loudly so operators can see a heal/anomaly occurred.
+	if currentVersion := n.keyStore.GetActiveVersion(); currentVersion != nil &&
+		currentVersion.MasterPublicKey != nil &&
+		!recomputedMPK.IsEqual(currentVersion.MasterPublicKey) {
+		n.logger.Sugar().Warnw("Reshare recomputed a master public key that differs from the active version — "+
+			"the previously served MPK was stale and is being healed to match the current shares. "+
+			"If app secrets were encrypted against the old MPK, they must be re-encrypted (or the cluster re-DKG'd).",
+			"operator_address", n.OperatorAddress.Hex(),
+			"recomputed_mpk", fmt.Sprintf("%x", recomputedMPK.CompressedBytes),
+			"previous_mpk", fmt.Sprintf("%x", currentVersion.MasterPublicKey.CompressedBytes),
+		)
 	}
 
 	// Persist new key version BEFORE adding to keystore
@@ -2006,9 +2016,14 @@ func (n *Node) signAppIDWithVersion(appID string, keyVersion *types.KeyShareVers
 //
 //	MPK = S·G2 = Σ_{i∈dealers} λ_i(dealers) · C_i[0]
 //
-// where λ_i is the Lagrange coefficient at 0 over the dealer set. This equals
-// the value clients compute by plain-summing the served (λ-scaled) commitments,
-// keeping the served MasterPublicKey consistent with the operators' shares.
+// where λ_i is the Lagrange coefficient at 0 over the dealer set.
+//
+// Note this uses a DIFFERENT commitment representation than the one clients sum,
+// but yields the same MPK: here we Lagrange-weight the dealers' UNSCALED
+// commitments (C_i[0] = x_i·G2). Each operator instead STORES/serves a
+// pre-scaled commitment (λ_j·x'_j·G2 from ComputeNewKeyShare), which the client
+// plain-sums. Both equal S·G2 — this path just reconstructs it from the raw
+// dealer commitments the node already holds at finalize time.
 func (n *Node) recomputeReshareMPK(session *ProtocolSession, dealers []common.Address) (*types.G2Point, error) {
 	if len(dealers) == 0 {
 		return nil, fmt.Errorf("no dealers provided for MPK recomputation")

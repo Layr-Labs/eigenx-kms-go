@@ -272,16 +272,20 @@ func WaitForReshare(cluster *TestCluster, initialVersions map[int]int64, timeout
 	checkInterval := 500 * time.Millisecond
 
 	for time.Now().Before(deadline) {
-		reshareOccurred := false
+		// Require EVERY node to have advanced to a new version. Returning as soon
+		// as a single node reshares lets callers observe a mixed-version cluster
+		// (some nodes old, some new), which yields inconsistent commitments /
+		// partial signatures and flaky reads.
+		allReshared := true
 		for i, n := range cluster.Nodes {
 			activeVersion := n.GetKeyStore().GetActiveVersion()
-			if activeVersion != nil && activeVersion.Version != initialVersions[i] {
-				reshareOccurred = true
+			if activeVersion == nil || activeVersion.Version == initialVersions[i] {
+				allReshared = false
 				break
 			}
 		}
 
-		if reshareOccurred {
+		if allReshared {
 			return true
 		}
 
