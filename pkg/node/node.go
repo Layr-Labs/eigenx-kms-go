@@ -1680,10 +1680,36 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	newKeyVersion.IsActive = true
 	newKeyVersion.ParticipantIDs = participantIDsForFinalize
 
-	// Carry forward MPK from the current active version (MPK doesn't change during reshare)
+	// Recompute the master public key from the trusted dealers' commitments rather
+	// than blindly carrying the previous version's MPK forward.
+	//
+	// Reshare preserves the master secret S, so the MPK is mathematically
+	// unchanged — but the served MasterPublicKey is a cached scalar that has, in
+	// practice, drifted from the actual key shares across long reshare histories
+	// (clients then encrypt against a stale MPK that no post-reshare share set can
+	// decrypt: "all combinations exhausted"). Recomputing here keeps the served
+	// MPK provably consistent with the shares/commitments the operators serve.
+	//
+	// Dealer i broadcasts Feldman commitments C_i with C_i[0] = x_i·G2 (x_i = its
+	// pre-reshare share). The shares lie on a degree-(t-1) polynomial, so the
+	// secret is the Lagrange interpolation at 0 over the dealer set D, giving
+	// MPK = S·G2 = Σ_{i∈D} λ_i(D)·C_i[0]. This matches Σ(served commitments[0]).
+	recomputedMPK, mpkErr := n.recomputeReshareMPK(session, participantIDsForFinalize)
+	if mpkErr != nil {
+		return fmt.Errorf("failed to recompute master public key during reshare: %w", mpkErr)
+	}
+	newKeyVersion.MasterPublicKey = recomputedMPK
+
+	// Consistency guard: reshare must not change the master public key. If the
+	// recomputed MPK diverges from the previous active version's MPK, the reshare
+	// is corrupt (it would render every app's secrets undecryptable) — fail loud
+	// rather than persist an inconsistent key version.
 	if currentVersion := n.keyStore.GetActiveVersion(); currentVersion != nil && currentVersion.MasterPublicKey != nil {
-		mpkCopy := *currentVersion.MasterPublicKey
-		newKeyVersion.MasterPublicKey = &mpkCopy
+		if !bytes.Equal(recomputedMPK.CompressedBytes, currentVersion.MasterPublicKey.CompressedBytes) {
+			return fmt.Errorf("reshare produced a master public key that differs from the active version "+
+				"(recomputed %x, active %x) — refusing to finalize a reshare that changes the master secret",
+				recomputedMPK.CompressedBytes, currentVersion.MasterPublicKey.CompressedBytes)
+		}
 	}
 
 	// Persist new key version BEFORE adding to keystore
@@ -1969,6 +1995,56 @@ func (n *Node) signAppIDWithVersion(appID string, keyVersion *types.KeyShareVers
 		return types.G1Point{}, fmt.Errorf("ScalarMulG1 failed: %w", err)
 	}
 	return *partialSig, nil
+}
+
+// recomputeReshareMPK reconstructs the master public key from the trusted
+// dealers' broadcast commitments during reshare finalization.
+//
+// Each dealer i broadcasts Feldman commitments C_i with C_i[0] = x_i·G2, where
+// x_i is dealer i's pre-reshare share. The shares interpolate a degree-(t-1)
+// polynomial whose constant term is the master secret S, so:
+//
+//	MPK = S·G2 = Σ_{i∈dealers} λ_i(dealers) · C_i[0]
+//
+// where λ_i is the Lagrange coefficient at 0 over the dealer set. This equals
+// the value clients compute by plain-summing the served (λ-scaled) commitments,
+// keeping the served MasterPublicKey consistent with the operators' shares.
+func (n *Node) recomputeReshareMPK(session *ProtocolSession, dealers []common.Address) (*types.G2Point, error) {
+	if len(dealers) == 0 {
+		return nil, fmt.Errorf("no dealers provided for MPK recomputation")
+	}
+
+	session.mu.RLock()
+	commitments := make(map[common.Address][]types.G2Point, len(dealers))
+	for _, d := range dealers {
+		commitments[d] = session.commitments[d]
+	}
+	session.mu.RUnlock()
+
+	mpk := types.ZeroG2Point()
+	for _, d := range dealers {
+		c := commitments[d]
+		if len(c) == 0 {
+			return nil, fmt.Errorf("missing commitment for trusted dealer %s during MPK recomputation", d.Hex())
+		}
+		lambda := eigenxcrypto.ComputeLagrangeCoefficient(d, dealers)
+		scaled, err := eigenxcrypto.ScalarMulG2(c[0], lambda)
+		if err != nil {
+			return nil, fmt.Errorf("scale commitment for dealer %s: %w", d.Hex(), err)
+		}
+		sum, err := eigenxcrypto.AddG2(*mpk, *scaled)
+		if err != nil {
+			return nil, fmt.Errorf("add commitment for dealer %s: %w", d.Hex(), err)
+		}
+		mpk = sum
+	}
+
+	if isZero, err := mpk.IsZero(); err != nil {
+		return nil, fmt.Errorf("check recomputed MPK: %w", err)
+	} else if isZero {
+		return nil, fmt.Errorf("recomputed master public key is zero")
+	}
+	return mpk, nil
 }
 
 // SignAppID signs an application ID using the key version active at attestationTime.
