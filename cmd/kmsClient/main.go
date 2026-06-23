@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/ecdsa"
 	"encoding/hex"
 	"fmt"
 	"log"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/Layr-Labs/chain-indexer/pkg/clients/ethereum"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 	"github.com/urfave/cli/v2"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/kmsClient"
@@ -357,4 +359,36 @@ func prepareOutputPath(p string) (string, error) {
 		return "", fmt.Errorf("output path %q has no file name", p)
 	}
 	return cleaned, nil
+}
+
+// loadECDSAKey resolves the ECDSA attestation private key from the two decrypt
+// flags. keyHex (--ecdsa-private-key) takes priority over keyFile
+// (--ecdsa-private-key-file); at least one must be non-empty. The key is a
+// hex-encoded secp256k1 private key. An optional 0x/0X prefix and surrounding
+// whitespace are tolerated — a trailing newline is common when the key is read
+// from a file.
+func loadECDSAKey(keyHex, keyFile string) (*ecdsa.PrivateKey, error) {
+	var raw string
+	switch {
+	case keyHex != "":
+		raw = keyHex
+	case keyFile != "":
+		b, err := os.ReadFile(keyFile)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read ECDSA private key file: %w", err)
+		}
+		raw = string(b)
+	default:
+		return nil, fmt.Errorf("an ECDSA private key is required for --attestation ecdsa: set --ecdsa-private-key or --ecdsa-private-key-file")
+	}
+
+	raw = strings.TrimSpace(raw)
+	raw = strings.TrimPrefix(raw, "0x")
+	raw = strings.TrimPrefix(raw, "0X")
+
+	key, err := ethcrypto.HexToECDSA(raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid ECDSA private key: %w", err)
+	}
+	return key, nil
 }
