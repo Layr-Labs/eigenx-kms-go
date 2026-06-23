@@ -34,14 +34,19 @@ This client can:
 		Version: "1.0.0",
 		Flags: []cli.Flag{
 			&cli.StringFlag{
+				Name:    "environment",
+				Aliases: []string{"e"},
+				Usage:   "Named connection preset that fills --avs-address and --operator-set-id (e.g. \"sepolia\"). Explicit flags override the preset. The RPC URL is never part of a preset.",
+				Value:   "",
+			},
+			&cli.StringFlag{
 				Name:  "rpc-url",
 				Usage: "Ethereum RPC URL",
 				Value: "http://localhost:8545",
 			},
 			&cli.StringFlag{
-				Name:     "avs-address",
-				Usage:    "AVS contract address",
-				Required: true,
+				Name:  "avs-address",
+				Usage: "AVS contract address (required unless provided by --environment)",
 			},
 			&cli.UintFlag{
 				Name:  "operator-set-id",
@@ -136,6 +141,21 @@ This client can:
 
 // createClient creates a new KMS client from CLI context
 func createClient(c *cli.Context) (*kmsClient.Client, error) {
+	// Resolve connection details from the --environment preset and any
+	// explicitly-set flags (explicit flags win over the preset). Done first so
+	// a config error (e.g. missing avs-address) fails fast without depending on
+	// a reachable RPC endpoint.
+	avsAddress, operatorSetID, err := resolveConnection(
+		c.String("environment"),
+		c.String("avs-address"),
+		c.IsSet("avs-address"),
+		uint32(c.Uint("operator-set-id")),
+		c.IsSet("operator-set-id"),
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	// Create logger
 	zapLogger, err := logger.NewLogger(&logger.LoggerConfig{Debug: false})
 	if err != nil {
@@ -163,8 +183,8 @@ func createClient(c *cli.Context) (*kmsClient.Client, error) {
 
 	// Create KMS client with injected dependencies
 	config := &kmsClient.ClientConfig{
-		AVSAddress:     c.String("avs-address"),
-		OperatorSetID:  uint32(c.Uint("operator-set-id")),
+		AVSAddress:     avsAddress,
+		OperatorSetID:  operatorSetID,
 		Logger:         zapLogger,
 		ContractCaller: contractCaller,
 	}
