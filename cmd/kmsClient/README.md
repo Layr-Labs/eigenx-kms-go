@@ -88,14 +88,18 @@ When `--attestation ecdsa` is set, at least one of `--ecdsa-private-key` or
 
 - Operators must run with ECDSA attestation enabled
   (`--enable-ecdsa-attestation=true`).
-- The application must exist on-chain — the operator fetches the app's release
-  while serving the request.
+- The app must exist on-chain so the operator can look up its creator. For ECDSA
+  specifically, a published release is **not** required (env is returned only if
+  a release exists); the signing key must belong to the app's creator.
 
 **Security caveat:** ECDSA attestation proves only ownership of the ECDSA
 private key and the freshness of the challenge. It does **not** prove a TEE
-execution environment, and the operator does not bind the ECDSA address to the
-application ID. The recovered application key is derived solely from the
-application ID, so it is identical regardless of which ECDSA key is presented.
+execution environment. The operator binds the ECDSA signer to the app's on-chain
+**creator**: the `--ecdsa-private-key` / `--ecdsa-private-key-file` you supply
+MUST be the key of the EOA that deployed/created the app, or the request is
+rejected with `ecdsa signer is not the app creator`. The attested ECDSA path
+does not require an on-chain release; it returns the app's environment only if a
+release exists, and otherwise returns empty env alongside the recovered key.
 Use ECDSA attestation for development and for operators configured to require
 it — not as a production confidentiality guarantee. For production, use a TEE
 attestation method (GCP Confidential Space / Intel Trust Authority).
