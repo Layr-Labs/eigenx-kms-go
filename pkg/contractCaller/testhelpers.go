@@ -15,8 +15,14 @@ import (
 	ethTypes "github.com/ethereum/go-ethereum/core/types"
 )
 
-// MockContractCallerStub provides a minimal stub implementation of IContractCaller for testing
-type MockContractCallerStub struct{}
+// MockContractCallerStub provides a minimal stub implementation of IContractCaller for testing.
+//
+// GetCommitmentAtFunc, when set, lets a test drive what the commitment registry returns
+// per (epoch, operator, block) — used by the reshare dealer-set-agreement simulation to
+// model which operators submitted on-chain. When nil, reads return an empty commitment.
+type MockContractCallerStub struct {
+	GetCommitmentAtFunc func(ctx context.Context, registryAddress common.Address, epoch int64, operator common.Address, blockNumber uint64) (commitmentHash [32]byte, ackMerkleRoot [32]byte, submittedAt uint64, err error)
+}
 
 func (m *MockContractCallerStub) GetOperatorSetMembersWithPeering(avsAddress string, operatorSetId uint32) (*peering.OperatorSetPeers, error) {
 	return nil, nil
@@ -59,6 +65,13 @@ func (m *MockContractCallerStub) SubmitCommitment(ctx context.Context, registryA
 }
 
 func (m *MockContractCallerStub) GetCommitment(ctx context.Context, registryAddress common.Address, epoch int64, operator common.Address) (commitmentHash [32]byte, ackMerkleRoot [32]byte, submittedAt uint64, err error) {
+	return m.GetCommitmentAt(ctx, registryAddress, epoch, operator, 0)
+}
+
+func (m *MockContractCallerStub) GetCommitmentAt(ctx context.Context, registryAddress common.Address, epoch int64, operator common.Address, blockNumber uint64) (commitmentHash [32]byte, ackMerkleRoot [32]byte, submittedAt uint64, err error) {
+	if m.GetCommitmentAtFunc != nil {
+		return m.GetCommitmentAtFunc(ctx, registryAddress, epoch, operator, blockNumber)
+	}
 	return [32]byte{}, [32]byte{}, 0, nil
 }
 

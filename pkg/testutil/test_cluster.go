@@ -1,10 +1,12 @@
 package testutil
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"net/http/httptest"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,6 +36,46 @@ type TestCluster struct {
 	NumNodes     int
 	MasterPubKey types.G2Point
 	MockPoller   *MockChainPoller // Exposed for test control
+
+	// CommitmentRegistry simulates the on-chain commitment registry that the reshare
+	// dealer-set-agreement path reads. By default every operator is reported as having
+	// submitted for every epoch (healthy cluster). Tests can call SuppressSubmission to
+	// model an operator that failed to submit (partition), exercising the agreement +
+	// abort-retry behavior. See docs/011_reshareDealerSetAgreement.md.
+	CommitmentRegistry *MockCommitmentRegistry
+}
+
+// MockCommitmentRegistry is a thread-safe in-memory stand-in for the on-chain
+// EigenKMSCommitmentRegistry, used to drive the reshare dealer-set-agreement logic in
+// tests. A commitment is considered "submitted" for (epoch, operator) unless explicitly
+// suppressed.
+type MockCommitmentRegistry struct {
+	mu         sync.RWMutex
+	suppressed map[string]bool // key: epoch|operator
+}
+
+// NewMockCommitmentRegistry returns a registry where everything reads as submitted.
+func NewMockCommitmentRegistry() *MockCommitmentRegistry {
+	return &MockCommitmentRegistry{suppressed: make(map[string]bool)}
+}
+
+func regKey(epoch int64, op common.Address) string {
+	return fmt.Sprintf("%d|%s", epoch, op.Hex())
+}
+
+// SuppressSubmission models an operator that did NOT submit a commitment for an epoch
+// (e.g. it was partitioned). The agreement logic will treat it as not-eligible.
+func (r *MockCommitmentRegistry) SuppressSubmission(epoch int64, op common.Address) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.suppressed[regKey(epoch, op)] = true
+}
+
+// submitted reports whether (epoch, op) is considered submitted.
+func (r *MockCommitmentRegistry) submitted(epoch int64, op common.Address) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return !r.suppressed[regKey(epoch, op)]
 }
 
 // NewTestCluster creates a test cluster of KMS nodes with completed DKG
@@ -66,10 +108,11 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 
 	// Create test cluster
 	cluster := &TestCluster{
-		Nodes:      make([]*node.Node, numNodes),
-		Servers:    make([]*httptest.Server, numNodes),
-		ServerURLs: make([]string, numNodes),
-		NumNodes:   numNodes,
+		Nodes:              make([]*node.Node, numNodes),
+		Servers:            make([]*httptest.Server, numNodes),
+		ServerURLs:         make([]string, numNodes),
+		NumNodes:           numNodes,
+		CommitmentRegistry: NewMockCommitmentRegistry(),
 	}
 
 	// Create nodes with real addresses and keys
@@ -121,8 +164,20 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 		// Use mock attestation verifier for tests
 		mockManager := attestation.NewStubManager()
 
-		// Create mock base contract caller for commitment registry
-		mockBaseContractCaller := &contractCaller.MockContractCallerStub{}
+		// Create mock base contract caller backed by the cluster's shared commitment
+		// registry simulation, so the reshare dealer-set-agreement path reads a
+		// consistent (and test-controllable) set of submitters across all nodes.
+		mockBaseContractCaller := &contractCaller.MockContractCallerStub{
+			GetCommitmentAtFunc: func(_ context.Context, _ common.Address, epoch int64, operator common.Address, _ uint64) ([32]byte, [32]byte, uint64, error) {
+				if cluster.CommitmentRegistry.submitted(epoch, operator) {
+					// Non-zero commitment hash = "submitted".
+					var h [32]byte
+					h[0] = 1
+					return h, h, 1, nil
+				}
+				return [32]byte{}, [32]byte{}, 0, nil
+			},
+		}
 
 		mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
 

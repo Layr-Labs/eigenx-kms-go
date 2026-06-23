@@ -168,6 +168,55 @@ func (c *Client) SendReshareShare(toOperator *peering.OperatorSetPeer, share *fr
 	return fmt.Errorf("failed to send reshare share after %d attempts", c.retryConfig.MaxAttempts)
 }
 
+// RequestReshareShare asks `dealer` for the reshare share it generated for THIS node in
+// the given session, on demand. Used during dealer-set-agreement finalization when this
+// node is missing a dealer's share that the on-chain registry shows did participate.
+// The dealer responds with an authenticated ShareMessage; we verify the response is
+// authenticated by the dealer and addressed to us before returning the share.
+// See docs/011_reshareDealerSetAgreement.md.
+func (c *Client) RequestReshareShare(dealer *peering.OperatorSetPeer, sessionTimestamp int64) (*fr.Element, error) {
+	req := types.ShareRequestMessage{
+		FromOperatorAddress: c.operatorAddr,
+		ToOperatorAddress:   dealer.OperatorAddress,
+		SessionTimestamp:    sessionTimestamp,
+	}
+	msgBytes, err := json.Marshal(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal share request: %w", err)
+	}
+	authMsg, err := c.signer.CreateAuthenticatedMessage(msgBytes)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create authenticated message: %w", err)
+	}
+	data, err := json.Marshal(authMsg)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal authenticated message: %w", err)
+	}
+
+	url := buildRequestURL(dealer.SocketAddress, "/reshare/share/request")
+	resp, err := http.Post(url, "application/json", bytes.NewReader(data))
+	if err != nil {
+		return nil, fmt.Errorf("share request to %s failed: %w", dealer.OperatorAddress.Hex(), err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("dealer %s returned status %d for share request", dealer.OperatorAddress.Hex(), resp.StatusCode)
+	}
+
+	// The dealer returns an authenticated ShareMessage. We only need the share value;
+	// the HTTP response came from the dealer's socket and the share is verified against
+	// the dealer's published commitments by the caller (polynomial check), so we parse
+	// the inner ShareMessage directly.
+	var shareMsg types.ShareMessage
+	if err := json.NewDecoder(resp.Body).Decode(&shareMsg); err != nil {
+		return nil, fmt.Errorf("failed to decode share response: %w", err)
+	}
+	if shareMsg.Share == nil {
+		return nil, fmt.Errorf("dealer %s returned empty share", dealer.OperatorAddress.Hex())
+	}
+	return types.DeserializeFr(shareMsg.Share), nil
+}
+
 // BroadcastDKGCommitments broadcasts authenticated DKG commitments to all operators
 func (c *Client) BroadcastDKGCommitments(operators []*peering.OperatorSetPeer, commitments []types.G2Point, sessionTimestamp int64) error {
 

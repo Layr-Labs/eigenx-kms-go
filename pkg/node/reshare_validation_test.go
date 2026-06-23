@@ -51,7 +51,7 @@ func makeNodeWithKeyVersion(t *testing.T, numOps int, participantIDs []common.Ad
 
 func TestRunReshareAsExistingOperator_AllOperatorsNewRejected(t *testing.T) {
 	n := makeNodeWithKeyVersion(t, 3, []common.Address{})
-	err := n.RunReshareAsExistingOperator(1000)
+	err := n.RunReshareAsExistingOperator(1000, 0)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "out of range")
 }
@@ -64,7 +64,7 @@ func TestRunReshareAsExistingOperator_PureRefreshPassesGuard(t *testing.T) {
 	}
 	n := makeNodeWithKeyVersion(t, numOps, participantIDs)
 
-	err := n.RunReshareAsExistingOperator(1000)
+	err := n.RunReshareAsExistingOperator(1000, 0)
 	require.Error(t, err)
 	require.NotContains(t, err.Error(), "out of range")
 }
@@ -82,4 +82,54 @@ func TestRunReshareAsNewOperator_GuardRejectsZero(t *testing.T) {
 		require.True(t, outOfRange,
 			"numNewOperators=0 must be rejected by the new-operator guard for N=%d", n)
 	}
+}
+
+func addr(i int) common.Address { return common.HexToAddress(fmt.Sprintf("0x%040x", i)) }
+
+// expectedReshareDealers must return the on-chain ∩ prior-participants set in on-chain
+// order — the deterministic dealer set every operator finalizes on. This is what makes
+// the reshare-finalize agreement invariant hold across nodes.
+func TestExpectedReshareDealers_IntersectsOnChainAndPriorParticipants(t *testing.T) {
+	// Prior participants: 1,2,3. On-chain now: 2,3,4 (1 left, 4 joined fresh).
+	prior := []common.Address{addr(1), addr(2), addr(3)}
+	n := makeNodeWithKeyVersion(t, 0, prior)
+
+	onChain := []*peering.OperatorSetPeer{
+		{OperatorAddress: addr(2)},
+		{OperatorAddress: addr(3)},
+		{OperatorAddress: addr(4)}, // new joiner: holds no share, must NOT be a dealer
+	}
+
+	dealers := n.expectedReshareDealers(onChain)
+
+	// Expect {2,3} only — intersection — in on-chain order.
+	require.Equal(t, []common.Address{addr(2), addr(3)}, dealers,
+		"dealers must be on-chain ∩ prior participants (exclude departed 1 and new 4), in on-chain order")
+}
+
+// Determinism: regardless of the order prior participants were stored, the dealer set
+// follows the on-chain operator ordering, so every node computes an identical slice.
+func TestExpectedReshareDealers_OrderFollowsOnChainSlice(t *testing.T) {
+	prior := []common.Address{addr(3), addr(1), addr(2)} // stored in arbitrary order
+	n := makeNodeWithKeyVersion(t, 0, prior)
+
+	onChain := []*peering.OperatorSetPeer{
+		{OperatorAddress: addr(1)},
+		{OperatorAddress: addr(2)},
+		{OperatorAddress: addr(3)},
+	}
+	dealers := n.expectedReshareDealers(onChain)
+	require.Equal(t, []common.Address{addr(1), addr(2), addr(3)}, dealers)
+}
+
+// With no active version (never completed DKG), there are no prior participants to
+// scope against; fall back to all current operators.
+func TestExpectedReshareDealers_NoActiveVersionReturnsAll(t *testing.T) {
+	n := makeNodeForValidation(t, 0)
+	onChain := []*peering.OperatorSetPeer{
+		{OperatorAddress: addr(1)},
+		{OperatorAddress: addr(2)},
+	}
+	dealers := n.expectedReshareDealers(onChain)
+	require.Equal(t, []common.Address{addr(1), addr(2)}, dealers)
 }

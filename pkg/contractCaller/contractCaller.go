@@ -83,6 +83,19 @@ type IContractCaller interface {
 		operator common.Address,
 	) (commitmentHash [32]byte, ackMerkleRoot [32]byte, submittedAt uint64, err error)
 
+	// GetCommitmentAt reads a commitment as-of a specific block height. Passing
+	// blockNumber == 0 reads at chain head (equivalent to GetCommitment). Used by the
+	// reshare dealer-set-agreement finalize path so all operators read the registry at
+	// the same pinned height and derive an identical dealer set.
+	// See docs/011_reshareDealerSetAgreement.md.
+	GetCommitmentAt(
+		ctx context.Context,
+		registryAddress common.Address,
+		epoch int64,
+		operator common.Address,
+		blockNumber uint64,
+	) (commitmentHash [32]byte, ackMerkleRoot [32]byte, submittedAt uint64, err error)
+
 	// EigenCompute app management functions
 	SetAppController(appController caller.AppControllerInterface) error
 

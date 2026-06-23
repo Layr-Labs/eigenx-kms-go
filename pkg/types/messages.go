@@ -25,6 +25,17 @@ type ShareMessage struct {
 	Share               *SerializedFrElement `json:"share"`
 }
 
+// ShareRequestMessage requests, on demand, the reshare share that `Dealer` generated
+// for `Requester` in session `SessionTimestamp`. Used during dealer-set-agreement
+// finalization when a node is missing a share for a dealer that the on-chain registry
+// shows did participate. The dealer responds with an authenticated ShareMessage
+// containing only the requester's share. See docs/011_reshareDealerSetAgreement.md.
+type ShareRequestMessage struct {
+	FromOperatorAddress common.Address `json:"fromOperatorAddress"` // requester
+	ToOperatorAddress   common.Address `json:"toOperatorAddress"`   // dealer being asked
+	SessionTimestamp    int64          `json:"sessionTimestamp"`
+}
+
 // CommitmentMessage broadcasts commitments to all nodes
 type CommitmentMessage struct {
 	FromOperatorAddress common.Address `json:"fromOperatorAddress"`
