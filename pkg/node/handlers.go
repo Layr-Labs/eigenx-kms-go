@@ -12,6 +12,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/ethereum/go-ethereum/common"
+	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 )
 
 // validateAuthenticatedMessage validates an incoming authenticated message
@@ -70,6 +71,31 @@ func (s *Server) validateAuthenticatedMessage(r *http.Request, expectedRecipient
 	}
 
 	return &authMsg, senderPeer, nil, nil
+}
+
+// verifyECDSAOwnership confirms the ECDSA attestation signer controls the app's
+// on-chain creator key. The appID for ECDSA must be an app contract address;
+// the signer is derived from the already-verified attestation public key and
+// compared to GetAppCreator(appID). Returns (httpStatus, error); (0, nil) on
+// success.
+func (s *Server) verifyECDSAOwnership(appID string, publicKey []byte) (int, error) {
+	if !common.IsHexAddress(appID) {
+		return http.StatusBadRequest, fmt.Errorf("app_id must be a contract address for ecdsa attestation")
+	}
+	pub, err := ethcrypto.UnmarshalPubkey(publicKey)
+	if err != nil {
+		return http.StatusBadRequest, fmt.Errorf("invalid ecdsa public key: %w", err)
+	}
+	signer := ethcrypto.PubkeyToAddress(*pub)
+
+	creator, err := s.node.baseContractCaller.GetAppCreator(common.HexToAddress(appID), nil)
+	if err != nil {
+		return http.StatusBadGateway, fmt.Errorf("failed to look up app creator: %w", err)
+	}
+	if signer != creator {
+		return http.StatusForbidden, fmt.Errorf("ecdsa signer is not the app creator")
+	}
+	return 0, nil
 }
 
 // handleSecretsRequest handles the /secrets endpoint for application secret retrieval
@@ -189,69 +215,97 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Step 3: Query latest release from on-chain AppController
-	release, err := s.node.baseContractCaller.GetLatestReleaseAsRelease(r.Context(), req.AppID)
-	if err != nil {
-		s.node.logger.Sugar().Warnw("Failed to get release", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
-		http.Error(w, "Release not found", http.StatusNotFound)
-		return
-	}
-
-	// Step 4: Verify image digest matches.
-	if claims.ImageDigest != release.ImageDigest {
-		s.node.logger.Sugar().Warnw("Image digest mismatch", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "expected", release.ImageDigest, "got", claims.ImageDigest)
-		http.Error(w, "Image digest mismatch - unauthorized image", http.StatusForbidden)
-		return
-	}
-
-	// Step 4b: Verify registry matches when claims surface one.
+	// Step 3: Resolve the release and run method-specific authorization.
 	//
-	// eigenx-snp populates claims.Registry from cc_init_data's policy.rego
-	// (e.g. "ghcr.io/example/app"); the on-chain Release.Registry is the
-	// same shape — what AgentKit publishes via extractRegistryNameNoDocker
-	// (registry + repo path, sans tag/digest). Other attestation methods
-	// (kbs-ear, gcp/intel) leave claims.Registry empty; in that case we
-	// don't enforce — those methods either don't surface the registry yet
-	// or cover environments where the on-chain Registry is absent. When
-	// release.Registry is empty (older releases pre-Registry-field) we
-	// also skip — fail-open here is safe because the digest check above
-	// already pinned identity.
-	if claims.Registry != "" && release.Registry != "" && claims.Registry != release.Registry {
-		s.node.logger.Sugar().Warnw("Registry mismatch",
-			"operator_address", s.node.OperatorAddress.Hex(),
-			"app_id", req.AppID,
-			"expected", release.Registry, "got", claims.Registry)
-		http.Error(w, "Registry mismatch - unauthorized image source", http.StatusForbidden)
-		return
-	}
+	// ECDSA is a lightweight ownership-proof method for testing: it binds to the
+	// app's on-chain creator and does NOT depend on a release (best-effort env,
+	// no digest/registry/container-policy checks). All other methods keep the
+	// full release + image-digest + registry + container-policy enforcement.
+	var release *types.Release
+	if req.AttestationMethod == "ecdsa" {
+		if status, ownErr := s.verifyECDSAOwnership(req.AppID, claims.PublicKey); ownErr != nil {
+			s.node.logger.Sugar().Warnw("ECDSA ownership check failed",
+				"operator_address", s.node.OperatorAddress.Hex(),
+				"app_id", req.AppID,
+				"error", ownErr)
+			http.Error(w, ownErr.Error(), status)
+			return
+		}
 
-	// Step 5: Verify container execution policy matches on-chain values.
-	//
-	// eigenx-snp does not surface ContainerPolicy in claims (the policy lives
-	// in cc_init_data's aa.toml / cdh.toml, which we don't parse yet). If a
-	// release pins a non-empty ContainerPolicy and the request authenticates
-	// via eigenx-snp, validateContainerPolicy would silently succeed against
-	// claims.ContainerPolicy's zero value — the policy would not be enforced.
-	// Fail closed instead: workloads that don't pin a ContainerPolicy still
-	// work over eigenx-snp; workloads that do pin one cannot use eigenx-snp
-	// until the SEV-SNP path surfaces the running container's policy claims.
-	// TODO(eigenx): surface the running container's launch spec into
-	// claims.ContainerPolicy so this gap closes and this branch can drop.
-	// Design + recommended approach: docs/009_eigenxSnpAttestation.md
-	// ("Follow-up 1: ContainerPolicy enforcement").
-	if req.AttestationMethod == "eigenx-snp" && hasContainerPolicy(release.ContainerPolicy) {
-		s.node.logger.Sugar().Warnw(
-			"refusing eigenx-snp request: release pins ContainerPolicy that this method does not yet surface in claims",
-			"operator_address", s.node.OperatorAddress.Hex(),
-			"app_id", req.AppID,
-		)
-		http.Error(w, "eigenx-snp attestation does not yet enforce ContainerPolicy; release requires it", http.StatusForbidden)
-		return
-	}
-	if err := validateContainerPolicy(claims.ContainerPolicy, release.ContainerPolicy); err != nil {
-		s.node.logger.Sugar().Warnw("Container policy mismatch", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
-		http.Error(w, "Container policy mismatch", http.StatusForbidden)
-		return
+		// Best-effort env: a missing release is fine for ECDSA — serve the share
+		// with empty env. A present release contributes its env.
+		release, err = s.node.baseContractCaller.GetLatestReleaseAsRelease(r.Context(), req.AppID)
+		if err != nil {
+			s.node.logger.Sugar().Infow("No release for ecdsa app; serving share with empty env",
+				"operator_address", s.node.OperatorAddress.Hex(),
+				"app_id", req.AppID)
+			release = &types.Release{}
+		}
+	} else {
+		// Query latest release from on-chain AppController
+		release, err = s.node.baseContractCaller.GetLatestReleaseAsRelease(r.Context(), req.AppID)
+		if err != nil {
+			s.node.logger.Sugar().Warnw("Failed to get release", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
+			http.Error(w, "Release not found", http.StatusNotFound)
+			return
+		}
+
+		// Step 4: Verify image digest matches.
+		if claims.ImageDigest != release.ImageDigest {
+			s.node.logger.Sugar().Warnw("Image digest mismatch", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "expected", release.ImageDigest, "got", claims.ImageDigest)
+			http.Error(w, "Image digest mismatch - unauthorized image", http.StatusForbidden)
+			return
+		}
+
+		// Step 4b: Verify registry matches when claims surface one.
+		//
+		// eigenx-snp populates claims.Registry from cc_init_data's policy.rego
+		// (e.g. "ghcr.io/example/app"); the on-chain Release.Registry is the
+		// same shape — what AgentKit publishes via extractRegistryNameNoDocker
+		// (registry + repo path, sans tag/digest). Other attestation methods
+		// (kbs-ear, gcp/intel) leave claims.Registry empty; in that case we
+		// don't enforce — those methods either don't surface the registry yet
+		// or cover environments where the on-chain Registry is absent. When
+		// release.Registry is empty (older releases pre-Registry-field) we
+		// also skip — fail-open here is safe because the digest check above
+		// already pinned identity.
+		if claims.Registry != "" && release.Registry != "" && claims.Registry != release.Registry {
+			s.node.logger.Sugar().Warnw("Registry mismatch",
+				"operator_address", s.node.OperatorAddress.Hex(),
+				"app_id", req.AppID,
+				"expected", release.Registry, "got", claims.Registry)
+			http.Error(w, "Registry mismatch - unauthorized image source", http.StatusForbidden)
+			return
+		}
+
+		// Step 5: Verify container execution policy matches on-chain values.
+		//
+		// eigenx-snp does not surface ContainerPolicy in claims (the policy lives
+		// in cc_init_data's aa.toml / cdh.toml, which we don't parse yet). If a
+		// release pins a non-empty ContainerPolicy and the request authenticates
+		// via eigenx-snp, validateContainerPolicy would silently succeed against
+		// claims.ContainerPolicy's zero value — the policy would not be enforced.
+		// Fail closed instead: workloads that don't pin a ContainerPolicy still
+		// work over eigenx-snp; workloads that do pin one cannot use eigenx-snp
+		// until the SEV-SNP path surfaces the running container's policy claims.
+		// TODO(eigenx): surface the running container's launch spec into
+		// claims.ContainerPolicy so this gap closes and this branch can drop.
+		// Design + recommended approach: docs/009_eigenxSnpAttestation.md
+		// ("Follow-up 1: ContainerPolicy enforcement").
+		if req.AttestationMethod == "eigenx-snp" && hasContainerPolicy(release.ContainerPolicy) {
+			s.node.logger.Sugar().Warnw(
+				"refusing eigenx-snp request: release pins ContainerPolicy that this method does not yet surface in claims",
+				"operator_address", s.node.OperatorAddress.Hex(),
+				"app_id", req.AppID,
+			)
+			http.Error(w, "eigenx-snp attestation does not yet enforce ContainerPolicy; release requires it", http.StatusForbidden)
+			return
+		}
+		if err := validateContainerPolicy(claims.ContainerPolicy, release.ContainerPolicy); err != nil {
+			s.node.logger.Sugar().Warnw("Container policy mismatch", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", err)
+			http.Error(w, "Container policy mismatch", http.StatusForbidden)
+			return
+		}
 	}
 
 	// Step 6: Get appropriate key share based on attestation time
