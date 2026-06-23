@@ -16,6 +16,8 @@ import (
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/kmsClient"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 )
 
@@ -92,6 +94,21 @@ This client can:
 					&cli.StringFlag{
 						Name:  "output",
 						Usage: "Output file for decrypted data",
+						Value: "",
+					},
+					&cli.StringFlag{
+						Name:  "attestation",
+						Usage: "Attestation method. Empty (default) uses the unauthenticated /app/sign endpoint; \"ecdsa\" uses ECDSA challenge-response attestation against /secrets.",
+						Value: "",
+					},
+					&cli.StringFlag{
+						Name:  "ecdsa-private-key",
+						Usage: "Hex-encoded secp256k1 private key for ECDSA attestation (takes priority over --ecdsa-private-key-file). Required when --attestation ecdsa.",
+						Value: "",
+					},
+					&cli.StringFlag{
+						Name:  "ecdsa-private-key-file",
+						Usage: "Path to a file holding a hex-encoded secp256k1 private key for ECDSA attestation. Used when --ecdsa-private-key is not set.",
 						Value: "",
 					},
 				},
@@ -211,6 +228,18 @@ func decryptCommand(c *cli.Context) error {
 	encryptedInput := c.String("encrypted-data")
 	threshold := c.Int("threshold")
 	outputFile := c.String("output")
+	attestationMethod := c.String("attestation")
+
+	// Validate the attestation method up front so a typo fails fast before any
+	// file or network work. Empty selects the legacy no-attestation /app/sign
+	// flow; "ecdsa" is the only attested method meaningful from a CLI
+	// (GCP/Intel/SNP require running inside a TEE).
+	switch attestationMethod {
+	case "", "ecdsa":
+		// supported
+	default:
+		return fmt.Errorf("unsupported --attestation %q: supported values are \"\" (none) and \"ecdsa\"", attestationMethod)
+	}
 
 	fmt.Printf("🔓 Decrypting data for app: %s\n", appID)
 
@@ -220,45 +249,25 @@ func decryptCommand(c *cli.Context) error {
 		return fmt.Errorf("failed to create client: %w", err)
 	}
 
-	// Get operators from chain
-	operators, err := client.GetOperators()
+	// Parse encrypted data (hex string or file) up front — independent of the
+	// attestation path and cheap to fail on.
+	encryptedData, err := parseEncryptedInput(encryptedInput)
 	if err != nil {
-		return fmt.Errorf("failed to get operators: %w", err)
+		return err
 	}
 
-	// Parse encrypted data (hex string or file)
-	var encryptedData []byte
-	if _, statErr := os.Stat(encryptedInput); statErr == nil {
-		// It's a file
-		fileData, readErr := os.ReadFile(encryptedInput)
-		if readErr != nil {
-			return fmt.Errorf("failed to read encrypted data file: %w", readErr)
-		}
-		// Use hexutil.Decode so we accept the 0x-prefixed output that
-		// `encrypt --output` writes; TrimSpace handles trailing newlines
-		// from editors or `echo`.
-		var decodeErr error
-		encryptedData, decodeErr = hexutil.Decode(strings.TrimSpace(string(fileData)))
-		if decodeErr != nil {
-			return fmt.Errorf("failed to decode hex data from file: %w", decodeErr)
-		}
+	// Recover the plaintext via the selected path.
+	var decryptedData []byte
+	if attestationMethod == "ecdsa" {
+		decryptedData, err = decryptWithECDSAAttestation(c, client, appID, encryptedData)
 	} else {
-		// It's a hex string
-		var decodeErr error
-		fmt.Printf("Using encrypted input %s\n", encryptedInput)
-		encryptedData, decodeErr = hexutil.Decode(encryptedInput)
-		if decodeErr != nil {
-			return fmt.Errorf("failed to decode hex data: %w", decodeErr)
-		}
+		decryptedData, err = decryptWithoutAttestation(client, appID, encryptedData, threshold)
 	}
-
-	// Decrypt data
-	decryptedData, err := client.Decrypt(appID, encryptedData, operators, threshold)
 	if err != nil {
-		return fmt.Errorf("failed to decrypt data: %w", err)
+		return err
 	}
 
-	// Output result
+	// Output result (shared by both paths)
 	if outputFile != "" {
 		cleanPath, pathErr := prepareOutputPath(outputFile)
 		if pathErr != nil {
@@ -274,6 +283,83 @@ func decryptCommand(c *cli.Context) error {
 	}
 
 	return nil
+}
+
+// parseEncryptedInput resolves the --encrypted-data value, which may be either
+// a path to a file containing hex or a hex string directly. It accepts the
+// 0x-prefixed output that `encrypt --output` writes; TrimSpace handles trailing
+// newlines from editors or `echo`.
+func parseEncryptedInput(input string) ([]byte, error) {
+	if _, statErr := os.Stat(input); statErr == nil {
+		fileData, readErr := os.ReadFile(input)
+		if readErr != nil {
+			return nil, fmt.Errorf("failed to read encrypted data file: %w", readErr)
+		}
+		data, decodeErr := hexutil.Decode(strings.TrimSpace(string(fileData)))
+		if decodeErr != nil {
+			return nil, fmt.Errorf("failed to decode hex data from file: %w", decodeErr)
+		}
+		return data, nil
+	}
+
+	fmt.Printf("Using encrypted input %s\n", input)
+	data, decodeErr := hexutil.Decode(strings.TrimSpace(input))
+	if decodeErr != nil {
+		return nil, fmt.Errorf("failed to decode hex data: %w", decodeErr)
+	}
+	return data, nil
+}
+
+// decryptWithoutAttestation recovers the plaintext via the unauthenticated
+// /app/sign endpoint — the CLI's original behavior.
+func decryptWithoutAttestation(client *kmsClient.Client, appID string, encryptedData []byte, threshold int) ([]byte, error) {
+	operators, err := client.GetOperators()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get operators: %w", err)
+	}
+
+	decryptedData, err := client.Decrypt(appID, encryptedData, operators, threshold)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt data: %w", err)
+	}
+	return decryptedData, nil
+}
+
+// decryptWithECDSAAttestation recovers the application private key from the
+// attested /secrets endpoint using ECDSA challenge-response attestation, then
+// decrypts the user-supplied ciphertext with it. Unlike the no-attestation
+// path, this requires the operators to have ECDSA attestation enabled and the
+// app to exist on-chain (the operator fetches the app's release while serving
+// the request).
+func decryptWithECDSAAttestation(c *cli.Context, client *kmsClient.Client, appID string, encryptedData []byte) ([]byte, error) {
+	key, err := loadECDSAKey(c.String("ecdsa-private-key"), c.String("ecdsa-private-key-file"))
+	if err != nil {
+		return nil, err
+	}
+
+	// The /secrets endpoint encrypts each partial signature to a per-request
+	// RSA public key. This keypair is transport-level only and never leaves
+	// this process, so we generate an ephemeral one per invocation.
+	rsaPrivPEM, rsaPubPEM, err := encryption.GenerateKeyPair(2048)
+	if err != nil {
+		return nil, fmt.Errorf("failed to generate ephemeral RSA key pair: %w", err)
+	}
+
+	result, err := client.RetrieveSecretsWithOptions(appID, &kmsClient.SecretsOptions{
+		AttestationMethod: "ecdsa",
+		ECDSAPrivateKey:   key,
+		RSAPrivateKeyPEM:  rsaPrivPEM,
+		RSAPublicKeyPEM:   rsaPubPEM,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to retrieve secrets: %w", err)
+	}
+
+	decryptedData, err := crypto.DecryptForApp(appID, result.AppPrivateKey, encryptedData)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt data: %w", err)
+	}
+	return decryptedData, nil
 }
 
 // getPubkeyCommand handles the get-pubkey subcommand
