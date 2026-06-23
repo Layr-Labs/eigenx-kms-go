@@ -158,8 +158,35 @@ See `examples/ecdsa_attestation.go` for complete implementation.
 
 ## Global Options
 
+- `--environment`, `-e`: named connection preset that fills `--avs-address` and `--operator-set-id` (e.g. `sepolia`). Explicit flags override the preset. The RPC URL is never part of a preset.
 - `--rpc-url`: Ethereum RPC endpoint (default: http://localhost:8545)
-- `--avs-address`: AVS contract address (required)
+- `--avs-address`: AVS contract address (required unless provided by `--environment`)
 - `--operator-set-id`: Operator set ID to use (default: 0)
 
 All commands automatically discover and interact with the current operator set from the blockchain.
+
+### Environments
+
+`--environment` (alias `-e`) selects a named connection preset so you don't have
+to pass `--avs-address`/`--operator-set-id` on every call:
+
+| Environment | avs-address | operator-set-id |
+|-------------|-------------|-----------------|
+| `sepolia`   | `0x47c9806e7DC4e6fE9a0a2399831F32d06DaE5730` | `0` |
+
+The preset supplies only `--avs-address` and `--operator-set-id`. It does **not**
+set `--rpc-url` — production RPC URLs embed API-key credentials, so you must
+still pass your own `--rpc-url`. Any flag you pass explicitly overrides the
+preset value.
+
+```bash
+# Use the sepolia preset; supply your own RPC URL
+./bin/kms-client --environment sepolia \
+  --rpc-url "https://eth-sepolia.example/v2/<key>" \
+  get-pubkey --app-id "my-application"
+
+# Override the preset's operator-set-id
+./bin/kms-client -e sepolia --operator-set-id 1 \
+  --rpc-url "https://eth-sepolia.example/v2/<key>" \
+  get-pubkey --app-id "my-application"
+```
