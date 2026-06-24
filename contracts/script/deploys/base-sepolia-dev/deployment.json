@@ -1,0 +1,11 @@
+{
+    "ENV": "base-sepolia-dev",
+    "COMMIT": "",
+    "VERSION": "0.1.0",
+    "ecdsaCertificateVerifier": "0xb3Cd1A457dEa9A9A6F6406c6419B1c326670A96F",
+    "bn254CertificateVerifier": "0xff58A373c18268F483C1F5cA03Cf885c0C43373a",
+    "operatorOwner": "0x47c9806e7dc4e6fe9a0a2399831f32d06dae5730",
+    "EigenKMSCommitmentRegistry_Impl": "0x7065a2442449450f072b106c26c037f2c13baead",
+    "EigenKMSCommitmentRegistry_Proxy": "0xfe0c3c2db3b767f768f9000d48193f0ee0bfc07d",
+    "ProxyAdmin": "0x396453d3f233da7771f292a5aa9dcfb59c87241e"
+}
