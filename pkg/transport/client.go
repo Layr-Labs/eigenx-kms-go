@@ -171,10 +171,13 @@ func (c *Client) SendReshareShare(toOperator *peering.OperatorSetPeer, share *fr
 // RequestReshareShare asks `dealer` for the reshare share it generated for THIS node in
 // the given session, on demand. Used during dealer-set-agreement finalization when this
 // node is missing a dealer's share that the on-chain registry shows did participate.
-// The dealer responds with an authenticated ShareMessage; we verify the response is
-// authenticated by the dealer and addressed to us before returning the share.
-// See docs/011_reshareDealerSetAgreement.md.
-func (c *Client) RequestReshareShare(dealer *peering.OperatorSetPeer, sessionTimestamp int64) (*fr.Element, error) {
+//
+// The dealer responds with a BN254-AuthenticatedMessage wrapping a ShareMessage. This
+// function returns the raw authenticated message; the CALLER must verify it against the
+// dealer's peer key (and check it is addressed to this node) before trusting the share —
+// see Node.fetchAndVerifyReshareShare. We do not unwrap here because the transport client
+// does not hold the peering keys needed to verify. See docs/011_reshareDealerSetAgreement.md.
+func (c *Client) RequestReshareShare(dealer *peering.OperatorSetPeer, sessionTimestamp int64) (*types.AuthenticatedMessage, error) {
 	req := types.ShareRequestMessage{
 		FromOperatorAddress: c.operatorAddr,
 		ToOperatorAddress:   dealer.OperatorAddress,
@@ -203,18 +206,11 @@ func (c *Client) RequestReshareShare(dealer *peering.OperatorSetPeer, sessionTim
 		return nil, fmt.Errorf("dealer %s returned status %d for share request", dealer.OperatorAddress.Hex(), resp.StatusCode)
 	}
 
-	// The dealer returns an authenticated ShareMessage. We only need the share value;
-	// the HTTP response came from the dealer's socket and the share is verified against
-	// the dealer's published commitments by the caller (polynomial check), so we parse
-	// the inner ShareMessage directly.
-	var shareMsg types.ShareMessage
-	if err := json.NewDecoder(resp.Body).Decode(&shareMsg); err != nil {
-		return nil, fmt.Errorf("failed to decode share response: %w", err)
+	var authResp types.AuthenticatedMessage
+	if err := json.NewDecoder(resp.Body).Decode(&authResp); err != nil {
+		return nil, fmt.Errorf("failed to decode authenticated share response: %w", err)
 	}
-	if shareMsg.Share == nil {
-		return nil, fmt.Errorf("dealer %s returned empty share", dealer.OperatorAddress.Hex())
-	}
-	return types.DeserializeFr(shareMsg.Share), nil
+	return &authResp, nil
 }
 
 // BroadcastDKGCommitments broadcasts authenticated DKG commitments to all operators

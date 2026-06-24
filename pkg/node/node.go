@@ -137,7 +137,11 @@ func (s *ProtocolSession) SetMyGeneratedShares(shares map[common.Address]*fr.Ele
 	defer s.mu.Unlock()
 	s.myGeneratedShares = make(map[common.Address]*fr.Element, len(shares))
 	for addr, sh := range shares {
-		s.myGeneratedShares[addr] = sh
+		// Deep-copy the field element: the caller retains the source map (it's the
+		// return value of GenerateNewShares), so storing the pointer would alias
+		// cryptographic material — a later mutation of the source would silently
+		// corrupt what we later serve on demand.
+		s.myGeneratedShares[addr] = new(fr.Element).Set(sh)
 	}
 }
 
@@ -149,7 +153,12 @@ func (s *ProtocolSession) GetMyGeneratedShareFor(recipient common.Address) *fr.E
 	if s.myGeneratedShares == nil {
 		return nil
 	}
-	return s.myGeneratedShares[recipient]
+	sh := s.myGeneratedShares[recipient]
+	if sh == nil {
+		return nil
+	}
+	// Return a copy so a caller cannot mutate the retained share.
+	return new(fr.Element).Set(sh)
 }
 
 // HandleReceivedShare stores a share and signals completion if all shares received
@@ -834,7 +843,7 @@ func (n *Node) deriveAgreedDealerSet(
 		submitted = submitted[:0]
 		for _, dealer := range expected {
 			commitmentHash, _, _, err := n.baseContractCaller.GetCommitmentAt(
-				ctx, n.commitmentRegistryAddress, epoch, dealer, uint64(maxInt64(pinnedBlock, 0)),
+				ctx, n.commitmentRegistryAddress, epoch, dealer, uint64(max(pinnedBlock, 0)),
 			)
 			if err != nil {
 				n.logger.Sugar().Debugw("registry read failed while deriving dealer set",
@@ -884,10 +893,46 @@ func (n *Node) fetchAndVerifyReshareShare(session *ProtocolSession, dealer commo
 		return nil, fmt.Errorf("dealer %s not in session operator set", dealer.Hex())
 	}
 
-	share, err := n.transport.RequestReshareShare(dealerPeer, session.SessionTimestamp)
-	if err != nil {
-		return nil, fmt.Errorf("fetch share from %s: %w", dealer.Hex(), err)
+	// Retry the fetch a few times: a transient connection failure (dealer briefly
+	// restarting, TCP RST) should not abort the whole reshare round (a ~interval-long
+	// wait). Verification failures below are NOT retried — a bad share is permanently bad.
+	var authResp *types.AuthenticatedMessage
+	var err error
+	backoff := 1 * time.Second
+	for attempt := 0; attempt < 3; attempt++ {
+		authResp, err = n.transport.RequestReshareShare(dealerPeer, session.SessionTimestamp)
+		if err == nil {
+			break
+		}
+		if attempt < 2 {
+			time.Sleep(backoff)
+			backoff *= 2
+		}
 	}
+	if err != nil {
+		return nil, fmt.Errorf("fetch share from %s after retries: %w", dealer.Hex(), err)
+	}
+
+	// Authenticate the response: it must be BN254-signed by the dealer we asked. This
+	// matches the push path's security model and prevents a spoofed From/To.
+	if err := n.verifyMessage(authResp, dealerPeer); err != nil {
+		return nil, fmt.Errorf("fetched share response from %s failed authentication: %w", dealer.Hex(), err)
+	}
+	var shareMsg types.ShareMessage
+	if err := json.Unmarshal(authResp.Payload, &shareMsg); err != nil {
+		return nil, fmt.Errorf("failed to parse fetched share from %s: %w", dealer.Hex(), err)
+	}
+	// The response must come FROM the dealer and be addressed TO this node.
+	if shareMsg.FromOperatorAddress != dealer {
+		return nil, fmt.Errorf("fetched share sender %s != requested dealer %s", shareMsg.FromOperatorAddress.Hex(), dealer.Hex())
+	}
+	if shareMsg.ToOperatorAddress != n.OperatorAddress {
+		return nil, fmt.Errorf("fetched share addressed to %s, not this node %s", shareMsg.ToOperatorAddress.Hex(), n.OperatorAddress.Hex())
+	}
+	if shareMsg.Share == nil {
+		return nil, fmt.Errorf("dealer %s returned empty share", dealer.Hex())
+	}
+	share := types.DeserializeFr(shareMsg.Share)
 
 	// Verify against the dealer's commitments (must have been broadcast/received).
 	session.mu.RLock()
@@ -900,14 +945,6 @@ func (n *Node) fetchAndVerifyReshareShare(session *ProtocolSession, dealer commo
 		return nil, fmt.Errorf("fetched share from %s failed polynomial verification", dealer.Hex())
 	}
 	return share, nil
-}
-
-// maxInt64 returns the larger of two int64 values.
-func maxInt64(a, b int64) int64 {
-	if a > b {
-		return a
-	}
-	return b
 }
 
 // hasExistingShares returns true if this node has active key shares
@@ -1866,9 +1903,16 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 	//
 	// To force agreement, we derive the dealer set from SHARED on-chain state rather than
 	// each node's local receipt timing: D = operators that submitted a commitment for
-	// this epoch in the registry, read at a PINNED block height so every node sees the
-	// same submitters. See docs/011_reshareDealerSetAgreement.md.
-	agreedDealers, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, session.TriggerBlockNumber)
+	// this epoch in the registry. See docs/011_reshareDealerSetAgreement.md.
+	//
+	// We read at L2 HEAD (pinnedBlock = 0), NOT session.TriggerBlockNumber. The trigger
+	// block is an Ethereum L1 block number, but the commitment registry lives on Base
+	// (L2) — the two block-number spaces are unrelated, so pinning the L2 read to an L1
+	// height would query Base at a wildly wrong (years-old) height and return empty,
+	// aborting every reshare. Head reads + the convergence/abort-retry below give
+	// agreement without a pinned height. session.TriggerBlockNumber is retained for when
+	// a real L2 block feed is plumbed; until then it must NOT be used as the read height.
+	agreedDealers, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, 0)
 	if err != nil {
 		return fmt.Errorf("failed to derive agreed dealer set: %w", err)
 	}

@@ -47,35 +47,49 @@ type TestCluster struct {
 
 // MockCommitmentRegistry is a thread-safe in-memory stand-in for the on-chain
 // EigenKMSCommitmentRegistry, used to drive the reshare dealer-set-agreement logic in
-// tests. A commitment is considered "submitted" for (epoch, operator) unless explicitly
-// suppressed.
+// tests. By default every operator reads as "submitted". A test can install a
+// suppression predicate to model an operator that did NOT submit (e.g. partitioned) for
+// ALL epochs — robust to test timing, unlike pre-seeding specific epoch timestamps.
 type MockCommitmentRegistry struct {
-	mu         sync.RWMutex
-	suppressed map[string]bool // key: epoch|operator
+	mu       sync.RWMutex
+	suppress func(epoch int64, op common.Address) bool // returns true => treat as NOT submitted
 }
 
 // NewMockCommitmentRegistry returns a registry where everything reads as submitted.
 func NewMockCommitmentRegistry() *MockCommitmentRegistry {
-	return &MockCommitmentRegistry{suppressed: make(map[string]bool)}
+	return &MockCommitmentRegistry{}
 }
 
-func regKey(epoch int64, op common.Address) string {
-	return fmt.Sprintf("%d|%s", epoch, op.Hex())
-}
-
-// SuppressSubmission models an operator that did NOT submit a commitment for an epoch
-// (e.g. it was partitioned). The agreement logic will treat it as not-eligible.
-func (r *MockCommitmentRegistry) SuppressSubmission(epoch int64, op common.Address) {
+// SuppressOperator models an operator that never submits a commitment (partitioned) for
+// every epoch, until cleared with Clear. Robust across test timing (no epoch window).
+func (r *MockCommitmentRegistry) SuppressOperator(victim common.Address) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.suppressed[regKey(epoch, op)] = true
+	r.suppress = func(_ int64, op common.Address) bool { return op == victim }
+}
+
+// SetSuppressPredicate installs a custom suppression predicate for fine-grained control.
+func (r *MockCommitmentRegistry) SetSuppressPredicate(fn func(epoch int64, op common.Address) bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.suppress = fn
+}
+
+// Clear removes any suppression — all operators read as submitted again (heal).
+func (r *MockCommitmentRegistry) Clear() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.suppress = nil
 }
 
 // submitted reports whether (epoch, op) is considered submitted.
 func (r *MockCommitmentRegistry) submitted(epoch int64, op common.Address) bool {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	return !r.suppressed[regKey(epoch, op)]
+	if r.suppress == nil {
+		return true
+	}
+	return !r.suppress(epoch, op)
 }
 
 // NewTestCluster creates a test cluster of KMS nodes with completed DKG
@@ -168,7 +182,15 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 		// registry simulation, so the reshare dealer-set-agreement path reads a
 		// consistent (and test-controllable) set of submitters across all nodes.
 		mockBaseContractCaller := &contractCaller.MockContractCallerStub{
-			GetCommitmentAtFunc: func(_ context.Context, _ common.Address, epoch int64, operator common.Address, _ uint64) ([32]byte, [32]byte, uint64, error) {
+			GetCommitmentAtFunc: func(_ context.Context, _ common.Address, epoch int64, operator common.Address, blockNumber uint64) ([32]byte, [32]byte, uint64, error) {
+				// Regression guard for the L1-block-as-L2-height bug: the registry is on
+				// Base (L2) but the reshare trigger block is an Ethereum (L1) block, so the
+				// finalize path MUST read at head (blockNumber == 0). If a non-zero block is
+				// ever threaded in again, fail loudly here rather than silently returning
+				// stale/empty results. See docs/011_reshareDealerSetAgreement.md.
+				if blockNumber != 0 {
+					t.Fatalf("GetCommitmentAt called with non-zero block %d; reshare must read the Base registry at head (the trigger block is an L1 height)", blockNumber)
+				}
 				if cluster.CommitmentRegistry.submitted(epoch, operator) {
 					// Non-zero commitment hash = "submitted".
 					var h [32]byte

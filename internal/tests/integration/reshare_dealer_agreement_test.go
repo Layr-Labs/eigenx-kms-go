@@ -147,33 +147,30 @@ func Test_ReshareDealerAgreement_PartitionedRoundDoesNotPoison(t *testing.T) {
 
 	assertClusterConsistent(t, cluster, "post-DKG")
 
-	// Pick one operator to "partition" for the next reshare epoch: suppress its on-chain
-	// commitment submission. The session epoch == the trigger block timestamp; suppress
-	// across a window of upcoming epochs so the next round is affected regardless of the
-	// exact boundary timestamp.
+	// Partition one operator for ALL epochs: its on-chain commitment never appears.
+	// Using an operator-level predicate (not a pre-seeded epoch window) keeps this robust
+	// to test/CI timing.
 	victim := cluster.Nodes[2].GetOperatorAddress()
-	base := time.Now().Unix()
-	for ts := base - 5; ts <= base+120; ts++ {
-		cluster.CommitmentRegistry.SuppressSubmission(ts, victim)
-	}
+	cluster.CommitmentRegistry.SuppressOperator(victim)
 
 	// Drive reshare rounds across the partition. Either every node finalizes on the same
 	// (smaller) agreed set, or they abort and retry — in all cases the cluster must
-	// remain consistent (never poisoned).
+	// remain consistent (never poisoned). We do not require version advancement here,
+	// only that whatever state results stays consistent.
 	for round := 0; round < 3; round++ {
 		versions := currentVersions(cluster)
-		// Reshare may or may not advance every node's version during the partition; we do
-		// not require advancement, only that whatever state results stays consistent.
 		_ = testutil.WaitForReshare(cluster, versions, 45*time.Second)
 		assertClusterConsistent(t, cluster, "partitioned-round")
 	}
 
-	// Heal the partition: the suppressed operator can submit again. After healing,
-	// reshares must continue to produce a consistent cluster.
-	cluster.CommitmentRegistry = testutil.NewMockCommitmentRegistry()
+	// Heal the partition: the suppressed operator submits again. After healing, reshares
+	// MUST advance AND keep the cluster consistent — require advancement so this phase has
+	// real teeth (a silently-stalled cluster would otherwise pass on stale state).
+	cluster.CommitmentRegistry.Clear()
 	for round := 0; round < 2; round++ {
 		versions := currentVersions(cluster)
-		_ = testutil.WaitForReshare(cluster, versions, 45*time.Second)
+		require.Truef(t, testutil.WaitForReshare(cluster, versions, 45*time.Second),
+			"expected a reshare to complete after healing the partition (round %d)", round)
 		assertClusterConsistent(t, cluster, "post-heal")
 	}
 }

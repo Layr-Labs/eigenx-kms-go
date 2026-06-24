@@ -627,7 +627,9 @@ func (s *Server) handleReshareShareRequest(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	session := s.node.getSession(reqMsg.SessionTimestamp)
+	// Tolerate slight delivery-ordering skew (matches the push /reshare/share handler),
+	// in case a request arrives on a node that hasn't created the session yet.
+	session := s.node.waitForSession(reqMsg.SessionTimestamp, 5*time.Second)
 	if session == nil {
 		http.Error(w, "Session not found", http.StatusServiceUnavailable)
 		return
@@ -653,9 +655,24 @@ func (s *Server) handleReshareShareRequest(w http.ResponseWriter, r *http.Reques
 		SessionTimestamp:    reqMsg.SessionTimestamp,
 		Share:               types.SerializeFr(share),
 	}
+	respBytes, err := json.Marshal(respMsg)
+	if err != nil {
+		http.Error(w, "Failed to marshal share response", http.StatusInternalServerError)
+		return
+	}
+	// Authenticate the response (BN254-signed), matching the push path's security model.
+	// The requester verifies this against the dealer's peer key before trusting the share,
+	// so the response's From/To fields can't be spoofed and the share is bound to this
+	// dealer as the sender.
+	authResp, err := s.node.transportSigner.CreateAuthenticatedMessage(respBytes)
+	if err != nil {
+		s.node.logger.Sugar().Warnw("Failed to sign share response", "error", err)
+		http.Error(w, "Failed to sign share response", http.StatusInternalServerError)
+		return
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	if err := json.NewEncoder(w).Encode(respMsg); err != nil {
+	if err := json.NewEncoder(w).Encode(authResp); err != nil {
 		s.node.logger.Sugar().Warnw("Failed to encode share response", "error", err)
 	}
 }
