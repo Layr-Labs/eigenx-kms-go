@@ -539,6 +539,9 @@ func runKMSServer(c *cli.Context) error {
 	// optional config: if unset, /secrets release lookups stay disabled (e.g. for a
 	// signing-only deployment).
 	if appControllerAddr := c.String("app-controller-address"); appControllerAddr != "" {
+		if !common.IsHexAddress(appControllerAddr) {
+			l.Sugar().Fatalw("Invalid app-controller-address", "value", appControllerAddr)
+		}
 		addr := common.HexToAddress(appControllerAddr)
 		appCtrl, acErr := caller.NewAppControllerAdapter(addr, l1Client)
 		if acErr != nil {
@@ -547,6 +550,10 @@ func runKMSServer(c *cli.Context) error {
 		if acErr := baseContractCaller.SetAppController(appCtrl); acErr != nil {
 			l.Sugar().Fatalw("Failed to set AppController", "error", acErr)
 		}
+		// The AppController is on L1, so release block numbers are L1 heights; give
+		// the (L2/Base-backed) baseContractCaller the L1 client for the release
+		// block-timestamp lookup in resolveLatestRelease.
+		baseContractCaller.SetAppControllerBlockClient(l1Client)
 		l.Sugar().Infow("AppController wired for /secrets release resolution", "address", addr.Hex())
 	} else {
 		l.Sugar().Warn("KMS_APP_CONTROLLER_ADDRESS not set — /secrets on-chain release resolution disabled")

@@ -36,6 +36,13 @@ type ContractCaller struct {
 	releaseManager       *IReleaseManager.IReleaseManager
 	permissionController *IPermissionController.IPermissionController
 	appController        AppControllerInterface // AppController for EigenCompute apps (optional, nil until SetAppController)
+	// appControllerClient is the L1 backend the AppController is bound to. The
+	// AppController lives on L1, so its release block numbers are L1 heights — but
+	// this ContractCaller's `ethclient` may be the L2/Base client (the /secrets
+	// release lookup runs on baseContractCaller). When set, resolveLatestRelease
+	// uses this client (not `ethclient`) to fetch the release block's timestamp so
+	// it reads the correct chain. nil => fall back to `ethclient` (single-chain).
+	appControllerClient *ethclient.Client
 
 	signer transactionSigner.ITransactionSigner
 }

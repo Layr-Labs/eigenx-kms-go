@@ -11,6 +11,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	ethTypes "github.com/ethereum/go-ethereum/core/types"
+	"github.com/ethereum/go-ethereum/ethclient"
 )
 
 // Env represents environment variables as a map
@@ -84,6 +85,16 @@ func (cc *ContractCaller) SetAppController(appController AppControllerInterface)
 	cc.appController = appController
 	cc.logger.Sugar().Info("AppController configured")
 	return nil
+}
+
+// SetAppControllerBlockClient sets the L1 backend used to resolve the AppController's
+// release block timestamps. Call this alongside SetAppController when this
+// ContractCaller's primary `ethclient` is on a different chain than the AppController
+// (e.g. baseContractCaller is L2/Base but the AppController is on L1). Passing nil is a
+// no-op (resolveLatestRelease then falls back to `ethclient`). Not part of
+// IContractCaller — it's only relevant to the concrete ContractCaller wiring.
+func (cc *ContractCaller) SetAppControllerBlockClient(client *ethclient.Client) {
+	cc.appControllerClient = client
 }
 
 // getAppController returns the AppController instance
@@ -265,8 +276,16 @@ func (cc *ContractCaller) GetLatestReleaseAsRelease(ctx context.Context, appID s
 		return nil, err
 	}
 
-	// Fetch the block header to get the authoritative release timestamp
-	header, err := cc.ethclient.HeaderByNumber(ctx, new(big.Int).SetUint64(r.BlockNumber))
+	// Fetch the block header to get the authoritative release timestamp. r.BlockNumber
+	// is an AppController (L1) block height, so read it from the L1 client when one was
+	// configured via SetAppControllerBlockClient — cc.ethclient may be the L2/Base
+	// client (the /secrets release lookup runs on baseContractCaller), and L1/L2 block
+	// numbers are not interchangeable. Fall back to cc.ethclient for single-chain setups.
+	blockClient := cc.ethclient
+	if cc.appControllerClient != nil {
+		blockClient = cc.appControllerClient
+	}
+	header, err := blockClient.HeaderByNumber(ctx, new(big.Int).SetUint64(r.BlockNumber))
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch block header for timestamp: %w", err)
 	}
