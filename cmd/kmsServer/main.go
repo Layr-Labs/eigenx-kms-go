@@ -153,6 +153,11 @@ This server implements:
 				Required: true,
 			},
 			&cli.StringFlag{
+				Name:    "app-controller-address",
+				Usage:   "EigenCompute AppController contract address (on L1). Enables /secrets on-chain release resolution.",
+				EnvVars: []string{config.EnvKMSAppControllerAddr},
+			},
+			&cli.StringFlag{
 				Name:    "persistence-type",
 				Usage:   "Persistence backend: 'memory' (testing only), 'badger' (local disk), or 'redis' (distributed)",
 				Value:   "badger",
@@ -524,6 +529,34 @@ func runKMSServer(c *cli.Context) error {
 	l1ContractCaller, err := caller.NewContractCaller(l1Client, nil, l)
 	if err != nil {
 		l.Sugar().Fatalw("Failed to create contract caller", "error", err)
+	}
+
+	// Wire the EigenCompute AppController so the /secrets handler can resolve an
+	// app's on-chain release. The handler reads releases via baseContractCaller, but
+	// the AppController contract lives on L1 — so bind the adapter to the L1 client
+	// and inject it into baseContractCaller. Without this, /secrets fails every app
+	// with "appController not initialized" (404 Release not found). The address is
+	// optional config: if unset, /secrets release lookups stay disabled (e.g. for a
+	// signing-only deployment).
+	if appControllerAddr := c.String("app-controller-address"); appControllerAddr != "" {
+		if !common.IsHexAddress(appControllerAddr) {
+			l.Sugar().Fatalw("Invalid app-controller-address", "value", appControllerAddr)
+		}
+		addr := common.HexToAddress(appControllerAddr)
+		appCtrl, acErr := caller.NewAppControllerAdapter(addr, l1Client)
+		if acErr != nil {
+			l.Sugar().Fatalw("Failed to create AppController adapter", "error", acErr, "address", addr.Hex())
+		}
+		if acErr := baseContractCaller.SetAppController(appCtrl); acErr != nil {
+			l.Sugar().Fatalw("Failed to set AppController", "error", acErr)
+		}
+		// The AppController is on L1, so release block numbers are L1 heights; give
+		// the (L2/Base-backed) baseContractCaller the L1 client for the release
+		// block-timestamp lookup in resolveLatestRelease.
+		baseContractCaller.SetAppControllerBlockClient(l1Client)
+		l.Sugar().Infow("AppController wired for /secrets release resolution", "address", addr.Hex())
+	} else {
+		l.Sugar().Warn("KMS_APP_CONTROLLER_ADDRESS not set — /secrets on-chain release resolution disabled")
 	}
 
 	pdf := peeringDataFetcher.NewPeeringDataFetcher(l1ContractCaller, l)

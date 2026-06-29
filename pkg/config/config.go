@@ -19,6 +19,11 @@ const (
 	EnvKMSVerbose                = "KMS_VERBOSE"
 	EnvKMSBaseRPCURL             = "KMS_BASE_RPC_URL"
 	EnvKMSCommitmentRegistryAddr = "KMS_COMMITMENT_REGISTRY_ADDRESS"
+	// EnvKMSAppControllerAddr is the EigenCompute AppController contract address on
+	// L1. When set, the KMS wires it into the contract caller so the /secrets handler
+	// can resolve an app's on-chain release (digest + encrypted_env). Unset = the
+	// /secrets release lookup fails with "appController not initialized".
+	EnvKMSAppControllerAddr = "KMS_APP_CONTROLLER_ADDRESS"
 	// ECDSA operator signing configuration
 	EnvKMSECDSAPrivateKey       = "KMS_ECDSA_PRIVATE_KEY"
 	EnvKMSUseRemoteSigner       = "KMS_USE_REMOTE_SIGNER"
