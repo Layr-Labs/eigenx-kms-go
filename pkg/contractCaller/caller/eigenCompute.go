@@ -2,6 +2,7 @@ package caller
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -301,10 +302,22 @@ func (cc *ContractCaller) GetLatestReleaseAsRelease(ctx context.Context, appID s
 		publicEnvStr = string(envBytes)
 	}
 
+	// r.EncryptedEnv is the raw on-chain IBE envelope (magic "IBE"||version||...,
+	// arbitrary binary). It travels to the CDH helper as the JSON string field
+	// encrypted_env; a raw string(...) cast would put non-UTF-8 bytes into JSON,
+	// which json.Marshal replaces with U+FFFD — corrupting the ciphertext — and
+	// the helper's decodeEncryptedEnv only accepts hex or base64, never raw
+	// bytes. Hex-encode so the bytes survive the wire intact and the helper's
+	// hex branch decodes them. Empty stays empty (public-only releases).
+	var encryptedEnvStr string
+	if len(r.EncryptedEnv) > 0 {
+		encryptedEnvStr = hex.EncodeToString(r.EncryptedEnv)
+	}
+
 	return &types.Release{
 		ImageDigest:     imageDigest,
 		Registry:        r.Registry,
-		EncryptedEnv:    string(r.EncryptedEnv),
+		EncryptedEnv:    encryptedEnvStr,
 		PublicEnv:       publicEnvStr,
 		Timestamp:       int64(header.Time),
 		ContainerPolicy: r.ContainerPolicy,
