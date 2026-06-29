@@ -40,17 +40,16 @@ func TestContractPolicyToTypes_Empty(t *testing.T) {
 	assert.Empty(t, got.EnvOverride)
 }
 
-// TestEncryptedEnvWireEncoding locks the /secrets wire contract for encrypted_env.
+// TestEncryptedEnvWireEncoding locks the encrypted_env serialization contract.
 //
 // The on-chain encryptedEnv is a raw IBE envelope (magic "IBE"||version||binary)
-// that is NOT valid UTF-8. GetLatestReleaseAsRelease puts it on the wire as the
-// JSON string field encrypted_env, and the CDH helper's decodeEncryptedEnv only
-// accepts hex or base64 — never raw bytes. A previous `string(rawBytes)` cast
-// both corrupted the ciphertext (json.Marshal replaces invalid UTF-8 with
-// U+FFFD) and produced a string the helper could not decode, so every unseal
-// failed with "encrypted_env is neither hex nor base64". This guards the
-// hex-encoding so the bytes survive the wire and the helper's hex branch
-// round-trips them back to the exact IBE envelope.
+// that is NOT valid UTF-8. GetLatestReleaseAsRelease assigns it to the
+// types.Release.EncryptedEnv string field, which is JSON-serialized across the
+// /secrets boundary. A `string(rawBytes)` cast of non-UTF-8 bytes is corrupted
+// by json.Marshal (invalid runes become U+FFFD), so the bytes a caller decodes
+// no longer match the original ciphertext. Hex-encoding keeps the value pure
+// ASCII so it survives serialization losslessly and decodes back to the exact
+// envelope.
 func TestEncryptedEnvWireEncoding(t *testing.T) {
 	// Realistic IBE envelope prefix ("IBE"\x01) followed by non-UTF-8 bytes.
 	raw := []byte{'I', 'B', 'E', 0x01, 0x8e, 0x2b, 0x31, 0x26, 0xff, 0xfe, 0x00, 0x80}
@@ -66,8 +65,7 @@ func TestEncryptedEnvWireEncoding(t *testing.T) {
 			"wire encoding must be lowercase hex, got %q", wire)
 	}
 
-	// And it must decode back to the exact original bytes — this is what the
-	// helper's decodeEncryptedEnv hex branch does.
+	// And it must decode back to the exact original bytes.
 	decoded, err := hex.DecodeString(wire)
 	require.NoError(t, err)
 	assert.Equal(t, raw, decoded, "hex round-trip must reproduce the raw IBE envelope")
