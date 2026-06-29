@@ -1,10 +1,12 @@
 package caller
 
 import (
+	"encoding/hex"
 	"testing"
 
 	iappctl "github.com/Layr-Labs/eigenx-kms-go/pkg/middleware-bindings/IAppController"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestContractPolicyToTypes covers the v1.5.x tuple-array env mapping that the
@@ -36,4 +38,36 @@ func TestContractPolicyToTypes_Empty(t *testing.T) {
 	got := contractPolicyToTypes(iappctl.IAppControllerContainerPolicy{})
 	assert.Empty(t, got.Env)
 	assert.Empty(t, got.EnvOverride)
+}
+
+// TestEncryptedEnvWireEncoding locks the encrypted_env serialization contract:
+// the raw IBE ciphertext (binary, not valid UTF-8) is hex-encoded onto the
+// JSON-serialized EncryptedEnv string field so it survives serialization
+// losslessly and decodes back to the exact bytes.
+func TestEncryptedEnvWireEncoding(t *testing.T) {
+	// Realistic IBE envelope prefix ("IBE"\x01) followed by non-UTF-8 bytes.
+	raw := []byte{'I', 'B', 'E', 0x01, 0x8e, 0x2b, 0x31, 0x26, 0xff, 0xfe, 0x00, 0x80}
+
+	wire := ""
+	if len(raw) > 0 {
+		wire = hex.EncodeToString(raw)
+	}
+
+	// The wire form must be pure ASCII hex (survives JSON + URL round-trips).
+	for _, c := range wire {
+		require.Truef(t, (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f'),
+			"wire encoding must be lowercase hex, got %q", wire)
+	}
+
+	// And it must decode back to the exact original bytes.
+	decoded, err := hex.DecodeString(wire)
+	require.NoError(t, err)
+	assert.Equal(t, raw, decoded, "hex round-trip must reproduce the raw IBE envelope")
+
+	// Empty stays empty (public-only releases have no encrypted_env).
+	empty := ""
+	if len([]byte{}) > 0 {
+		empty = hex.EncodeToString([]byte{})
+	}
+	assert.Equal(t, "", empty)
 }

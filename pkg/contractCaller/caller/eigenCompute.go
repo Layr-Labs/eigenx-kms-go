@@ -2,6 +2,7 @@ package caller
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"math/big"
@@ -301,10 +302,18 @@ func (cc *ContractCaller) GetLatestReleaseAsRelease(ctx context.Context, appID s
 		publicEnvStr = string(envBytes)
 	}
 
+	// EncryptedEnv is a JSON-serialized string field, so the raw IBE ciphertext
+	// (binary, not valid UTF-8 — see crypto.EncryptForApp) must be hex-encoded to
+	// survive serialization. Empty stays empty (public-only releases).
+	var encryptedEnvStr string
+	if len(r.EncryptedEnv) > 0 {
+		encryptedEnvStr = hex.EncodeToString(r.EncryptedEnv)
+	}
+
 	return &types.Release{
 		ImageDigest:     imageDigest,
 		Registry:        r.Registry,
-		EncryptedEnv:    string(r.EncryptedEnv),
+		EncryptedEnv:    encryptedEnvStr,
 		PublicEnv:       publicEnvStr,
 		Timestamp:       int64(header.Time),
 		ContainerPolicy: r.ContainerPolicy,
