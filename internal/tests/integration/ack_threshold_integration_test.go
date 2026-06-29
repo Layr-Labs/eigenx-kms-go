@@ -41,7 +41,7 @@ func Test_Reshare_SucceedsWithExactlyThresholdAcks(t *testing.T) {
 	// Run reshare manually (existing operators) at a new session timestamp.
 	reshareTS := time.Now().Unix()
 	require.NoError(t, runOnAllNodes(cluster, func(ctx context.Context, idx int) error {
-		return cluster.Nodes[idx].RunReshareAsExistingOperator(reshareTS)
+		return cluster.Nodes[idx].RunReshareAsExistingOperator(reshareTS, 0)
 	}, 120*time.Second))
 
 	require.True(t, droppedReshare.Load(), "expected exactly one dropped /reshare/ack to dealer")

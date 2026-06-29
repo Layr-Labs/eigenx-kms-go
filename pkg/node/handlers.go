@@ -604,6 +604,79 @@ func (s *Server) handleReshareShare(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 }
 
+// handleReshareShareRequest answers an on-demand share fetch: a peer asks for the
+// reshare share THIS node (as dealer) generated for it during dealer-set-agreement
+// finalization. We serve ONLY the share destined for the authenticated requester —
+// never any other operator's share. See docs/011_reshareDealerSetAgreement.md.
+func (s *Server) handleReshareShareRequest(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	authMsg, senderPeer, _, err := s.validateAuthenticatedMessage(r, s.node.OperatorAddress)
+	if err != nil {
+		s.node.logger.Sugar().Warnw("Reshare share-request authentication failed", "error", err)
+		http.Error(w, "Authentication failed", http.StatusUnauthorized)
+		return
+	}
+
+	var reqMsg types.ShareRequestMessage
+	if err := json.Unmarshal(authMsg.Payload, &reqMsg); err != nil {
+		http.Error(w, "Failed to parse share request", http.StatusBadRequest)
+		return
+	}
+
+	// Tolerate slight delivery-ordering skew (matches the push /reshare/share handler),
+	// in case a request arrives on a node that hasn't created the session yet.
+	session := s.node.waitForSession(reqMsg.SessionTimestamp, 5*time.Second)
+	if session == nil {
+		http.Error(w, "Session not found", http.StatusServiceUnavailable)
+		return
+	}
+
+	// Serve only the requester's own share (the authenticated sender), never another
+	// operator's. The requester address is the authenticated identity, not a field the
+	// caller can spoof.
+	requester := senderPeer.OperatorAddress
+	share := session.GetMyGeneratedShareFor(requester)
+	if share == nil {
+		s.node.logger.Sugar().Warnw("No generated share to serve for requester",
+			"operator_address", s.node.OperatorAddress.Hex(),
+			"requester", requester.Hex(),
+			"session_timestamp", reqMsg.SessionTimestamp)
+		http.Error(w, "No share available for requester", http.StatusNotFound)
+		return
+	}
+
+	respMsg := types.ShareMessage{
+		FromOperatorAddress: s.node.OperatorAddress,
+		ToOperatorAddress:   requester,
+		SessionTimestamp:    reqMsg.SessionTimestamp,
+		Share:               types.SerializeFr(share),
+	}
+	respBytes, err := json.Marshal(respMsg)
+	if err != nil {
+		http.Error(w, "Failed to marshal share response", http.StatusInternalServerError)
+		return
+	}
+	// Authenticate the response (BN254-signed), matching the push path's security model.
+	// The requester verifies this against the dealer's peer key before trusting the share,
+	// so the response's From/To fields can't be spoofed and the share is bound to this
+	// dealer as the sender.
+	authResp, err := s.node.transportSigner.CreateAuthenticatedMessage(respBytes)
+	if err != nil {
+		s.node.logger.Sugar().Warnw("Failed to sign share response", "error", err)
+		http.Error(w, "Failed to sign share response", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	if err := json.NewEncoder(w).Encode(authResp); err != nil {
+		s.node.logger.Sugar().Warnw("Failed to encode share response", "error", err)
+	}
+}
+
 func (s *Server) handleReshareAck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)

@@ -96,10 +96,23 @@ type ProtocolSession struct {
 	StartTime        time.Time
 	Operators        []*peering.OperatorSetPeer
 
+	// TriggerBlockNumber is the interval-boundary block that triggered this session.
+	// It is identical across all operators (they all trigger on the same boundary) and
+	// is the anchor for the pinned-height registry read used to derive the agreed
+	// reshare dealer set. See docs/011_reshareDealerSetAgreement.md.
+	TriggerBlockNumber int64
+
 	// Session-specific state (moved from global Node state)
 	shares      map[common.Address]*fr.Element
 	commitments map[common.Address][]types.G2Point
 	acks        map[common.Address]map[common.Address]*types.Acknowledgement
+
+	// myGeneratedShares retains the per-recipient shares THIS node generated as a
+	// dealer (recipient address -> share). Unlike `shares` (which holds shares this
+	// node RECEIVED from others), this is what we DEALT, kept so we can answer an
+	// on-demand share-fetch request from a peer that missed our original send during
+	// the dealer-set-agreement finalize phase. Populated once after GenerateNewShares.
+	myGeneratedShares map[common.Address]*fr.Element
 
 	// Completion channels (buffered, size 1) - signaled when all expected messages received
 	sharesCompleteChan      chan bool
@@ -115,6 +128,37 @@ type ProtocolSession struct {
 	verifiedOperators map[common.Address]bool
 
 	mu sync.RWMutex
+}
+
+// SetMyGeneratedShares records the per-recipient shares this node dealt, so they can
+// be re-served on demand to a peer that missed the original send.
+func (s *ProtocolSession) SetMyGeneratedShares(shares map[common.Address]*fr.Element) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.myGeneratedShares = make(map[common.Address]*fr.Element, len(shares))
+	for addr, sh := range shares {
+		// Deep-copy the field element: the caller retains the source map (it's the
+		// return value of GenerateNewShares), so storing the pointer would alias
+		// cryptographic material — a later mutation of the source would silently
+		// corrupt what we later serve on demand.
+		s.myGeneratedShares[addr] = new(fr.Element).Set(sh)
+	}
+}
+
+// GetMyGeneratedShareFor returns the share this node (as dealer) generated for the
+// given recipient, or nil if not present. Used to answer an on-demand share fetch.
+func (s *ProtocolSession) GetMyGeneratedShareFor(recipient common.Address) *fr.Element {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.myGeneratedShares == nil {
+		return nil
+	}
+	sh := s.myGeneratedShares[recipient]
+	if sh == nil {
+		return nil
+	}
+	// Return a copy so a caller cannot mutate the retained share.
+	return new(fr.Element).Set(sh)
 }
 
 // HandleReceivedShare stores a share and signals completion if all shares received
@@ -468,7 +512,7 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 			"block_interval", blockInterval)
 
 		go func() {
-			if err := n.RunReshareAsExistingOperator(blockTimestamp); err != nil {
+			if err := n.RunReshareAsExistingOperator(blockTimestamp, blockNumber); err != nil {
 				n.logger.Sugar().Errorw("Automatic reshare failed",
 					"operator_address", n.OperatorAddress.Hex(),
 					"error", err)
@@ -721,6 +765,186 @@ func validateReshareOperatorOverlap(oldParticipants []common.Address, newOperato
 	}
 
 	return nil
+}
+
+// expectedReshareDealers returns the canonical set of dealers every operator must use
+// when finalizing a reshare round, in deterministic order. It is the intersection of
+// the current on-chain operator set with the previous key version's participants:
+// only previous participants hold a share to deal, and only currently-registered
+// operators are legitimate.
+//
+// This set is computed purely from chain/persisted state — NOT from any per-node
+// runtime view of who happened to respond — so it is identical on every honest node.
+// Finalizing on this exact set on all nodes is what guarantees their refreshed shares
+// stay mutually consistent (see the invariant comment at the reshare finalize site).
+//
+// Ordering follows the `operators` slice (the on-chain order, identical across nodes),
+// so the dealer set is order-stable as well as membership-stable.
+//
+// If there is no active version (this node has never completed DKG), there are no
+// prior participants to scope against; the caller should not be finalizing an
+// existing-operator reshare in that state, so we return all current operators.
+func (n *Node) expectedReshareDealers(operators []*peering.OperatorSetPeer) []common.Address {
+	activeVersion := n.keyStore.GetActiveVersion()
+	if activeVersion == nil || len(activeVersion.ParticipantIDs) == 0 {
+		dealers := make([]common.Address, 0, len(operators))
+		for _, op := range operators {
+			dealers = append(dealers, op.OperatorAddress)
+		}
+		return dealers
+	}
+
+	prevParticipants := make(map[common.Address]struct{}, len(activeVersion.ParticipantIDs))
+	for _, addr := range activeVersion.ParticipantIDs {
+		prevParticipants[addr] = struct{}{}
+	}
+
+	dealers := make([]common.Address, 0, len(operators))
+	for _, op := range operators {
+		if _, ok := prevParticipants[op.OperatorAddress]; ok {
+			dealers = append(dealers, op.OperatorAddress)
+		}
+	}
+	return dealers
+}
+
+// deriveAgreedDealerSet returns the dealer set all operators agree to finalize on,
+// derived from SHARED on-chain state (the commitment registry) rather than any node's
+// local receipt timing. A dealer is in the set iff it submitted a commitment for this
+// epoch in the registry.
+//
+// Because reads happen at chain head (the registry is on Base/L2 while the reshare is
+// triggered by an Ethereum/L1 block, so the L1 trigger block cannot pin the L2 read —
+// see docs/011_reshareDealerSetAgreement.md), we converge by polling until every
+// EXPECTED dealer (on-chain ∩ prior participants) has submitted, or a bounded deadline
+// passes. `commitments[epoch]` is append-only and epoch-keyed, so the observed set only
+// grows and never changes a past entry — polling converges all honest nodes to the same
+// "all dealers that submitted for this epoch" set. A genuinely-offline operator never
+// submits, so it is uniformly absent on every node (preserving liveness).
+//
+// pinnedBlock, when > 0, is used as the L2 read height (reserved for when an L2 block
+// feed is available); 0 means read at head.
+func (n *Node) deriveAgreedDealerSet(
+	ctx context.Context,
+	operators []*peering.OperatorSetPeer,
+	epoch int64,
+	pinnedBlock int64,
+) ([]common.Address, error) {
+	expected := n.expectedReshareDealers(operators)
+	if len(expected) == 0 {
+		return nil, fmt.Errorf("no expected dealers for reshare")
+	}
+
+	deadline := time.Now().Add(config.GetProtocolTimeoutForChain(n.ChainID))
+	pollInterval := 1 * time.Second
+
+	var submitted []common.Address
+	for {
+		submitted = submitted[:0]
+		for _, dealer := range expected {
+			commitmentHash, _, _, err := n.baseContractCaller.GetCommitmentAt(
+				ctx, n.commitmentRegistryAddress, epoch, dealer, uint64(max(pinnedBlock, 0)),
+			)
+			if err != nil {
+				n.logger.Sugar().Debugw("registry read failed while deriving dealer set",
+					"operator_address", n.OperatorAddress.Hex(),
+					"dealer", dealer.Hex(), "error", err)
+				continue
+			}
+			if commitmentHash != ([32]byte{}) {
+				submitted = append(submitted, dealer)
+			}
+		}
+
+		// Converged: every expected dealer has submitted on-chain.
+		if len(submitted) == len(expected) {
+			return submitted, nil
+		}
+		if time.Now().After(deadline) {
+			// Deadline reached: finalize on whoever submitted (uniform across nodes,
+			// since it's derived from the same registry). Caller enforces |D| >= threshold.
+			n.logger.Sugar().Infow("Dealer-set convergence deadline reached",
+				"operator_address", n.OperatorAddress.Hex(),
+				"submitted", len(submitted), "expected", len(expected))
+			return submitted, nil
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(pollInterval):
+		}
+	}
+}
+
+// fetchAndVerifyReshareShare obtains the share `dealer` generated for THIS node via the
+// on-demand fetch RPC, then verifies it against the dealer's broadcast commitments using
+// the same polynomial-commitment check as the push path. Returns the verified share or
+// an error if it cannot be obtained/verified.
+func (n *Node) fetchAndVerifyReshareShare(session *ProtocolSession, dealer common.Address) (*fr.Element, error) {
+	// Locate the dealer's peer info.
+	var dealerPeer *peering.OperatorSetPeer
+	for _, op := range session.Operators {
+		if op.OperatorAddress == dealer {
+			dealerPeer = op
+			break
+		}
+	}
+	if dealerPeer == nil {
+		return nil, fmt.Errorf("dealer %s not in session operator set", dealer.Hex())
+	}
+
+	// Retry the fetch a few times: a transient connection failure (dealer briefly
+	// restarting, TCP RST) should not abort the whole reshare round (a ~interval-long
+	// wait). Verification failures below are NOT retried — a bad share is permanently bad.
+	var authResp *types.AuthenticatedMessage
+	var err error
+	backoff := 1 * time.Second
+	for attempt := 0; attempt < 3; attempt++ {
+		authResp, err = n.transport.RequestReshareShare(dealerPeer, session.SessionTimestamp)
+		if err == nil {
+			break
+		}
+		if attempt < 2 {
+			time.Sleep(backoff)
+			backoff *= 2
+		}
+	}
+	if err != nil {
+		return nil, fmt.Errorf("fetch share from %s after retries: %w", dealer.Hex(), err)
+	}
+
+	// Authenticate the response: it must be BN254-signed by the dealer we asked. This
+	// matches the push path's security model and prevents a spoofed From/To.
+	if err := n.verifyMessage(authResp, dealerPeer); err != nil {
+		return nil, fmt.Errorf("fetched share response from %s failed authentication: %w", dealer.Hex(), err)
+	}
+	var shareMsg types.ShareMessage
+	if err := json.Unmarshal(authResp.Payload, &shareMsg); err != nil {
+		return nil, fmt.Errorf("failed to parse fetched share from %s: %w", dealer.Hex(), err)
+	}
+	// The response must come FROM the dealer and be addressed TO this node.
+	if shareMsg.FromOperatorAddress != dealer {
+		return nil, fmt.Errorf("fetched share sender %s != requested dealer %s", shareMsg.FromOperatorAddress.Hex(), dealer.Hex())
+	}
+	if shareMsg.ToOperatorAddress != n.OperatorAddress {
+		return nil, fmt.Errorf("fetched share addressed to %s, not this node %s", shareMsg.ToOperatorAddress.Hex(), n.OperatorAddress.Hex())
+	}
+	if shareMsg.Share == nil {
+		return nil, fmt.Errorf("dealer %s returned empty share", dealer.Hex())
+	}
+	share := types.DeserializeFr(shareMsg.Share)
+
+	// Verify against the dealer's commitments (must have been broadcast/received).
+	session.mu.RLock()
+	commitments := session.commitments[dealer]
+	session.mu.RUnlock()
+	if len(commitments) == 0 {
+		return nil, fmt.Errorf("no commitments for dealer %s to verify fetched share", dealer.Hex())
+	}
+	if !n.resharer.VerifyNewShare(share, commitments) {
+		return nil, fmt.Errorf("fetched share from %s failed polynomial verification", dealer.Hex())
+	}
+	return share, nil
 }
 
 // hasExistingShares returns true if this node has active key shares
@@ -1277,11 +1501,18 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 }
 
 // RunReshareAsExistingOperator executes the reshare protocol as an existing operator with shares.
-func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
+//
+// triggerBlock is the interval-boundary block number that triggered this reshare; it is
+// identical across all operators and anchors the pinned-height registry read used to
+// derive the agreed dealer set at finalize (docs/011_reshareDealerSetAgreement.md).
+// Pass 0 to disable pinned-height agreement and fall back to head reads (used by unit
+// tests that don't run a real chain).
+func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock int64) error {
 	ctx := context.Background()
 	n.logger.Sugar().Infow("Starting reshare as existing operator",
 		"operator_address", n.OperatorAddress.Hex(),
-		"session_timestamp", sessionTimestamp)
+		"session_timestamp", sessionTimestamp,
+		"trigger_block", triggerBlock)
 
 	// Fetch current operators from peering system
 	operators, err := n.fetchCurrentOperators(ctx, n.AVSAddress, n.OperatorSetId)
@@ -1342,6 +1573,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 	if err != nil {
 		return fmt.Errorf("failed to create reshare session: %w", err)
 	}
+	session.TriggerBlockNumber = triggerBlock
 	defer n.cleanupSession(session.SessionTimestamp)
 
 	// Persist initial session state
@@ -1364,6 +1596,10 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		n.logger.Sugar().Errorw("Failed to broadcast reshare commitments", "operator_address", n.OperatorAddress.Hex(), "error", err)
 		// Continue anyway - other nodes may have received
 	}
+
+	// Retain the shares we generated as a dealer so we can re-serve any of them to a
+	// peer that missed our original send (see on-demand share fetch during finalize).
+	session.SetMyGeneratedShares(shares)
 
 	// Send shares to all operators
 	for _, op := range operators {
@@ -1655,18 +1891,68 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64) error {
 		"merkle_verified", len(verifiedOps),
 		"trusted_dealers", len(trustedShares))
 
-	participantIDsForFinalize := make([]common.Address, 0, len(trustedShares))
-	finalShares := make(map[common.Address]*fr.Element, len(trustedShares))
-	for _, op := range operators {
+	// CRITICAL CORRECTNESS INVARIANT: every operator MUST finalize on the IDENTICAL
+	// dealer set. ComputeNewKeyShare reconstructs each refreshed share via Lagrange
+	// interpolation over the dealer set, and the coefficients depend on WHICH dealers
+	// are in it. If operators finalize on different sets (e.g. one is briefly partitioned
+	// and misses a dealer before its peers do) they land on different polynomials, their
+	// refreshed shares become mutually inconsistent, no threshold subset recovers a
+	// consistent app key (every decrypt fails "all combinations exhausted"), and
+	// Σcommitments[0] diverges from the served MasterPublicKey. A single mixed-set round
+	// permanently poisons the cluster (verified empirically + by real-code simulation).
+	//
+	// To force agreement, we derive the dealer set from SHARED on-chain state rather than
+	// each node's local receipt timing: D = operators that submitted a commitment for
+	// this epoch in the registry. See docs/011_reshareDealerSetAgreement.md.
+	//
+	// We read at L2 HEAD (pinnedBlock = 0), NOT session.TriggerBlockNumber. The trigger
+	// block is an Ethereum L1 block number, but the commitment registry lives on Base
+	// (L2) — the two block-number spaces are unrelated, so pinning the L2 read to an L1
+	// height would query Base at a wildly wrong (years-old) height and return empty,
+	// aborting every reshare. Head reads + the convergence/abort-retry below give
+	// agreement without a pinned height. session.TriggerBlockNumber is retained for when
+	// a real L2 block feed is plumbed; until then it must NOT be used as the read height.
+	agreedDealers, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, 0)
+	if err != nil {
+		return fmt.Errorf("failed to derive agreed dealer set: %w", err)
+	}
+	if len(agreedDealers) < newThreshold {
+		return fmt.Errorf("agreed dealer set too small: got %d on-chain submitters, need %d; will retry next interval",
+			len(agreedDealers), newThreshold)
+	}
 
-		if share, ok := trustedShares[op.OperatorAddress]; ok {
-			participantIDsForFinalize = append(participantIDsForFinalize, op.OperatorAddress)
-			finalShares[op.OperatorAddress] = share
+	// Ensure we hold a verified share from every dealer in D. For any we are missing
+	// (we were lagging / dropped that send), fetch it on demand from the dealer and
+	// verify it with the same polynomial-commitment check as the push path. If we still
+	// cannot obtain+verify a dealer in D, ABORT and retry — we must not finalize on a set
+	// different from D.
+	participantIDsForFinalize := make([]common.Address, 0, len(agreedDealers))
+	finalShares := make(map[common.Address]*fr.Element, len(agreedDealers))
+	for _, dealer := range agreedDealers {
+		if share, ok := trustedShares[dealer]; ok {
+			participantIDsForFinalize = append(participantIDsForFinalize, dealer)
+			finalShares[dealer] = share
+			continue
 		}
+		// Missing locally — fetch on demand.
+		share, ferr := n.fetchAndVerifyReshareShare(session, dealer)
+		if ferr != nil {
+			n.logger.Sugar().Warnw("Aborting reshare finalize: could not obtain a dealer in the agreed set",
+				"operator_address", n.OperatorAddress.Hex(),
+				"missing_dealer", dealer.Hex(),
+				"agreed_dealers", len(agreedDealers),
+				"error", ferr)
+			return fmt.Errorf("reshare aborted: missing verified share for agreed dealer %s: %w; will retry next interval",
+				dealer.Hex(), ferr)
+		}
+		participantIDsForFinalize = append(participantIDsForFinalize, dealer)
+		finalShares[dealer] = share
 	}
-	if len(participantIDsForFinalize) < newThreshold {
-		return fmt.Errorf("insufficient verified shares for reshare finalize: got %d, need %d", len(participantIDsForFinalize), newThreshold)
-	}
+
+	n.logger.Sugar().Infow("Finalizing reshare on agreed dealer set",
+		"operator_address", n.OperatorAddress.Hex(),
+		"agreed_dealers", len(participantIDsForFinalize),
+		"pinned_block", session.TriggerBlockNumber)
 
 	// Compute refreshed share using the same Lagrange reconstruction as the new-operator path.
 	newKeyVersion, err := n.resharer.ComputeNewKeyShare(participantIDsForFinalize, finalShares, nil)

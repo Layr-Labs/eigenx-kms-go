@@ -1,10 +1,12 @@
 package testutil
 
 import (
+	"context"
 	"encoding/hex"
 	"fmt"
 	"net/http/httptest"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,6 +36,60 @@ type TestCluster struct {
 	NumNodes     int
 	MasterPubKey types.G2Point
 	MockPoller   *MockChainPoller // Exposed for test control
+
+	// CommitmentRegistry simulates the on-chain commitment registry that the reshare
+	// dealer-set-agreement path reads. By default every operator is reported as having
+	// submitted for every epoch (healthy cluster). Tests can call SuppressSubmission to
+	// model an operator that failed to submit (partition), exercising the agreement +
+	// abort-retry behavior. See docs/011_reshareDealerSetAgreement.md.
+	CommitmentRegistry *MockCommitmentRegistry
+}
+
+// MockCommitmentRegistry is a thread-safe in-memory stand-in for the on-chain
+// EigenKMSCommitmentRegistry, used to drive the reshare dealer-set-agreement logic in
+// tests. By default every operator reads as "submitted". A test can install a
+// suppression predicate to model an operator that did NOT submit (e.g. partitioned) for
+// ALL epochs — robust to test timing, unlike pre-seeding specific epoch timestamps.
+type MockCommitmentRegistry struct {
+	mu       sync.RWMutex
+	suppress func(epoch int64, op common.Address) bool // returns true => treat as NOT submitted
+}
+
+// NewMockCommitmentRegistry returns a registry where everything reads as submitted.
+func NewMockCommitmentRegistry() *MockCommitmentRegistry {
+	return &MockCommitmentRegistry{}
+}
+
+// SuppressOperator models an operator that never submits a commitment (partitioned) for
+// every epoch, until cleared with Clear. Robust across test timing (no epoch window).
+func (r *MockCommitmentRegistry) SuppressOperator(victim common.Address) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.suppress = func(_ int64, op common.Address) bool { return op == victim }
+}
+
+// SetSuppressPredicate installs a custom suppression predicate for fine-grained control.
+func (r *MockCommitmentRegistry) SetSuppressPredicate(fn func(epoch int64, op common.Address) bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.suppress = fn
+}
+
+// Clear removes any suppression — all operators read as submitted again (heal).
+func (r *MockCommitmentRegistry) Clear() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.suppress = nil
+}
+
+// submitted reports whether (epoch, op) is considered submitted.
+func (r *MockCommitmentRegistry) submitted(epoch int64, op common.Address) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.suppress == nil {
+		return true
+	}
+	return !r.suppress(epoch, op)
 }
 
 // NewTestCluster creates a test cluster of KMS nodes with completed DKG
@@ -66,10 +122,11 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 
 	// Create test cluster
 	cluster := &TestCluster{
-		Nodes:      make([]*node.Node, numNodes),
-		Servers:    make([]*httptest.Server, numNodes),
-		ServerURLs: make([]string, numNodes),
-		NumNodes:   numNodes,
+		Nodes:              make([]*node.Node, numNodes),
+		Servers:            make([]*httptest.Server, numNodes),
+		ServerURLs:         make([]string, numNodes),
+		NumNodes:           numNodes,
+		CommitmentRegistry: NewMockCommitmentRegistry(),
 	}
 
 	// Create nodes with real addresses and keys
@@ -121,8 +178,28 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 		// Use mock attestation verifier for tests
 		mockManager := attestation.NewStubManager()
 
-		// Create mock base contract caller for commitment registry
-		mockBaseContractCaller := &contractCaller.MockContractCallerStub{}
+		// Create mock base contract caller backed by the cluster's shared commitment
+		// registry simulation, so the reshare dealer-set-agreement path reads a
+		// consistent (and test-controllable) set of submitters across all nodes.
+		mockBaseContractCaller := &contractCaller.MockContractCallerStub{
+			GetCommitmentAtFunc: func(_ context.Context, _ common.Address, epoch int64, operator common.Address, blockNumber uint64) ([32]byte, [32]byte, uint64, error) {
+				// Regression guard for the L1-block-as-L2-height bug: the registry is on
+				// Base (L2) but the reshare trigger block is an Ethereum (L1) block, so the
+				// finalize path MUST read at head (blockNumber == 0). If a non-zero block is
+				// ever threaded in again, fail loudly here rather than silently returning
+				// stale/empty results. See docs/011_reshareDealerSetAgreement.md.
+				if blockNumber != 0 {
+					t.Fatalf("GetCommitmentAt called with non-zero block %d; reshare must read the Base registry at head (the trigger block is an L1 height)", blockNumber)
+				}
+				if cluster.CommitmentRegistry.submitted(epoch, operator) {
+					// Non-zero commitment hash = "submitted".
+					var h [32]byte
+					h[0] = 1
+					return h, h, 1, nil
+				}
+				return [32]byte{}, [32]byte{}, 0, nil
+			},
+		}
 
 		mockRegistryAddress := common.HexToAddress("0x1111111111111111111111111111111111111111")
 

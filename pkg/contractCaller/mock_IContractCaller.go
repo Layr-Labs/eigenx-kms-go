@@ -633,6 +633,106 @@ func (_c *MockIContractCaller_GetCommitment_Call) RunAndReturn(run func(ctx cont
 	return _c
 }
 
+// GetCommitmentAt provides a mock function for the type MockIContractCaller
+func (_mock *MockIContractCaller) GetCommitmentAt(ctx context.Context, registryAddress common.Address, epoch int64, operator common.Address, blockNumber uint64) ([32]byte, [32]byte, uint64, error) {
+	ret := _mock.Called(ctx, registryAddress, epoch, operator, blockNumber)
+
+	if len(ret) == 0 {
+		panic("no return value specified for GetCommitmentAt")
+	}
+
+	var r0 [32]byte
+	var r1 [32]byte
+	var r2 uint64
+	var r3 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, common.Address, int64, common.Address, uint64) ([32]byte, [32]byte, uint64, error)); ok {
+		return returnFunc(ctx, registryAddress, epoch, operator, blockNumber)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, common.Address, int64, common.Address, uint64) [32]byte); ok {
+		r0 = returnFunc(ctx, registryAddress, epoch, operator, blockNumber)
+	} else {
+		if ret.Get(0) != nil {
+			r0 = ret.Get(0).([32]byte)
+		}
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, common.Address, int64, common.Address, uint64) [32]byte); ok {
+		r1 = returnFunc(ctx, registryAddress, epoch, operator, blockNumber)
+	} else {
+		if ret.Get(1) != nil {
+			r1 = ret.Get(1).([32]byte)
+		}
+	}
+	if returnFunc, ok := ret.Get(2).(func(context.Context, common.Address, int64, common.Address, uint64) uint64); ok {
+		r2 = returnFunc(ctx, registryAddress, epoch, operator, blockNumber)
+	} else {
+		r2 = ret.Get(2).(uint64)
+	}
+	if returnFunc, ok := ret.Get(3).(func(context.Context, common.Address, int64, common.Address, uint64) error); ok {
+		r3 = returnFunc(ctx, registryAddress, epoch, operator, blockNumber)
+	} else {
+		r3 = ret.Error(3)
+	}
+	return r0, r1, r2, r3
+}
+
+// MockIContractCaller_GetCommitmentAt_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'GetCommitmentAt'
+type MockIContractCaller_GetCommitmentAt_Call struct {
+	*mock.Call
+}
+
+// GetCommitmentAt is a helper method to define mock.On call
+//   - ctx context.Context
+//   - registryAddress common.Address
+//   - epoch int64
+//   - operator common.Address
+//   - blockNumber uint64
+func (_e *MockIContractCaller_Expecter) GetCommitmentAt(ctx interface{}, registryAddress interface{}, epoch interface{}, operator interface{}, blockNumber interface{}) *MockIContractCaller_GetCommitmentAt_Call {
+	return &MockIContractCaller_GetCommitmentAt_Call{Call: _e.mock.On("GetCommitmentAt", ctx, registryAddress, epoch, operator, blockNumber)}
+}
+
+func (_c *MockIContractCaller_GetCommitmentAt_Call) Run(run func(ctx context.Context, registryAddress common.Address, epoch int64, operator common.Address, blockNumber uint64)) *MockIContractCaller_GetCommitmentAt_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 common.Address
+		if args[1] != nil {
+			arg1 = args[1].(common.Address)
+		}
+		var arg2 int64
+		if args[2] != nil {
+			arg2 = args[2].(int64)
+		}
+		var arg3 common.Address
+		if args[3] != nil {
+			arg3 = args[3].(common.Address)
+		}
+		var arg4 uint64
+		if args[4] != nil {
+			arg4 = args[4].(uint64)
+		}
+		run(
+			arg0,
+			arg1,
+			arg2,
+			arg3,
+			arg4,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIContractCaller_GetCommitmentAt_Call) Return(commitmentHash [32]byte, ackMerkleRoot [32]byte, submittedAt uint64, err error) *MockIContractCaller_GetCommitmentAt_Call {
+	_c.Call.Return(commitmentHash, ackMerkleRoot, submittedAt, err)
+	return _c
+}
+
+func (_c *MockIContractCaller_GetCommitmentAt_Call) RunAndReturn(run func(ctx context.Context, registryAddress common.Address, epoch int64, operator common.Address, blockNumber uint64) ([32]byte, [32]byte, uint64, error)) *MockIContractCaller_GetCommitmentAt_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetLatestRelease provides a mock function for the type MockIContractCaller
 func (_mock *MockIContractCaller) GetLatestRelease(ctx context.Context, appID string) ([32]byte, caller.Env, []byte, types0.ContainerPolicy, error) {
 	ret := _mock.Called(ctx, appID)

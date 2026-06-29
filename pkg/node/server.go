@@ -160,6 +160,7 @@ func NewServer(node *Node, port int) *Server {
 
 	// Reshare endpoints
 	mux.HandleFunc("/reshare/share", maxBodySize(64<<10, s.handleReshareShare))
+	mux.HandleFunc("/reshare/share/request", maxBodySize(64<<10, s.handleReshareShareRequest))
 	mux.HandleFunc("/reshare/commitment", maxBodySize(256<<10, s.handleReshareCommitment))
 	mux.HandleFunc("/reshare/ack", maxBodySize(64<<10, s.handleReshareAck))
 
