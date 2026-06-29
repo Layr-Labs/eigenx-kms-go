@@ -40,16 +40,10 @@ func TestContractPolicyToTypes_Empty(t *testing.T) {
 	assert.Empty(t, got.EnvOverride)
 }
 
-// TestEncryptedEnvWireEncoding locks the encrypted_env serialization contract.
-//
-// The on-chain encryptedEnv is a raw IBE envelope (magic "IBE"||version||binary)
-// that is NOT valid UTF-8. GetLatestReleaseAsRelease assigns it to the
-// types.Release.EncryptedEnv string field, which is JSON-serialized across the
-// /secrets boundary. A `string(rawBytes)` cast of non-UTF-8 bytes is corrupted
-// by json.Marshal (invalid runes become U+FFFD), so the bytes a caller decodes
-// no longer match the original ciphertext. Hex-encoding keeps the value pure
-// ASCII so it survives serialization losslessly and decodes back to the exact
-// envelope.
+// TestEncryptedEnvWireEncoding locks the encrypted_env serialization contract:
+// the raw IBE ciphertext (binary, not valid UTF-8) is hex-encoded onto the
+// JSON-serialized EncryptedEnv string field so it survives serialization
+// losslessly and decodes back to the exact bytes.
 func TestEncryptedEnvWireEncoding(t *testing.T) {
 	// Realistic IBE envelope prefix ("IBE"\x01) followed by non-UTF-8 bytes.
 	raw := []byte{'I', 'B', 'E', 0x01, 0x8e, 0x2b, 0x31, 0x26, 0xff, 0xfe, 0x00, 0x80}

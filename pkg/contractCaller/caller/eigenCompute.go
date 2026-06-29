@@ -302,14 +302,9 @@ func (cc *ContractCaller) GetLatestReleaseAsRelease(ctx context.Context, appID s
 		publicEnvStr = string(envBytes)
 	}
 
-	// r.EncryptedEnv is the raw on-chain IBE ciphertext (format in
-	// crypto.EncryptForApp: "IBE"||version||C1||nonce||ct+tag) — arbitrary
-	// binary, not valid UTF-8. types.Release.EncryptedEnv is a string serialized to
-	// JSON (it crosses the /secrets HTTP boundary), and a raw string([]byte)
-	// cast of non-UTF-8 bytes is corrupted by json.Marshal (invalid runes become
-	// U+FFFD). Hex-encode so the bytes survive serialization losslessly; callers
-	// decode back to the original envelope. Empty stays empty (public-only
-	// releases have no encrypted_env).
+	// EncryptedEnv is a JSON-serialized string field, so the raw IBE ciphertext
+	// (binary, not valid UTF-8 — see crypto.EncryptForApp) must be hex-encoded to
+	// survive serialization. Empty stays empty (public-only releases).
 	var encryptedEnvStr string
 	if len(r.EncryptedEnv) > 0 {
 		encryptedEnvStr = hex.EncodeToString(r.EncryptedEnv)
