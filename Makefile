@@ -45,6 +45,18 @@ build/cmd/kmsClient/static:
 		-trimpath -buildvcs=false \
 		-o ${BIN}/kms-client ./cmd/kmsClient
 
+# Static linux/amd64 eigenx-cdh-helper for the podVM AMI build (it bakes this
+# binary into the SEV-SNP guest image — see ecloud-platform-infra
+# podvm-build.sh). Built reproducibly (CGO off, -trimpath) and published as a
+# release asset so the in-TEE binary traces to a git tag/commit instead of a
+# hand-uploaded S3 blob.
+.PHONY: build/cmd/kmsCDHHelper/static
+build/cmd/kmsCDHHelper/static:
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+		$(GO_FLAGS_STATIC) \
+		-trimpath -buildvcs=false \
+		-o ${BIN}/eigenx-cdh-helper ./cmd/kmsCDHHelper
+
 .PHONY: build/cmd
 build/cmd: build/cmd/kmsServer build/cmd/registerOperator build/cmd/kmsClient
 
