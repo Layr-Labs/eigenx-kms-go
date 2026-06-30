@@ -3,9 +3,18 @@
 GO = $(shell which go)
 BIN = ./bin
 
-GO_FLAGS=-ldflags "-X 'github.com/Layr-Labs/eigenx-kms-go/internal/version.Version=$(shell cat VERSION)' -X 'github.com/Layr-Labs/eigenx-kms-go/internal/version.Commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo 'unknown')'"
+# Version/commit embedded into every build. Kept as a bare ldflags fragment (no
+# -ldflags prefix) so it can be composed into a SINGLE -ldflags arg below: go
+# build only honors the LAST -ldflags it sees, so two separate -ldflags would
+# silently drop one set. See GO_FLAGS_STATIC.
+VERSION_LDFLAGS=-X 'github.com/Layr-Labs/eigenx-kms-go/internal/version.Version=$(shell cat VERSION)' -X 'github.com/Layr-Labs/eigenx-kms-go/internal/version.Commit=$(shell git rev-parse --short HEAD 2>/dev/null || echo 'unknown')'
 
-GO_FLAGS_STATIC=$(GO_FLAGS) -ldflags="-s -w -extldflags '-static'"
+GO_FLAGS=-ldflags "$(VERSION_LDFLAGS)"
+
+# Static build folds the version flags into the same -ldflags as -s -w -extldflags;
+# a previous `$(GO_FLAGS) -ldflags=...` form emitted two -ldflags and lost the
+# version embedding (the whole point of provenance for the in-TEE helper).
+GO_FLAGS_STATIC=-ldflags "-s -w -extldflags '-static' $(VERSION_LDFLAGS)"
 
 all: deps/go build/cmd
 
@@ -44,6 +53,10 @@ build/cmd/kmsClient/static:
 		$(GO_FLAGS_STATIC) \
 		-trimpath -buildvcs=false \
 		-o ${BIN}/kms-client ./cmd/kmsClient
+
+.PHONY: build/cmd/kmsCDHHelper
+build/cmd/kmsCDHHelper:
+	go build $(GO_FLAGS) -o ${BIN}/eigenx-cdh-helper ./cmd/kmsCDHHelper
 
 # Static linux/amd64 eigenx-cdh-helper for the podVM AMI build (it bakes this
 # binary into the SEV-SNP guest image — see ecloud-platform-infra
