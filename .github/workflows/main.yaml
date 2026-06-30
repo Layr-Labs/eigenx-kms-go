@@ -161,12 +161,28 @@ jobs:
           sudo chown -R $USER:$USER .
           ./scripts/bundleReleases.sh $VERSION
 
+      # Build the eigenx-cdh-helper as a standalone release asset. The podVM AMI
+      # build (ecloud-platform-infra podvm-build.sh) bakes this exact binary into
+      # the SEV-SNP guest image. Publishing it here — keyed to the release tag,
+      # with a .sha256 sidecar — replaces the hand-built blob hand-uploaded to S3,
+      # so the in-TEE helper traces to a git commit. Static (CGO off, -trimpath).
+      - name: Build eigenx-cdh-helper release asset
+        run: |
+          make build/cmd/kmsCDHHelper/static
+          mkdir -p ./release
+          cp ./bin/eigenx-cdh-helper ./release/eigenx-cdh-helper-linux-amd64
+          ( cd ./release && sha256sum eigenx-cdh-helper-linux-amd64 > eigenx-cdh-helper-linux-amd64.sha256 )
+          echo "helper sha256: $(cat ./release/eigenx-cdh-helper-linux-amd64.sha256)"
+
       - name: Create Release and Upload Assets
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           draft: false
           prerelease: false
-          files: ./release/*.tar*
+          files: |
+            ./release/*.tar*
+            ./release/eigenx-cdh-helper-linux-amd64
+            ./release/eigenx-cdh-helper-linux-amd64.sha256
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
