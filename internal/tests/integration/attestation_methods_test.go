@@ -127,19 +127,26 @@ func TestSecretsEndpoint_ECDSAAttestation(t *testing.T) {
 
 	n, mockCC := createTestNodeWithManager(t, manager)
 
-	// Add test release
+	// Generate ECDSA key pair for attestation. ECDSA /secrets binds the signer
+	// to the app's on-chain creator, so the app ID must be a contract address
+	// and its creator must equal the signer's address.
+	appPrivateKey, err := crypto.GenerateKey()
+	require.NoError(t, err)
+	appPublicKey := crypto.FromECDSAPub(&appPrivateKey.PublicKey)
+	creatorAddr := crypto.PubkeyToAddress(appPrivateKey.PublicKey)
+
+	appAddr := common.HexToAddress("0x00000000000000000000000000000000000ECD5A")
+	appID := appAddr.Hex()
+	mockCC.SetAppCreator(appAddr, creatorAddr)
+
+	// Add test release keyed on the app contract address
 	testRelease := &kmsTypes.Release{
 		ImageDigest:  "ecdsa:unverified", // ECDSA uses this default
 		EncryptedEnv: "encrypted-env-data",
 		PublicEnv:    "PUBLIC_VAR=test-value",
 		Timestamp:    time.Now().Unix(),
 	}
-	mockCC.AddTestRelease("ecdsa-test-app", testRelease)
-
-	// Generate ECDSA key pair for attestation
-	appPrivateKey, err := crypto.GenerateKey()
-	require.NoError(t, err)
-	appPublicKey := crypto.FromECDSAPub(&appPrivateKey.PublicKey)
+	mockCC.AddTestRelease(appID, testRelease)
 
 	// Generate challenge
 	nonce := make([]byte, attestation.NonceLength)
@@ -150,7 +157,7 @@ func TestSecretsEndpoint_ECDSAAttestation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Sign challenge
-	signature, err := attestation.SignChallenge(appPrivateKey, "ecdsa-test-app", challenge)
+	signature, err := attestation.SignChallenge(appPrivateKey, appID, challenge)
 	require.NoError(t, err)
 
 	// Generate RSA key pair for response encryption
@@ -160,7 +167,7 @@ func TestSecretsEndpoint_ECDSAAttestation(t *testing.T) {
 
 	// Create ECDSA attestation request
 	req := kmsTypes.SecretsRequestV1{
-		AppID:             "ecdsa-test-app",
+		AppID:             appID,
 		AttestationMethod: "ecdsa",
 		Attestation:       signature,
 		Challenge:         []byte(challenge),
@@ -211,24 +218,29 @@ func TestSecretsEndpoint_ECDSAWithExtraData(t *testing.T) {
 
 	n, mockCC := createTestNodeWithManager(t, manager)
 
+	appPrivateKey, err := crypto.GenerateKey()
+	require.NoError(t, err)
+	appPublicKey := crypto.FromECDSAPub(&appPrivateKey.PublicKey)
+	creatorAddr := crypto.PubkeyToAddress(appPrivateKey.PublicKey)
+
+	appAddr := common.HexToAddress("0x00000000000000000000000000000000e57Ada7a")
+	appID := appAddr.Hex()
+	mockCC.SetAppCreator(appAddr, creatorAddr)
+
 	testRelease := &kmsTypes.Release{
 		ImageDigest:  "ecdsa:unverified",
 		EncryptedEnv: "encrypted-env-data",
 		PublicEnv:    "PUBLIC_VAR=test-value",
 		Timestamp:    time.Now().Unix(),
 	}
-	mockCC.AddTestRelease("extra-data-app", testRelease)
-
-	appPrivateKey, err := crypto.GenerateKey()
-	require.NoError(t, err)
-	appPublicKey := crypto.FromECDSAPub(&appPrivateKey.PublicKey)
+	mockCC.AddTestRelease(appID, testRelease)
 
 	nonce := make([]byte, attestation.NonceLength)
 	_, err = rand.Read(nonce)
 	require.NoError(t, err)
 	challenge, err := attestation.GenerateChallenge(nonce)
 	require.NoError(t, err)
-	signature, err := attestation.SignChallenge(appPrivateKey, "extra-data-app", challenge)
+	signature, err := attestation.SignChallenge(appPrivateKey, appID, challenge)
 	require.NoError(t, err)
 
 	rsaEncrypt := encryption.NewRSAEncryption()
@@ -238,7 +250,7 @@ func TestSecretsEndpoint_ECDSAWithExtraData(t *testing.T) {
 	extraData := []byte(`{"action":"transfer","amount":"100","to":"0xdead"}`)
 
 	req := kmsTypes.SecretsRequestV1{
-		AppID:             "extra-data-app",
+		AppID:             appID,
 		AttestationMethod: "ecdsa",
 		Attestation:       signature,
 		Challenge:         []byte(challenge),
@@ -549,15 +561,6 @@ func TestSecretsEndpoint_BothMethodsEnabled(t *testing.T) {
 	}
 	mockCC.AddTestRelease("test-app-gcp", releaseGCP)
 
-	// Add release for ECDSA
-	releaseECDSA := &kmsTypes.Release{
-		ImageDigest:  "ecdsa:unverified",
-		EncryptedEnv: "ecdsa-env",
-		PublicEnv:    "PUBLIC=ecdsa",
-		Timestamp:    time.Now().Unix(),
-	}
-	mockCC.AddTestRelease("test-app-ecdsa", releaseECDSA)
-
 	// Test 1: Use GCP method
 	gcpClaims := kmsTypes.AttestationClaims{
 		AppID:       "test-app-gcp",
@@ -583,16 +586,27 @@ func TestSecretsEndpoint_BothMethodsEnabled(t *testing.T) {
 
 	assert.Equal(t, http.StatusOK, w.Code, "GCP method should succeed")
 
-	// Test 2: Use ECDSA method
+	// Test 2: Use ECDSA method. ECDSA binds the signer to the app's on-chain
+	// creator, so use a contract-address app ID whose creator is the signer.
 	appPrivKey, _ := crypto.GenerateKey()
 	appPubKey := crypto.FromECDSAPub(&appPrivKey.PublicKey)
+	ecdsaAppAddr := common.HexToAddress("0x00000000000000000000000000000000b074ECDb")
+	ecdsaAppID := ecdsaAppAddr.Hex()
+	mockCC.SetAppCreator(ecdsaAppAddr, crypto.PubkeyToAddress(appPrivKey.PublicKey))
+	mockCC.AddTestRelease(ecdsaAppID, &kmsTypes.Release{
+		ImageDigest:  "ecdsa:unverified",
+		EncryptedEnv: "ecdsa-env",
+		PublicEnv:    "PUBLIC=ecdsa",
+		Timestamp:    time.Now().Unix(),
+	})
+
 	nonce := make([]byte, attestation.NonceLength)
 	_, _ = rand.Read(nonce)
 	challenge, _ := attestation.GenerateChallenge(nonce)
-	signature, _ := attestation.SignChallenge(appPrivKey, "test-app-ecdsa", challenge)
+	signature, _ := attestation.SignChallenge(appPrivKey, ecdsaAppID, challenge)
 
 	reqECDSA := kmsTypes.SecretsRequestV1{
-		AppID:             "test-app-ecdsa",
+		AppID:             ecdsaAppID,
 		AttestationMethod: "ecdsa",
 		Attestation:       signature,
 		Challenge:         []byte(challenge),

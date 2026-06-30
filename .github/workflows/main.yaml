@@ -68,7 +68,7 @@ jobs:
       - name: Install Foundry
         uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1.8
         with:
-          version: v1.5.1
+          version: v1.7.1
       - name: Run tests
         run: |
           make deps

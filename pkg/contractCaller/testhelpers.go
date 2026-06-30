@@ -119,8 +119,9 @@ func (m *MockContractCallerStub) GetLatestReleaseAsRelease(ctx context.Context, 
 // confirmUpgrade() promotes the pending release to the confirmed releases map.
 type TestableContractCallerStub struct {
 	MockContractCallerStub
-	releases        map[string]*types.Release // confirmed (active) releases
-	pendingReleases map[string]*types.Release // pending releases awaiting confirmation
+	releases        map[string]*types.Release         // confirmed (active) releases
+	pendingReleases map[string]*types.Release         // pending releases awaiting confirmation
+	creators        map[common.Address]common.Address // configured app creators
 	mu              sync.RWMutex
 }
 
@@ -129,6 +130,7 @@ func NewTestableContractCallerStub() *TestableContractCallerStub {
 	return &TestableContractCallerStub{
 		releases:        make(map[string]*types.Release),
 		pendingReleases: make(map[string]*types.Release),
+		creators:        make(map[common.Address]common.Address),
 	}
 }
 
@@ -160,6 +162,23 @@ func (m *TestableContractCallerStub) ConfirmUpgrade(appID string) error {
 	m.releases[appID] = pending
 	delete(m.pendingReleases, appID)
 	return nil
+}
+
+// SetAppCreator configures the on-chain creator returned by GetAppCreator for
+// a given app address. Used to drive ECDSA ownership-binding tests.
+func (m *TestableContractCallerStub) SetAppCreator(app common.Address, creator common.Address) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.creators[app] = creator
+}
+
+// GetAppCreator returns the configured creator for an app, or the zero address
+// if none was set. It never errors — release lookups and creator lookups are
+// independent in tests.
+func (m *TestableContractCallerStub) GetAppCreator(app common.Address, opts *bind.CallOpts) (common.Address, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.creators[app], nil
 }
 
 // GetLatestRelease returns the confirmed release data for an app in its raw form.
