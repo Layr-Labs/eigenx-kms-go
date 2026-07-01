@@ -161,6 +161,16 @@ const (
 	initDataPath     = "/run/peerpod/initdata"
 )
 
+// appPrivateKeyKey is a reserved Key value that makes the helper emit the
+// threshold-recovered app_private_key itself (hex of its compressed G1 bytes)
+// rather than an environment variable. This is the KMS-derived root a
+// signing daemon seeds from (app_private_key = S·H(appID)); it travels the
+// exact same eigenx-snp attestation path as a sealed env var, so it is only
+// ever recoverable inside an attested TEE. Because it is not part of the
+// release env, it bypasses the merged-env assembly, the IBE-decrypt, and the
+// tmpfs env cache entirely (the root must never be written to disk).
+const appPrivateKeyKey = "__EIGENX_APP_PRIVATE_KEY__"
+
 func main() {
 	if err := run(); err != nil {
 		log.Printf("kmsCDHHelper: %v", err)
@@ -180,10 +190,15 @@ func run() error {
 	// is held across the read so we don't race a concurrent first-call writer
 	// (kata-agent unseals sequentially today, but a multi-container pod shares
 	// the podVM). See env_cache.go.
-	if env, ok, cerr := loadCachedEnv(req.AppID); cerr != nil {
-		return fmt.Errorf("read env cache: %w", cerr)
-	} else if ok {
-		return emitKey(env, req.Key)
+	//
+	// The app_private_key root is never cached (it is not part of the env map),
+	// so its request always attests fresh and never consults the cache.
+	if req.Key != appPrivateKeyKey {
+		if env, ok, cerr := loadCachedEnv(req.AppID); cerr != nil {
+			return fmt.Errorf("read env cache: %w", cerr)
+		} else if ok {
+			return emitKey(env, req.Key)
+		}
 	}
 
 	rsaPriv, rsaPubPEM, err := generateRSAKeypair()
@@ -251,8 +266,14 @@ func run() error {
 	// Cache the whole merged env so sibling sealed vars for this app this pod
 	// boot hit the fast path above. Best-effort: a cache write failure must not
 	// fail the unseal — we already have the value in hand.
-	if cerr := storeCachedEnv(req.AppID, env); cerr != nil {
-		log.Printf("warning: cache merged env for app %q: %v", req.AppID, cerr)
+	//
+	// Never cache the app_private_key root: it is not part of the release env,
+	// and it must not be persisted to the tmpfs cache. Its request always
+	// re-attests (see the fast-path guard above).
+	if req.Key != appPrivateKeyKey {
+		if cerr := storeCachedEnv(req.AppID, env); cerr != nil {
+			log.Printf("warning: cache merged env for app %q: %v", req.AppID, cerr)
+		}
 	}
 
 	return emitKey(env, req.Key)
@@ -651,6 +672,21 @@ func retrieveAndDecrypt(
 	result, err := client.RetrieveSecretsWithOptions(req.AppID, opts)
 	if err != nil {
 		return nil, fmt.Errorf("RetrieveSecretsWithOptions: %w", err)
+	}
+
+	// Root-key request: emit the threshold-recovered app_private_key itself
+	// (hex of its compressed G1 bytes) and stop. This is the KMS-derived root a
+	// signing daemon seeds from; it does not depend on the release's
+	// encrypted_env, so we return before the IBE-decrypt below. The key was
+	// already validated against the master public key by RetrieveSecretsWithOptions
+	// (VerifyAppPrivateKey), so a poisoned KMS fails there, not here.
+	if req.Key == appPrivateKeyKey {
+		if len(result.AppPrivateKey.CompressedBytes) == 0 {
+			return nil, fmt.Errorf("KMS returned empty app_private_key for app %q", req.AppID)
+		}
+		return map[string]string{
+			appPrivateKeyKey: hex.EncodeToString(result.AppPrivateKey.CompressedBytes),
+		}, nil
 	}
 
 	// Per the KMS design (docs/references/new_kms.md, "Application Decryption"):

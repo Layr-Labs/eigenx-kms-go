@@ -68,6 +68,15 @@ func TestEmitKey_MissingKeyFailsLoud(t *testing.T) {
 	assert.Contains(t, err.Error(), "not present in app env")
 }
 
+func TestEmitKey_AppPrivateKeySentinel(t *testing.T) {
+	// The root-key request path returns a one-entry map keyed by the sentinel
+	// (see retrieveAndDecrypt); emitKey must serve it like any other key so the
+	// app_private_key hex reaches stdout unchanged.
+	rootHex := "852555c344147396974349e16f65c08dbf11b0d109e9df97afe2cfd41a84c5f34572a80bcb3053ac0ebec1693e539274"
+	err := emitKey(map[string]string{appPrivateKeyKey: rootHex}, appPrivateKeyKey)
+	require.NoError(t, err)
+}
+
 func TestCacheRoundTrip(t *testing.T) {
 	// Point the cache at a temp dir so the test doesn't touch /run/eigenx.
 	orig := envCacheDir
