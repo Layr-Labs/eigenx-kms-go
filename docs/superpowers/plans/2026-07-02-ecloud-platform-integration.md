@@ -261,26 +261,29 @@ git commit -m "chore(bindings): regenerate IEigenKMSRegistrar for platformRpcUrl
 ## Task 3: `ContractCaller.GetAvsConfig`
 
 **Files:**
-- Modify: `pkg/contractCaller/contractCaller.go` (add `AvsConfig` type + interface method)
-- Modify: `pkg/contractCaller/caller/caller.go` (implement)
+- Modify: `pkg/contractCaller/caller/caller.go` (add `AvsConfig` type + `mapAvsConfig` + `GetAvsConfig` impl)
+- Modify: `pkg/contractCaller/contractCaller.go` (add `GetAvsConfig` to the `IContractCaller` interface, referencing `caller.AvsConfig`)
 - Test: `pkg/contractCaller/caller/caller_avsconfig_test.go` (new)
+
+**Grounding (verified):** `pkg/contractCaller/contractCaller.go` (package `contractCaller`) **imports** `pkg/contractCaller/caller` (package `caller`) and already references `caller.*` types in the interface (`caller.AppControllerInterface`, `caller.Env`, `caller.AppUpgradedIterator`). `caller` does **not** import `contractCaller`. Therefore `AvsConfig` MUST be defined in **package `caller`** and referenced as `caller.AvsConfig` from the interface — defining it in `contractCaller` and referencing it from `caller` would be an import cycle. This is settled; do not define the type in `contractCaller.go`.
 
 **Interfaces:**
 - Consumes: `IEigenKMSRegistrar.NewIEigenKMSRegistrarCaller`, `cc.allocationManager.GetAVSRegistrar` (existing socket-read pattern at `caller.go:154-170`).
-- Produces:
+- Produces (package `caller`):
   ```go
-  // pkg/contractCaller/contractCaller.go
   type AvsConfig struct {
       OperatorSetId  uint32
       PlatformRpcUrl string
   }
-  // added to IContractCaller:
-  GetAvsConfig(ctx context.Context, avsAddress string) (*AvsConfig, error)
+  func mapAvsConfig(in IEigenKMSRegistrar.IEigenKMSRegistrarTypesAvsConfig) *AvsConfig
+  // on *ContractCaller, added to the IContractCaller interface:
+  GetAvsConfig(ctx context.Context, avsAddress string) (*caller.AvsConfig, error)
   ```
+  Consumers (Task 7) refer to this as `caller.AvsConfig` and call `baseContractCaller.GetAvsConfig(ctx, avs)`.
 
 - [ ] **Step 1: Write the failing test**
 
-The live path needs chain, so this test asserts the wrapper exists and maps fields via a table over the binding struct. Create `pkg/contractCaller/caller/caller_avsconfig_test.go`:
+The live path needs chain, so this test targets the pure mapping `mapAvsConfig`. It is authored in its FINAL form (local `AvsConfig`, in package `caller`, no `contractCaller` import). Create `pkg/contractCaller/caller/caller_avsconfig_test.go`:
 ```go
 package caller
 
@@ -288,7 +291,6 @@ import (
 	"testing"
 
 	IEigenKMSRegistrar "github.com/Layr-Labs/eigenx-kms-go/pkg/middleware-bindings/IEigenKMSRegistrar"
-	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller"
 	"github.com/stretchr/testify/require"
 )
 
@@ -301,38 +303,18 @@ func Test_mapAvsConfig(t *testing.T) {
 		PlatformRpcUrl: "platform.example:9002",
 	}
 	got := mapAvsConfig(in)
-	require.Equal(t, &contractCaller.AvsConfig{OperatorSetId: 7, PlatformRpcUrl: "platform.example:9002"}, got)
+	require.Equal(t, &AvsConfig{OperatorSetId: 7, PlatformRpcUrl: "platform.example:9002"}, got)
 }
 ```
 
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `./scripts/goTest.sh ./pkg/contractCaller/caller -run Test_mapAvsConfig -v`
-Expected: FAIL — `mapAvsConfig` undefined / `contractCaller.AvsConfig` undefined.
+Expected: FAIL — `mapAvsConfig` / `AvsConfig` undefined.
 
-- [ ] **Step 3: Add the type + interface method**
+- [ ] **Step 3: Add the type, mapper, and method in caller.go**
 
-In `pkg/contractCaller/contractCaller.go`, add near the top of the interface's package (outside the interface block):
-```go
-// AvsConfig is the platform-relevant slice of the on-chain EigenKMSRegistrar config.
-type AvsConfig struct {
-	OperatorSetId  uint32
-	PlatformRpcUrl string
-}
-```
-and add to the `IContractCaller` interface:
-```go
-	// GetAvsConfig resolves the AVS registrar from the AVS address and reads its config.
-	GetAvsConfig(ctx context.Context, avsAddress string) (*AvsConfig, error)
-```
-
-- [ ] **Step 4: Implement in caller.go**
-
-In `pkg/contractCaller/caller/caller.go` add (import `context` if not already, and the `contractCaller` package — note it may create an import cycle if `caller` is imported by `contractCaller`; verify: `contractCaller.go` is package `contractCaller`, `caller.go` is package `caller`, and `caller` already imports nothing from `contractCaller`. To avoid a cycle, define `mapAvsConfig` to return `*contractCaller.AvsConfig` only if `caller` may import `contractCaller`. If it may not, instead declare the `AvsConfig` type in the `caller` package and alias it. CHECK the existing import direction first: `grep -n "eigenx-kms-go/pkg/contractCaller\"" pkg/contractCaller/caller/*.go`. If caller already imports the parent package, proceed; otherwise put `AvsConfig` in package `caller` and have the interface reference `caller.AvsConfig`, mirroring how `caller.AppControllerInterface` / `caller.Env` are already referenced from the interface.):
-
-Assuming the interface already references `caller.*` types (it references `caller.AppControllerInterface`, `caller.Env`, `caller.AppUpgradedIterator`), define `AvsConfig` in **package `caller`** and reference it as `caller.AvsConfig` from the interface. Concretely:
-
-In `pkg/contractCaller/caller/caller.go`:
+In `pkg/contractCaller/caller/caller.go` (ensure `context` is imported):
 ```go
 // AvsConfig is the platform-relevant slice of the on-chain EigenKMSRegistrar config.
 type AvsConfig struct {
@@ -344,6 +326,7 @@ func mapAvsConfig(in IEigenKMSRegistrar.IEigenKMSRegistrarTypesAvsConfig) *AvsCo
 	return &AvsConfig{OperatorSetId: in.OperatorSetId, PlatformRpcUrl: in.PlatformRpcUrl}
 }
 
+// GetAvsConfig resolves the AVS registrar from the AVS address and reads its config.
 func (cc *ContractCaller) GetAvsConfig(ctx context.Context, avsAddress string) (*AvsConfig, error) {
 	avsAddr := common.HexToAddress(avsAddress)
 	avsRegistrarAddress, err := cc.allocationManager.GetAVSRegistrar(&bind.CallOpts{Context: ctx}, avsAddr)
@@ -361,11 +344,14 @@ func (cc *ContractCaller) GetAvsConfig(ctx context.Context, avsAddress string) (
 	return mapAvsConfig(cfg), nil
 }
 ```
-And in `pkg/contractCaller/contractCaller.go`, add to the interface:
+
+- [ ] **Step 4: Add the method to the interface (referencing `caller.AvsConfig`)**
+
+In `pkg/contractCaller/contractCaller.go`, add to the `IContractCaller` interface (it already imports and references the `caller` package):
 ```go
+	// GetAvsConfig resolves the AVS registrar from the AVS address and reads its config.
 	GetAvsConfig(ctx context.Context, avsAddress string) (*caller.AvsConfig, error)
 ```
-Update the test's expected type accordingly to `&caller.AvsConfig{...}` (it is in package `caller`, so use the local type: `&AvsConfig{...}`; delete the `contractCaller` import from the test).
 
 - [ ] **Step 5: Run the test to verify it passes**
 
@@ -405,12 +391,19 @@ git commit -m "feat(contractCaller): add GetAvsConfig to read platformRpcUrl on-
 
 - [ ] **Step 1: Add the submodule for proto provenance**
 
-Run:
+First resolve the exact commit to pin (the PR #277 merge on `master`) so provenance is
+a fixed point, not a moving branch:
 ```bash
+# capture the current master HEAD of the local checkout as the pin
+PIN=$(git -C /Users/seanmcgary/Code/ecloud-platform rev-parse HEAD)
+echo "pinning ecloud-platform @ $PIN"
 git submodule add https://github.com/Layr-Labs/ecloud-platform third_party/ecloud-platform
-git -C third_party/ecloud-platform checkout <PR#277 merge commit or master>
+git -C third_party/ecloud-platform checkout "$PIN"
 ```
-(If network/auth blocks the submodule add, skip to Step 2 and copy the protos from the local checkout at `/Users/seanmcgary/Code/ecloud-platform`; record the origin commit in the proto header comment. The submodule is provenance, not a build input.)
+Record `$PIN` — it is the `@ <commit>` value used in the proto header comment (Step 2).
+(If network/auth blocks the submodule add, skip it and copy the protos from the local
+checkout at `/Users/seanmcgary/Code/ecloud-platform`, still recording `$PIN` in the
+header. The submodule is provenance, not a build input.)
 
 - [ ] **Step 2: Copy the two proto files**
 
@@ -726,17 +719,69 @@ func timeNowUnix() int64 { return time.Now().Unix() }
 Run: `./scripts/goTest.sh ./pkg/clients/platformClient -run TestBuildAuthenticatedMessage -v`
 Expected: PASS.
 
-- [ ] **Step 5: Add a dial-injected RPC test (fake server via bufconn or a fake conn)**
+- [ ] **Step 5: Add the unconfigured-URL test and the success-path mapping test**
 
-Append to `platformClient_test.go` a test that injects `dial` returning a fake `grpc.ClientConnInterface` whose `Invoke` populates a `GetLatestDeployedReleaseResponse` with two apps, and asserts `GetLatestDeployedRelease` maps them into `Release.Apps`. Also assert `url == ""` returns `ErrPlatformURLNotConfigured` without dialing:
+Append both tests to `platformClient_test.go`. The first asserts the fail-closed path
+dials nothing; the second injects a fake `grpc.ClientConnInterface` and asserts the
+response maps into `Release`. Add imports: `context`, `google.golang.org/grpc`,
+`kmsv1 "github.com/Layr-Labs/eigenx-kms-go/gen/protos/eigenlayer/platform/v1/kms"`,
+`gethcrypto`, `zap`, `inMemoryTransportSigner`.
 ```go
 func TestGetLatestDeployedRelease_UnconfiguredURL(t *testing.T) {
 	c := &client{urlProvider: func() string { return "" }, nowUnix: func() int64 { return 1 }}
 	_, err := c.GetLatestDeployedRelease(context.Background(), "s")
 	require.ErrorIs(t, err, ErrPlatformURLNotConfigured)
 }
+
+// fakeConn implements grpc.ClientConnInterface; Invoke fills the reply with a fixed
+// GetLatestDeployedReleaseResponse so we can assert the client's response mapping.
+type fakeConn struct{ resp *kmsv1.GetLatestDeployedReleaseResponse }
+
+func (f *fakeConn) Invoke(_ context.Context, _ string, _, reply any, _ ...grpc.CallOption) error {
+	out := reply.(*kmsv1.GetLatestDeployedReleaseResponse)
+	*out = *f.resp
+	return nil
+}
+func (f *fakeConn) NewStream(_ context.Context, _ *grpc.StreamDesc, _ string, _ ...grpc.CallOption) (grpc.ClientStream, error) {
+	return nil, nil
+}
+
+func TestGetLatestDeployedRelease_MapsResponse(t *testing.T) {
+	priv, err := gethcrypto.GenerateKey()
+	require.NoError(t, err)
+	signer, err := inMemoryTransportSigner.NewECDSAInMemoryTransportSigner(gethcrypto.FromECDSA(priv), zap.NewNop())
+	require.NoError(t, err)
+
+	resp := &kmsv1.GetLatestDeployedReleaseResponse{
+		StackId:        "stack-123",
+		Version:        4,
+		ManifestDigest: "sha256:manifestdigest",
+		Apps: []*kmsv1.DeployedApp{
+			{Name: "web", Image: "registry/web@sha256:aaa"},
+			{Name: "worker", Image: "registry/worker@sha256:bbb"},
+		},
+	}
+	c := &client{
+		urlProvider:     func() string { return "platform.example:9002" },
+		operatorAddress: gethcrypto.PubkeyToAddress(priv.PublicKey),
+		signer:          signer,
+		logger:          zap.NewNop(),
+		nowUnix:         func() int64 { return 1_700_000_000 },
+		dial: func(string) (grpc.ClientConnInterface, func() error, error) {
+			return &fakeConn{resp: resp}, func() error { return nil }, nil
+		},
+	}
+	got, err := c.GetLatestDeployedRelease(context.Background(), "stack-123")
+	require.NoError(t, err)
+	require.Equal(t, "stack-123", got.StackID)
+	require.Equal(t, int32(4), got.Version)
+	require.Equal(t, "sha256:manifestdigest", got.ManifestDigest)
+	require.Equal(t, []App{
+		{Name: "web", Image: "registry/web@sha256:aaa"},
+		{Name: "worker", Image: "registry/worker@sha256:bbb"},
+	}, got.Apps)
+}
 ```
-(For the mapping test, implement a minimal `grpc.ClientConnInterface` whose `Invoke(ctx, method, args, reply, ...)` type-asserts `reply.(*kmsv1.GetLatestDeployedReleaseResponse)` and fills it; `NewStream` may return `nil, nil`. Inject a signer built as in Step 1 so `buildAuthenticatedMessage` succeeds.)
 
 - [ ] **Step 6: Run the package tests**
 
@@ -884,25 +929,25 @@ func (n *Node) refreshPlatformConfig(ctx context.Context) {
   (`n.PlatformRpcURL` is a method value of type `func() string`; `operatorAddress` and
   `tps` are already in scope in `NewNode`.) The `NewNode` signature is unchanged.
 
-- [ ] **Step 4: Refresh on the per-block callback + initial read**
+- [ ] **Step 4: Refresh on the per-block callback (reshare-interval cadence)**
 
-In `checkScheduledOperations`, near the top (before the interval-boundary early-return so the URL stays fresh regardless of reshare cadence, but gated to avoid a read every block), add:
+The platform URL is refreshed on the same reshare-interval boundaries the scheduler
+already keys on — a cheap `eth_call` bounded to that cadence to limit RPC load (NOT
+every block, and NOT more often than reshare). Insert the refresh **immediately after**
+`blockInterval := config.GetReshareBlockIntervalForChain(n.ChainID)` (which is the line
+right before the existing `// Step 2` guard `if blockNumber%blockInterval != 0 { return }`
+in `checkScheduledOperations`), so it fires exactly on interval boundaries. Reuse
+`blockInterval`; do not recompute it:
 ```go
-	// Refresh the platform RPC URL from chain on interval boundaries (cheap eth_call,
-	// bounded to the reshare cadence to limit RPC load). Runs before the boundary
-	// early-return below via its own modulus check.
-	if blockNumber%config.GetReshareBlockIntervalForChain(n.ChainID) == 0 {
-		n.refreshPlatformConfig(context.Background())
-	}
-```
-(Place this AFTER `blockNumber`/`blockInterval` are computed and BEFORE `Step 2`'s `if blockNumber%blockInterval != 0 { return }`. Reuse `blockInterval` rather than recomputing.)
-
-Concretely, insert right after `blockInterval := config.GetReshareBlockIntervalForChain(n.ChainID)`:
-```go
+	// Refresh the platform RPC URL from chain on reshare-interval boundaries
+	// (cheap eth_call, bounded to that cadence to limit RPC load).
 	if blockNumber%blockInterval == 0 {
 		n.refreshPlatformConfig(context.Background())
 	}
 ```
+(Placing it before the early-return is not required for correctness since the guard is
+the same modulus as the return; keeping it here co-locates it with the boundary logic
+and makes the single `eth_call`-per-boundary cadence obvious.)
 
 - [ ] **Step 5: (No main.go change needed)**
 
@@ -945,8 +990,10 @@ git commit -m "feat(node): cache and refresh on-chain platform RPC URL; build pl
 Create `pkg/node/secrets_platform_test.go`. Build a `Server`/`Node` with a fake `platformClient.Client` and a stub attestation method that returns known `claims.ImageDigest`; drive `handleSecretsRequest` via `httptest`. Assert:
 - digest matches an app image → 200, response `EncryptedPartialSig != nil`, `EncryptedEnv == ""`, `PublicEnv == ""`.
 - digest matches no app → 403.
-- fake returns `ErrPlatformURLNotConfigured` → non-2xx with the "platform URL not configured" message.
-- fake returns a gRPC `PermissionDenied` → 403; `Unavailable` → 503.
+- fake returns `ErrPlatformURLNotConfigured` → 503 with the "platform RPC URL not configured" message.
+- fake returns a gRPC `PermissionDenied` → 403; `Unavailable` → 503; `Unauthenticated` → 500.
+- `AttestationMethod == "ecdsa"` with a `stack_id` → 403 ("ecdsa attestation is not permitted for stack_id requests"), and the fake platform client is **never called** (assert its call count stays 0). This proves the ecdsa guard fires before any platform call even if a digest would otherwise match.
+- a non-`sha256:`-prefixed `claims.ImageDigest` (e.g. `"ecdsa:unverified"`) with a non-ecdsa method + `stack_id` → 403 (defense-in-depth digest well-formedness check).
 
 Follow the existing `pkg/node/secrets_test.go` for how the suite constructs a `Node` with fakes (key store seeded with an active version so `signAppIDWithVersion` succeeds, a fake attestation method registered on the `AttestationManager`, RSA key in the request). Reuse those helpers; add a fake `platformClient.Client`:
 ```go
@@ -975,6 +1022,18 @@ In `pkg/node/handlers.go`, replace the current Step 3–5 block (the on-chain `G
 	//   - stack_id empty -> on-chain AppController release (existing behavior)
 	var release *types.Release // set only on the on-chain path
 	if req.StackID != "" {
+		// The platform path authorizes SOLELY by matching the attested image digest
+		// (no registry/policy check). ECDSA attestation proves only key ownership, not
+		// the running image (its claims.ImageDigest is either "ecdsa:unverified" or an
+		// operator-configured AllowedImageDigest — neither is a TEE-measured digest).
+		// Reject it outright so a configured AllowedImageDigest can never satisfy the
+		// platform digest match. Require a TEE method (gcp/intel/eigenx-snp).
+		if req.AttestationMethod == "ecdsa" {
+			s.node.logger.Sugar().Warnw("ecdsa attestation not allowed on the platform (stack_id) path",
+				"operator_address", s.node.OperatorAddress.Hex(), "stack_id", req.StackID)
+			http.Error(w, "ecdsa attestation is not permitted for stack_id requests", http.StatusForbidden)
+			return
+		}
 		if err := s.authorizeViaPlatform(r.Context(), req.StackID, claims); err != nil {
 			s.writePlatformAuthError(w, req, err)
 			return
@@ -1020,6 +1079,12 @@ func (s *Server) authorizeViaPlatform(ctx context.Context, stackID string, claim
 	if s.node.platformClient == nil {
 		return platformClient.ErrPlatformURLNotConfigured
 	}
+	// Defense-in-depth: only a well-formed TEE-measured digest may match. This
+	// rejects "ecdsa:unverified" and any non-sha256 placeholder even if the ecdsa
+	// guard in the caller is ever bypassed.
+	if !strings.HasPrefix(claims.ImageDigest, "sha256:") {
+		return errPlatformDigestMismatch
+	}
 	rel, err := s.node.platformClient.GetLatestDeployedRelease(ctx, stackID)
 	if err != nil {
 		return err
@@ -1056,6 +1121,14 @@ func (s *Server) writePlatformAuthError(w http.ResponseWriter, req types.Secrets
 			http.Error(w, "no deployed release for stack", http.StatusNotFound)
 		case codes.Unavailable:
 			http.Error(w, "platform unavailable", http.StatusServiceUnavailable)
+		case codes.Unauthenticated:
+			// The platform rejected our signed request (bad sig / stale / tampered) —
+			// this is an OPERATOR-side misconfiguration (clock skew, wrong signing key,
+			// key not the registered ECDSAAddress), not the caller's fault. Map to 500
+			// so the caller retries elsewhere while the operator is alerted via logs.
+			s.node.logger.Sugar().Errorw("platform rejected operator signature (Unauthenticated) — check operator clock/signing key",
+				"operator_address", s.node.OperatorAddress.Hex(), "stack_id", req.StackID, "error", err)
+			http.Error(w, "platform authorization failed", http.StatusInternalServerError)
 		default:
 			s.node.logger.Sugar().Warnw("platform authorization error",
 				"operator_address", s.node.OperatorAddress.Hex(), "stack_id", req.StackID, "error", err)
@@ -1104,18 +1177,18 @@ git commit -m "feat(node): authorize /secrets via ecloud-platform when stack_id 
 
 ---
 
-## Task 9: Optional operator flag + full-suite gate
+## Task 9: Full-suite gate
 
-**Files:**
-- Modify: `cmd/kmsServer/main.go` (nothing required if URL is fully on-chain; this task is the final gate + optional override flag)
+**Files:** none modified (verification-only task).
 
 **Interfaces:** none new.
 
-- [ ] **Step 1: (Optional) add a platform-URL override flag**
+The platform URL is discovered entirely on-chain (`AvsConfig.platformRpcUrl`), so there
+is **no operator override flag** — the on-chain value is authoritative and adding a
+`--platform-rpc-url` override would contradict `PlatformRpcURL()`'s design as a pure
+reader of the chain-populated cache (YAGNI). This task is the final gate only.
 
-The URL is discovered on-chain, so no flag is strictly required. If an operator override is desired for testing, add a `StringFlag` `--platform-rpc-url` (env `KMS_PLATFORM_RPC_URL`) and, when set, make the node's `PlatformRpcURL()` prefer it. **YAGNI default: skip this step** unless testing needs it; the on-chain value is authoritative. If skipped, delete this step's checkbox and proceed.
-
-- [ ] **Step 2: Run the full gate**
+- [ ] **Step 1: Run the full gate**
 
 Run:
 ```bash
@@ -1126,17 +1199,17 @@ make test
 ```
 Expected: `go build` clean; `fmtcheck` clean; `lint` 0 issues; `make test` — forge tests pass and the full Go suite passes (0 FAIL).
 
-- [ ] **Step 3: Verify no binding drift**
+- [ ] **Step 2: Verify no binding drift**
 
 Run: `./scripts/compileMiddlewareBindings.sh && git status --porcelain pkg/middleware-bindings`
 Expected: no unexpected modifications (bindings already regenerated in Task 2).
 
-- [ ] **Step 4: Verify no module cycle**
+- [ ] **Step 3: Verify no module cycle**
 
 Run: `grep -n "Layr-Labs/ecloud-platform" go.mod || echo clean`
 Expected: `clean`.
 
-- [ ] **Step 5: Commit any formatting/lint fixes**
+- [ ] **Step 4: Commit any formatting/lint fixes**
 
 ```bash
 git add -A
@@ -1154,6 +1227,14 @@ git commit -m "chore: satisfy lint/fmt and finalize ecloud-platform integration"
 - **Spec §6 (testability):** fakes for `platformClient.Client` and `IContractCaller`; pure signing round-trip. ✓
 - **Spec §7 (testing):** forge event/round-trip (T1), signing round-trip (T5), handler switch cases incl. unconfigured/Unavailable/PermissionDenied/mismatch (T8), refresh (T7). ✓
 - **Spec "key share only":** Task 8 Step 3 leaves `EncryptedEnv`/`PublicEnv` empty on the platform path. ✓
-- **Module-cycle constraint:** Task 4 managed-mode override + Task 9 Step 4 guard. ✓
-- **ECDSA limitation:** `"ecdsa:unverified"` never matches `"sha256:..."`, so ECDSA+`stack_id` fails the digest match (403) — consistent with spec; no special-casing needed.
+- **Module-cycle constraint:** Task 4 managed-mode override + Task 9 Step 3 guard. ✓
+- **ECDSA limitation (HARDENED per security review):** the platform path now
+  **explicitly rejects `AttestationMethod == "ecdsa"`** (Task 8 Step 3) AND requires a
+  well-formed `sha256:`-prefixed digest in `authorizeViaPlatform`. This closes the hole
+  where a configured `AllowedImageDigest` (`pkg/attestation/ecdsa.go:177`) could let an
+  ECDSA attestation — which proves only key ownership, not the running image — satisfy
+  the digest match. Do NOT rely on the string never matching.
+- **stack_id validation:** caller-supplied `stack_id` is bounded by the existing
+  `maxSecretsBodyBytes` body cap before signing; a bad value fails closed at the
+  platform (`NotFound`/`PermissionDenied`). (Security review LOW; body cap suffices.)
 - **Open decision resolved in-plan:** the URL-freshness ordering hazard (client built before node) is resolved by constructing `platformClient` inside `NewNode` with `n.PlatformRpcURL` as the live provider (Task 7 Step 3); `NewNode`'s signature is unchanged and main.go needs no wiring edit.
