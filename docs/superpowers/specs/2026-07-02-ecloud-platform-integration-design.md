@@ -18,6 +18,13 @@ image digest against the **ecloud-platform's** deployed release for that stack, 
 than against the on-chain `AppController`. Operators discover the platform's RPC URL by
 reading it from the `EigenKMSRegistrar` contract on-chain.
 
+On the platform path the operator returns **only the encrypted partial key share** —
+not the application secrets. Unlike the on-chain `AppController` `Release`, which stores
+`EncryptedEnv`/`PublicEnv` that the KMS relays back today, the platform owns secrets
+itself and its release response carries none. Once the attested digest is verified, the
+operator hands back the threshold key share (RSA-encrypted to the request's ephemeral
+key); the caller uses it to decrypt secrets it fetches from the platform out of band.
+
 ### The three pieces
 
 | # | Piece | Where | Purpose |
@@ -38,6 +45,7 @@ reading it from the `EigenKMSRegistrar` contract on-chain.
 | Generated client import path | `github.com/Layr-Labs/eigenx-kms-go/gen/protos/...` (self-contained; the only coherent choice for local compilation). Revisitable during planning. |
 | Config-refresh mechanism | **Poll `GetAvsConfig` on the existing per-block ticker** (`checkScheduledOperations`) and update the cached URL when it changes. The on-chain event is emitted for external observability/tooling; the node's own refresh is a lightweight config re-read, avoiding a new log-subscription pipeline (which would require registering the contract in the chain-indexer store and implementing the currently no-op `HandleLog`). More robust to missed logs, far less code. |
 | Digest match rule | The attested `claims.ImageDigest` must match the `@sha256:<digest>` of **any** app in the platform's returned release (`Apps[].Image`). |
+| Response on the platform path | Return **only** the encrypted partial key share (`EncryptedPartialSig` + echoed `ExtraData`); leave `EncryptedEnv`/`PublicEnv` **empty**. The platform owns secrets and its release response carries none. The on-chain path is unchanged (still returns on-chain `EncryptedEnv`/`PublicEnv`). |
 
 ### Out of scope
 
@@ -87,8 +95,10 @@ sequenceDiagram
 
     alt stack_id is empty - existing on-chain path
         Sec->>AC: GetLatestReleaseAsRelease app_id
-        AC-->>Sec: release ImageDigest, Registry, ContainerPolicy
+        AC-->>Sec: release ImageDigest, Registry, ContainerPolicy, EncryptedEnv, PublicEnv
         Sec->>Sec: digest plus registry plus policy checks
+        Sec->>Sec: select key share, compute partial BLS sig, RSA-encrypt share
+        Sec-->>App: SecretsResponseV1 with encrypted_env, public_env, encrypted_partial_sig
     else stack_id present - new platform path
         Sec->>PC: GetLatestDeployedRelease ctx, stack_id
         alt platformRpcUrl not configured
@@ -103,15 +113,14 @@ sequenceDiagram
                 PC-->>Sec: typed error
                 Sec-->>App: mapped HTTP error fail closed
             else ok
-                Plat-->>PC: version, manifest_digest, apps name and image
+                Plat-->>PC: version, manifest_digest, apps name and image - NO secrets
                 PC-->>Sec: Release Apps
                 Sec->>Sec: accept iff claims.ImageDigest matches sha256 of ANY app image else 403
+                Sec->>Sec: select key share, compute partial BLS sig, RSA-encrypt share
+                Sec-->>App: SecretsResponseV1 with encrypted_partial_sig ONLY, empty env fields
             end
         end
     end
-
-    Sec->>Sec: select key share, compute partial BLS sig, RSA-encrypt
-    Sec-->>App: SecretsResponseV1 encrypted_env, encrypted_partial_sig
 ```
 
 ## 2. Grounding: verified facts
@@ -379,7 +388,17 @@ generated `kmsv1` package — nothing that imports back into it.
        The ECDSA attestation method yields `"ecdsa:unverified"` and therefore **cannot
        satisfy** the platform digest match — platform validation requires a
        digest-bearing attestation (GCP/Intel/eigenx-snp). This is called out explicitly.
-- The rest of the handler (key-share selection, partial-sig, response) is unchanged.
+- **Response differs on the platform path — return only the key share, not secrets.**
+  The on-chain path today returns `EncryptedEnv`/`PublicEnv` sourced from the on-chain
+  `Release` (secrets are stored on-chain). The **platform** `GetLatestDeployedRelease`
+  response carries **no env/secrets** — the platform manages secrets itself. So once
+  the digest is verified, the platform path returns **only** the encrypted partial key
+  share (`EncryptedPartialSig`, plus the echoed `ExtraData`); `EncryptedEnv` and
+  `PublicEnv` are left **empty**. The caller uses the recovered threshold key share to
+  decrypt secrets it fetches from the platform out of band. Key-share selection
+  (`AttestationTime`/active version), partial-sig computation (`signAppIDWithVersion`),
+  and RSA-encryption of the share are **identical** to the on-chain path; only the
+  release-authorization source and the env fields of the response differ.
 
 ### Wiring
 - `cmd/kmsServer/main.go`: after the transport signer and contract caller are built,
@@ -415,7 +434,8 @@ generated `kmsv1` package — nothing that imports back into it.
   wrong key → verification fails. Timestamp is unix seconds.
 - **`handleSecretsRequest` switch (fake platformClient):**
   - `stack_id` empty → on-chain path exercised (existing tests unchanged).
-  - `stack_id` set, digest matches an app → 200 (partial sig returned).
+  - `stack_id` set, digest matches an app → 200; response has `EncryptedPartialSig`
+    populated and `EncryptedEnv`/`PublicEnv` **empty** (secrets not returned).
   - `stack_id` set, digest matches no app → 403.
   - `stack_id` set, URL not configured → fail-closed error to caller.
   - `stack_id` set, platform Unavailable/PermissionDenied/NotFound → mapped codes.
