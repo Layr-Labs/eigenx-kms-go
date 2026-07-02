@@ -54,6 +54,66 @@ reading it from the `EigenKMSRegistrar` contract on-chain.
   submodule-and-local-codegen approach as the near-term step and documents the
   migration path (§8).
 
+### Request/response flow
+
+The node discovers the platform URL from chain (background, per-block), then uses it
+to authorize `/secrets` requests that carry a `stack_id`. Requests without a `stack_id`
+never touch the platform.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant Chain as EigenKMSRegistrar chain
+    participant Node as KMS Node per-block loop
+    participant App as App caller
+    participant Sec as secrets handler
+    participant Att as attestationManager
+    participant PC as platformClient
+    participant Plat as ecloud-platform KMSService 9002
+    participant AC as AppController chain
+
+    Note over Node,Chain: Background on-chain config discovery Piece B
+    loop every N blocks
+        Node->>Chain: GetAvsConfig avsAddress
+        Chain-->>Node: operatorSetId, platformRpcUrl
+        Node->>Node: update cached platformRpcUrl if changed
+    end
+
+    Note over App,AC: secrets request Piece C switch
+    App->>Sec: POST secrets with app_id, optional stack_id, attestation
+    Sec->>Att: VerifyWithMethod method, attestReq
+    Att-->>Sec: claims AppID, ImageDigest
+    Sec->>Sec: require claims.AppID equals req.AppID, then JTI replay check
+
+    alt stack_id is empty - existing on-chain path
+        Sec->>AC: GetLatestReleaseAsRelease app_id
+        AC-->>Sec: release ImageDigest, Registry, ContainerPolicy
+        Sec->>Sec: digest plus registry plus policy checks
+    else stack_id present - new platform path
+        Sec->>PC: GetLatestDeployedRelease ctx, stack_id
+        alt platformRpcUrl not configured
+            PC-->>Sec: ErrPlatformURLNotConfigured
+            Sec-->>App: error fail closed - platform URL not configured
+        else configured
+            PC->>PC: sign ReleasePayload op_addr, stack_id, now with keccak256 and 65-byte ECDSA
+            PC->>Plat: GetLatestDeployedRelease AuthenticatedMessage
+            Plat->>Plat: verify hash, freshness 60s, sig, operator-set membership
+            alt not authorized or not found or unreachable
+                Plat-->>PC: gRPC PermissionDenied or NotFound or Unavailable
+                PC-->>Sec: typed error
+                Sec-->>App: mapped HTTP error fail closed
+            else ok
+                Plat-->>PC: version, manifest_digest, apps name and image
+                PC-->>Sec: Release Apps
+                Sec->>Sec: accept iff claims.ImageDigest matches sha256 of ANY app image else 403
+            end
+        end
+    end
+
+    Sec->>Sec: select key share, compute partial BLS sig, RSA-encrypt
+    Sec-->>App: SecretsResponseV1 encrypted_env, encrypted_partial_sig
+```
+
 ## 2. Grounding: verified facts
 
 ### Platform server side (from `ecloud-platform`, PR #277)
