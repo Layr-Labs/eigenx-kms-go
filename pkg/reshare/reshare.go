@@ -205,6 +205,12 @@ func ValidateReshareMasterPublicKey(
 		}
 	}
 
+	// Defensive: with len(dealers) > 0 and each ScalarMulG2 returning a non-nil point, sum is
+	// non-nil here — but guard rather than risk a nil-deref panic on a consensus-critical path
+	// if ScalarMulG2's contract ever changes.
+	if sum == nil {
+		return fmt.Errorf("internal: MPK sum is nil after processing %d dealers", len(dealers))
+	}
 	if !sum.IsEqual(expectedMPK) {
 		return fmt.Errorf("post-reshare master public key mismatch: refreshed shares do not reconstruct the served master public key " +
 			"(source-version split or divergent dealer set); aborting to avoid corrupting the master secret")
@@ -223,7 +229,11 @@ func ValidateReshareMasterPublicKey(
 //
 // Safety rules (conservative — Layer 1's MPK check is the ultimate backstop, so when in
 // doubt we abort rather than risk divergent finalize sets across nodes):
-//   - every dealer must have a known source version (else we cannot classify it → error);
+//   - a dealer with an UNKNOWN source version is dropped from the tally, not counted. A
+//     source version is unknown if it is absent from the map OR reported as 0 — 0 is the
+//     zero value a pre-Layer-2 peer (omitempty field) or a node with no active version
+//     sends, so it must never be counted as a real "version 0" (that would let a rolling
+//     upgrade form a bogus version-0 majority);
 //   - the winning version must have >= threshold dealers (else no safe set → error);
 //   - a tie for the top count is ambiguous (different nodes could break it differently)
 //     → error.
@@ -241,14 +251,15 @@ func SelectMajoritySourceVersion(
 
 	counts := make(map[int64]int)
 	for _, d := range dealers {
-		v, ok := sourceVersions[d]
-		if !ok {
-			return nil, 0, fmt.Errorf("dealer %s did not report a source version; cannot safely finalize", d.Hex())
+		// A version of 0 (or absent) is "unknown" — skip it. It never counts toward a
+		// majority; if too few dealers have a known version, the threshold check below aborts.
+		if v := sourceVersions[d]; v != 0 {
+			counts[v]++
 		}
-		counts[v]++
 	}
 
-	// Find the top count and detect ties.
+	// Find the top count and detect ties. `tie` is cleared whenever a strictly higher count
+	// is found, so a later equal-count entry only re-flags a tie against the current best.
 	var bestVersion int64
 	bestCount := 0
 	tie := false

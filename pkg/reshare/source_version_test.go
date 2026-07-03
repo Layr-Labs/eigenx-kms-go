@@ -81,15 +81,69 @@ func TestSelectMajoritySourceVersion_AbortsOnTie(t *testing.T) {
 	}
 }
 
-func TestSelectMajoritySourceVersion_MissingSourceVersionErrors(t *testing.T) {
+func TestSelectMajoritySourceVersion_UnknownDealerDropped(t *testing.T) {
 	A := common.HexToAddress("0x0A")
 	B := common.HexToAddress("0x0B")
 	C := common.HexToAddress("0x0C")
-	// C never reported a source version — cannot classify it, so we cannot safely finalize.
+	// C never reported a source version (absent from the map) — it is unknown and dropped
+	// from the tally, exactly like a zero. A and B share version 100 and meet the threshold,
+	// so we finalize on {A, B} and exclude C. (Dropping an unclassifiable laggard and
+	// finalizing on the known-version quorum is the intended Layer 2 behavior; Layer 1
+	// backstops any residual divergence.)
 	src := map[common.Address]int64{A: 100, B: 100}
 
-	if _, _, err := SelectMajoritySourceVersion([]common.Address{A, B, C}, src, 2); err == nil {
-		t.Fatal("expected error when a dealer's source version is unknown, got nil")
+	kept, version, err := SelectMajoritySourceVersion([]common.Address{A, B, C}, src, 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if version != 100 || len(kept) != 2 {
+		t.Fatalf("expected {A,B} on version 100 (C dropped as unknown), got version %d, kept %v", version, kept)
+	}
+	for _, d := range kept {
+		if d == C {
+			t.Fatal("dealer with an unknown source version must be excluded")
+		}
+	}
+
+	// But if dropping the unknown leaves fewer than threshold on the majority, abort.
+	if _, _, err := SelectMajoritySourceVersion([]common.Address{A, B, C}, map[common.Address]int64{A: 100}, 2); err == nil {
+		t.Fatal("expected error when known-version dealers fall below threshold, got nil")
+	}
+}
+
+// A dealer reporting SourceVersion == 0 is a pre-Layer-2 peer (the field is omitempty, so
+// old nodes send nothing and it deserializes to 0) or a node with no active version. The
+// zero is "unknown", NOT a real version 0 — it must be excluded from the source-version
+// tally exactly like a missing entry, so a rolling upgrade cannot count old nodes into a
+// bogus "version 0" majority. (docs/012 Layer 2; bot review round 1.)
+func TestSelectMajoritySourceVersion_ZeroIsUnknownNotCounted(t *testing.T) {
+	A := common.HexToAddress("0x0A")
+	B := common.HexToAddress("0x0B")
+	C := common.HexToAddress("0x0C")
+
+	// A is pre-Layer-2 (reports 0); B and C are on version 100. A must be excluded, and the
+	// kept set must be {B, C} on version 100 — never a "version 0" that includes A.
+	src := map[common.Address]int64{A: 0, B: 100, C: 100}
+	kept, version, err := SelectMajoritySourceVersion([]common.Address{A, B, C}, src, 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if version != 100 {
+		t.Fatalf("expected majority version 100, got %d", version)
+	}
+	if len(kept) != 2 {
+		t.Fatalf("expected {B,C} kept (A excluded as unknown), got %d: %v", len(kept), kept)
+	}
+	for _, d := range kept {
+		if d == A {
+			t.Fatal("dealer reporting SourceVersion 0 must be excluded, not counted as version 0")
+		}
+	}
+
+	// If the ONLY dealers reachable report 0, there is no known majority ≥ threshold → abort.
+	allZero := map[common.Address]int64{A: 0, B: 0, C: 0}
+	if _, _, err := SelectMajoritySourceVersion([]common.Address{A, B, C}, allZero, 2); err == nil {
+		t.Fatal("expected error when all dealers report unknown (0) source versions, got nil")
 	}
 }
 

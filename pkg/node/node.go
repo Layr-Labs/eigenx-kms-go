@@ -1666,6 +1666,16 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 	// Get current share and the version we are dealing FROM. All finalized dealers must
 	// deal from the same source version or the refreshed shares won't descend from one
 	// polynomial (docs/012 Layer 2); we advertise this version in our commitment broadcast.
+	//
+	// We deal from our LOCAL active share (GetActivePrivateShare) and TELL everyone which
+	// version that is (sourceVersion). We deliberately do NOT fetch a specific version via
+	// keystore.GetPrivateShareForVersion here: a node always deals its own current share and
+	// lets the cluster reconcile at finalize. If this node is a laggard, SelectMajoritySource-
+	// Version drops it from the dealer set (its stale-version commitment loses the majority),
+	// and it re-derives its refreshed share purely as a RECIPIENT of the kept dealers — it
+	// never needs to look up a historical share to deal. GetPrivateShareForVersion exists as
+	// a guarded accessor for that potential future dealing path and for debugging; the
+	// current design closes the laggard case via recipient-side reconciliation instead.
 	currentShare, err := n.keyStore.GetActivePrivateShare()
 	if err != nil {
 		return err
