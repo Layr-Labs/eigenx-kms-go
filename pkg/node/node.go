@@ -232,17 +232,6 @@ func (n *Node) getRetainedGeneratedShare(sessionTimestamp int64, recipient commo
 	return new(fr.Element).Set(sh)
 }
 
-// SetSourceVersion records the source key version a reshare dealer dealt from (from its
-// commitment broadcast). See docs/012 Layer 2.
-func (s *ProtocolSession) SetSourceVersion(dealer common.Address, version int64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.sourceVersions == nil {
-		s.sourceVersions = make(map[common.Address]int64)
-	}
-	s.sourceVersions[dealer] = version
-}
-
 // GetSourceVersions returns a copy of the per-dealer source versions recorded this session.
 func (s *ProtocolSession) GetSourceVersions() map[common.Address]int64 {
 	s.mu.RLock()
@@ -264,8 +253,15 @@ func (s *ProtocolSession) GetCommitmentsFor(dealer common.Address) []types.G2Poi
 	if !ok {
 		return nil
 	}
+	// Deep copy: a shallow copy(out, c) would share each G2Point's CompressedBytes backing
+	// array with session state, so an in-place byte mutation by a caller could corrupt the
+	// stored commitment that Layer 1's MPK check relies on. Copy the bytes too.
 	out := make([]types.G2Point, len(c))
-	copy(out, c)
+	for i, pt := range c {
+		cb := make([]byte, len(pt.CompressedBytes))
+		copy(cb, pt.CompressedBytes)
+		out[i] = types.G2Point{CompressedBytes: cb}
+	}
 	return out
 }
 
@@ -297,9 +293,16 @@ func (s *ProtocolSession) HandleReceivedShare(sender common.Address, share *fr.E
 	return nil
 }
 
-// HandleReceivedCommitment stores commitments and signals completion if all received
-// Returns error if duplicate commitment detected
-func (s *ProtocolSession) HandleReceivedCommitment(sender common.Address, commitments []types.G2Point) error {
+// HandleReceivedCommitment stores commitments (and, for reshare, the dealer's source
+// version) and signals completion if all received. Returns error if duplicate commitment
+// detected.
+//
+// sourceVersion is the key version the dealer reshared FROM (docs/012 Layer 2); pass 0 for
+// DKG, which has no source version. It is recorded under the SAME lock and BEFORE the
+// completion channel is signaled — atomicity matters: the reshare goroutine unblocked by
+// the signal reads GetSourceVersions() at finalize, so recording it separately (after the
+// signal) would race and could drop the last dealer as "unknown", aborting the round.
+func (s *ProtocolSession) HandleReceivedCommitment(sender common.Address, commitments []types.G2Point, sourceVersion int64) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -314,6 +317,10 @@ func (s *ProtocolSession) HandleReceivedCommitment(sender common.Address, commit
 	}
 
 	s.commitments[sender] = commitments
+	if s.sourceVersions == nil {
+		s.sourceVersions = make(map[common.Address]int64)
+	}
+	s.sourceVersions[sender] = sourceVersion
 
 	// Signal completion when ALL commitments received (not threshold).
 	// The threshold fallback is handled by waitForCommitmentsWithThreshold.
@@ -1322,7 +1329,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	// session — causing verifyAcknowledgement to reject the ack with
 	// "dealer commitments unavailable".
 	_ = session.HandleReceivedShare(n.OperatorAddress, shares[n.OperatorAddress])
-	_ = session.HandleReceivedCommitment(n.OperatorAddress, commitments)
+	_ = session.HandleReceivedCommitment(n.OperatorAddress, commitments, 0) // DKG has no source version
 
 	// Broadcast commitments
 	if err := n.transport.BroadcastDKGCommitments(operators, commitments, session.SessionTimestamp); err != nil {
@@ -1680,10 +1687,9 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 	if err != nil {
 		return err
 	}
-	var sourceVersion int64
-	if activeVersion := n.keyStore.GetActiveVersion(); activeVersion != nil {
-		sourceVersion = activeVersion.Version
-	}
+	// sourceVersion is always set here: GetActivePrivateShare above already errored out if
+	// there were no active version, so GetActiveVersion is non-nil.
+	sourceVersion := n.keyStore.GetActiveVersion().Version
 
 	// Phase 1: Generate dealer polynomials anchored at each dealer's current share.
 	// Each dealer i samples f_i with f_i(0)=x_i and broadcasts commitments + per-recipient shares.
@@ -1714,8 +1720,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 	// session — causing verifyAcknowledgement to reject the ack with
 	// "dealer commitments unavailable".
 	_ = session.HandleReceivedShare(n.OperatorAddress, shares[n.OperatorAddress])
-	_ = session.HandleReceivedCommitment(n.OperatorAddress, commitments)
-	session.SetSourceVersion(n.OperatorAddress, sourceVersion)
+	_ = session.HandleReceivedCommitment(n.OperatorAddress, commitments, sourceVersion)
 
 	// Broadcast commitments (advertising the source version we dealt from)
 	if err := n.transport.BroadcastReshareCommitments(operators, commitments, session.SessionTimestamp, sourceVersion); err != nil {
@@ -2059,13 +2064,30 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 	// and drop laggards. An excluded dealer still recomputes its own refreshed share as a
 	// recipient of the kept dealers, resyncing implicitly. If the majority is below
 	// threshold or ambiguous, abort-retry (Layer 1's MPK check is the ultimate backstop).
+	observedSourceVersions := session.GetSourceVersions()
 	agreedDealers, srcVersion, err := reshare.SelectMajoritySourceVersion(
-		agreedDealers, session.GetSourceVersions(), newThreshold)
+		agreedDealers, observedSourceVersions, newThreshold)
 	if err != nil {
 		n.logger.Sugar().Warnw("Aborting reshare finalize: no source-version-agreed dealer set",
 			"operator_address", n.OperatorAddress.Hex(),
 			"error", err)
 		return fmt.Errorf("reshare aborted: %w; will retry next interval", err)
+	}
+	// Observability: SelectMajoritySourceVersion picks the PLURALITY version, not the newest.
+	// If the majority is on an older version than the newest one observed (e.g. 2 of 3 nodes
+	// both missed the last round), the cluster correctly finalizes on that older version — but
+	// surface it so operators don't misread a "regression" to a lower version as a fault.
+	var maxObserved int64
+	for _, v := range observedSourceVersions {
+		if v > maxObserved {
+			maxObserved = v
+		}
+	}
+	if srcVersion < maxObserved {
+		n.logger.Sugar().Infow("Reshare source-version majority is behind the newest observed version (expected under a shared lag; not a fault)",
+			"operator_address", n.OperatorAddress.Hex(),
+			"chosen_source_version", srcVersion,
+			"max_observed_version", maxObserved)
 	}
 
 	// Ensure we hold a verified share from every dealer in D. For any we are missing

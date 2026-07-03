@@ -41,7 +41,14 @@ func TestSession_GetCommitmentsFor(t *testing.T) {
 	gotA[0] = types.G2Point{CompressedBytes: []byte{0xFF}}
 	again := s.GetCommitmentsFor(dealerA)
 	require.Equal(t, []byte{1, 2, 3}, again[0].CompressedBytes,
-		"returned slice must be a copy; caller mutation must not alias into session state")
+		"returned slice must be a copy; caller element reassignment must not alias into session state")
+
+	// Deep copy: an IN-PLACE byte mutation of the returned commitment must also not corrupt
+	// session state (a shallow copy would share the CompressedBytes backing array).
+	again[0].CompressedBytes[0] = 0xFF
+	afterInPlace := s.GetCommitmentsFor(dealerA)
+	require.Equal(t, []byte{1, 2, 3}, afterInPlace[0].CompressedBytes,
+		"returned commitments must be deep-copied; in-place byte mutation must not alias into session state")
 }
 
 // Layer 3a (docs/012): a dealer must be able to serve the share it generated for a peer

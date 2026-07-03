@@ -411,8 +411,9 @@ func (s *Server) handleDKGCommitment(w http.ResponseWriter, r *http.Request) {
 
 	senderAddr := senderPeer.OperatorAddress
 
-	// Store commitment in session (handles duplicate detection and completion signaling)
-	if err := session.HandleReceivedCommitment(senderAddr, commitMsg.Commitments); err != nil {
+	// Store commitment in session (handles duplicate detection and completion signaling).
+	// DKG has no source version → 0.
+	if err := session.HandleReceivedCommitment(senderAddr, commitMsg.Commitments, 0); err != nil {
 		s.node.logger.Sugar().Warnw("Failed to store commitment",
 			"from", senderPeer.OperatorAddress.Hex(),
 			"error", err)
@@ -585,17 +586,16 @@ func (s *Server) handleReshareCommitment(w http.ResponseWriter, r *http.Request)
 
 	senderAddr := senderPeer.OperatorAddress
 
-	// Store commitment in session
-	if err := session.HandleReceivedCommitment(senderAddr, commitMsg.Commitments); err != nil {
+	// Store commitment + the dealer's source version atomically (docs/012 Layer 2). Recording
+	// them together under the session lock, before the completion signal, avoids a race where
+	// finalize reads GetSourceVersions() before this dealer's version lands and drops it.
+	if err := session.HandleReceivedCommitment(senderAddr, commitMsg.Commitments, commitMsg.SourceVersion); err != nil {
 		s.node.logger.Sugar().Warnw("Failed to store reshare commitment",
 			"from", senderPeer.OperatorAddress.Hex(),
 			"error", err)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	// Record the source version this dealer dealt from, so finalize can drop dealers on a
-	// stale source version (docs/012 Layer 2).
-	session.SetSourceVersion(senderAddr, commitMsg.SourceVersion)
 
 	s.node.logger.Sugar().Debugw("Received reshare commitments",
 		"operator_address", s.node.OperatorAddress.Hex(),
