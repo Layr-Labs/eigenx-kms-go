@@ -28,6 +28,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 )
 
 // testSecretsFixture holds the common objects needed by secrets endpoint tests.
@@ -120,6 +121,13 @@ func Test_SecretsEndpoint(t *testing.T) {
 	t.Run("AllowlistNilAllowsAll", func(t *testing.T) { testSecretsEndpointAllowlistNilAllowsAll(t) })
 	t.Run("ExtraDataEchoBehavior", func(t *testing.T) { testSecretsEndpointExtraDataEchoBehavior(t) })
 	t.Run("ExtraDataTooLarge", func(t *testing.T) { testSecretsEndpointExtraDataTooLarge(t) })
+	t.Run("ECDSAOwnerWithEnv", func(t *testing.T) { testSecretsECDSAOwnerWithEnv(t) })
+	t.Run("ECDSAOwnerNoRelease", func(t *testing.T) { testSecretsECDSAOwnerNoRelease(t) })
+	t.Run("ECDSAOwnerEmptyEnvRelease", func(t *testing.T) { testSecretsECDSAOwnerEmptyEnvRelease(t) })
+	t.Run("ECDSAWrongSigner", func(t *testing.T) { testSecretsECDSAWrongSigner(t) })
+	t.Run("ECDSAAppIDNotAddress", func(t *testing.T) { testSecretsECDSAAppIDNotAddress(t) })
+	t.Run("ECDSABadPubKey", func(t *testing.T) { testSecretsECDSABadPubKey(t) })
+	t.Run("NonECDSAStillRequiresRelease", func(t *testing.T) { testSecretsNonECDSAStillRequiresRelease(t) })
 }
 
 // createTestPeeringDataFetcher creates a test peering data fetcher using ChainConfig data
@@ -1011,5 +1019,215 @@ func testSecretsEndpointExtraDataTooLarge(t *testing.T) {
 	}
 	if !strings.Contains(w.Body.String(), "extra_data exceeds 1MB limit") {
 		t.Errorf("Expected error message about 1MB limit, got: %s", w.Body.String())
+	}
+}
+
+// ecdsaSecretsResult captures the outcome of an ECDSA /secrets POST.
+type ecdsaSecretsResult struct {
+	code int
+	resp kmsTypes.SecretsResponseV1
+	body string
+}
+
+// postECDSASecrets posts an ECDSA /secrets request for appID with the given
+// secp256k1 public key bytes. StubECDSAMethod echoes the request public key
+// into claims, so the handler derives the signer from pubKey.
+func postECDSASecrets(t *testing.T, f *testSecretsFixture, appID string, pubKey []byte) ecdsaSecretsResult {
+	t.Helper()
+
+	_, pubKeyPEM, err := encryption.GenerateKeyPair(2048)
+	if err != nil {
+		t.Fatalf("Failed to generate RSA key pair: %v", err)
+	}
+
+	req := kmsTypes.SecretsRequestV1{
+		AppID:             appID,
+		AttestationMethod: "ecdsa",
+		Attestation:       []byte("sig-placeholder"), // StubECDSAMethod ignores it
+		PublicKey:         pubKey,
+		RSAPubKeyTmp:      pubKeyPEM,
+		AttestationTime:   time.Now().Unix(),
+	}
+	reqBody, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("Failed to marshal request: %v", err)
+	}
+	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
+	httpReq.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	f.server.handleSecretsRequest(w, httpReq)
+
+	out := ecdsaSecretsResult{code: w.Code, body: w.Body.String()}
+	if w.Code == http.StatusOK {
+		if err := json.NewDecoder(w.Body).Decode(&out.resp); err != nil {
+			t.Fatalf("Failed to decode 200 response: %v", err)
+		}
+	}
+	return out
+}
+
+func testSecretsECDSAOwnerWithEnv(t *testing.T) {
+	f := newTestSecretsFixture(t)
+	appAddr := common.HexToAddress("0x00000000000000000000000000000000000000a1")
+
+	key, err := ethcrypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("keygen: %v", err)
+	}
+	pubKey := ethcrypto.FromECDSAPub(&key.PublicKey)
+	f.contractCallerStub.SetAppCreator(appAddr, ethcrypto.PubkeyToAddress(key.PublicKey))
+
+	f.contractCallerStub.AddTestRelease(appAddr.Hex(), &kmsTypes.Release{
+		ImageDigest:  "sha256:whatever",
+		EncryptedEnv: "enc-env-xyz",
+		PublicEnv:    "PUB=1",
+		Timestamp:    time.Now().Unix(),
+	})
+
+	got := postECDSASecrets(t, f, appAddr.Hex(), pubKey)
+	if got.code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", got.code, got.body)
+	}
+	if got.resp.EncryptedEnv != "enc-env-xyz" || got.resp.PublicEnv != "PUB=1" {
+		t.Errorf("expected release env echoed, got enc=%q pub=%q", got.resp.EncryptedEnv, got.resp.PublicEnv)
+	}
+	if len(got.resp.EncryptedPartialSig) == 0 {
+		t.Error("expected non-empty partial signature")
+	}
+}
+
+func testSecretsECDSAOwnerNoRelease(t *testing.T) {
+	f := newTestSecretsFixture(t)
+	appAddr := common.HexToAddress("0x00000000000000000000000000000000000000a2")
+
+	key, err := ethcrypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("keygen: %v", err)
+	}
+	pubKey := ethcrypto.FromECDSAPub(&key.PublicKey)
+	f.contractCallerStub.SetAppCreator(appAddr, ethcrypto.PubkeyToAddress(key.PublicKey))
+	// No release added.
+
+	got := postECDSASecrets(t, f, appAddr.Hex(), pubKey)
+	if got.code != http.StatusOK {
+		t.Fatalf("expected 200 (no release should NOT 404 for ecdsa), got %d body=%s", got.code, got.body)
+	}
+	if got.resp.EncryptedEnv != "" || got.resp.PublicEnv != "" {
+		t.Errorf("expected empty env, got enc=%q pub=%q", got.resp.EncryptedEnv, got.resp.PublicEnv)
+	}
+	if len(got.resp.EncryptedPartialSig) == 0 {
+		t.Error("expected non-empty partial signature even with no release")
+	}
+}
+
+func testSecretsECDSAOwnerEmptyEnvRelease(t *testing.T) {
+	f := newTestSecretsFixture(t)
+	appAddr := common.HexToAddress("0x00000000000000000000000000000000000000a3")
+
+	key, err := ethcrypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("keygen: %v", err)
+	}
+	pubKey := ethcrypto.FromECDSAPub(&key.PublicKey)
+	f.contractCallerStub.SetAppCreator(appAddr, ethcrypto.PubkeyToAddress(key.PublicKey))
+	f.contractCallerStub.AddTestRelease(appAddr.Hex(), &kmsTypes.Release{
+		ImageDigest: "sha256:whatever",
+		Timestamp:   time.Now().Unix(),
+		// env fields empty
+	})
+
+	got := postECDSASecrets(t, f, appAddr.Hex(), pubKey)
+	if got.code != http.StatusOK {
+		t.Fatalf("expected 200, got %d body=%s", got.code, got.body)
+	}
+	if got.resp.EncryptedEnv != "" || got.resp.PublicEnv != "" {
+		t.Errorf("expected empty env, got enc=%q pub=%q", got.resp.EncryptedEnv, got.resp.PublicEnv)
+	}
+	if len(got.resp.EncryptedPartialSig) == 0 {
+		t.Error("expected non-empty partial signature")
+	}
+}
+
+func testSecretsECDSAWrongSigner(t *testing.T) {
+	f := newTestSecretsFixture(t)
+	appAddr := common.HexToAddress("0x00000000000000000000000000000000000000a4")
+
+	// Creator is one key; the request is signed by a DIFFERENT key.
+	creatorKey, _ := ethcrypto.GenerateKey()
+	f.contractCallerStub.SetAppCreator(appAddr, ethcrypto.PubkeyToAddress(creatorKey.PublicKey))
+
+	wrongKey, err := ethcrypto.GenerateKey()
+	if err != nil {
+		t.Fatalf("keygen: %v", err)
+	}
+	wrongPub := ethcrypto.FromECDSAPub(&wrongKey.PublicKey)
+
+	got := postECDSASecrets(t, f, appAddr.Hex(), wrongPub)
+	if got.code != http.StatusForbidden {
+		t.Fatalf("expected 403 for wrong signer, got %d body=%s", got.code, got.body)
+	}
+	if !strings.Contains(got.body, "not the app creator") {
+		t.Errorf("expected 'not the app creator' message, got %q", got.body)
+	}
+}
+
+func testSecretsECDSAAppIDNotAddress(t *testing.T) {
+	f := newTestSecretsFixture(t)
+	key, _ := ethcrypto.GenerateKey()
+	pubKey := ethcrypto.FromECDSAPub(&key.PublicKey)
+
+	got := postECDSASecrets(t, f, "not-an-address", pubKey)
+	if got.code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for non-address appID, got %d body=%s", got.code, got.body)
+	}
+	if !strings.Contains(got.body, "contract address") {
+		t.Errorf("expected 'contract address' message, got %q", got.body)
+	}
+}
+
+func testSecretsECDSABadPubKey(t *testing.T) {
+	f := newTestSecretsFixture(t)
+	appAddr := common.HexToAddress("0x00000000000000000000000000000000000000a5")
+	f.contractCallerStub.SetAppCreator(appAddr, common.HexToAddress("0x00000000000000000000000000000000000000ff"))
+
+	got := postECDSASecrets(t, f, appAddr.Hex(), []byte{0x01, 0x02, 0x03}) // not a valid pubkey
+	if got.code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for bad pubkey, got %d body=%s", got.code, got.body)
+	}
+	if !strings.Contains(got.body, "public key") {
+		t.Errorf("expected 'public key' message, got %q", got.body)
+	}
+}
+
+func testSecretsNonECDSAStillRequiresRelease(t *testing.T) {
+	// Regression guard: gcp method with NO release must still 404 — the
+	// release requirement is intact for non-ECDSA methods.
+	f := newTestSecretsFixture(t)
+	_, pubKeyPEM, err := encryption.GenerateKeyPair(2048)
+	if err != nil {
+		t.Fatalf("rsa keygen: %v", err)
+	}
+	h := sha256.Sum256(pubKeyPEM)
+	claims := kmsTypes.AttestationClaims{
+		AppID:       "no-release-app",
+		ImageDigest: "sha256:test123",
+		IssuedAt:    time.Now().Unix(),
+		PublicKey:   pubKeyPEM,
+		Nonce:       hex.EncodeToString(h[:]),
+	}
+	attBytes, _ := json.Marshal(claims)
+	req := kmsTypes.SecretsRequestV1{
+		AppID:             "no-release-app",
+		AttestationMethod: "gcp",
+		Attestation:       attBytes,
+		RSAPubKeyTmp:      pubKeyPEM,
+		AttestationTime:   time.Now().Unix(),
+	}
+	reqBody, _ := json.Marshal(req)
+	httpReq := httptest.NewRequest(http.MethodPost, "/secrets", bytes.NewBuffer(reqBody))
+	w := httptest.NewRecorder()
+	f.server.handleSecretsRequest(w, httpReq)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for gcp with no release, got %d body=%s", w.Code, w.Body.String())
 	}
 }
