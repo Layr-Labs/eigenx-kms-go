@@ -72,6 +72,17 @@ type Node struct {
 	sessionNotify     map[int64]chan struct{} // Notifies when session is created
 	sessionNotifyLock sync.Mutex
 
+	// retainedGeneratedShares holds the per-recipient reshare shares this node dealt,
+	// keyed by session timestamp, kept PAST session teardown so a lagging peer can still
+	// fetch the share it missed (docs/012 Layer 3a). Without this, a dealer that finished
+	// a round and cleaned up its session would 503 the fetch, the peer would abort and
+	// fall a version behind, and the next round would corrupt the master secret. Bounded
+	// to the last retainedShareRounds sessions to cap memory (in-memory only — a restart
+	// drops it, which degrades to the pre-existing abort-and-retry, never to corruption).
+	retainedGeneratedShares     map[int64]map[common.Address]*fr.Element
+	retainedGeneratedShareOrder []int64
+	retainedSharesMutex         sync.RWMutex
+
 	// Scheduling
 	enableAutoReshare     bool
 	lastProcessedBoundary int64
@@ -106,6 +117,12 @@ type ProtocolSession struct {
 	shares      map[common.Address]*fr.Element
 	commitments map[common.Address][]types.G2Point
 	acks        map[common.Address]map[common.Address]*types.Acknowledgement
+
+	// sourceVersions records, per reshare dealer, the key version it dealt FROM (carried
+	// in its commitment broadcast). Used at finalize to drop dealers on a stale source
+	// version so the refreshed shares all descend from one polynomial (docs/012 Layer 2).
+	// Empty for DKG (no source version).
+	sourceVersions map[common.Address]int64
 
 	// myGeneratedShares retains the per-recipient shares THIS node generated as a
 	// dealer (recipient address -> share). Unlike `shares` (which holds shares this
@@ -159,6 +176,97 @@ func (s *ProtocolSession) GetMyGeneratedShareFor(recipient common.Address) *fr.E
 	}
 	// Return a copy so a caller cannot mutate the retained share.
 	return new(fr.Element).Set(sh)
+}
+
+// retainedShareRounds bounds how many recent reshare rounds' generated shares are kept
+// for on-demand fetch after session teardown (docs/012 Layer 3a). At the ~2-minute
+// reshare cadence this covers several minutes of catch-up window, ample for the
+// second-scale receipt skew that triggered the live incident, while capping memory.
+const retainedShareRounds = 4
+
+// retainGeneratedShares stores (a copy of) the per-recipient shares this node dealt for
+// the given session so they can be served after the session is torn down. Bounded to the
+// most recent retainedShareRounds sessions; the oldest is evicted first.
+func (n *Node) retainGeneratedShares(sessionTimestamp int64, shares map[common.Address]*fr.Element) {
+	n.retainedSharesMutex.Lock()
+	defer n.retainedSharesMutex.Unlock()
+
+	if n.retainedGeneratedShares == nil {
+		n.retainedGeneratedShares = make(map[int64]map[common.Address]*fr.Element)
+	}
+
+	if _, exists := n.retainedGeneratedShares[sessionTimestamp]; !exists {
+		n.retainedGeneratedShareOrder = append(n.retainedGeneratedShareOrder, sessionTimestamp)
+	}
+
+	cp := make(map[common.Address]*fr.Element, len(shares))
+	for addr, sh := range shares {
+		// Deep-copy: the caller retains the source map (GenerateNewShares' return value),
+		// so storing the pointer would alias cryptographic material.
+		cp[addr] = new(fr.Element).Set(sh)
+	}
+	n.retainedGeneratedShares[sessionTimestamp] = cp
+
+	// Evict oldest beyond the bound.
+	for len(n.retainedGeneratedShareOrder) > retainedShareRounds {
+		oldest := n.retainedGeneratedShareOrder[0]
+		n.retainedGeneratedShareOrder = n.retainedGeneratedShareOrder[1:]
+		delete(n.retainedGeneratedShares, oldest)
+	}
+}
+
+// getRetainedGeneratedShare returns a copy of the share this node dealt to recipient for
+// the given session, or nil if not retained (unknown session or recipient).
+func (n *Node) getRetainedGeneratedShare(sessionTimestamp int64, recipient common.Address) *fr.Element {
+	n.retainedSharesMutex.RLock()
+	defer n.retainedSharesMutex.RUnlock()
+
+	byRecipient, ok := n.retainedGeneratedShares[sessionTimestamp]
+	if !ok {
+		return nil
+	}
+	sh, ok := byRecipient[recipient]
+	if !ok || sh == nil {
+		return nil
+	}
+	return new(fr.Element).Set(sh)
+}
+
+// SetSourceVersion records the source key version a reshare dealer dealt from (from its
+// commitment broadcast). See docs/012 Layer 2.
+func (s *ProtocolSession) SetSourceVersion(dealer common.Address, version int64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sourceVersions == nil {
+		s.sourceVersions = make(map[common.Address]int64)
+	}
+	s.sourceVersions[dealer] = version
+}
+
+// GetSourceVersions returns a copy of the per-dealer source versions recorded this session.
+func (s *ProtocolSession) GetSourceVersions() map[common.Address]int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := make(map[common.Address]int64, len(s.sourceVersions))
+	for k, v := range s.sourceVersions {
+		out[k] = v
+	}
+	return out
+}
+
+// GetCommitmentsFor returns a copy of the polynomial commitments this session received
+// from the given dealer, or nil if none. Used by the post-reshare MPK validation to
+// recompute the group public key from the agreed dealers' commitments (docs/012 Layer 1).
+func (s *ProtocolSession) GetCommitmentsFor(dealer common.Address) []types.G2Point {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	c, ok := s.commitments[dealer]
+	if !ok {
+		return nil
+	}
+	out := make([]types.G2Point, len(c))
+	copy(out, c)
+	return out
 }
 
 // HandleReceivedShare stores a share and signals completion if all shares received
@@ -1045,6 +1153,7 @@ func (n *Node) createSession(sessionType string, operators []*peering.OperatorSe
 		shares:                  make(map[common.Address]*fr.Element),
 		commitments:             make(map[common.Address][]types.G2Point),
 		acks:                    make(map[common.Address]map[common.Address]*types.Acknowledgement),
+		sourceVersions:          make(map[common.Address]int64),
 		sharesCompleteChan:      make(chan bool, 1),
 		commitmentsCompleteChan: make(chan bool, 1),
 		acksCompleteChan:        make(chan bool, 1),
@@ -1554,10 +1663,16 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 	// Create reshare instance with current operators
 	n.resharer = reshare.NewReshare(n.OperatorAddress, operators)
 
-	// Get current share
+	// Get current share and the version we are dealing FROM. All finalized dealers must
+	// deal from the same source version or the refreshed shares won't descend from one
+	// polynomial (docs/012 Layer 2); we advertise this version in our commitment broadcast.
 	currentShare, err := n.keyStore.GetActivePrivateShare()
 	if err != nil {
 		return err
+	}
+	var sourceVersion int64
+	if activeVersion := n.keyStore.GetActiveVersion(); activeVersion != nil {
+		sourceVersion = activeVersion.Version
 	}
 
 	// Phase 1: Generate dealer polynomials anchored at each dealer's current share.
@@ -1590,9 +1705,10 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 	// "dealer commitments unavailable".
 	_ = session.HandleReceivedShare(n.OperatorAddress, shares[n.OperatorAddress])
 	_ = session.HandleReceivedCommitment(n.OperatorAddress, commitments)
+	session.SetSourceVersion(n.OperatorAddress, sourceVersion)
 
-	// Broadcast commitments
-	if err := n.transport.BroadcastReshareCommitments(operators, commitments, session.SessionTimestamp); err != nil {
+	// Broadcast commitments (advertising the source version we dealt from)
+	if err := n.transport.BroadcastReshareCommitments(operators, commitments, session.SessionTimestamp, sourceVersion); err != nil {
 		n.logger.Sugar().Errorw("Failed to broadcast reshare commitments", "operator_address", n.OperatorAddress.Hex(), "error", err)
 		// Continue anyway - other nodes may have received
 	}
@@ -1600,6 +1716,11 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 	// Retain the shares we generated as a dealer so we can re-serve any of them to a
 	// peer that missed our original send (see on-demand share fetch during finalize).
 	session.SetMyGeneratedShares(shares)
+	// Also retain at the node level, keyed by session, so we can still serve an on-demand
+	// fetch AFTER this session is torn down on completion (docs/012 Layer 3a). This is the
+	// fix for the live incident's 503 trigger: a lagging peer fetching our share after we
+	// finished the round must succeed, not abort.
+	n.retainGeneratedShares(session.SessionTimestamp, shares)
 
 	// Send shares to all operators
 	for _, op := range operators {
@@ -1921,6 +2042,22 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 			len(agreedDealers), newThreshold)
 	}
 
+	// SOURCE-VERSION AGREEMENT (docs/012 Layer 2). #110 agrees on WHICH dealers deal, but
+	// not on WHICH source version they deal FROM. A dealer that lagged a prior round deals
+	// from a stale share; mixing it in shifts the reconstructed secret. Keep only dealers on
+	// the majority source version (deterministic across nodes — all see the same broadcasts)
+	// and drop laggards. An excluded dealer still recomputes its own refreshed share as a
+	// recipient of the kept dealers, resyncing implicitly. If the majority is below
+	// threshold or ambiguous, abort-retry (Layer 1's MPK check is the ultimate backstop).
+	agreedDealers, srcVersion, err := reshare.SelectMajoritySourceVersion(
+		agreedDealers, session.GetSourceVersions(), newThreshold)
+	if err != nil {
+		n.logger.Sugar().Warnw("Aborting reshare finalize: no source-version-agreed dealer set",
+			"operator_address", n.OperatorAddress.Hex(),
+			"error", err)
+		return fmt.Errorf("reshare aborted: %w; will retry next interval", err)
+	}
+
 	// Ensure we hold a verified share from every dealer in D. For any we are missing
 	// (we were lagging / dropped that send), fetch it on demand from the dealer and
 	// verify it with the same polynomial-commitment check as the push path. If we still
@@ -1952,6 +2089,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 	n.logger.Sugar().Infow("Finalizing reshare on agreed dealer set",
 		"operator_address", n.OperatorAddress.Hex(),
 		"agreed_dealers", len(participantIDsForFinalize),
+		"source_version", srcVersion,
 		"pinned_block", session.TriggerBlockNumber)
 
 	// Compute refreshed share using the same Lagrange reconstruction as the new-operator path.
@@ -1970,6 +2108,26 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 	if currentVersion := n.keyStore.GetActiveVersion(); currentVersion != nil && currentVersion.MasterPublicKey != nil {
 		mpkCopy := *currentVersion.MasterPublicKey
 		newKeyVersion.MasterPublicKey = &mpkCopy
+
+		// VALIDATE BEFORE COMMIT (docs/011 § step 5, docs/012 Layer 1). Recompute the
+		// group public key implied by the agreed dealers' commitments and require it to
+		// equal the carried-forward MPK. If any dealer dealt from a mismatched source
+		// share (a cross-round version split) or the dealer sets diverged, the refreshed
+		// shares would not reconstruct the served MPK — decrypt would fail cluster-wide
+		// with "all combinations exhausted" and the corruption would be permanent. Abort
+		// loudly and retry next interval instead of persisting a poisoned share.
+		commitmentsByDealer := make(map[common.Address][]types.G2Point, len(participantIDsForFinalize))
+		for _, dealer := range participantIDsForFinalize {
+			commitmentsByDealer[dealer] = session.GetCommitmentsFor(dealer)
+		}
+		if verr := reshare.ValidateReshareMasterPublicKey(participantIDsForFinalize, commitmentsByDealer, &mpkCopy); verr != nil {
+			n.logger.Sugar().Errorw("ABORTING reshare finalize: post-reshare MPK validation failed",
+				"operator_address", n.OperatorAddress.Hex(),
+				"agreed_dealers", len(participantIDsForFinalize),
+				"new_version", newKeyVersion.Version,
+				"error", verr)
+			return fmt.Errorf("reshare aborted: post-reshare MPK validation failed: %w; will retry next interval", verr)
+		}
 	}
 
 	// Persist new key version BEFORE adding to keystore

@@ -42,6 +42,14 @@ type CommitmentMessage struct {
 	ToOperatorAddress   common.Address `json:"toOperatorAddress"` // 0x0 for broadcast
 	SessionTimestamp    int64          `json:"sessionTimestamp"`
 	Commitments         []G2Point      `json:"commitments"`
+
+	// SourceVersion is the key version the sender is resharing FROM (the version of the
+	// share used as its dealer polynomial's constant term). Reshare only preserves the
+	// master secret if all finalized dealers deal from the same source version; nodes use
+	// this to drop laggards dealing from a stale version (docs/012 Layer 2). Zero for DKG
+	// (no source) and for pre-Layer-2 peers; a zero from a reshare dealer is treated as
+	// "unknown" and excludes it from the source-version-agreed set.
+	SourceVersion int64 `json:"sourceVersion,omitempty"`
 }
 
 // AcknowledgementMessage contains an acknowledgement

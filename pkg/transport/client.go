@@ -250,8 +250,10 @@ func (c *Client) BroadcastDKGCommitments(operators []*peering.OperatorSetPeer, c
 	return nil
 }
 
-// BroadcastReshareCommitments broadcasts authenticated reshare commitments to all operators
-func (c *Client) BroadcastReshareCommitments(operators []*peering.OperatorSetPeer, commitments []types.G2Point, sessionTimestamp int64) error {
+// BroadcastReshareCommitments broadcasts authenticated reshare commitments to all operators.
+// sourceVersion is the key version the sender is resharing FROM; recipients use it to drop
+// dealers on a stale source version at finalize (docs/012 Layer 2).
+func (c *Client) BroadcastReshareCommitments(operators []*peering.OperatorSetPeer, commitments []types.G2Point, sessionTimestamp int64, sourceVersion int64) error {
 
 	// Send to all other operators
 	for _, op := range operators {
@@ -263,6 +265,7 @@ func (c *Client) BroadcastReshareCommitments(operators []*peering.OperatorSetPee
 			ToOperatorAddress:   op.OperatorAddress,
 			SessionTimestamp:    sessionTimestamp,
 			Commitments:         commitments,
+			SourceVersion:       sourceVersion,
 		}
 
 		msgBytes, err := json.Marshal(msg)
