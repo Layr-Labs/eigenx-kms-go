@@ -3,10 +3,46 @@ package node
 import (
 	"testing"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
 )
+
+// GetCommitmentsFor feeds each dealer's C_d[0] into ValidateReshareMasterPublicKey
+// (Layer 1). A regression here (wrong dealer's commitments, a nil slice for a present
+// dealer, or aliasing back into session state) would silently weaken the MPK check, so
+// lock its contract directly. (bot review round 2.)
+func TestSession_GetCommitmentsFor(t *testing.T) {
+	dealerA := common.HexToAddress("0x0A")
+	dealerB := common.HexToAddress("0x0B")
+
+	commA := []types.G2Point{{CompressedBytes: []byte{1, 2, 3}}, {CompressedBytes: []byte{4}}}
+	commB := []types.G2Point{{CompressedBytes: []byte{9, 9}}}
+
+	s := &ProtocolSession{
+		commitments: map[common.Address][]types.G2Point{
+			dealerA: commA,
+			dealerB: commB,
+		},
+	}
+
+	gotA := s.GetCommitmentsFor(dealerA)
+	require.Len(t, gotA, 2, "must return dealer A's own commitments")
+	require.Equal(t, []byte{1, 2, 3}, gotA[0].CompressedBytes)
+
+	gotB := s.GetCommitmentsFor(dealerB)
+	require.Len(t, gotB, 1, "distinct dealers must get distinct commitments")
+
+	require.Nil(t, s.GetCommitmentsFor(common.HexToAddress("0xFF")),
+		"must return nil for a dealer with no commitments (not another dealer's)")
+
+	// The returned slice is a copy: reassigning an element must not mutate session state.
+	gotA[0] = types.G2Point{CompressedBytes: []byte{0xFF}}
+	again := s.GetCommitmentsFor(dealerA)
+	require.Equal(t, []byte{1, 2, 3}, again[0].CompressedBytes,
+		"returned slice must be a copy; caller mutation must not alias into session state")
+}
 
 // Layer 3a (docs/012): a dealer must be able to serve the share it generated for a peer
 // even AFTER its own session has been torn down on round completion. In the live incident

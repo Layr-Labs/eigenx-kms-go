@@ -2096,6 +2096,9 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 		finalShares[dealer] = share
 	}
 
+	// srcVersion is logged for observability only; the refreshed share is computed from each
+	// dealer's already-received share below, not re-fetched by version. srcVersion's role is
+	// upstream — SelectMajoritySourceVersion used it to pick participantIDsForFinalize.
 	n.logger.Sugar().Infow("Finalizing reshare on agreed dealer set",
 		"operator_address", n.OperatorAddress.Hex(),
 		"agreed_dealers", len(participantIDsForFinalize),
@@ -2114,8 +2117,17 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 	newKeyVersion.IsActive = true
 	newKeyVersion.ParticipantIDs = participantIDsForFinalize
 
-	// Carry forward MPK from the current active version (MPK doesn't change during reshare)
-	if currentVersion := n.keyStore.GetActiveVersion(); currentVersion != nil && currentVersion.MasterPublicKey != nil {
+	// Carry forward MPK from the current active version (MPK doesn't change during reshare).
+	// A non-nil active version with a nil MPK must NOT silently skip Layer 1: that would both
+	// leave a source-version split undetected AND carry a nil MPK forward, making the nil
+	// sticky so every subsequent reshare also skips validation. Abort loudly instead. (The
+	// activeVersion == nil case is genesis with no MPK to validate against — handled below by
+	// leaving newKeyVersion.MasterPublicKey nil and skipping validation.)
+	if currentVersion := n.keyStore.GetActiveVersion(); currentVersion != nil {
+		if currentVersion.MasterPublicKey == nil {
+			return fmt.Errorf("reshare aborted: active version %d has nil MasterPublicKey; cannot validate reshare (check DKG log for a commitments error); will retry next interval",
+				currentVersion.Version)
+		}
 		mpkCopy := *currentVersion.MasterPublicKey
 		newKeyVersion.MasterPublicKey = &mpkCopy
 

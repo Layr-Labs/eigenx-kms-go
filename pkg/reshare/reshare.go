@@ -260,6 +260,9 @@ func SelectMajoritySourceVersion(
 
 	// Find the top count and detect ties. `tie` is cleared whenever a strictly higher count
 	// is found, so a later equal-count entry only re-flags a tie against the current best.
+	// Invariant: `counts` contains only non-zero versions (the v != 0 guard above), so every
+	// entry has c >= 1 and the first iteration always satisfies c > 0 == bestCount — there is
+	// no spurious tie at initialization. This relies on that guard; do not relax it.
 	var bestVersion int64
 	bestCount := 0
 	tie := false
