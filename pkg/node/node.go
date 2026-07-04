@@ -2100,27 +2100,12 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 	// verification are excluded here; the source-version selection below runs over the
 	// VERIFIED subset, so all honest nodes compute over identical shared data.
 	observedSourceVersions := session.GetSourceVersions()
-	verifiedDealers := make([]common.Address, 0, len(agreedDealers))
-	verifiedSourceVersions := make(map[common.Address]int64, len(agreedDealers))
+	commitmentsByDealer := make(map[common.Address][]types.G2Point, len(agreedDealers))
 	for _, dealer := range agreedDealers {
-		sv, haveVer := observedSourceVersions[dealer]
-		commits := session.GetCommitmentsFor(dealer)
-		if !haveVer || len(commits) == 0 {
-			// We don't yet hold this dealer's P2P commitment/version; cannot verify it
-			// against the on-chain hash. Drop it from the verified set (it may rejoin a
-			// later round). This is a bounded liveness cost, never a divergent finalize.
-			n.logger.Sugar().Debugw("Reshare dealer dropped: no verifiable P2P commitment/version",
-				"operator_address", n.OperatorAddress.Hex(), "dealer", dealer.Hex())
-			continue
-		}
-		if eigenxcrypto.HashReshareCommitment(commits, sv) != onChainHashes[dealer] {
-			n.logger.Sugar().Warnw("Reshare dealer dropped: P2P (commitments, sourceVersion) does not match on-chain commitment hash (possible equivocation or stale broadcast)",
-				"operator_address", n.OperatorAddress.Hex(), "dealer", dealer.Hex(), "advertised_source_version", sv)
-			continue
-		}
-		verifiedDealers = append(verifiedDealers, dealer)
-		verifiedSourceVersions[dealer] = sv
+		commitmentsByDealer[dealer] = session.GetCommitmentsFor(dealer)
 	}
+	verifiedDealers, verifiedSourceVersions := reshare.VerifyDealerSourceVersions(
+		agreedDealers, onChainHashes, commitmentsByDealer, observedSourceVersions)
 	if len(verifiedDealers) < newThreshold {
 		return fmt.Errorf("verified reshare dealer set too small: %d of %d on-chain submitters verified, need %d; will retry next interval",
 			len(verifiedDealers), len(agreedDealers), newThreshold)

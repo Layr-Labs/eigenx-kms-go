@@ -218,6 +218,40 @@ func ValidateReshareMasterPublicKey(
 	return nil
 }
 
+// VerifyDealerSourceVersions keeps only agreed dealers whose P2P (commitments, sourceVersion)
+// hash to the dealer's ON-CHAIN commitment hash, and returns the verified dealers (in input
+// order) plus their verified source-version map (docs/013 Change 2).
+//
+// This is the gate that closes the Layer-2 corruption vector: the source version fed to the
+// downstream majority tally is now cryptographically bound to shared, append-only registry
+// state, so a dealer cannot advertise a version over P2P that differs from the one it
+// committed on-chain (equivocation is rejected), and a dealer whose commitments/version we
+// have not received is dropped — never silently trusted at an unauthenticated version. A
+// dealer with no on-chain hash (absent from onChainHashes) is likewise dropped.
+func VerifyDealerSourceVersions(
+	agreedDealers []common.Address,
+	onChainHashes map[common.Address][32]byte,
+	commitmentsByDealer map[common.Address][]types.G2Point,
+	sourceVersions map[common.Address]int64,
+) ([]common.Address, map[common.Address]int64) {
+	verified := make([]common.Address, 0, len(agreedDealers))
+	verifiedVersions := make(map[common.Address]int64, len(agreedDealers))
+	for _, dealer := range agreedDealers {
+		onChain, haveOnChain := onChainHashes[dealer]
+		sv, haveVer := sourceVersions[dealer]
+		commits := commitmentsByDealer[dealer]
+		if !haveOnChain || !haveVer || len(commits) == 0 {
+			continue
+		}
+		if crypto.HashReshareCommitment(commits, sv) != onChain {
+			continue
+		}
+		verified = append(verified, dealer)
+		verifiedVersions[dealer] = sv
+	}
+	return verified, verifiedVersions
+}
+
 // SelectMajoritySourceVersion picks the source key version that a threshold of the agreed
 // dealers dealt from, and returns the subset of dealers on that version (docs/012 Layer 2).
 //

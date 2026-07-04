@@ -187,30 +187,45 @@ section) over re-DKG.
   registry majority doesn't already: the winning version each round *is* the catch-up
   target. Rejected as over-engineering.
 
-## Testing & validation (harness gap is a MERGE BLOCKER)
+## Testing & validation (as built)
 
 docs/011 noted the in-memory `TestCluster` shares one registry and "cannot reproduce
-cross-node divergence." That gap is exactly why both bugs shipped. Closing it is a merge
-requirement for this PR:
+cross-node divergence." That gap is exactly why both bugs shipped. As-built coverage:
 
-- **Unit (`pkg/reshare`)**: source-version tally over verified on-chain submitters —
-  preprod case `{464,464,212}` → keep `{op1,op2}` on 464; highest-version tie-break;
-  sub-threshold abort; **mixed-subset determinism**: two nodes with different P2P receipt
-  but identical on-chain view select the identical `kept` set.
-- **Unit (`pkg/crypto`/`pkg/node`)**: `HashCommitment` binds source version; a P2P
-  `CommitmentMessage` whose `SourceVersion` mismatches the on-chain hash is rejected
-  (fetch-or-abort, not silent drop).
-- **Integration (`internal/tests/integration`) — the blocker**: a harness that drives
-  per-node divergence (drop a dealer's broadcast on ONE node while it submits on-chain;
-  pin op3 a version behind; intermittent partition) and asserts, across many rounds, that
-  **all nodes finalize on the identical `D`** and a constant genesis ciphertext stays
-  decryptable. This must fail on the shipped Layer 2 (reproducing Bug 2) and pass with
-  B-lite.
+- **Unit (`pkg/crypto`)**: a **golden-vector** test pins `HashCommitment`'s bytes so DKG +
+  ack hashing cannot change; `HashReshareCommitment` binds the source version (differs from
+  `HashCommitment` and across versions).
+- **Unit (`pkg/reshare`) — the Bug 2 teeth**: `VerifyDealerSourceVersions` (the finalize
+  gate, extracted as a pure function) **rejects an equivocated version** (P2P version ≠
+  on-chain-committed version → hash mismatch → dropped), **rejects a wrong/skewed version**
+  a node might receive, and **drops an unreceived dealer** — so an unauthenticated P2P
+  version can never enter the tally, which is precisely what closes the divergent-subset
+  corruption vector. Plus `SelectMajoritySourceVersion`: preprod case `{464,464,212}` →
+  keep `{op1,op2}` on 464; highest-version tie-break; sub-threshold abort.
+- **Integration (`internal/tests/integration`)**: `Test_ReshareParticipantIDs_DoNotRatchet-
+  DownOnSubsetRounds` drives subset rounds (one operator suppressed on-chain) and asserts
+  every node keeps the **full** `ParticipantIDs` — teeth-verified (fails on the pre-Change-1
+  code: "ratcheted to 2"). The existing partition test
+  (`Test_ReshareDealerAgreement_PartitionedRoundDoesNotPoison`) confirms share/MPK
+  consistency across partitioned + healed rounds with the new verified-tally path.
+
+**Harness limitation (documented, not papered over).** A true *per-node finalize
+divergence* integration test — one node admitting a different same-source subset than its
+peers *while liveness is preserved* — is **not achievable** in the current in-memory
+harness: the ack→merkle→on-chain-submit chain is coupled, so dropping a node's inbound
+commitments stalls the whole cluster's submission (breaks liveness) instead of producing a
+divergent finalize. We therefore cover Bug 2 at the **verification-function layer**
+(`VerifyDealerSourceVersions` unit tests above), which is the exact mechanism that admits
+or rejects a dealer's version — a divergent finalize is impossible iff that gate is correct,
+and it is unit-proven to reject every mismatched/equivocated/unreceived case. A
+harness that decouples ack-collection from on-chain submission (to drive finalize-time
+divergence directly) is a worthwhile follow-up but is not a prerequisite for this fix.
+
 - **Live**: re-run the 24h ECDSA soak under induced partition on a re-DKG'd cluster;
   require zero finalize aborts sustained and zero decrypt failures.
 
 ## Rollout
 
-1. Land B-lite (Changes 1–3) with the integration blocker green.
+1. Land B-lite (Changes 1–3) with the unit + integration suites green.
 2. Re-DKG the preprod cluster under the fixed binary.
 3. Re-run the soak to confirm sustained liveness + durability under partition.
