@@ -258,24 +258,19 @@ func SelectMajoritySourceVersion(
 		}
 	}
 
-	// Find the top count and detect ties. `tie` is cleared whenever a strictly higher count
-	// is found, so a later equal-count entry only re-flags a tie against the current best.
+	// Pick the winning version: highest count, ties broken toward the HIGHEST version number.
+	// This is deterministic across nodes ONLY because the caller tallies over on-chain-
+	// VERIFIED versions (docs/013 Change 2), so every honest node sees identical `counts` and
+	// picks the identical winner — no divergent finalize. Preferring the higher version on a
+	// tie also advances the cluster rather than regressing it.
 	// Invariant: `counts` contains only non-zero versions (the v != 0 guard above), so every
-	// entry has c >= 1 and the first iteration always satisfies c > 0 == bestCount — there is
-	// no spurious tie at initialization. This relies on that guard; do not relax it.
+	// entry has c >= 1. Do not relax that guard.
 	var bestVersion int64
 	bestCount := 0
-	tie := false
 	for v, c := range counts {
-		switch {
-		case c > bestCount:
-			bestVersion, bestCount, tie = v, c, false
-		case c == bestCount:
-			tie = true
+		if c > bestCount || (c == bestCount && v > bestVersion) {
+			bestVersion, bestCount = v, c
 		}
-	}
-	if tie {
-		return nil, 0, fmt.Errorf("ambiguous source-version majority (tie at %d dealers); aborting to avoid divergent finalize sets", bestCount)
 	}
 	if bestCount < threshold {
 		return nil, 0, fmt.Errorf("majority source version has only %d dealers, need %d; aborting", bestCount, threshold)

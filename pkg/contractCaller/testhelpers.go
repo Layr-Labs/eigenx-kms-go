@@ -22,6 +22,15 @@ import (
 // model which operators submitted on-chain. When nil, reads return an empty commitment.
 type MockContractCallerStub struct {
 	GetCommitmentAtFunc func(ctx context.Context, registryAddress common.Address, epoch int64, operator common.Address, blockNumber uint64) (commitmentHash [32]byte, ackMerkleRoot [32]byte, submittedAt uint64, err error)
+	// SubmitCommitmentFunc, when set, is invoked by SubmitCommitment so tests can record the
+	// real per-(epoch,operator) commitment hash (needed to serve authentic hashes back via
+	// GetCommitmentAt — docs/013 Change 2 verifies P2P commitments against the on-chain hash).
+	// The operator identity is threaded via OperatorAddress below (SubmitCommitment's ABI has
+	// no operator arg; the contract uses msg.sender).
+	SubmitCommitmentFunc func(epoch int64, operator common.Address, commitmentHash [32]byte, ackMerkleRoot [32]byte)
+	// OperatorAddress identifies which operator this caller instance acts as, so
+	// SubmitCommitment can attribute the submission (mirrors msg.sender on-chain).
+	OperatorAddress common.Address
 }
 
 func (m *MockContractCallerStub) GetOperatorSetMembersWithPeering(avsAddress string, operatorSetId uint32) (*peering.OperatorSetPeers, error) {
@@ -61,6 +70,9 @@ func (m *MockContractCallerStub) CreateOperatorAndRegisterWithAvs(ctx context.Co
 }
 
 func (m *MockContractCallerStub) SubmitCommitment(ctx context.Context, registryAddress common.Address, epoch int64, commitmentHash [32]byte, ackMerkleRoot [32]byte) (*ethTypes.Receipt, error) {
+	if m.SubmitCommitmentFunc != nil {
+		m.SubmitCommitmentFunc(epoch, m.OperatorAddress, commitmentHash, ackMerkleRoot)
+	}
 	return &ethTypes.Receipt{Status: 1}, nil
 }
 

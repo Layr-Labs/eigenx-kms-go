@@ -957,23 +957,30 @@ func (n *Node) expectedReshareDealers(operators []*peering.OperatorSetPeer) []co
 //
 // pinnedBlock, when > 0, is used as the L2 read height (reserved for when an L2 block
 // feed is available); 0 means read at head.
+// Returns the agreed dealer set AND each submitter's on-chain commitment hash, so the
+// caller can verify each dealer's P2P-advertised (commitments, sourceVersion) against the
+// shared registry state (docs/013 Change 2).
 func (n *Node) deriveAgreedDealerSet(
 	ctx context.Context,
 	operators []*peering.OperatorSetPeer,
 	epoch int64,
 	pinnedBlock int64,
-) ([]common.Address, error) {
+) ([]common.Address, map[common.Address][32]byte, error) {
 	expected := n.expectedReshareDealers(operators)
 	if len(expected) == 0 {
-		return nil, fmt.Errorf("no expected dealers for reshare")
+		return nil, nil, fmt.Errorf("no expected dealers for reshare")
 	}
 
 	deadline := time.Now().Add(config.GetProtocolTimeoutForChain(n.ChainID))
 	pollInterval := 1 * time.Second
 
 	var submitted []common.Address
+	onChainHashes := make(map[common.Address][32]byte, len(expected))
 	for {
 		submitted = submitted[:0]
+		for k := range onChainHashes {
+			delete(onChainHashes, k)
+		}
 		for _, dealer := range expected {
 			commitmentHash, _, _, err := n.baseContractCaller.GetCommitmentAt(
 				ctx, n.commitmentRegistryAddress, epoch, dealer, uint64(max(pinnedBlock, 0)),
@@ -986,12 +993,13 @@ func (n *Node) deriveAgreedDealerSet(
 			}
 			if commitmentHash != ([32]byte{}) {
 				submitted = append(submitted, dealer)
+				onChainHashes[dealer] = commitmentHash
 			}
 		}
 
 		// Converged: every expected dealer has submitted on-chain.
 		if len(submitted) == len(expected) {
-			return submitted, nil
+			return submitted, onChainHashes, nil
 		}
 		if time.Now().After(deadline) {
 			// Deadline reached: finalize on whoever submitted (uniform across nodes,
@@ -999,11 +1007,11 @@ func (n *Node) deriveAgreedDealerSet(
 			n.logger.Sugar().Infow("Dealer-set convergence deadline reached",
 				"operator_address", n.OperatorAddress.Hex(),
 				"submitted", len(submitted), "expected", len(expected))
-			return submitted, nil
+			return submitted, onChainHashes, nil
 		}
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		case <-time.After(pollInterval):
 		}
 	}
@@ -1972,26 +1980,32 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 		return fmt.Errorf("my commitments not found in reshare")
 	}
 
-	myCommitmentHash := eigenxcrypto.HashCommitment(myCommitments)
+	// The ON-CHAIN submitted hash for reshare binds the source version (docs/013 Change 2),
+	// so every node can verify each dealer's P2P-advertised SourceVersion against shared
+	// registry state at finalize. This is intentionally NOT the ack/merkle hash: the ack
+	// subsystem (merkle tree + ack signatures) keeps using the plain HashCommitment, and
+	// nothing compares the two, so they are free to diverge.
+	onChainCommitmentHash := eigenxcrypto.HashReshareCommitment(myCommitments, sourceVersion)
 
 	n.logger.Sugar().Infow("Merkle tree built successfully in reshare",
 		"num_acks", len(myAcks),
 		"merkle_root", fmt.Sprintf("0x%x", merkleTree.Root))
 
 	// Submit to contract with retry logic
-	err = n.submitCommitmentWithRetry(ctx, session.SessionTimestamp, myCommitmentHash, merkleTree.Root)
+	err = n.submitCommitmentWithRetry(ctx, session.SessionTimestamp, onChainCommitmentHash, merkleTree.Root)
 	if err != nil {
 		return fmt.Errorf("failed to submit commitment in reshare after retries: %w", err)
 	}
 
 	n.logger.Sugar().Infow("Commitment submitted to Base contract successfully in reshare",
-		"commitment_hash", fmt.Sprintf("0x%x", myCommitmentHash),
+		"commitment_hash", fmt.Sprintf("0x%x", onChainCommitmentHash),
+		"source_version", sourceVersion,
 		"merkle_root", fmt.Sprintf("0x%x", merkleTree.Root))
 
-	// Store in session
+	// Store in session (myCommitmentHash retains the plain hash; it is not consensus-read).
 	session.mu.Lock()
 	session.myAckMerkleTree = merkleTree
-	session.myCommitmentHash = myCommitmentHash
+	session.myCommitmentHash = eigenxcrypto.HashCommitment(myCommitments)
 	session.contractSubmitted = true
 	session.mu.Unlock()
 
@@ -2066,7 +2080,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 	// aborting every reshare. Head reads + the convergence/abort-retry below give
 	// agreement without a pinned height. session.TriggerBlockNumber is retained for when
 	// a real L2 block feed is plumbed; until then it must NOT be used as the read height.
-	agreedDealers, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, 0)
+	agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, 0)
 	if err != nil {
 		return fmt.Errorf("failed to derive agreed dealer set: %w", err)
 	}
@@ -2075,28 +2089,64 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 			len(agreedDealers), newThreshold)
 	}
 
-	// SOURCE-VERSION AGREEMENT (docs/012 Layer 2). #110 agrees on WHICH dealers deal, but
-	// not on WHICH source version they deal FROM. A dealer that lagged a prior round deals
-	// from a stale share; mixing it in shifts the reconstructed secret. Keep only dealers on
-	// the majority source version (deterministic across nodes — all see the same broadcasts)
-	// and drop laggards. An excluded dealer still recomputes its own refreshed share as a
-	// recipient of the kept dealers, resyncing implicitly. If the majority is below
-	// threshold or ambiguous, abort-retry (Layer 1's MPK check is the ultimate backstop).
+	// SOURCE-VERSION VERIFICATION (docs/013 Change 2). For each on-chain-agreed dealer,
+	// recompute HashReshareCommitment(its P2P commitments, its P2P-advertised SourceVersion)
+	// and require it to equal the dealer's ON-CHAIN commitment hash. This binds the source
+	// version to shared, append-only registry state: a dealer cannot advertise a version
+	// over P2P that differs from the one it committed on-chain (equivocation is rejected),
+	// and a dealer whose commitments/version we haven't received yet is dropped from the
+	// tally universe — but only after this verification, so the version we DO tally on is
+	// cryptographically bound, not an unauthenticated P2P value. Dealers that fail
+	// verification are excluded here; the source-version selection below runs over the
+	// VERIFIED subset, so all honest nodes compute over identical shared data.
 	observedSourceVersions := session.GetSourceVersions()
+	verifiedDealers := make([]common.Address, 0, len(agreedDealers))
+	verifiedSourceVersions := make(map[common.Address]int64, len(agreedDealers))
+	for _, dealer := range agreedDealers {
+		sv, haveVer := observedSourceVersions[dealer]
+		commits := session.GetCommitmentsFor(dealer)
+		if !haveVer || len(commits) == 0 {
+			// We don't yet hold this dealer's P2P commitment/version; cannot verify it
+			// against the on-chain hash. Drop it from the verified set (it may rejoin a
+			// later round). This is a bounded liveness cost, never a divergent finalize.
+			n.logger.Sugar().Debugw("Reshare dealer dropped: no verifiable P2P commitment/version",
+				"operator_address", n.OperatorAddress.Hex(), "dealer", dealer.Hex())
+			continue
+		}
+		if eigenxcrypto.HashReshareCommitment(commits, sv) != onChainHashes[dealer] {
+			n.logger.Sugar().Warnw("Reshare dealer dropped: P2P (commitments, sourceVersion) does not match on-chain commitment hash (possible equivocation or stale broadcast)",
+				"operator_address", n.OperatorAddress.Hex(), "dealer", dealer.Hex(), "advertised_source_version", sv)
+			continue
+		}
+		verifiedDealers = append(verifiedDealers, dealer)
+		verifiedSourceVersions[dealer] = sv
+	}
+	if len(verifiedDealers) < newThreshold {
+		return fmt.Errorf("verified reshare dealer set too small: %d of %d on-chain submitters verified, need %d; will retry next interval",
+			len(verifiedDealers), len(agreedDealers), newThreshold)
+	}
+
+	// SOURCE-VERSION AGREEMENT (docs/013 Change 3). Keep only dealers on the winning source
+	// version (highest version with >= threshold verified submitters). Because the tally
+	// runs over the on-chain-VERIFIED versions above, every honest node computes it over
+	// identical shared data and selects the identical kept set (restoring the docs/011
+	// identical-D invariant). An excluded laggard still recomputes its own refreshed share
+	// as a recipient of the kept dealers, resyncing implicitly.
 	agreedDealers, srcVersion, err := reshare.SelectMajoritySourceVersion(
-		agreedDealers, observedSourceVersions, newThreshold)
+		verifiedDealers, verifiedSourceVersions, newThreshold)
 	if err != nil {
 		n.logger.Sugar().Warnw("Aborting reshare finalize: no source-version-agreed dealer set",
 			"operator_address", n.OperatorAddress.Hex(),
 			"error", err)
 		return fmt.Errorf("reshare aborted: %w; will retry next interval", err)
 	}
-	// Observability: SelectMajoritySourceVersion picks the PLURALITY version, not the newest.
-	// If the majority is on an older version than the newest one observed (e.g. 2 of 3 nodes
-	// both missed the last round), the cluster correctly finalizes on that older version — but
-	// surface it so operators don't misread a "regression" to a lower version as a fault.
+	// Observability: SelectMajoritySourceVersion picks the highest version with >= threshold
+	// support, not necessarily the newest present. If the winning version is behind the
+	// newest verified one (e.g. 2 of 3 nodes both missed the last round), the cluster
+	// correctly finalizes on that older version — surface it so operators don't misread a
+	// "regression" to a lower version as a fault.
 	var maxObserved int64
-	for _, v := range observedSourceVersions {
+	for _, v := range verifiedSourceVersions {
 		if v > maxObserved {
 			maxObserved = v
 		}
