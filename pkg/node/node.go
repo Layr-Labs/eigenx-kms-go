@@ -899,6 +899,24 @@ func validateReshareOperatorOverlap(oldParticipants []common.Address, newOperato
 // If there is no active version (this node has never completed DKG), there are no
 // prior participants to scope against; the caller should not be finalizing an
 // existing-operator reshare in that state, so we return all current operators.
+// sessionParticipantIDs returns the set of operators that HOLD a refreshed share after a
+// reshare finalizes — the full session operator set, in on-chain order.
+//
+// This is deliberately NOT the dealer subset. ComputeNewKeyShare gives every recipient
+// (every session operator) a valid share of the same secret S, whether or not it dealt
+// this round. Persisting the dealer subset as a version's ParticipantIDs is the "ratchet"
+// bug (docs/013 Change 1): expectedReshareDealers intersects the next round's dealers with
+// the prior version's ParticipantIDs, so a subset round shrinks the expected set — and
+// does so per-node — which froze a version split on preprod. The holder set is the full
+// on-chain operators slice, identical across nodes.
+func sessionParticipantIDs(operators []*peering.OperatorSetPeer) []common.Address {
+	ids := make([]common.Address, 0, len(operators))
+	for _, op := range operators {
+		ids = append(ids, op.OperatorAddress)
+	}
+	return ids
+}
+
 func (n *Node) expectedReshareDealers(operators []*peering.OperatorSetPeer) []common.Address {
 	activeVersion := n.keyStore.GetActiveVersion()
 	if activeVersion == nil || len(activeVersion.ParticipantIDs) == 0 {
@@ -2137,7 +2155,11 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 	}
 	newKeyVersion.Version = sessionTimestamp
 	newKeyVersion.IsActive = true
-	newKeyVersion.ParticipantIDs = participantIDsForFinalize
+	// ParticipantIDs is the set of share HOLDERS (full session operator set), NOT the dealer
+	// subset that reconstructed this round. Every operator recomputes its own share, so all
+	// hold a share of S; storing the dealer subset here shrinks the next round's expected
+	// dealer set per-node and freezes a version split (docs/013 Change 1).
+	newKeyVersion.ParticipantIDs = sessionParticipantIDs(operators)
 
 	// Carry forward MPK from the current active version (MPK doesn't change during reshare).
 	// A non-nil active version with a nil MPK must NOT silently skip Layer 1: that would both
@@ -2403,6 +2425,10 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	}
 	newKeyVersion.Version = sessionTimestamp // Use session timestamp as version
 	newKeyVersion.IsActive = true            // First key version becomes active immediately
+	// Record the full session operator set as share holders, not the dealer subset that
+	// ComputeNewKeyShare defaulted to (docs/013 Change 1) — keeps the next round's expected
+	// dealer set stable across nodes.
+	newKeyVersion.ParticipantIDs = sessionParticipantIDs(operators)
 
 	// Fetch MPK from existing operators using threshold agreement
 	// New operators cannot derive the MPK from reshare protocol data alone

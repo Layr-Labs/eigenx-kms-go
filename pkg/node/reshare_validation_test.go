@@ -133,3 +133,36 @@ func TestExpectedReshareDealers_NoActiveVersionReturnsAll(t *testing.T) {
 	dealers := n.expectedReshareDealers(onChain)
 	require.Equal(t, []common.Address{addr(1), addr(2)}, dealers)
 }
+
+// sessionParticipantIDs returns the set of operators that HOLD a refreshed share after a
+// reshare — the full session operator set, in on-chain order. It is NOT the dealer subset:
+// ComputeNewKeyShare gives every recipient (every session operator) a share of the same
+// secret S, whether or not it was a dealer. Persisting the dealer subset as ParticipantIDs
+// is the "ratchet" bug (docs/013 Change 1) — it shrinks the next round's expected dealer
+// set per-node and freezes a version split. This must be deterministic and identical
+// across nodes (it is the on-chain operators slice), regardless of which threshold subset
+// dealt this round.
+func TestSessionParticipantIDs_IsFullOperatorSetInOrder(t *testing.T) {
+	operators := []*peering.OperatorSetPeer{
+		{OperatorAddress: addr(2)},
+		{OperatorAddress: addr(3)},
+		{OperatorAddress: addr(1)},
+	}
+	got := sessionParticipantIDs(operators)
+	require.Equal(t, []common.Address{addr(2), addr(3), addr(1)}, got,
+		"participant set must be every session operator, in on-chain order — not the dealer subset")
+}
+
+// The participant set must NOT depend on which dealers finalized the round: a 2-of-3
+// round still leaves all 3 operators holding a share, so ParticipantIDs stays the full 3.
+func TestSessionParticipantIDs_IndependentOfDealerSubset(t *testing.T) {
+	operators := []*peering.OperatorSetPeer{
+		{OperatorAddress: addr(1)},
+		{OperatorAddress: addr(2)},
+		{OperatorAddress: addr(3)},
+	}
+	// Even though only {1,2} may have been the finalize dealer set this round, every
+	// operator recomputes its own share, so the holder set is still {1,2,3}.
+	got := sessionParticipantIDs(operators)
+	require.Equal(t, []common.Address{addr(1), addr(2), addr(3)}, got)
+}
