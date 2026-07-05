@@ -11,6 +11,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 	ethcrypto "github.com/ethereum/go-ethereum/crypto"
 )
@@ -410,8 +411,9 @@ func (s *Server) handleDKGCommitment(w http.ResponseWriter, r *http.Request) {
 
 	senderAddr := senderPeer.OperatorAddress
 
-	// Store commitment in session (handles duplicate detection and completion signaling)
-	if err := session.HandleReceivedCommitment(senderAddr, commitMsg.Commitments); err != nil {
+	// Store commitment in session (handles duplicate detection and completion signaling).
+	// DKG has no source version → 0.
+	if err := session.HandleReceivedCommitment(senderAddr, commitMsg.Commitments, 0); err != nil {
 		s.node.logger.Sugar().Warnw("Failed to store commitment",
 			"from", senderPeer.OperatorAddress.Hex(),
 			"error", err)
@@ -584,8 +586,10 @@ func (s *Server) handleReshareCommitment(w http.ResponseWriter, r *http.Request)
 
 	senderAddr := senderPeer.OperatorAddress
 
-	// Store commitment in session
-	if err := session.HandleReceivedCommitment(senderAddr, commitMsg.Commitments); err != nil {
+	// Store commitment + the dealer's source version atomically (docs/012 Layer 2). Recording
+	// them together under the session lock, before the completion signal, avoids a race where
+	// finalize reads GetSourceVersions() before this dealer's version lands and drops it.
+	if err := session.HandleReceivedCommitment(senderAddr, commitMsg.Commitments, commitMsg.SourceVersion); err != nil {
 		s.node.logger.Sugar().Warnw("Failed to store reshare commitment",
 			"from", senderPeer.OperatorAddress.Hex(),
 			"error", err)
@@ -681,19 +685,24 @@ func (s *Server) handleReshareShareRequest(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Tolerate slight delivery-ordering skew (matches the push /reshare/share handler),
-	// in case a request arrives on a node that hasn't created the session yet.
-	session := s.node.waitForSession(reqMsg.SessionTimestamp, 5*time.Second)
-	if session == nil {
-		http.Error(w, "Session not found", http.StatusServiceUnavailable)
-		return
-	}
-
 	// Serve only the requester's own share (the authenticated sender), never another
 	// operator's. The requester address is the authenticated identity, not a field the
 	// caller can spoof.
 	requester := senderPeer.OperatorAddress
-	share := session.GetMyGeneratedShareFor(requester)
+
+	// Resolve the share the requester is missing. Prefer a live session (tolerating slight
+	// delivery-ordering skew, in case the request arrives before this node created the
+	// session), but fall back to the node-level retained store: the common case in the
+	// live incident is a peer that lagged and asks for our share AFTER we already finished
+	// the round and tore down our session. Retained shares (docs/012 Layer 3a) let that
+	// fetch succeed instead of 503-ing the peer into a corrupting version split.
+	var share *fr.Element
+	if session := s.node.waitForSession(reqMsg.SessionTimestamp, 5*time.Second); session != nil {
+		share = session.GetMyGeneratedShareFor(requester)
+	}
+	if share == nil {
+		share = s.node.getRetainedGeneratedShare(reqMsg.SessionTimestamp, requester)
+	}
 	if share == nil {
 		s.node.logger.Sugar().Warnw("No generated share to serve for requester",
 			"operator_address", s.node.OperatorAddress.Hex(),

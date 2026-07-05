@@ -85,3 +85,64 @@ func TestGetKeyVersionAtTime(t *testing.T) {
 		}
 	})
 }
+
+// TestGetPrivateShareForVersion covers the exact-match version accessor added for
+// reshare source-version agreement (docs/012). Unlike GetKeyVersionAtTime, it MUST
+// return an error on absence and MUST NOT fall back to a nearest/earlier version — a
+// nearest-match would let a lagging node deal from a stale share and reintroduce the
+// master-secret corruption this accessor exists to prevent.
+func TestGetPrivateShareForVersion(t *testing.T) {
+	t.Run("returns the share for an exact version match", func(t *testing.T) {
+		ks := NewKeyStore()
+		ks.AddVersion(makeVersion(1_700_000_100))
+		ks.AddVersion(makeVersion(1_700_000_200))
+
+		got, err := ks.GetPrivateShareForVersion(1_700_000_200)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := new(fr.Element).SetInt64(1_700_000_200)
+		if !got.Equal(want) {
+			t.Fatalf("wrong share returned for version 1_700_000_200")
+		}
+	})
+
+	t.Run("errors when the version is absent (no nearest-match fallback)", func(t *testing.T) {
+		ks := NewKeyStore()
+		ks.AddVersion(makeVersion(1_700_000_100))
+		ks.AddVersion(makeVersion(1_700_000_300))
+
+		// 1_700_000_200 does not exist. GetKeyVersionAtTime would return the
+		// 1_700_000_100 version here; this accessor must NOT — it must error.
+		if _, err := ks.GetPrivateShareForVersion(1_700_000_200); err == nil {
+			t.Fatal("expected an error for an absent version, got nil (nearest-match fallback would reintroduce the corruption bug)")
+		}
+	})
+
+	t.Run("errors on empty keystore", func(t *testing.T) {
+		ks := NewKeyStore()
+		if _, err := ks.GetPrivateShareForVersion(1_700_000_100); err == nil {
+			t.Fatal("expected an error on empty keystore, got nil")
+		}
+	})
+
+	t.Run("returns a copy, not the stored element", func(t *testing.T) {
+		ks := NewKeyStore()
+		ks.AddVersion(makeVersion(1_700_000_100))
+
+		got, err := ks.GetPrivateShareForVersion(1_700_000_100)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Mutating the returned element must not corrupt the stored share.
+		got.SetInt64(42)
+		again, err := ks.GetPrivateShareForVersion(1_700_000_100)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		want := new(fr.Element).SetInt64(1_700_000_100)
+		if !again.Equal(want) {
+			t.Fatal("stored share was mutated through the returned element; accessor must return a copy")
+		}
+	})
+}

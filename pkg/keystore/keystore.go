@@ -113,6 +113,28 @@ func (ks *KeyStore) ClearPendingVersion() {
 	ks.pendingVersion = nil
 }
 
+// GetPrivateShareForVersion returns a copy of the private share for the EXACT version.
+//
+// Unlike GetKeyVersionAtTime, this does NOT fall back to a nearest/earlier version: it
+// errors if the exact version is absent. Reshare source-version agreement (docs/012)
+// depends on this — a lagging node that asked for the quorum's version and silently got
+// its own stale version back would deal from a mismatched-source polynomial and re-corrupt
+// the master secret. Callers must treat the error as "I must catch up, not deal."
+func (ks *KeyStore) GetPrivateShareForVersion(version int64) (*fr.Element, error) {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+
+	for _, v := range ks.keyVersions {
+		if v.Version == version {
+			if v.PrivateShare == nil {
+				return nil, fmt.Errorf("key version %d has no private share", version)
+			}
+			return new(fr.Element).Set(v.PrivateShare), nil
+		}
+	}
+	return nil, fmt.Errorf("no key version %d in keystore", version)
+}
+
 // GetKeyVersionAtTime returns the key version that was active at the given timestamp.
 // It returns the latest version whose Version (block timestamp) is <= the given timestamp.
 func (ks *KeyStore) GetKeyVersionAtTime(timestamp int64) *types.KeyShareVersion {

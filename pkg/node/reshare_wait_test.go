@@ -30,16 +30,45 @@ func TestHandleReceivedCommitment_EmptyCommitmentsRejected(t *testing.T) {
 		Operators:               makeTestOps(3),
 	}
 
-	err := session.HandleReceivedCommitment(common.HexToAddress("0x01"), nil)
+	err := session.HandleReceivedCommitment(common.HexToAddress("0x01"), nil, 0)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "empty commitments")
 
-	err = session.HandleReceivedCommitment(common.HexToAddress("0x01"), []types.G2Point{})
+	err = session.HandleReceivedCommitment(common.HexToAddress("0x01"), []types.G2Point{}, 0)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "empty commitments")
 
 	// Verify nothing was stored
 	require.Empty(t, session.commitments)
+}
+
+// The source version must be recorded ATOMICALLY with the commitment, under the same
+// lock and BEFORE the completion channel is signaled. Otherwise the reshare goroutine
+// (unblocked by the signal) can read GetSourceVersions() before the last dealer's source
+// version is stored, drop that dealer as "unknown", and abort the round unnecessarily.
+// (bot review round 3.)
+func TestHandleReceivedCommitment_RecordsSourceVersionBeforeSignal(t *testing.T) {
+	session := &ProtocolSession{
+		commitments:             make(map[common.Address][]types.G2Point),
+		sourceVersions:          make(map[common.Address]int64),
+		commitmentsCompleteChan: make(chan bool, 1),
+		Operators:               makeTestOps(1), // single operator: this commitment completes the set
+	}
+
+	dealer := common.HexToAddress("0x0A")
+	comm := []types.G2Point{{CompressedBytes: []byte{1}}}
+	require.NoError(t, session.HandleReceivedCommitment(dealer, comm, 1783020000))
+
+	// The completion signal is now readable — and by the time it is, the source version
+	// MUST already be visible (recorded under the same lock, before the signal).
+	select {
+	case <-session.commitmentsCompleteChan:
+	default:
+		t.Fatal("expected commitments-complete to be signaled")
+	}
+	got := session.GetSourceVersions()
+	require.Equal(t, int64(1783020000), got[dealer],
+		"source version must be recorded atomically with the commitment, before the completion signal")
 }
 
 // --- waitForNShares ---
