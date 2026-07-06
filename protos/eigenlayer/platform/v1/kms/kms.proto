@@ -6,7 +6,7 @@ syntax = "proto3";
 
 package eigenlayer.platform.v1.kms;
 
-option go_package = "github.com/Layr-Labs/ecloud-platform/gen/protos/eigenlayer/platform/v1/kms";
+option go_package = "github.com/Layr-Labs/ecloud-platform/gen/protos/eigenlayer/platform/v1/kms"; // NOTE: overridden at gen time by buf.gen.yaml managed mode (go_package_prefix) to the eigenx-kms-go module path.
 
 // AuthenticatedMessage is byte-compatible with eigenx-kms-go pkg/types: an
 // operator signs the inner payload's keccak256 hash with their ECDSA key.

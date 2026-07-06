@@ -237,6 +237,19 @@ func TestSecretsPlatform_URLNotConfigured(t *testing.T) {
 	assert.Contains(t, w.Body.String(), "platform RPC URL not configured")
 }
 
+func TestSecretsPlatform_NilClient(t *testing.T) {
+	n := newPlatformTestNode(t, newPlatformManager(t, platformTestDigest))
+	// Defensive fail-closed guard: with no platform client configured the handler
+	// must reject the stack_id request rather than skipping platform authorization.
+	n.platformClient = nil
+
+	req := buildPlatformSecretsRequest(t, platformTestAppID, "gcp", platformTestStackID)
+	w := servePlatformSecrets(t, n, req)
+
+	assert.Equal(t, http.StatusServiceUnavailable, w.Code, "body: %s", w.Body.String())
+	assert.Contains(t, w.Body.String(), "platform RPC URL not configured")
+}
+
 func TestSecretsPlatform_GRPCPermissionDenied(t *testing.T) {
 	n := newPlatformTestNode(t, newPlatformManager(t, platformTestDigest))
 	fake := &fakePlatformClient{err: status.Error(codes.PermissionDenied, "denied")}

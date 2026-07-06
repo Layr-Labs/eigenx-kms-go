@@ -143,6 +143,9 @@ func (cc *ContractCaller) GetOperatorSetMembersWithPeering(
 
 // AvsConfig is the platform-relevant slice of the on-chain EigenKMSRegistrar config.
 type AvsConfig struct {
+	// OperatorSetId mirrors the on-chain AvsConfig field. It is populated for
+	// completeness/parity with the contract; the node currently consumes only
+	// PlatformRpcUrl.
 	OperatorSetId  uint32
 	PlatformRpcUrl string
 }

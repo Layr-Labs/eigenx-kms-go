@@ -565,7 +565,9 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 	// Refresh the platform RPC URL from chain on reshare-interval boundaries
 	// (cheap eth_call, bounded to that cadence to limit RPC load).
 	if blockNumber%blockInterval == 0 {
-		n.refreshPlatformConfig(context.Background())
+		refreshCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		n.refreshPlatformConfig(refreshCtx)
+		cancel()
 	}
 
 	// Step 2: Check if this block is an interval boundary

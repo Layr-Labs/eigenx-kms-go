@@ -119,6 +119,14 @@ func (c *client) GetLatestDeployedRelease(ctx context.Context, stackID string) (
 	}, nil
 }
 
+// defaultDial opens a plaintext (non-TLS) gRPC connection to the platform's
+// internal server, which terminates TLS at the network boundary and authenticates
+// callers via the in-body operator signature (not transport credentials). This
+// assumes the platform endpoint (discovered from on-chain AvsConfig, owner-set) is
+// reachable only over a trusted internal network: the GetLatestDeployedRelease
+// RESPONSE is trusted to authorize key-share release, so a MITM on this channel
+// could authorize a malicious image. Operators MUST ensure platformRpcUrl points at
+// a trusted in-cluster address. TODO: support TLS once the platform exposes it.
 func defaultDial(url string) (grpc.ClientConnInterface, func() error, error) {
 	conn, err := grpc.NewClient(url, grpc.WithTransportCredentials(insecure.NewCredentials()))
 	if err != nil {
