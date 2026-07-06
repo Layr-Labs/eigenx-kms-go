@@ -8,7 +8,9 @@ import (
 )
 
 // fixedCommitments returns a deterministic (non-random) commitment slice so hash outputs
-// are stable across runs — required for the golden-vector guard below.
+// are stable across runs — required for the golden-vector guard below. These are synthetic
+// bytes, intentionally NOT valid compressed G2 points: HashCommitment/HashReshareCommitment
+// hash raw CompressedBytes and never deserialize the curve, so any stable byte string works.
 func fixedCommitments() []types.G2Point {
 	return []types.G2Point{
 		{CompressedBytes: []byte{0x01, 0x02, 0x03, 0x04}},
