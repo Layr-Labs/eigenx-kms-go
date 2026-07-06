@@ -105,6 +105,14 @@ func TestEmitAppPrivateKey_RejectsWrongLength(t *testing.T) {
 		require.Errorf(t, err, "expected error for %d-byte key", n)
 		assert.Contains(t, err.Error(), "want 48")
 	}
+
+	// A nil slice is len 0, so it takes the same reject path — assert explicitly.
+	_, err := emitAppPrivateKey(&kmsClient.SecretsResult{
+		AppPrivateKey: types.G1Point{CompressedBytes: nil},
+		Verified:      true,
+	}, "0xapp")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "want 48")
 }
 
 func TestEmitAppPrivateKey_EmitsVerified48Byte(t *testing.T) {
