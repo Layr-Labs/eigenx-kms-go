@@ -166,3 +166,21 @@ func TestSessionParticipantIDs_IndependentOfDealerSubset(t *testing.T) {
 	got := sessionParticipantIDs(operators)
 	require.Equal(t, []common.Address{addr(1), addr(2), addr(3)}, got)
 }
+
+// existingOperatorDealers returns only the EXISTING operators (those holding a share), in
+// on-chain order — the dealer set a NEW operator must converge on. A new operator has no
+// active version, so it can't use expectedReshareDealers (which would return ALL operators,
+// including itself and other joiners who never submit on-chain — making convergence wait
+// out the full protocol timeout every join, docs/013 PR#119 round-3 finding 2).
+func TestExistingOperatorDealers_ExcludesNewJoiners(t *testing.T) {
+	operators := []*peering.OperatorSetPeer{
+		{OperatorAddress: addr(1)}, // existing
+		{OperatorAddress: addr(2)}, // existing
+		{OperatorAddress: addr(3)}, // new joiner (self) — not in existingOpIDs
+	}
+	existingOpIDs := map[common.Address]bool{addr(1): true, addr(2): true}
+
+	got := existingOperatorDealers(operators, existingOpIDs)
+	require.Equal(t, []common.Address{addr(1), addr(2)}, got,
+		"must return only existing (share-holding) operators, in on-chain order")
+}

@@ -905,6 +905,22 @@ func sessionParticipantIDs(operators []*peering.OperatorSetPeer) []common.Addres
 	return ids
 }
 
+// existingOperatorDealers returns the existing (share-holding) operators, in on-chain order.
+// A NEW operator has no active key version, so expectedReshareDealers would return ALL
+// operators — including itself and other joiners that never submit an on-chain commitment,
+// making deriveAgreedDealerSet wait out the full protocol timeout every join (it can never
+// converge on a set that includes non-submitters). The new-operator path passes this instead
+// so it converges on the same timeline as the existing operators. (docs/013; PR #119 round 3.)
+func existingOperatorDealers(operators []*peering.OperatorSetPeer, existingOpIDs map[common.Address]bool) []common.Address {
+	dealers := make([]common.Address, 0, len(existingOpIDs))
+	for _, op := range operators {
+		if existingOpIDs[op.OperatorAddress] {
+			dealers = append(dealers, op.OperatorAddress)
+		}
+	}
+	return dealers
+}
+
 // expectedReshareDealers returns the canonical set of dealers every operator must use
 // when finalizing a reshare round, in deterministic order. It is the intersection of
 // the current on-chain operator set with the previous key version's participants:
@@ -965,13 +981,21 @@ func (n *Node) expectedReshareDealers(operators []*peering.OperatorSetPeer) []co
 // Returns the agreed dealer set AND each submitter's on-chain commitment hash, so the
 // caller can verify each dealer's P2P-advertised (commitments, sourceVersion) against the
 // shared registry state (docs/013 Change 2).
+// expectedDealers, when non-nil, is the exact set of dealers to converge on (used by the
+// new-operator path, which must target the EXISTING operators — the only on-chain submitters
+// — rather than expectedReshareDealers' all-operators fallback). When nil, the canonical
+// expectedReshareDealers set is used (existing-operator path).
 func (n *Node) deriveAgreedDealerSet(
 	ctx context.Context,
 	operators []*peering.OperatorSetPeer,
 	epoch int64,
 	pinnedBlock int64,
+	expectedDealers []common.Address,
 ) ([]common.Address, map[common.Address][32]byte, error) {
-	expected := n.expectedReshareDealers(operators)
+	expected := expectedDealers
+	if expected == nil {
+		expected = n.expectedReshareDealers(operators)
+	}
 	if len(expected) == 0 {
 		return nil, nil, fmt.Errorf("no expected dealers for reshare")
 	}
@@ -2087,7 +2111,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 	// aborting every reshare. Head reads + the convergence/abort-retry below give
 	// agreement without a pinned height. session.TriggerBlockNumber is retained for when
 	// a real L2 block feed is plumbed; until then it must NOT be used as the read height.
-	agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, 0)
+	agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, 0, nil)
 	if err != nil {
 		return fmt.Errorf("failed to derive agreed dealer set: %w", err)
 	}
@@ -2449,7 +2473,12 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	// registry, verify each dealer's source version against its on-chain commitment hash, and
 	// select the agreed source-version subset — then finalize on exactly that set.
 	requiredShares := dkg.CalculateThreshold(len(operators))
-	agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, 0)
+	// Converge on the EXISTING operators (the only on-chain submitters), not the
+	// all-operators fallback expectedReshareDealers would return for a node with no active
+	// version — otherwise convergence can never complete and every join waits the full
+	// protocol timeout (docs/013; PR #119 round 3, finding 2).
+	agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, 0,
+		existingOperatorDealers(operators, existingOpIDs))
 	if err != nil {
 		return fmt.Errorf("failed to derive agreed dealer set (new operator): %w", err)
 	}

@@ -269,11 +269,13 @@ func VerifyDealerSourceVersions(
 //     sends, so it must never be counted as a real "version 0" (that would let a rolling
 //     upgrade form a bogus version-0 majority);
 //   - the winning version must have >= threshold dealers (else no safe set → error);
-//   - a tie for the top count is ambiguous (different nodes could break it differently)
-//     → error.
+//   - a top-count tie is broken deterministically toward the HIGHEST version. This is safe
+//     because callers pass an on-chain-VERIFIED version map (VerifyDealerSourceVersions), so
+//     every honest node computes the identical tally and picks the same winner; preferring
+//     the higher version advances the cluster rather than regressing it.
 //
-// All honest nodes observe the same dealer commitments, so this selection is deterministic
-// across the cluster.
+// All honest nodes observe the same verified dealer versions, so this selection is
+// deterministic across the cluster.
 func SelectMajoritySourceVersion(
 	dealers []common.Address,
 	sourceVersions map[common.Address]int64,
