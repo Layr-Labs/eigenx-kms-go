@@ -8,7 +8,11 @@ import {IAllowlist} from "@eigenlayer-middleware/src/interfaces/IAllowlist.sol";
 interface IEigenKMSRegistrarTypes {
     struct AvsConfig {
         uint32 operatorSetId;
+        string platformRpcUrl; // ecloud-platform internal gRPC endpoint, e.g. host:9002
     }
+
+    /// @notice Emitted whenever the AVS config is set/changed.
+    event AvsConfigSet(uint32 operatorSetId, string platformRpcUrl);
 }
 
 /**
