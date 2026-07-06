@@ -135,12 +135,18 @@ func (s *Server) authorizeViaPlatform(ctx context.Context, stackID string, claim
 }
 
 // digestFromImageRef extracts "sha256:<hex>" from a full ref "...@sha256:<hex>".
+// It requires a full 64-char hex tail: a malformed ref like "app@sha256:" (empty
+// tail) yields "" so the app-loop skips it and can never match an attested digest.
 func digestFromImageRef(ref string) string {
 	i := strings.Index(ref, "@sha256:")
 	if i < 0 {
 		return ""
 	}
-	return ref[i+1:] // drop the '@', keep "sha256:<hex>"
+	digest := ref[i+1:] // "sha256:<hex>"
+	if len(digest) != len("sha256:")+64 {
+		return ""
+	}
+	return digest
 }
 
 // writePlatformAuthError maps a platform authorization failure to an HTTP status.
@@ -159,6 +165,8 @@ func (s *Server) writePlatformAuthError(w http.ResponseWriter, req types.Secrets
 			http.Error(w, "no deployed release for stack", http.StatusNotFound)
 		case codes.Unavailable:
 			http.Error(w, "platform unavailable", http.StatusServiceUnavailable)
+		case codes.DeadlineExceeded:
+			http.Error(w, "platform request timed out", http.StatusServiceUnavailable)
 		case codes.Unauthenticated:
 			// The platform rejected our signed request (bad sig / stale / tampered) —
 			// this is an OPERATOR-side misconfiguration (clock skew, wrong signing key,

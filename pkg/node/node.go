@@ -530,6 +530,20 @@ func (n *Node) PlatformRpcURL() string {
 	return v.(string)
 }
 
+// isSafePlatformURL rejects gRPC targets that could reach the local filesystem or
+// unix sockets (defense-in-depth against a malicious/misconfigured on-chain URL).
+// A valid platform target is host:port or a dns:/// target — never file://, unix://,
+// unix-abstract://, http://, or https://.
+func isSafePlatformURL(u string) bool {
+	lower := strings.ToLower(strings.TrimSpace(u))
+	for _, bad := range []string{"file://", "unix://", "unix-abstract://", "http://", "https://"} {
+		if strings.HasPrefix(lower, bad) {
+			return false
+		}
+	}
+	return true
+}
+
 // refreshPlatformConfig reads AvsConfig from chain and updates the cached URL.
 // Non-fatal: on error it leaves the current value in place and logs.
 func (n *Node) refreshPlatformConfig(ctx context.Context) {
@@ -540,6 +554,14 @@ func (n *Node) refreshPlatformConfig(ctx context.Context) {
 		return
 	}
 	if cfg == nil {
+		return
+	}
+	// Validate the fetched URL at ingestion. A non-empty URL with a dangerous scheme
+	// (file/unix/http/etc.) is ignored — leave the cached value untouched so the client
+	// fails closed on the empty/previous URL rather than reaching the local filesystem.
+	if cfg.PlatformRpcUrl != "" && !isSafePlatformURL(cfg.PlatformRpcUrl) {
+		n.logger.Sugar().Warnw("Ignoring unsafe platform RPC URL from chain",
+			"operator_address", n.OperatorAddress.Hex(), "url", cfg.PlatformRpcUrl)
 		return
 	}
 	if n.PlatformRpcURL() != cfg.PlatformRpcUrl {
@@ -564,6 +586,8 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 
 	// Refresh the platform RPC URL from chain on reshare-interval boundaries
 	// (cheap eth_call, bounded to that cadence to limit RPC load).
+	// Platform-URL refresh and the reshare trigger below both fire on the same
+	// reshare-interval boundary; this shared %blockInterval gate is intentional.
 	if blockNumber%blockInterval == 0 {
 		refreshCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		n.refreshPlatformConfig(refreshCtx)
