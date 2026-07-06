@@ -674,7 +674,11 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 			valid, verifyErr := crypto.VerifyAppPrivateKey(appID, *candidate, *masterPubKey)
 			return verifyErr == nil && valid
 		})
-		verified = err == nil
+		// A non-error result means a candidate passed the pairing check against
+		// the master public key, so success on this branch is a verified key.
+		if err == nil {
+			verified = true
+		}
 	} else {
 		c.logger.Sugar().Warnw("SECURITY DEGRADED: failed to get master public key, falling back to single-attempt recovery without BFT retry — invalid partial signatures will not be tolerated",
 			"error", masterPKErr)

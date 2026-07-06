@@ -172,6 +172,14 @@ const (
 // tmpfs env cache entirely (the root must never be written to disk).
 const appPrivateKeyKey = "__EIGENX_APP_PRIVATE_KEY__"
 
+// cacheable reports whether a request key may be served from / written to the
+// tmpfs env cache. The app_private_key root is never cached: it is not part of
+// the release env and must not be persisted to disk, so its request always
+// re-attests. This single predicate is the one place the invariant lives.
+func cacheable(key string) bool {
+	return key != appPrivateKeyKey
+}
+
 func main() {
 	if err := run(); err != nil {
 		log.Printf("kmsCDHHelper: %v", err)
@@ -194,7 +202,7 @@ func run() error {
 	//
 	// The app_private_key root is never cached (it is not part of the env map),
 	// so its request always attests fresh and never consults the cache.
-	if req.Key != appPrivateKeyKey {
+	if cacheable(req.Key) {
 		if env, ok, cerr := loadCachedEnv(req.AppID); cerr != nil {
 			return fmt.Errorf("read env cache: %w", cerr)
 		} else if ok {
@@ -271,7 +279,7 @@ func run() error {
 	// Never cache the app_private_key root: it is not part of the release env,
 	// and it must not be persisted to the tmpfs cache. Its request always
 	// re-attests (see the fast-path guard above).
-	if req.Key != appPrivateKeyKey {
+	if cacheable(req.Key) {
 		if cerr := storeCachedEnv(req.AppID, env); cerr != nil {
 			log.Printf("warning: cache merged env for app %q: %v", req.AppID, cerr)
 		}
@@ -592,6 +600,28 @@ func fetchAAEvidence(reportData [reportDataLength]byte) ([]byte, error) {
 	return body, nil
 }
 
+// appPrivateKeyG1Bytes is the compressed size of a BLS12-381 G1 point — the
+// exact length of a well-formed app_private_key.
+const appPrivateKeyG1Bytes = 48
+
+// emitAppPrivateKey validates a threshold-recovery result and returns the raw
+// app_private_key (hex of its compressed G1 bytes) keyed by the sentinel. It is
+// the root secret a signing daemon seeds from, so it is emitted only when it was
+// validated against the master public key — never on the degraded (no-BFT-retry)
+// path where a Byzantine operator could yield a corrupted key — and only when it
+// has the exact G1 point length.
+func emitAppPrivateKey(result *kmsClient.SecretsResult, appID string) (map[string]string, error) {
+	if !result.Verified {
+		return nil, fmt.Errorf("refusing to emit app_private_key for app %q: not verified against master public key (degraded recovery)", appID)
+	}
+	if len(result.AppPrivateKey.CompressedBytes) != appPrivateKeyG1Bytes {
+		return nil, fmt.Errorf("KMS returned app_private_key of %d bytes for app %q, want %d", len(result.AppPrivateKey.CompressedBytes), appID, appPrivateKeyG1Bytes)
+	}
+	return map[string]string{
+		appPrivateKeyKey: hex.EncodeToString(result.AppPrivateKey.CompressedBytes),
+	}, nil
+}
+
 // retrieveAndDecrypt drives the on-chain operator discovery, the eigenx-snp
 // secret-retrieval flow, and the IBE-decrypt of the KMS-returned encrypted_env.
 // It returns the app's full environment as a merged key→value map:
@@ -680,17 +710,7 @@ func retrieveAndDecrypt(
 	// signing daemon seeds from; it does not depend on the release's
 	// encrypted_env, so we return before the IBE-decrypt below.
 	if req.Key == appPrivateKeyKey {
-		if len(result.AppPrivateKey.CompressedBytes) == 0 {
-			return nil, fmt.Errorf("KMS returned empty app_private_key for app %q", req.AppID)
-		}
-		// Warn if the key was recovered on the degraded path (not validated
-		// against the master public key). Stderr so stdout stays the pure key.
-		if !result.Verified {
-			log.Printf("WARNING: app_private_key not verified against master public key (degraded recovery)")
-		}
-		return map[string]string{
-			appPrivateKeyKey: hex.EncodeToString(result.AppPrivateKey.CompressedBytes),
-		}, nil
+		return emitAppPrivateKey(result, req.AppID)
 	}
 
 	// Per the KMS design (docs/references/new_kms.md, "Application Decryption"):
