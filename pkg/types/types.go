@@ -130,7 +130,10 @@ type AppSignResponse struct {
 
 // SecretsRequestV1 represents a request for application secrets
 type SecretsRequestV1 struct {
-	AppID             string `json:"app_id"`
+	AppID string `json:"app_id"`
+	// StackID, when set, switches /secrets authorization to the ecloud-platform
+	// release for this stack instead of the on-chain AppController for AppID.
+	StackID           string `json:"stack_id,omitempty"`
 	AttestationMethod string `json:"attestation_method"` // Attestation method: "gcp", "intel", "ecdsa" (default: "gcp")
 	Attestation       []byte `json:"attestation"`        // Attestation data (JWT for GCP/Intel, signature for ECDSA)
 	RSAPubKeyTmp      []byte `json:"rsa_pubkey_tmp"`     // Ephemeral RSA public key
