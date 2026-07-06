@@ -136,6 +136,9 @@ type Request struct {
 	AppID           string `json:"app_id"`
 	// Key is the environment-variable name to return from the merged app env,
 	// or the reserved sentinel appPrivateKeyKey to return the app_private_key itself.
+	// The sentinel is intercepted before the env is assembled, so any release env
+	// key of that exact name would be permanently shadowed — the name is reserved
+	// and must not be used in app releases.
 	Key string `json:"key"`
 }
 
@@ -175,7 +178,8 @@ const appPrivateKeyKey = "__EIGENX_APP_PRIVATE_KEY__"
 // cacheable reports whether a request key may be served from / written to the
 // tmpfs env cache. The app_private_key root is never cached: it is not part of
 // the release env and must not be persisted to disk, so its request always
-// re-attests. This single predicate is the one place the invariant lives.
+// re-attests. This single predicate is the one place the invariant lives — add
+// any future reserved sentinels to the exclusion here.
 func cacheable(key string) bool {
 	return key != appPrivateKeyKey
 }
@@ -632,6 +636,9 @@ func emitAppPrivateKey(result *kmsClient.SecretsResult, appID string) (map[strin
 // AppPrivateKey from the threshold partial sigs and returns the still-encrypted
 // EncryptedEnv. The IBE-decrypt of that encrypted_env happens here via
 // crypto.DecryptForApp(appID, AppPrivateKey, ...).
+//
+// When the sentinel key (appPrivateKeyKey) is requested, the function returns
+// the raw app_private_key and skips the IBE-decrypt step entirely.
 func retrieveAndDecrypt(
 	req *Request,
 	evidence, ccInitData, rsaPubPEM []byte,

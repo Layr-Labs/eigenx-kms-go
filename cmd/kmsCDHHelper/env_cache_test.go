@@ -96,7 +96,7 @@ func TestEmitAppPrivateKey_RefusesUnverified(t *testing.T) {
 func TestEmitAppPrivateKey_RejectsWrongLength(t *testing.T) {
 	// A verified result whose key isn't a 48-byte compressed G1 point is
 	// malformed and must be rejected rather than emitted. Covers the empty case.
-	for _, n := range []int{0, 32, 49} {
+	for _, n := range []int{0, 32, 47, 49} {
 		result := &kmsClient.SecretsResult{
 			AppPrivateKey: types.G1Point{CompressedBytes: make([]byte, n)},
 			Verified:      true,
