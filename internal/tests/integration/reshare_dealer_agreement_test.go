@@ -174,3 +174,48 @@ func Test_ReshareDealerAgreement_PartitionedRoundDoesNotPoison(t *testing.T) {
 		assertClusterConsistent(t, cluster, "post-heal")
 	}
 }
+
+// Test_ReshareParticipantIDs_DoNotRatchetDownOnSubsetRounds guards docs/013 Change 1.
+// A reshare that finalizes on a 2-of-3 dealer SUBSET (one operator partitioned from the
+// on-chain registry) must NOT shrink any node's persisted ParticipantIDs to that subset:
+// all three operators still recompute a share of the same secret, so all three remain
+// share HOLDERS. Storing the dealer subset instead is the ratchet that froze a version
+// split on preprod — expectedReshareDealers would then permanently exclude the dropped
+// operator, per-node. This test fails on the pre-Change-1 code (which stored the subset).
+func Test_ReshareParticipantIDs_DoNotRatchetDownOnSubsetRounds(t *testing.T) {
+	cluster := testutil.NewTestCluster(t, 3)
+	defer cluster.Close()
+
+	assertClusterConsistent(t, cluster, "post-DKG")
+
+	// Full expected holder set = all three operator addresses.
+	full := make(map[common.Address]struct{}, len(cluster.Nodes))
+	for _, n := range cluster.Nodes {
+		full[n.GetOperatorAddress()] = struct{}{}
+	}
+
+	// Partition op3 from the on-chain registry so finalize rounds agree on the 2-of-3
+	// subset {op1,op2} — the subset-round condition.
+	victim := cluster.Nodes[2].GetOperatorAddress()
+	cluster.CommitmentRegistry.SuppressOperator(victim)
+
+	for round := 0; round < 3; round++ {
+		versions := currentVersions(cluster)
+		_ = testutil.WaitForReshare(cluster, versions, 45*time.Second)
+		assertClusterConsistent(t, cluster, "subset-round")
+
+		// After each subset round, EVERY node must still list the FULL operator set as
+		// ParticipantIDs — never the shrunken dealer subset.
+		for _, n := range cluster.Nodes {
+			v := n.GetKeyStore().GetActiveVersion()
+			require.NotNil(t, v)
+			require.Lenf(t, v.ParticipantIDs, len(full),
+				"node %s ParticipantIDs ratcheted to %d (expected full %d) after a subset round",
+				n.GetOperatorAddress().Hex(), len(v.ParticipantIDs), len(full))
+			for _, id := range v.ParticipantIDs {
+				_, ok := full[id]
+				require.Truef(t, ok, "unexpected ParticipantID %s", id.Hex())
+			}
+		}
+	}
+}

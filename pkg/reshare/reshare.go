@@ -218,6 +218,40 @@ func ValidateReshareMasterPublicKey(
 	return nil
 }
 
+// VerifyDealerSourceVersions keeps only agreed dealers whose P2P (commitments, sourceVersion)
+// hash to the dealer's ON-CHAIN commitment hash, and returns the verified dealers (in input
+// order) plus their verified source-version map (docs/013 Change 2).
+//
+// This is the gate that closes the Layer-2 corruption vector: the source version fed to the
+// downstream majority tally is now cryptographically bound to shared, append-only registry
+// state, so a dealer cannot advertise a version over P2P that differs from the one it
+// committed on-chain (equivocation is rejected), and a dealer whose commitments/version we
+// have not received is dropped — never silently trusted at an unauthenticated version. A
+// dealer with no on-chain hash (absent from onChainHashes) is likewise dropped.
+func VerifyDealerSourceVersions(
+	agreedDealers []common.Address,
+	onChainHashes map[common.Address][32]byte,
+	commitmentsByDealer map[common.Address][]types.G2Point,
+	sourceVersions map[common.Address]int64,
+) ([]common.Address, map[common.Address]int64) {
+	verified := make([]common.Address, 0, len(agreedDealers))
+	verifiedVersions := make(map[common.Address]int64, len(agreedDealers))
+	for _, dealer := range agreedDealers {
+		onChain, haveOnChain := onChainHashes[dealer]
+		sv, haveVer := sourceVersions[dealer]
+		commits := commitmentsByDealer[dealer]
+		if !haveOnChain || !haveVer || len(commits) == 0 {
+			continue
+		}
+		if crypto.HashReshareCommitment(commits, sv) != onChain {
+			continue
+		}
+		verified = append(verified, dealer)
+		verifiedVersions[dealer] = sv
+	}
+	return verified, verifiedVersions
+}
+
 // SelectMajoritySourceVersion picks the source key version that a threshold of the agreed
 // dealers dealt from, and returns the subset of dealers on that version (docs/012 Layer 2).
 //
@@ -235,11 +269,13 @@ func ValidateReshareMasterPublicKey(
 //     sends, so it must never be counted as a real "version 0" (that would let a rolling
 //     upgrade form a bogus version-0 majority);
 //   - the winning version must have >= threshold dealers (else no safe set → error);
-//   - a tie for the top count is ambiguous (different nodes could break it differently)
-//     → error.
+//   - a top-count tie is broken deterministically toward the HIGHEST version. This is safe
+//     because callers pass an on-chain-VERIFIED version map (VerifyDealerSourceVersions), so
+//     every honest node computes the identical tally and picks the same winner; preferring
+//     the higher version advances the cluster rather than regressing it.
 //
-// All honest nodes observe the same dealer commitments, so this selection is deterministic
-// across the cluster.
+// All honest nodes observe the same verified dealer versions, so this selection is
+// deterministic across the cluster.
 func SelectMajoritySourceVersion(
 	dealers []common.Address,
 	sourceVersions map[common.Address]int64,
@@ -258,24 +294,19 @@ func SelectMajoritySourceVersion(
 		}
 	}
 
-	// Find the top count and detect ties. `tie` is cleared whenever a strictly higher count
-	// is found, so a later equal-count entry only re-flags a tie against the current best.
+	// Pick the winning version: highest count, ties broken toward the HIGHEST version number.
+	// This is deterministic across nodes ONLY because the caller tallies over on-chain-
+	// VERIFIED versions (docs/013 Change 2), so every honest node sees identical `counts` and
+	// picks the identical winner — no divergent finalize. Preferring the higher version on a
+	// tie also advances the cluster rather than regressing it.
 	// Invariant: `counts` contains only non-zero versions (the v != 0 guard above), so every
-	// entry has c >= 1 and the first iteration always satisfies c > 0 == bestCount — there is
-	// no spurious tie at initialization. This relies on that guard; do not relax it.
+	// entry has c >= 1. Do not relax that guard.
 	var bestVersion int64
 	bestCount := 0
-	tie := false
 	for v, c := range counts {
-		switch {
-		case c > bestCount:
-			bestVersion, bestCount, tie = v, c, false
-		case c == bestCount:
-			tie = true
+		if c > bestCount || (c == bestCount && v > bestVersion) {
+			bestVersion, bestCount = v, c
 		}
-	}
-	if tie {
-		return nil, 0, fmt.Errorf("ambiguous source-version majority (tie at %d dealers); aborting to avoid divergent finalize sets", bestCount)
 	}
 	if bestCount < threshold {
 		return nil, 0, fmt.Errorf("majority source version has only %d dealers, need %d; aborting", bestCount, threshold)

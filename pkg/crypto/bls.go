@@ -165,12 +165,40 @@ func HashToG1(appID string) (*types.G1Point, error) {
 	return &types.G1Point{CompressedBytes: g1Point.Marshal()}, nil
 }
 
-// HashCommitment hashes commitments
+// HashCommitment hashes commitments.
+//
+// SHARED by DKG on-chain submission and ack merkle signing/verification — its output is
+// byte-for-byte consensus-critical across the DKG/reshare boundary and MUST NOT change
+// (guarded by a golden-vector test). For reshare's on-chain submission, use
+// HashReshareCommitment instead, which additionally binds the source version.
 func HashCommitment(commitments []types.G2Point) [32]byte {
 	h := sha256.New()
 	for _, c := range commitments {
 		h.Write(c.CompressedBytes)
 	}
+	return [32]byte(h.Sum(nil))
+}
+
+// HashReshareCommitment hashes reshare commitments together with the dealer's source
+// version (the key version it reshared FROM). Used ONLY on the reshare on-chain-submit and
+// reshare-verify paths (docs/013 Change 2): committing the source version on-chain lets
+// every node verify a dealer's P2P-advertised SourceVersion against shared, append-only
+// registry state, making source-version equivocation detectable and removing the silent
+// "unknown version → drop" path. It is intentionally distinct from HashCommitment so DKG
+// and ack hashing are untouched.
+//
+// The source version is appended as 8 big-endian bytes after all commitment bytes, so the
+// preimage is unambiguous: keccak/​sha domain is separated from HashCommitment by the extra
+// trailer (a bare HashCommitment preimage can never equal one with an 8-byte version
+// trailer for the same commitments, since the version bytes always extend the input).
+func HashReshareCommitment(commitments []types.G2Point, sourceVersion int64) [32]byte {
+	h := sha256.New()
+	for _, c := range commitments {
+		h.Write(c.CompressedBytes)
+	}
+	var vb [8]byte
+	binary.BigEndian.PutUint64(vb[:], uint64(sourceVersion))
+	h.Write(vb[:])
 	return [32]byte(h.Sum(nil))
 }
 

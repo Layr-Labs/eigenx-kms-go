@@ -136,10 +136,15 @@ type ProtocolSession struct {
 	commitmentsCompleteChan chan bool
 	acksCompleteChan        chan bool
 
-	// Phase 4: Merkle tree state
-	myAckMerkleTree   *merkle.MerkleTree
-	myCommitmentHash  [32]byte
-	contractSubmitted bool
+	// Phase 4: Merkle tree state.
+	// myAckCommitmentHash is the PLAIN HashCommitment of this node's commitments (the
+	// ack/merkle-domain hash). It is NOT necessarily the value submitted on-chain: for
+	// reshare the on-chain submission binds the source version (HashReshareCommitment), so
+	// this field and the on-chain hash intentionally differ. It is retained for diagnostics
+	// only and is not consensus-read; do not treat it as the on-chain commitment hash.
+	myAckMerkleTree     *merkle.MerkleTree
+	myAckCommitmentHash [32]byte
+	contractSubmitted   bool
 
 	// Phase 4: Verification state
 	verifiedOperators map[common.Address]bool
@@ -882,6 +887,40 @@ func validateReshareOperatorOverlap(oldParticipants []common.Address, newOperato
 	return nil
 }
 
+// sessionParticipantIDs returns the set of operators that HOLD a refreshed share after a
+// reshare finalizes — the full session operator set, in on-chain order.
+//
+// This is deliberately NOT the dealer subset. ComputeNewKeyShare gives every recipient
+// (every session operator) a valid share of the same secret S, whether or not it dealt
+// this round. Persisting the dealer subset as a version's ParticipantIDs is the "ratchet"
+// bug (docs/013 Change 1): expectedReshareDealers intersects the next round's dealers with
+// the prior version's ParticipantIDs, so a subset round shrinks the expected set — and
+// does so per-node — which froze a version split on preprod. The holder set is the full
+// on-chain operators slice, identical across nodes.
+func sessionParticipantIDs(operators []*peering.OperatorSetPeer) []common.Address {
+	ids := make([]common.Address, 0, len(operators))
+	for _, op := range operators {
+		ids = append(ids, op.OperatorAddress)
+	}
+	return ids
+}
+
+// existingOperatorDealers returns the existing (share-holding) operators, in on-chain order.
+// A NEW operator has no active key version, so expectedReshareDealers would return ALL
+// operators — including itself and other joiners that never submit an on-chain commitment,
+// making deriveAgreedDealerSet wait out the full protocol timeout every join (it can never
+// converge on a set that includes non-submitters). The new-operator path passes this instead
+// so it converges on the same timeline as the existing operators. (docs/013; PR #119 round 3.)
+func existingOperatorDealers(operators []*peering.OperatorSetPeer, existingOpIDs map[common.Address]bool) []common.Address {
+	dealers := make([]common.Address, 0, len(existingOpIDs))
+	for _, op := range operators {
+		if existingOpIDs[op.OperatorAddress] {
+			dealers = append(dealers, op.OperatorAddress)
+		}
+	}
+	return dealers
+}
+
 // expectedReshareDealers returns the canonical set of dealers every operator must use
 // when finalizing a reshare round, in deterministic order. It is the intersection of
 // the current on-chain operator set with the previous key version's participants:
@@ -939,23 +978,38 @@ func (n *Node) expectedReshareDealers(operators []*peering.OperatorSetPeer) []co
 //
 // pinnedBlock, when > 0, is used as the L2 read height (reserved for when an L2 block
 // feed is available); 0 means read at head.
+// Returns the agreed dealer set AND each submitter's on-chain commitment hash, so the
+// caller can verify each dealer's P2P-advertised (commitments, sourceVersion) against the
+// shared registry state (docs/013 Change 2).
+// expectedDealers, when non-nil, is the exact set of dealers to converge on (used by the
+// new-operator path, which must target the EXISTING operators — the only on-chain submitters
+// — rather than expectedReshareDealers' all-operators fallback). When nil, the canonical
+// expectedReshareDealers set is used (existing-operator path).
 func (n *Node) deriveAgreedDealerSet(
 	ctx context.Context,
 	operators []*peering.OperatorSetPeer,
 	epoch int64,
 	pinnedBlock int64,
-) ([]common.Address, error) {
-	expected := n.expectedReshareDealers(operators)
+	expectedDealers []common.Address,
+) ([]common.Address, map[common.Address][32]byte, error) {
+	expected := expectedDealers
+	if expected == nil {
+		expected = n.expectedReshareDealers(operators)
+	}
 	if len(expected) == 0 {
-		return nil, fmt.Errorf("no expected dealers for reshare")
+		return nil, nil, fmt.Errorf("no expected dealers for reshare")
 	}
 
 	deadline := time.Now().Add(config.GetProtocolTimeoutForChain(n.ChainID))
 	pollInterval := 1 * time.Second
 
 	var submitted []common.Address
+	onChainHashes := make(map[common.Address][32]byte, len(expected))
 	for {
 		submitted = submitted[:0]
+		for k := range onChainHashes {
+			delete(onChainHashes, k)
+		}
 		for _, dealer := range expected {
 			commitmentHash, _, _, err := n.baseContractCaller.GetCommitmentAt(
 				ctx, n.commitmentRegistryAddress, epoch, dealer, uint64(max(pinnedBlock, 0)),
@@ -968,12 +1022,13 @@ func (n *Node) deriveAgreedDealerSet(
 			}
 			if commitmentHash != ([32]byte{}) {
 				submitted = append(submitted, dealer)
+				onChainHashes[dealer] = commitmentHash
 			}
 		}
 
 		// Converged: every expected dealer has submitted on-chain.
 		if len(submitted) == len(expected) {
-			return submitted, nil
+			return submitted, onChainHashes, nil
 		}
 		if time.Now().After(deadline) {
 			// Deadline reached: finalize on whoever submitted (uniform across nodes,
@@ -981,11 +1036,11 @@ func (n *Node) deriveAgreedDealerSet(
 			n.logger.Sugar().Infow("Dealer-set convergence deadline reached",
 				"operator_address", n.OperatorAddress.Hex(),
 				"submitted", len(submitted), "expected", len(expected))
-			return submitted, nil
+			return submitted, onChainHashes, nil
 		}
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return nil, nil, ctx.Err()
 		case <-time.After(pollInterval):
 		}
 	}
@@ -1499,7 +1554,7 @@ func (n *Node) RunDKG(sessionTimestamp int64) error {
 	// Store in session
 	session.mu.Lock()
 	session.myAckMerkleTree = merkleTree
-	session.myCommitmentHash = myCommitmentHash
+	session.myAckCommitmentHash = myCommitmentHash
 	session.contractSubmitted = true
 	session.mu.Unlock()
 
@@ -1954,26 +2009,34 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 		return fmt.Errorf("my commitments not found in reshare")
 	}
 
-	myCommitmentHash := eigenxcrypto.HashCommitment(myCommitments)
+	// The ON-CHAIN submitted hash for reshare binds the source version (docs/013 Change 2),
+	// so every node can verify each dealer's P2P-advertised SourceVersion against shared
+	// registry state at finalize. This is intentionally NOT the ack/merkle hash: the ack
+	// subsystem (merkle tree + ack signatures) keeps using the plain HashCommitment, and
+	// nothing compares the two, so they are free to diverge.
+	onChainCommitmentHash := eigenxcrypto.HashReshareCommitment(myCommitments, sourceVersion)
 
 	n.logger.Sugar().Infow("Merkle tree built successfully in reshare",
 		"num_acks", len(myAcks),
 		"merkle_root", fmt.Sprintf("0x%x", merkleTree.Root))
 
 	// Submit to contract with retry logic
-	err = n.submitCommitmentWithRetry(ctx, session.SessionTimestamp, myCommitmentHash, merkleTree.Root)
+	err = n.submitCommitmentWithRetry(ctx, session.SessionTimestamp, onChainCommitmentHash, merkleTree.Root)
 	if err != nil {
 		return fmt.Errorf("failed to submit commitment in reshare after retries: %w", err)
 	}
 
 	n.logger.Sugar().Infow("Commitment submitted to Base contract successfully in reshare",
-		"commitment_hash", fmt.Sprintf("0x%x", myCommitmentHash),
+		"commitment_hash", fmt.Sprintf("0x%x", onChainCommitmentHash),
+		"source_version", sourceVersion,
 		"merkle_root", fmt.Sprintf("0x%x", merkleTree.Root))
 
-	// Store in session
+	// Store in session. myAckCommitmentHash holds the PLAIN hash (ack/merkle domain); the
+	// on-chain submission above used HashReshareCommitment (source-version-bound), so the two
+	// intentionally differ for reshare — see the field doc.
 	session.mu.Lock()
 	session.myAckMerkleTree = merkleTree
-	session.myCommitmentHash = myCommitmentHash
+	session.myAckCommitmentHash = eigenxcrypto.HashCommitment(myCommitments)
 	session.contractSubmitted = true
 	session.mu.Unlock()
 
@@ -2048,7 +2111,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 	// aborting every reshare. Head reads + the convergence/abort-retry below give
 	// agreement without a pinned height. session.TriggerBlockNumber is retained for when
 	// a real L2 block feed is plumbed; until then it must NOT be used as the read height.
-	agreedDealers, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, 0)
+	agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, 0, nil)
 	if err != nil {
 		return fmt.Errorf("failed to derive agreed dealer set: %w", err)
 	}
@@ -2057,28 +2120,49 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 			len(agreedDealers), newThreshold)
 	}
 
-	// SOURCE-VERSION AGREEMENT (docs/012 Layer 2). #110 agrees on WHICH dealers deal, but
-	// not on WHICH source version they deal FROM. A dealer that lagged a prior round deals
-	// from a stale share; mixing it in shifts the reconstructed secret. Keep only dealers on
-	// the majority source version (deterministic across nodes — all see the same broadcasts)
-	// and drop laggards. An excluded dealer still recomputes its own refreshed share as a
-	// recipient of the kept dealers, resyncing implicitly. If the majority is below
-	// threshold or ambiguous, abort-retry (Layer 1's MPK check is the ultimate backstop).
+	// SOURCE-VERSION VERIFICATION (docs/013 Change 2). For each on-chain-agreed dealer,
+	// recompute HashReshareCommitment(its P2P commitments, its P2P-advertised SourceVersion)
+	// and require it to equal the dealer's ON-CHAIN commitment hash. This binds the source
+	// version to shared, append-only registry state: a dealer cannot advertise a version
+	// over P2P that differs from the one it committed on-chain (equivocation is rejected),
+	// and a dealer whose commitments/version we haven't received yet is dropped from the
+	// tally universe — but only after this verification, so the version we DO tally on is
+	// cryptographically bound, not an unauthenticated P2P value. Dealers that fail
+	// verification are excluded here; the source-version selection below runs over the
+	// VERIFIED subset, so all honest nodes compute over identical shared data.
 	observedSourceVersions := session.GetSourceVersions()
+	commitmentsByDealer := make(map[common.Address][]types.G2Point, len(agreedDealers))
+	for _, dealer := range agreedDealers {
+		commitmentsByDealer[dealer] = session.GetCommitmentsFor(dealer)
+	}
+	verifiedDealers, verifiedSourceVersions := reshare.VerifyDealerSourceVersions(
+		agreedDealers, onChainHashes, commitmentsByDealer, observedSourceVersions)
+	if len(verifiedDealers) < newThreshold {
+		return fmt.Errorf("verified reshare dealer set too small: %d of %d on-chain submitters verified, need %d; will retry next interval",
+			len(verifiedDealers), len(agreedDealers), newThreshold)
+	}
+
+	// SOURCE-VERSION AGREEMENT (docs/013 Change 3). Keep only dealers on the winning source
+	// version (highest version with >= threshold verified submitters). Because the tally
+	// runs over the on-chain-VERIFIED versions above, every honest node computes it over
+	// identical shared data and selects the identical kept set (restoring the docs/011
+	// identical-D invariant). An excluded laggard still recomputes its own refreshed share
+	// as a recipient of the kept dealers, resyncing implicitly.
 	agreedDealers, srcVersion, err := reshare.SelectMajoritySourceVersion(
-		agreedDealers, observedSourceVersions, newThreshold)
+		verifiedDealers, verifiedSourceVersions, newThreshold)
 	if err != nil {
 		n.logger.Sugar().Warnw("Aborting reshare finalize: no source-version-agreed dealer set",
 			"operator_address", n.OperatorAddress.Hex(),
 			"error", err)
 		return fmt.Errorf("reshare aborted: %w; will retry next interval", err)
 	}
-	// Observability: SelectMajoritySourceVersion picks the PLURALITY version, not the newest.
-	// If the majority is on an older version than the newest one observed (e.g. 2 of 3 nodes
-	// both missed the last round), the cluster correctly finalizes on that older version — but
-	// surface it so operators don't misread a "regression" to a lower version as a fault.
+	// Observability: SelectMajoritySourceVersion picks the highest version with >= threshold
+	// support, not necessarily the newest present. If the winning version is behind the
+	// newest verified one (e.g. 2 of 3 nodes both missed the last round), the cluster
+	// correctly finalizes on that older version — surface it so operators don't misread a
+	// "regression" to a lower version as a fault.
 	var maxObserved int64
-	for _, v := range observedSourceVersions {
+	for _, v := range verifiedSourceVersions {
 		if v > maxObserved {
 			maxObserved = v
 		}
@@ -2137,7 +2221,11 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 	}
 	newKeyVersion.Version = sessionTimestamp
 	newKeyVersion.IsActive = true
-	newKeyVersion.ParticipantIDs = participantIDsForFinalize
+	// ParticipantIDs is the set of share HOLDERS (full session operator set), NOT the dealer
+	// subset that reconstructed this round. Every operator recomputes its own share, so all
+	// hold a share of S; storing the dealer subset here shrinks the next round's expected
+	// dealer set per-node and freezes a version split (docs/013 Change 1).
+	newKeyVersion.ParticipantIDs = sessionParticipantIDs(operators)
 
 	// Carry forward MPK from the current active version (MPK doesn't change during reshare).
 	// A non-nil active version with a nil MPK must NOT silently skip Layer 1: that would both
@@ -2160,11 +2248,11 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 		// shares would not reconstruct the served MPK — decrypt would fail cluster-wide
 		// with "all combinations exhausted" and the corruption would be permanent. Abort
 		// loudly and retry next interval instead of persisting a poisoned share.
-		commitmentsByDealer := make(map[common.Address][]types.G2Point, len(participantIDsForFinalize))
+		mpkCommitmentsByDealer := make(map[common.Address][]types.G2Point, len(participantIDsForFinalize))
 		for _, dealer := range participantIDsForFinalize {
-			commitmentsByDealer[dealer] = session.GetCommitmentsFor(dealer)
+			mpkCommitmentsByDealer[dealer] = session.GetCommitmentsFor(dealer)
 		}
-		if verr := reshare.ValidateReshareMasterPublicKey(participantIDsForFinalize, commitmentsByDealer, &mpkCopy); verr != nil {
+		if verr := reshare.ValidateReshareMasterPublicKey(participantIDsForFinalize, mpkCommitmentsByDealer, &mpkCopy); verr != nil {
 			n.logger.Sugar().Errorw("ABORTING reshare finalize: post-reshare MPK validation failed",
 				"operator_address", n.OperatorAddress.Hex(),
 				"agreed_dealers", len(participantIDsForFinalize),
@@ -2378,17 +2466,69 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 		"merkle_verified", len(verifiedOps),
 		"trusted_dealers", len(trustedShares))
 
-	participantIDs := make([]common.Address, 0, len(trustedShares))
-	finalShares := make(map[common.Address]*fr.Element, len(trustedShares))
-	for _, op := range operators {
-
-		if share, ok := trustedShares[op.OperatorAddress]; ok {
-			participantIDs = append(participantIDs, op.OperatorAddress)
-			finalShares[op.OperatorAddress] = share
-		}
+	// AGREE on the dealer set from shared on-chain state, exactly as the existing-operator
+	// path does (docs/013). A new operator MUST finalize on the IDENTICAL dealer set D as
+	// everyone else, or its ComputeNewKeyShare interpolates over a different D and produces a
+	// share inconsistent with the cluster (Bug 2 on the join path). We derive D from the
+	// registry, verify each dealer's source version against its on-chain commitment hash, and
+	// select the agreed source-version subset — then finalize on exactly that set.
+	requiredShares := dkg.CalculateThreshold(len(operators))
+	// Converge on the EXISTING operators (the only on-chain submitters), not the
+	// all-operators fallback expectedReshareDealers would return for a node with no active
+	// version — otherwise convergence can never complete and every join waits the full
+	// protocol timeout (docs/013; PR #119 round 3, finding 2).
+	agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, 0,
+		existingOperatorDealers(operators, existingOpIDs))
+	if err != nil {
+		return fmt.Errorf("failed to derive agreed dealer set (new operator): %w", err)
+	}
+	observedSourceVersions := session.GetSourceVersions()
+	commitmentsByDealer := make(map[common.Address][]types.G2Point, len(agreedDealers))
+	for _, dealer := range agreedDealers {
+		commitmentsByDealer[dealer] = session.GetCommitmentsFor(dealer)
+	}
+	verifiedDealers, verifiedSourceVersions := reshare.VerifyDealerSourceVersions(
+		agreedDealers, onChainHashes, commitmentsByDealer, observedSourceVersions)
+	// Explicit pre-check symmetric with the existing-operator path (surfaces verified-vs-agreed
+	// counts for ops triage of join failures) before SelectMajoritySourceVersion's own guard.
+	if len(verifiedDealers) < requiredShares {
+		return fmt.Errorf("verified reshare dealer set too small (new operator): %d of %d on-chain submitters verified, need %d; will retry next interval",
+			len(verifiedDealers), len(agreedDealers), requiredShares)
+	}
+	agreedDealers, agreedSrcVersion, err := reshare.SelectMajoritySourceVersion(verifiedDealers, verifiedSourceVersions, requiredShares)
+	if err != nil {
+		n.logger.Sugar().Warnw("Aborting new-operator reshare finalize: no source-version-agreed dealer set",
+			"operator_address", n.OperatorAddress.Hex(), "error", err)
+		return fmt.Errorf("new-operator reshare aborted: %w; will retry next interval", err)
 	}
 
-	requiredShares := dkg.CalculateThreshold(len(operators))
+	// Assemble finalize shares from the agreed dealer set. Every agreed dealer must have a
+	// share; if one is missing locally (a joining node is especially likely to have missed
+	// the initial push window), fetch it on demand and verify it — mirroring the
+	// existing-operator path — before aborting. Only abort if it still can't be obtained.
+	participantIDs := make([]common.Address, 0, len(agreedDealers))
+	finalShares := make(map[common.Address]*fr.Element, len(agreedDealers))
+	for _, dealer := range agreedDealers {
+		if share, ok := trustedShares[dealer]; ok {
+			participantIDs = append(participantIDs, dealer)
+			finalShares[dealer] = share
+			continue
+		}
+		share, ferr := n.fetchAndVerifyReshareShare(session, dealer)
+		if ferr != nil {
+			n.logger.Sugar().Warnw("Aborting new-operator reshare finalize: could not obtain a dealer in the agreed set",
+				"operator_address", n.OperatorAddress.Hex(), "missing_dealer", dealer.Hex(), "error", ferr)
+			return fmt.Errorf("new-operator reshare aborted: missing verified share for agreed dealer %s: %w; will retry next interval", dealer.Hex(), ferr)
+		}
+		participantIDs = append(participantIDs, dealer)
+		finalShares[dealer] = share
+	}
+
+	n.logger.Sugar().Infow("Finalizing new-operator reshare on agreed dealer set",
+		"operator_address", n.OperatorAddress.Hex(),
+		"agreed_dealers", len(participantIDs),
+		"source_version", agreedSrcVersion)
+
 	if len(participantIDs) < requiredShares {
 		return fmt.Errorf("insufficient verified shares for new-operator finalize: got %d, need %d", len(participantIDs), requiredShares)
 	}
@@ -2403,6 +2543,10 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	}
 	newKeyVersion.Version = sessionTimestamp // Use session timestamp as version
 	newKeyVersion.IsActive = true            // First key version becomes active immediately
+	// Record the full session operator set as share holders, not the dealer subset that
+	// ComputeNewKeyShare defaulted to (docs/013 Change 1) — keeps the next round's expected
+	// dealer set stable across nodes.
+	newKeyVersion.ParticipantIDs = sessionParticipantIDs(operators)
 
 	// Fetch MPK from existing operators using threshold agreement
 	// New operators cannot derive the MPK from reshare protocol data alone

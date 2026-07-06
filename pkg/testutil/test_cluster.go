@@ -53,11 +53,45 @@ type TestCluster struct {
 type MockCommitmentRegistry struct {
 	mu       sync.RWMutex
 	suppress func(epoch int64, op common.Address) bool // returns true => treat as NOT submitted
+	// submissions stores the REAL commitment hash each operator submitted per epoch, so
+	// GetCommitmentAt serves authentic hashes. docs/013 Change 2 verifies each dealer's P2P
+	// commitments+sourceVersion against this on-chain hash, so a sentinel would fail every
+	// reshare. Keyed by epoch then operator.
+	submissions map[int64]map[common.Address][32]byte
 }
 
 // NewMockCommitmentRegistry returns a registry where everything reads as submitted.
 func NewMockCommitmentRegistry() *MockCommitmentRegistry {
-	return &MockCommitmentRegistry{}
+	return &MockCommitmentRegistry{
+		submissions: make(map[int64]map[common.Address][32]byte),
+	}
+}
+
+// recordSubmission stores an operator's real commitment hash for an epoch (called from the
+// per-node mock caller's SubmitCommitment).
+func (r *MockCommitmentRegistry) recordSubmission(epoch int64, op common.Address, commitmentHash [32]byte) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.submissions[epoch] == nil {
+		r.submissions[epoch] = make(map[common.Address][32]byte)
+	}
+	r.submissions[epoch][op] = commitmentHash
+}
+
+// commitmentHashFor returns the real submitted hash for (epoch, op), or the zero hash if
+// the operator has not submitted (or is suppressed).
+func (r *MockCommitmentRegistry) commitmentHashFor(epoch int64, op common.Address) [32]byte {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	if r.suppress != nil && r.suppress(epoch, op) {
+		return [32]byte{}
+	}
+	if byOp, ok := r.submissions[epoch]; ok {
+		if h, ok := byOp[op]; ok {
+			return h
+		}
+	}
+	return [32]byte{}
 }
 
 // SuppressOperator models an operator that never submits a commitment (partitioned) for
@@ -80,16 +114,6 @@ func (r *MockCommitmentRegistry) Clear() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.suppress = nil
-}
-
-// submitted reports whether (epoch, op) is considered submitted.
-func (r *MockCommitmentRegistry) submitted(epoch int64, op common.Address) bool {
-	r.mu.RLock()
-	defer r.mu.RUnlock()
-	if r.suppress == nil {
-		return true
-	}
-	return !r.suppress(epoch, op)
 }
 
 // NewTestCluster creates a test cluster of KMS nodes with completed DKG
@@ -181,7 +205,16 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 		// Create mock base contract caller backed by the cluster's shared commitment
 		// registry simulation, so the reshare dealer-set-agreement path reads a
 		// consistent (and test-controllable) set of submitters across all nodes.
+		//
+		// SubmitCommitment records this operator's REAL commitment hash into the shared
+		// registry; GetCommitmentAt serves it back. This authenticity matters because
+		// docs/013 Change 2 verifies each dealer's P2P (commitments, sourceVersion) against
+		// its on-chain commitment hash — a sentinel value would fail every reshare.
 		mockBaseContractCaller := &contractCaller.MockContractCallerStub{
+			OperatorAddress: common.HexToAddress(addresses[i]),
+			SubmitCommitmentFunc: func(epoch int64, operator common.Address, commitmentHash [32]byte, _ [32]byte) {
+				cluster.CommitmentRegistry.recordSubmission(epoch, operator, commitmentHash)
+			},
 			GetCommitmentAtFunc: func(_ context.Context, _ common.Address, epoch int64, operator common.Address, blockNumber uint64) ([32]byte, [32]byte, uint64, error) {
 				// Regression guard for the L1-block-as-L2-height bug: the registry is on
 				// Base (L2) but the reshare trigger block is an Ethereum (L1) block, so the
@@ -191,13 +224,12 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 				if blockNumber != 0 {
 					t.Fatalf("GetCommitmentAt called with non-zero block %d; reshare must read the Base registry at head (the trigger block is an L1 height)", blockNumber)
 				}
-				if cluster.CommitmentRegistry.submitted(epoch, operator) {
-					// Non-zero commitment hash = "submitted".
-					var h [32]byte
-					h[0] = 1
-					return h, h, 1, nil
+				// Serve the operator's REAL submitted hash (zero if not submitted/suppressed).
+				h := cluster.CommitmentRegistry.commitmentHashFor(epoch, operator)
+				if h == ([32]byte{}) {
+					return [32]byte{}, [32]byte{}, 0, nil
 				}
-				return [32]byte{}, [32]byte{}, 0, nil
+				return h, h, 1, nil
 			},
 		}
 

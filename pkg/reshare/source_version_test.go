@@ -67,17 +67,47 @@ func TestSelectMajoritySourceVersion_AbortsWhenMajorityBelowThreshold(t *testing
 	}
 }
 
-func TestSelectMajoritySourceVersion_AbortsOnTie(t *testing.T) {
+// A top-count tie is broken DETERMINISTICALLY toward the HIGHEST version (docs/013
+// Change 3). This is safe only because the tally now runs over on-chain-VERIFIED versions
+// (finalize verifies each dealer's version against the registry hash before calling this),
+// so every honest node computes the identical tally and picks the identical winner — no
+// divergent finalize. Highest-version preference also advances the cluster rather than
+// regressing it when a tie occurs.
+func TestSelectMajoritySourceVersion_TieBrokenByHighestVersion(t *testing.T) {
 	A := common.HexToAddress("0x0A")
 	B := common.HexToAddress("0x0B")
 	C := common.HexToAddress("0x0C")
 	D := common.HexToAddress("0x0D")
-	// Tie: two on 100, two on 90, threshold 2. A tie is ambiguous — different nodes could
-	// pick different majorities and finalize on divergent sets, so abort rather than risk it.
+	// Tie: two on 100, two on 90, threshold 2. Break toward the higher version (100).
 	src := map[common.Address]int64{A: 100, B: 100, C: 90, D: 90}
 
-	if _, _, err := SelectMajoritySourceVersion([]common.Address{A, B, C, D}, src, 2); err == nil {
-		t.Fatal("expected error on an ambiguous tie, got nil")
+	kept, version, err := SelectMajoritySourceVersion([]common.Address{A, B, C, D}, src, 2)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if version != 100 {
+		t.Fatalf("tie must break toward the highest version (100), got %d", version)
+	}
+	if len(kept) != 2 {
+		t.Fatalf("expected the two version-100 dealers, got %d: %v", len(kept), kept)
+	}
+	for _, d := range kept {
+		if d == C || d == D {
+			t.Fatal("kept set must be the version-100 dealers {A,B}, not the version-90 ones")
+		}
+	}
+}
+
+// The tie-break still respects the threshold: if the highest tied version has fewer than
+// threshold dealers, and so does every other version, abort.
+func TestSelectMajoritySourceVersion_TieBreakStillRespectsThreshold(t *testing.T) {
+	A := common.HexToAddress("0x0A")
+	B := common.HexToAddress("0x0B")
+	C := common.HexToAddress("0x0C")
+	// 1 on 100, 1 on 90, 1 on 80; threshold 2 — no version reaches threshold.
+	src := map[common.Address]int64{A: 100, B: 90, C: 80}
+	if _, _, err := SelectMajoritySourceVersion([]common.Address{A, B, C}, src, 2); err == nil {
+		t.Fatal("expected error when no version reaches threshold, got nil")
 	}
 }
 
