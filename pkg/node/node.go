@@ -12,12 +12,14 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	chainPoller "github.com/Layr-Labs/chain-indexer/pkg/chainPollers"
 	"github.com/Layr-Labs/chain-indexer/pkg/clients/ethereum"
 	"github.com/Layr-Labs/crypto-libs/pkg/ecdsa"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
+	platformClient "github.com/Layr-Labs/eigenx-kms-go/pkg/clients/platformClient"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -97,6 +99,10 @@ type Node struct {
 
 	// Access control
 	appAllowlist map[string]bool // nil means all apps allowed
+
+	// ecloud-platform integration
+	platformClient platformClient.Client
+	platformURL    atomic.Value // string; current on-chain platformRpcUrl
 }
 
 // ProtocolSession tracks state for a DKG or reshare session
@@ -504,11 +510,43 @@ func NewNode(
 	// Set node reference in server
 	n.server.node = n
 
+	// Build the ecloud-platform client using the node's own PlatformRpcURL accessor as
+	// the live URL provider, so the client always reads the freshest cached on-chain URL.
+	n.platformClient = platformClient.NewClient(n.PlatformRpcURL, operatorAddress, tps, l)
+
 	// Initialize transport with authenticated messaging
 	// TODO(seanmcgary): this should be injected, not created here
 	n.transport = transport.NewClient(operatorAddress, tps)
 
 	return n, nil
+}
+
+// PlatformRpcURL returns the cached on-chain platform RPC URL ("" if unset).
+func (n *Node) PlatformRpcURL() string {
+	v := n.platformURL.Load()
+	if v == nil {
+		return ""
+	}
+	return v.(string)
+}
+
+// refreshPlatformConfig reads AvsConfig from chain and updates the cached URL.
+// Non-fatal: on error it leaves the current value in place and logs.
+func (n *Node) refreshPlatformConfig(ctx context.Context) {
+	cfg, err := n.baseContractCaller.GetAvsConfig(ctx, n.AVSAddress)
+	if err != nil {
+		n.logger.Sugar().Warnw("Failed to read AvsConfig for platform URL",
+			"operator_address", n.OperatorAddress.Hex(), "error", err)
+		return
+	}
+	if cfg == nil {
+		return
+	}
+	if n.PlatformRpcURL() != cfg.PlatformRpcUrl {
+		n.logger.Sugar().Infow("Platform RPC URL updated from chain",
+			"operator_address", n.OperatorAddress.Hex(), "url", cfg.PlatformRpcUrl)
+	}
+	n.platformURL.Store(cfg.PlatformRpcUrl)
 }
 
 // startScheduler starts the automatic protocol scheduler with context
@@ -523,6 +561,12 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 
 	// Step 1: Get block interval for this chain
 	blockInterval := config.GetReshareBlockIntervalForChain(n.ChainID)
+
+	// Refresh the platform RPC URL from chain on reshare-interval boundaries
+	// (cheap eth_call, bounded to that cadence to limit RPC load).
+	if blockNumber%blockInterval == 0 {
+		n.refreshPlatformConfig(context.Background())
+	}
 
 	// Step 2: Check if this block is an interval boundary
 	if blockNumber%blockInterval != 0 {
