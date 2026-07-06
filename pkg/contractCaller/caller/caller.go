@@ -141,6 +141,34 @@ func (cc *ContractCaller) GetOperatorSetMembersWithPeering(
 	}, nil
 }
 
+// AvsConfig is the platform-relevant slice of the on-chain EigenKMSRegistrar config.
+type AvsConfig struct {
+	OperatorSetId  uint32
+	PlatformRpcUrl string
+}
+
+func mapAvsConfig(in IEigenKMSRegistrar.IEigenKMSRegistrarTypesAvsConfig) *AvsConfig {
+	return &AvsConfig{OperatorSetId: in.OperatorSetId, PlatformRpcUrl: in.PlatformRpcUrl}
+}
+
+// GetAvsConfig resolves the AVS registrar from the AVS address and reads its config.
+func (cc *ContractCaller) GetAvsConfig(ctx context.Context, avsAddress string) (*AvsConfig, error) {
+	avsAddr := common.HexToAddress(avsAddress)
+	avsRegistrarAddress, err := cc.allocationManager.GetAVSRegistrar(&bind.CallOpts{Context: ctx}, avsAddr)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get AVS registrar address: %w", err)
+	}
+	regCaller, err := IEigenKMSRegistrar.NewIEigenKMSRegistrarCaller(avsRegistrarAddress, cc.ethclient)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create AVS registrar caller: %w", err)
+	}
+	cfg, err := regCaller.GetAvsConfig(&bind.CallOpts{Context: ctx})
+	if err != nil {
+		return nil, fmt.Errorf("failed to read AVS config: %w", err)
+	}
+	return mapAvsConfig(cfg), nil
+}
+
 func (cc *ContractCaller) GetOperatorSetDetailsForOperator(
 	operatorAddress common.Address,
 	avsAddress string,

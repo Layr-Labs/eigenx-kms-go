@@ -115,4 +115,7 @@ type IContractCaller interface {
 	// GetLatestReleaseAsRelease returns the confirmed (active) release. This is only updated
 	// after the Coordinator calls confirmUpgrade(), preventing race conditions during upgrades.
 	GetLatestReleaseAsRelease(ctx context.Context, appID string) (*types.Release, error)
+
+	// GetAvsConfig resolves the AVS registrar from the AVS address and reads its config.
+	GetAvsConfig(ctx context.Context, avsAddress string) (*caller.AvsConfig, error)
 }
