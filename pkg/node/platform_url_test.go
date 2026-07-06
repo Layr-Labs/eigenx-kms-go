@@ -51,15 +51,51 @@ func TestRefreshPlatformConfig_ErrorLeavesCache(t *testing.T) {
 }
 
 // TestRefreshPlatformConfig_UnsafeURLIgnored verifies that a fetched URL with a
-// dangerous scheme (e.g. file://) is ignored and the cached value is unchanged.
+// dangerous scheme (e.g. file://, or the grpc-go single-colon unix:path form) is
+// ignored and the cached value is unchanged.
 func TestRefreshPlatformConfig_UnsafeURLIgnored(t *testing.T) {
-	fake := &fakeCallerWithAvsConfig{cfg: &caller.AvsConfig{PlatformRpcUrl: "p.example:9002"}}
-	n := &Node{baseContractCaller: fake, AVSAddress: "0xavs", logger: zap.NewNop()}
-	n.refreshPlatformConfig(context.Background())
-	require.Equal(t, "p.example:9002", n.PlatformRpcURL())
+	unsafeURLs := []string{
+		"file:///etc/passwd",
+		// grpc-go single-colon unix target (no //) — must also be blocked.
+		"unix:/var/run/docker.sock",
+		"unix:///var/run/docker.sock",
+	}
+	for _, unsafe := range unsafeURLs {
+		t.Run(unsafe, func(t *testing.T) {
+			fake := &fakeCallerWithAvsConfig{cfg: &caller.AvsConfig{PlatformRpcUrl: "p.example:9002"}}
+			n := &Node{baseContractCaller: fake, AVSAddress: "0xavs", logger: zap.NewNop()}
+			n.refreshPlatformConfig(context.Background())
+			require.Equal(t, "p.example:9002", n.PlatformRpcURL())
 
-	// A dangerous scheme must be rejected, leaving the good cached URL in place.
-	fake.cfg = &caller.AvsConfig{PlatformRpcUrl: "file:///etc/passwd"}
-	n.refreshPlatformConfig(context.Background())
-	require.Equal(t, "p.example:9002", n.PlatformRpcURL())
+			// A dangerous scheme must be rejected, leaving the good cached URL in place.
+			fake.cfg = &caller.AvsConfig{PlatformRpcUrl: unsafe}
+			n.refreshPlatformConfig(context.Background())
+			require.Equal(t, "p.example:9002", n.PlatformRpcURL())
+		})
+	}
+}
+
+// TestIsSafePlatformURL directly exercises the scheme classifier, including both
+// unix: forms (single-colon grpc-go target and unix:// URL) which must be rejected.
+func TestIsSafePlatformURL(t *testing.T) {
+	rejected := []string{
+		"file:///etc/passwd",
+		"unix:/x",
+		"unix:///x",
+		"unix://x",
+		"unix-abstract://x",
+		"http://example.com",
+		"https://example.com",
+	}
+	for _, u := range rejected {
+		require.False(t, isSafePlatformURL(u), "expected %q to be rejected", u)
+	}
+
+	accepted := []string{
+		"p.example:9002",
+		"dns:///p.example:9002",
+	}
+	for _, u := range accepted {
+		require.True(t, isSafePlatformURL(u), "expected %q to be accepted", u)
+	}
 }

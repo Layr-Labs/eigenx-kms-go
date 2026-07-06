@@ -40,6 +40,11 @@ func TestDigestFromImageRef(t *testing.T) {
 			ref:  "app@sha256:" + strings.Repeat("a", 65),
 			want: "",
 		},
+		{
+			name: "non-hex tail is rejected",
+			ref:  "registry/app@sha256:" + strings.Repeat("g", 64),
+			want: "",
+		},
 	}
 
 	for _, tc := range cases {

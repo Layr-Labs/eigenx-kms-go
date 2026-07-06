@@ -225,6 +225,22 @@ func TestSecretsPlatform_DigestNoMatch(t *testing.T) {
 	assert.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
 }
 
+func TestSecretsPlatform_ZeroApps(t *testing.T) {
+	// A release with no apps can match no digest → digest mismatch → 403.
+	n := newPlatformTestNode(t, newPlatformManager(t, platformTestDigest))
+	fake := &fakePlatformClient{rel: &platformClient.Release{
+		StackID: platformTestStackID,
+		Apps:    nil,
+	}}
+	n.platformClient = fake
+
+	req := buildPlatformSecretsRequest(t, platformTestAppID, "gcp", platformTestStackID)
+	w := servePlatformSecrets(t, n, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+	assert.Equal(t, 1, fake.calls)
+}
+
 func TestSecretsPlatform_URLNotConfigured(t *testing.T) {
 	n := newPlatformTestNode(t, newPlatformManager(t, platformTestDigest))
 	fake := &fakePlatformClient{err: platformClient.ErrPlatformURLNotConfigured}

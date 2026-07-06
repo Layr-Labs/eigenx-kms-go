@@ -136,7 +136,8 @@ func (s *Server) authorizeViaPlatform(ctx context.Context, stackID string, claim
 
 // digestFromImageRef extracts "sha256:<hex>" from a full ref "...@sha256:<hex>".
 // It requires a full 64-char hex tail: a malformed ref like "app@sha256:" (empty
-// tail) yields "" so the app-loop skips it and can never match an attested digest.
+// tail) or one whose tail contains a non-hex character yields "" so the app-loop
+// skips it and can never match an attested digest.
 func digestFromImageRef(ref string) string {
 	i := strings.Index(ref, "@sha256:")
 	if i < 0 {
@@ -145,6 +146,11 @@ func digestFromImageRef(ref string) string {
 	digest := ref[i+1:] // "sha256:<hex>"
 	if len(digest) != len("sha256:")+64 {
 		return ""
+	}
+	for _, c := range digest[len("sha256:"):] {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return ""
+		}
 	}
 	return digest
 }

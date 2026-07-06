@@ -532,11 +532,12 @@ func (n *Node) PlatformRpcURL() string {
 
 // isSafePlatformURL rejects gRPC targets that could reach the local filesystem or
 // unix sockets (defense-in-depth against a malicious/misconfigured on-chain URL).
-// A valid platform target is host:port or a dns:/// target — never file://, unix://,
-// unix-abstract://, http://, or https://.
+// A valid platform target is host:port or a dns:/// target — never file://, unix:
+// (blocks both the grpc-go unix:path and unix://path forms), unix-abstract://,
+// http://, or https://.
 func isSafePlatformURL(u string) bool {
 	lower := strings.ToLower(strings.TrimSpace(u))
-	for _, bad := range []string{"file://", "unix://", "unix-abstract://", "http://", "https://"} {
+	for _, bad := range []string{"file://", "unix:", "unix-abstract://", "http://", "https://"} {
 		if strings.HasPrefix(lower, bad) {
 			return false
 		}
@@ -590,8 +591,8 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 	// reshare-interval boundary; this shared %blockInterval gate is intentional.
 	if blockNumber%blockInterval == 0 {
 		refreshCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 		n.refreshPlatformConfig(refreshCtx)
-		cancel()
 	}
 
 	// Step 2: Check if this block is an interval boundary
