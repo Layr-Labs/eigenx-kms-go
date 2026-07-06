@@ -1,0 +1,36 @@
+// Copied from github.com/Layr-Labs/ecloud-platform
+//   protos/eigenlayer/platform/v1/kms/kms.proto @ 815540f4
+// Regenerate with: make protos-sync && make protos
+// Do not edit by hand; this is the KMS-facing wire contract.
+syntax = "proto3";
+
+package eigenlayer.platform.v1.kms;
+
+option go_package = "github.com/Layr-Labs/ecloud-platform/gen/protos/eigenlayer/platform/v1/kms";
+
+// AuthenticatedMessage is byte-compatible with eigenx-kms-go pkg/types: an
+// operator signs the inner payload's keccak256 hash with their ECDSA key.
+message AuthenticatedMessage {
+  bytes payload   = 1; // JSON of the inner request payload
+  // hash is keccak256(payload), 32 bytes. The server independently recomputes
+  // and requires this to equal keccak256(payload), so it is not trusted input;
+  // it is kept for byte-compatibility with the eigenx-kms-go wire format.
+  bytes hash      = 2;
+  bytes signature = 3; // 65-byte [R‖S‖V] ECDSA over hash
+}
+
+message GetLatestDeployedReleaseRequest {
+  AuthenticatedMessage auth = 1;
+}
+
+message DeployedApp {
+  string name  = 1;
+  string image = 2; // full ref incl. @sha256:<digest>
+}
+
+message GetLatestDeployedReleaseResponse {
+  string stack_id        = 1;
+  int32  version         = 2;
+  string manifest_digest = 3;
+  repeated DeployedApp apps = 4;
+}
