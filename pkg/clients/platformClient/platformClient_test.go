@@ -54,7 +54,9 @@ func TestGetLatestDeployedRelease_UnconfiguredURL(t *testing.T) {
 
 // fakeConn implements grpc.ClientConnInterface; Invoke fills the reply with a fixed
 // GetLatestDeployedReleaseResponse so we can assert the client's response mapping.
-type fakeConn struct{ resp *kmsv1.GetLatestDeployedReleaseResponse }
+type fakeConn struct {
+	resp *kmsv1.GetLatestDeployedReleaseResponse
+}
 
 func (f *fakeConn) Invoke(_ context.Context, _ string, _, reply any, _ ...grpc.CallOption) error {
 	out := reply.(*kmsv1.GetLatestDeployedReleaseResponse)
