@@ -128,6 +128,32 @@ type IEigenKMSRegistrarTypesAvsConfig struct {
 func (_IEigenKMSRegistrar *IEigenKMSRegistrarCaller) GetAvsConfig(opts *bind.CallOpts) (IEigenKMSRegistrarTypesAvsConfig, error)
 ```
 
+**Post-rebase handler + test-infra facts (verified 2026-07-06, master):**
+- `handleSecretsRequest` (`pkg/node/handlers.go`) authorizes at "Step 3" via a two-way
+  branch: `if req.AttestationMethod == "ecdsa" { verifyECDSAOwnership(req.AppID,
+  claims.PublicKey) + best-effort GetLatestReleaseAsRelease (sets &types.Release{} on
+  miss) } else { GetLatestReleaseAsRelease + digest + registry + container-policy }`.
+  `var release *types.Release` is declared at the top of Step 3 and is **always non-nil**
+  after the branch today; the response build (Step 10) reads `release.EncryptedEnv/PublicEnv`
+  unconditionally. Task 8 adds a THIRD `stack_id` branch (release stays nil) and makes the
+  env population nil-guarded.
+- New helper `func (s *Server) verifyECDSAOwnership(appID string, publicKey []byte) (int, error)`
+  and new interface method `GetAppCreator(app common.Address, opts *bind.CallOpts)
+  (common.Address, error)` exist on master — unrelated to the platform path but they are
+  why the ecdsa branch is now separate.
+- `IContractCaller` has a **mockery-generated** mock at
+  `pkg/contractCaller/mock_IContractCaller.go` (regenerate with `make mocks`; config
+  `.mockery.yaml`) AND hand-written stubs `MockContractCallerStub` /
+  `TestableContractCallerStub` in `pkg/contractCaller/testhelpers.go` (the latter adds
+  `AddTestRelease`, `SetAppCreator`, two-phase pending/confirm). Adding an interface
+  method requires updating all of these (Task 3 Step 6).
+- Integration harness: `createTestNodeWithManager(t, manager) (*node.Node,
+  *contractCaller.TestableContractCallerStub)` in
+  `internal/tests/integration/attestation_methods_test.go`; drive the handler with
+  `node.NewServer(n, 0).GetHandler().ServeHTTP(w, req)`. `node.NewServer(node *Node, port int) *Server`
+  and `(*Server).GetHandler() http.Handler` are the current signatures.
+- `SecretsRequestV1` still has NO `StackID` field (Task 6 adds it).
+
 ---
 
 ## Task 1: Contract — `platformRpcUrl` in `AvsConfig` + `AvsConfigSet` event
@@ -263,6 +289,8 @@ git commit -m "chore(bindings): regenerate IEigenKMSRegistrar for platformRpcUrl
 **Files:**
 - Modify: `pkg/contractCaller/caller/caller.go` (add `AvsConfig` type + `mapAvsConfig` + `GetAvsConfig` impl)
 - Modify: `pkg/contractCaller/contractCaller.go` (add `GetAvsConfig` to the `IContractCaller` interface, referencing `caller.AvsConfig`)
+- Regenerate: `pkg/contractCaller/mock_IContractCaller.go` (mockery-generated; `make mocks`)
+- Modify: `pkg/contractCaller/testhelpers.go` (add `GetAvsConfig` to `MockContractCallerStub`)
 - Test: `pkg/contractCaller/caller/caller_avsconfig_test.go` (new)
 
 **Grounding (verified):** `pkg/contractCaller/contractCaller.go` (package `contractCaller`) **imports** `pkg/contractCaller/caller` (package `caller`) and already references `caller.*` types in the interface (`caller.AppControllerInterface`, `caller.Env`, `caller.AppUpgradedIterator`). `caller` does **not** import `contractCaller`. Therefore `AvsConfig` MUST be defined in **package `caller`** and referenced as `caller.AvsConfig` from the interface — defining it in `contractCaller` and referencing it from `caller` would be an import cycle. This is settled; do not define the type in `contractCaller.go`.
@@ -358,17 +386,44 @@ In `pkg/contractCaller/contractCaller.go`, add to the `IContractCaller` interfac
 Run: `./scripts/goTest.sh ./pkg/contractCaller/caller -run Test_mapAvsConfig -v`
 Expected: PASS.
 
-- [ ] **Step 6: Build the whole tree (interface satisfied by any mocks)**
+- [ ] **Step 6: Regenerate the mockery mock + add `GetAvsConfig` to the hand-written stubs**
+
+Adding a method to `IContractCaller` breaks three implementers that the rebase
+introduced/updated. Handle all three:
+
+1. **Generated mock** `pkg/contractCaller/mock_IContractCaller.go` (header: `Code generated
+   by mockery; DO NOT EDIT.`). Regenerate it — do NOT hand-edit:
+   ```bash
+   make mocks   # runs `mockery` per .mockery.yaml (Makefile:108); installs v3.5.5 if needed via `make deps`
+   ```
+   Confirm the regenerated file gained a `GetAvsConfig` method:
+   `grep -n "func (_mock \*MockIContractCaller) GetAvsConfig" pkg/contractCaller/mock_IContractCaller.go`
+2. **Hand-written stubs** in `pkg/contractCaller/testhelpers.go`: add a `GetAvsConfig`
+   method to `MockContractCallerStub` (the base stub; `TestableContractCallerStub`
+   embeds it, so one method covers both). Add after the other `MockContractCallerStub`
+   methods:
+   ```go
+   func (m *MockContractCallerStub) GetAvsConfig(ctx context.Context, avsAddress string) (*caller.AvsConfig, error) {
+       return &caller.AvsConfig{}, nil
+   }
+   ```
+   (Returning a zero `AvsConfig` — empty `PlatformRpcUrl` — is correct: existing tests
+   don't exercise the platform path, so this keeps them fail-closed/unaffected. Task 7
+   adds a configurable variant on `TestableContractCallerStub` if a test needs a URL.)
+
+- [ ] **Step 7: Build the whole tree**
 
 Run: `go build ./...`
-Expected: success. If a mock/fake `IContractCaller` exists in tests, it now fails to compile — add a `GetAvsConfig` stub to it (return `nil, nil` or a fixed value). Find them: `grep -rln "GetLatestReleaseAsRelease" --include="*.go" pkg cmd internal | xargs grep -ln "func.*GetLatestReleaseAsRelease"`.
+Expected: success (all `IContractCaller` implementers now satisfy the interface). If any
+other implementer surfaces, add the same `GetAvsConfig` stub. Find them:
+`grep -rln "func.*GetLatestReleaseAsRelease" --include="*.go" pkg cmd internal`.
 
-- [ ] **Step 7: Run the package tests**
+- [ ] **Step 8: Run the package tests**
 
 Run: `./scripts/goTest.sh ./pkg/contractCaller/... -v`
 Expected: PASS.
 
-- [ ] **Step 8: Commit**
+- [ ] **Step 9: Commit**
 
 ```bash
 git add pkg/contractCaller
@@ -847,7 +902,12 @@ git commit -m "feat(types): add StackID to SecretsRequestV1"
 
 - [ ] **Step 1: Write the failing test**
 
-Create `pkg/node/platform_url_test.go`. Use a fake `IContractCaller` that returns a settable `AvsConfig`; assert `refreshPlatformConfig` updates `PlatformRpcURL()`.
+Create `pkg/node/platform_url_test.go` (`package node`). Use a fake `IContractCaller`
+that returns a settable `AvsConfig`; assert `refreshPlatformConfig` updates
+`PlatformRpcURL()`. Build the fake by **embedding the canonical
+`contractCaller.MockContractCallerStub`** (post-rebase, in
+`pkg/contractCaller/testhelpers.go`) and overriding only `GetAvsConfig` — this avoids
+re-stubbing the ~25-method interface:
 ```go
 package node
 
@@ -855,13 +915,24 @@ import (
 	"context"
 	"testing"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/zap"
 )
+
+type fakeCallerWithAvsConfig struct {
+	contractCaller.MockContractCallerStub // embeds all no-op methods (incl. the Task 3 GetAvsConfig)
+	cfg *caller.AvsConfig
+}
+
+func (f *fakeCallerWithAvsConfig) GetAvsConfig(ctx context.Context, avsAddress string) (*caller.AvsConfig, error) {
+	return f.cfg, nil
+}
 
 func TestRefreshPlatformConfig_UpdatesCache(t *testing.T) {
 	fake := &fakeCallerWithAvsConfig{cfg: &caller.AvsConfig{PlatformRpcUrl: "p.example:9002"}}
-	n := &Node{baseContractCaller: fake, AVSAddress: "0xavs", logger: testLogger(t)}
+	n := &Node{baseContractCaller: fake, AVSAddress: "0xavs", logger: zap.NewNop()}
 	require.Equal(t, "", n.PlatformRpcURL())
 	n.refreshPlatformConfig(context.Background())
 	require.Equal(t, "p.example:9002", n.PlatformRpcURL())
@@ -871,7 +942,8 @@ func TestRefreshPlatformConfig_UpdatesCache(t *testing.T) {
 	require.Equal(t, "q.example:9002", n.PlatformRpcURL())
 }
 ```
-Add a minimal `fakeCallerWithAvsConfig` embedding an existing test fake or implementing only `GetAvsConfig` plus panics for the rest — reuse the mock added in Task 3 Step 6 if one exists in the `node` test package; otherwise define it in this file implementing the full `IContractCaller` with `GetAvsConfig` returning `f.cfg` and other methods returning zero values. Use the repo's existing `testLogger` helper if present; else `zap.NewNop()`.
+(Constructing `&Node{...}` directly with only the fields the method reads is legal in
+`package node` and avoids the full `NewNode` wiring for this focused unit test.)
 
 - [ ] **Step 2: Run it to verify it fails**
 
@@ -928,6 +1000,12 @@ func (n *Node) refreshPlatformConfig(ctx context.Context) {
   ```
   (`n.PlatformRpcURL` is a method value of type `func() string`; `operatorAddress` and
   `tps` are already in scope in `NewNode`.) The `NewNode` signature is unchanged.
+- **Test-injection seam:** `platformClient` is an unexported field of type
+  `platformClient.Client` (an interface). Tests in `package node` (e.g.
+  `secrets_platform_test.go`, Task 8) inject a fake by assigning the field directly
+  (`n.platformClient = &fakePlatformClient{...}`) after `NewNode` returns — no exported
+  setter or constructor param is needed. This is why the field is an interface, not a
+  concrete `*client`.
 
 - [ ] **Step 4: Refresh on the per-block callback (reshare-interval cadence)**
 
@@ -982,31 +1060,56 @@ git commit -m "feat(node): cache and refresh on-chain platform RPC URL; build pl
 - (No `cmd/kmsServer/main.go` change — the client is built inside `NewNode` in Task 7.)
 
 **Interfaces:**
-- Consumes: `platformClient.Client`, `platformClient.ErrPlatformURLNotConfigured`, `n.PlatformRpcURL()`.
-- Produces: authorization branch — `stack_id` empty → existing on-chain path; `stack_id` set → platform path returning `SecretsResponseV1{EncryptedPartialSig, ExtraData}` with empty env fields.
+- Consumes: `platformClient.Client` (the unexported `n.platformClient` field, set in Task 7), `platformClient.ErrPlatformURLNotConfigured`, `platformClient.Release`/`App`.
+- Produces: a THREE-way authorization branch in `handleSecretsRequest` — `stack_id` set → platform path (release stays nil → env fields empty, share-only); else `ecdsa` → existing ownership-proof branch (verbatim); else → existing on-chain digest/registry/policy branch (verbatim). Plus helpers `authorizeViaPlatform`, `digestFromImageRef`, `writePlatformAuthError`, and sentinel `errPlatformDigestMismatch` on `*Server`.
 
 - [ ] **Step 1: Write the failing test**
 
-Create `pkg/node/secrets_platform_test.go`. Build a `Server`/`Node` with a fake `platformClient.Client` and a stub attestation method that returns known `claims.ImageDigest`; drive `handleSecretsRequest` via `httptest`. Assert:
-- digest matches an app image → 200, response `EncryptedPartialSig != nil`, `EncryptedEnv == ""`, `PublicEnv == ""`.
-- digest matches no app → 403.
-- fake returns `ErrPlatformURLNotConfigured` → 503 with the "platform RPC URL not configured" message.
-- fake returns a gRPC `PermissionDenied` → 403; `Unavailable` → 503; `Unauthenticated` → 500.
-- `AttestationMethod == "ecdsa"` with a `stack_id` → 403 ("ecdsa attestation is not permitted for stack_id requests"), and the fake platform client is **never called** (assert its call count stays 0). This proves the ecdsa guard fires before any platform call even if a digest would otherwise match.
-- a non-`sha256:`-prefixed `claims.ImageDigest` (e.g. `"ecdsa:unverified"`) with a non-ecdsa method + `stack_id` → 403 (defense-in-depth digest well-formedness check).
+Create `pkg/node/secrets_platform_test.go` in **`package node`** (internal — so it can
+set the unexported `n.platformClient` field directly; there is no exported setter).
 
-Follow the existing `pkg/node/secrets_test.go` for how the suite constructs a `Node` with fakes (key store seeded with an active version so `signAppIDWithVersion` succeeds, a fake attestation method registered on the `AttestationManager`, RSA key in the request). Reuse those helpers; add a fake `platformClient.Client`:
+**Harness (post-rebase):** the integration suite builds a node via
+`createTestNodeWithManager(t, manager)` in `internal/tests/integration/attestation_methods_test.go`,
+which returns `(*node.Node, *contractCaller.TestableContractCallerStub)` and seeds an
+active key share. That helper is in an EXTERNAL package, so it cannot set the unexported
+field. Therefore build the node **in-package** here, mirroring that helper's setup
+(peering fetcher, `inMemoryTransportSigner`, `contractCaller.NewTestableContractCallerStub()`,
+`memory.NewMemoryPersistence()`, `node.NewNode(...)`, then `n.GetKeyStore().AddVersion(...)`),
+and after `NewNode` returns, inject the fake platform client:
+```go
+n.SetPlatformClientForTest(&fakePlatformClient{rel: ...}) // OR, in-package, n's field directly
+```
+Since the test is `package node`, assign the field directly: `nodeInternal.platformClient = fake`.
+(If the node struct is built via the exported `NewNode`, add a tiny in-package test
+helper `func (n *Node) setPlatformClientForTest(c platformClient.Client){ n.platformClient = c }`
+in the test file's package, or assign `n.platformClient` directly — both are legal in
+`package node`.)
+
+Register a fake attestation method on the `AttestationManager` that returns a chosen
+`claims.ImageDigest` and `claims.AppID == req.AppID`. Drive the handler via
+`server := node.NewServer(n, 0); server.GetHandler().ServeHTTP(w, httpReq)` (the pattern
+used by `TestSecretsEndpoint_ECDSAAttestation`). The fake platform client:
 ```go
 type fakePlatformClient struct {
-	rel *platformClient.Release
-	err error
+	rel   *platformClient.Release
+	err   error
+	calls int
 }
 
 func (f *fakePlatformClient) GetLatestDeployedRelease(ctx context.Context, stackID string) (*platformClient.Release, error) {
+	f.calls++
 	return f.rel, f.err
 }
 ```
-Digest helper under test: the handler must accept iff `claims.ImageDigest == "sha256:"+<hex after @sha256:>` for some app. Seed the fake release app image as `"registry/app@sha256:" + hex` and the attestation claims digest as `"sha256:" + hex`.
+Assert (each request carries `StackID` set unless noted):
+- digest matches an app image → 200, response `EncryptedPartialSig != nil`, `EncryptedEnv == ""`, `PublicEnv == ""`.
+- digest matches no app → 403.
+- fake returns `ErrPlatformURLNotConfigured` → 503 with the "platform RPC URL not configured" message.
+- fake returns a gRPC `PermissionDenied` → 403; `Unavailable` → 503; `Unauthenticated` → 500. (Build these with `status.Error(codes.X, "…")`.)
+- `AttestationMethod == "ecdsa"` with a `stack_id` → 403 ("ecdsa attestation is not permitted for stack_id requests"), and `fake.calls == 0` (the ecdsa guard fires before any platform call).
+- non-`sha256:`-prefixed `claims.ImageDigest` (e.g. `"ecdsa:unverified"`) with a non-ecdsa method + `stack_id` → 403 (defense-in-depth well-formedness check).
+
+Digest fixture: seed the fake release app image as `"registry/app@sha256:" + hex` and the fake attestation `claims.ImageDigest` as `"sha256:" + hex`.
 
 - [ ] **Step 2: Run it to verify it fails**
 
@@ -1015,12 +1118,22 @@ Expected: FAIL — the platform branch does not exist yet.
 
 - [ ] **Step 3: Implement the branch in `handleSecretsRequest`**
 
-In `pkg/node/handlers.go`, replace the current Step 3–5 block (the on-chain `GetLatestReleaseAsRelease` lookup + digest/registry/policy checks at ~lines 192–255) with a switch on `req.StackID`. Keep the existing on-chain code verbatim in the `else` branch; add the platform branch. Structure:
+**Post-rebase grounding (IMPORTANT — the handler was refactored on master).** `handleSecretsRequest` in `pkg/node/handlers.go` now declares `var release *types.Release` at "Step 3" and branches:
 ```go
-	// Steps 3–5: authorize the attested image. Two sources:
-	//   - stack_id set  -> ecloud-platform release for that stack (return share only)
-	//   - stack_id empty -> on-chain AppController release (existing behavior)
-	var release *types.Release // set only on the on-chain path
+	var release *types.Release
+	if req.AttestationMethod == "ecdsa" {
+		// verifyECDSAOwnership(...) + best-effort GetLatestReleaseAsRelease (empty on miss)
+	} else {
+		// GetLatestReleaseAsRelease + digest + registry (Step 4b) + container-policy (Step 5)
+	}
+```
+and the response build (Step 10) reads `release.EncryptedEnv` / `release.PublicEnv` **unconditionally** (release is always non-nil today — the ecsda branch sets `&types.Release{}` on a miss). Your change adds a THIRD, highest-priority branch for `req.StackID != ""` and makes the response env-population conditional. Turn the existing two-way `if/else` into a three-way `if/else if/else`, keeping the ecdsa and on-chain branches **verbatim**:
+```go
+	// Step 3: authorize the attested image. Three sources, in priority order:
+	//   - stack_id set   -> ecloud-platform release for that stack (return share ONLY, no env)
+	//   - ecdsa method   -> on-chain creator ownership proof (best-effort env)   [existing]
+	//   - otherwise      -> on-chain AppController release + digest/registry/policy [existing]
+	var release *types.Release // stays nil on the platform path (no secrets returned)
 	if req.StackID != "" {
 		// The platform path authorizes SOLELY by matching the attested image digest
 		// (no registry/policy check). ECDSA attestation proves only key ownership, not
@@ -1038,25 +1151,24 @@ In `pkg/node/handlers.go`, replace the current Step 3–5 block (the on-chain `G
 			s.writePlatformAuthError(w, req, err)
 			return
 		}
-		// Platform path returns NO secrets; env fields stay empty.
+		// release stays nil -> response env fields stay empty (share-only).
+	} else if req.AttestationMethod == "ecdsa" {
+		// --- existing ecdsa branch, verbatim (verifyECDSAOwnership + best-effort env) ---
 	} else {
-		// --- existing on-chain path, unchanged ---
-		var relErr error
-		release, relErr = s.node.baseContractCaller.GetLatestReleaseAsRelease(r.Context(), req.AppID)
-		if relErr != nil {
-			s.node.logger.Sugar().Warnw("Failed to get release", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "error", relErr)
-			http.Error(w, "Release not found", http.StatusNotFound)
-			return
-		}
-		if claims.ImageDigest != release.ImageDigest {
-			s.node.logger.Sugar().Warnw("Image digest mismatch", "operator_address", s.node.OperatorAddress.Hex(), "app_id", req.AppID, "expected", release.ImageDigest, "got", claims.ImageDigest)
-			http.Error(w, "Image digest mismatch - unauthorized image", http.StatusForbidden)
-			return
-		}
-		// ... keep the existing registry (Step 4b) and container-policy (Step 5) checks verbatim ...
+		// --- existing on-chain branch, verbatim (GetLatestReleaseAsRelease + digest +
+		//     registry Step 4b + container-policy Step 5) ---
 	}
 ```
-Then at the response-build (Step 10), source env from `release` only when non-nil:
+Then change the response build (Step 10) so env is sourced from `release` **only when non-nil** (the platform path leaves it nil). The current code is:
+```go
+	response := types.SecretsResponseV1{
+		EncryptedEnv:        release.EncryptedEnv,
+		PublicEnv:           release.PublicEnv,
+		EncryptedPartialSig: encryptedPartialSig,
+		ExtraData:           req.ExtraData,
+	}
+```
+Replace with the nil-guarded form:
 ```go
 	response := types.SecretsResponseV1{
 		EncryptedPartialSig: encryptedPartialSig,
@@ -1238,3 +1350,30 @@ git commit -m "chore: satisfy lint/fmt and finalize ecloud-platform integration"
   `maxSecretsBodyBytes` body cap before signing; a bad value fails closed at the
   platform (`NotFound`/`PermissionDenied`). (Security review LOW; body cap suffices.)
 - **Open decision resolved in-plan:** the URL-freshness ordering hazard (client built before node) is resolved by constructing `platformClient` inside `NewNode` with `n.PlatformRpcURL` as the live provider (Task 7 Step 3); `NewNode`'s signature is unchanged and main.go needs no wiring edit.
+
+### Rebase reconciliation (2026-07-06 — master rebased under the plan)
+
+The plan was re-validated against a rebased master. Changes that touched the plan's
+grounding and how each was handled:
+
+1. **`handleSecretsRequest` refactored** into `if ecdsa {verifyECDSAOwnership + best-effort
+   env} else {on-chain digest/registry/policy}`, with `var release *types.Release` always
+   non-nil and the response reading env unconditionally. → Task 8 Step 3 rewritten to add a
+   THIRD, highest-priority `stack_id` branch and make env population nil-guarded, keeping
+   the two existing branches verbatim. The new on-chain ECDSA **creator ownership proof**
+   (`verifyECDSAOwnership` + `GetAppCreator`) is independent of the platform path and is
+   left untouched; the platform path still rejects `ecdsa` outright.
+2. **`IContractCaller` now has a mockery-generated mock** (`mock_IContractCaller.go`,
+   `make mocks`, `.mockery.yaml`) plus canonical hand-written stubs
+   (`MockContractCallerStub`/`TestableContractCallerStub` in `testhelpers.go`). → Task 3
+   Step 6 rewritten: regenerate the mock via `make mocks` and add `GetAvsConfig` to
+   `MockContractCallerStub` (covers both stubs via embedding). Files section updated.
+3. **Canonical test harness** (`createTestNodeWithManager` returning
+   `*TestableContractCallerStub`; `NewServer(n,0).GetHandler()`). → Task 8 Step 1 and
+   Task 7 Step 1 rewritten to use the real harness and to inject the fake
+   `platformClient.Client` by direct field assignment (`package node` internal test), with
+   a documented test-injection seam note in Task 7 Step 3.
+4. **Unchanged & still valid:** contract `AvsConfig` (no `platformRpcUrl` yet) and its
+   binding, `checkScheduledOperations`/`blockInterval`, `NewNode` signature, config
+   env-const pattern, `SecretsRequestV1` (no `StackID` yet), `pkg/clients/` layout — Tasks
+   1, 2, 4, 5, 6 and the Task 7 refresh mechanics need no change.
