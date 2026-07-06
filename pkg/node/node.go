@@ -2460,6 +2460,12 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	}
 	verifiedDealers, verifiedSourceVersions := reshare.VerifyDealerSourceVersions(
 		agreedDealers, onChainHashes, commitmentsByDealer, observedSourceVersions)
+	// Explicit pre-check symmetric with the existing-operator path (surfaces verified-vs-agreed
+	// counts for ops triage of join failures) before SelectMajoritySourceVersion's own guard.
+	if len(verifiedDealers) < requiredShares {
+		return fmt.Errorf("verified reshare dealer set too small (new operator): %d of %d on-chain submitters verified, need %d; will retry next interval",
+			len(verifiedDealers), len(agreedDealers), requiredShares)
+	}
 	agreedDealers, agreedSrcVersion, err := reshare.SelectMajoritySourceVersion(verifiedDealers, verifiedSourceVersions, requiredShares)
 	if err != nil {
 		n.logger.Sugar().Warnw("Aborting new-operator reshare finalize: no source-version-agreed dealer set",
@@ -2468,14 +2474,22 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	}
 
 	// Assemble finalize shares from the agreed dealer set. Every agreed dealer must have a
-	// share we verified above (it is a verified on-chain submitter); if one is somehow
-	// missing locally, abort rather than finalize on a divergent set.
+	// share; if one is missing locally (a joining node is especially likely to have missed
+	// the initial push window), fetch it on demand and verify it — mirroring the
+	// existing-operator path — before aborting. Only abort if it still can't be obtained.
 	participantIDs := make([]common.Address, 0, len(agreedDealers))
 	finalShares := make(map[common.Address]*fr.Element, len(agreedDealers))
 	for _, dealer := range agreedDealers {
-		share, ok := trustedShares[dealer]
-		if !ok {
-			return fmt.Errorf("new-operator reshare aborted: missing verified share for agreed dealer %s; will retry next interval", dealer.Hex())
+		if share, ok := trustedShares[dealer]; ok {
+			participantIDs = append(participantIDs, dealer)
+			finalShares[dealer] = share
+			continue
+		}
+		share, ferr := n.fetchAndVerifyReshareShare(session, dealer)
+		if ferr != nil {
+			n.logger.Sugar().Warnw("Aborting new-operator reshare finalize: could not obtain a dealer in the agreed set",
+				"operator_address", n.OperatorAddress.Hex(), "missing_dealer", dealer.Hex(), "error", ferr)
+			return fmt.Errorf("new-operator reshare aborted: missing verified share for agreed dealer %s: %w; will retry next interval", dealer.Hex(), ferr)
 		}
 		participantIDs = append(participantIDs, dealer)
 		finalShares[dealer] = share
