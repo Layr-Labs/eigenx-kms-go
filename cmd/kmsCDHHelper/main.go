@@ -134,7 +134,8 @@ type Request struct {
 	// override path; empty falls back to defaultSingleOperatorAddress.
 	OperatorAddress string `json:"operator_address,omitempty"`
 	AppID           string `json:"app_id"`
-	// Key is the environment-variable name to return from the merged app env.
+	// Key is the environment-variable name to return from the merged app env,
+	// or the reserved sentinel appPrivateKeyKey to return the app_private_key itself.
 	Key string `json:"key"`
 }
 
@@ -677,12 +678,15 @@ func retrieveAndDecrypt(
 	// Root-key request: emit the threshold-recovered app_private_key itself
 	// (hex of its compressed G1 bytes) and stop. This is the KMS-derived root a
 	// signing daemon seeds from; it does not depend on the release's
-	// encrypted_env, so we return before the IBE-decrypt below. The key was
-	// already validated against the master public key by RetrieveSecretsWithOptions
-	// (VerifyAppPrivateKey), so a poisoned KMS fails there, not here.
+	// encrypted_env, so we return before the IBE-decrypt below.
 	if req.Key == appPrivateKeyKey {
 		if len(result.AppPrivateKey.CompressedBytes) == 0 {
 			return nil, fmt.Errorf("KMS returned empty app_private_key for app %q", req.AppID)
+		}
+		// Warn if the key was recovered on the degraded path (not validated
+		// against the master public key). Stderr so stdout stays the pure key.
+		if !result.Verified {
+			log.Printf("WARNING: app_private_key not verified against master public key (degraded recovery)")
 		}
 		return map[string]string{
 			appPrivateKeyKey: hex.EncodeToString(result.AppPrivateKey.CompressedBytes),

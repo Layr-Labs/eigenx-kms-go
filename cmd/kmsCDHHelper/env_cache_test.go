@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -73,8 +75,18 @@ func TestEmitKey_AppPrivateKeySentinel(t *testing.T) {
 	// (see retrieveAndDecrypt); emitKey must serve it like any other key so the
 	// app_private_key hex reaches stdout unchanged.
 	rootHex := "852555c344147396974349e16f65c08dbf11b0d109e9df97afe2cfd41a84c5f34572a80bcb3053ac0ebec1693e539274"
+
+	r, w, _ := os.Pipe()
+	old := os.Stdout
+	os.Stdout = w
 	err := emitKey(map[string]string{appPrivateKeyKey: rootHex}, appPrivateKeyKey)
+	w.Close()
+	os.Stdout = old
 	require.NoError(t, err)
+
+	var buf bytes.Buffer
+	_, _ = io.Copy(&buf, r)
+	assert.Equal(t, rootHex, buf.String())
 }
 
 func TestCacheRoundTrip(t *testing.T) {

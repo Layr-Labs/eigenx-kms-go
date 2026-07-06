@@ -58,6 +58,9 @@ type SecretsResult struct {
 	ResponseCount   int
 	ThresholdNeeded int
 	ExtraData       []byte // echoed from KMS response
+	// Verified is false on the degraded path (master public key unavailable, so
+	// AppPrivateKey was recovered without VerifyAppPrivateKey).
+	Verified bool
 }
 
 // SecretsOptions configures secret retrieval behavior
@@ -664,12 +667,14 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 	// cannot be fetched (e.g., key rotation race), fall back to single-attempt recovery.
 	// partialSigs is already a map[common.Address]types.G1Point with correct node IDs
 	var appPrivateKey *types.G1Point
+	verified := false
 	masterPubKey, masterPKErr := c.GetMasterPublicKey(operators)
 	if masterPKErr == nil {
 		appPrivateKey, err = crypto.RecoverAppPrivateKeyWithRetry(appID, partialSigs, threshold, func(candidate *types.G1Point) bool {
 			valid, verifyErr := crypto.VerifyAppPrivateKey(appID, *candidate, *masterPubKey)
 			return verifyErr == nil && valid
 		})
+		verified = err == nil
 	} else {
 		c.logger.Sugar().Warnw("SECURITY DEGRADED: failed to get master public key, falling back to single-attempt recovery without BFT retry — invalid partial signatures will not be tolerated",
 			"error", masterPKErr)
@@ -698,6 +703,7 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 		ResponseCount:   len(responses),
 		ThresholdNeeded: threshold,
 		ExtraData:       opts.ExtraData,
+		Verified:        verified,
 	}, nil
 }
 
