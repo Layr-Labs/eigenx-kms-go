@@ -134,7 +134,11 @@ type Request struct {
 	// override path; empty falls back to defaultSingleOperatorAddress.
 	OperatorAddress string `json:"operator_address,omitempty"`
 	AppID           string `json:"app_id"`
-	// Key is the environment-variable name to return from the merged app env.
+	// Key is the environment-variable name to return from the merged app env,
+	// or the reserved sentinel appPrivateKeyKey to return the app_private_key itself.
+	// The sentinel is intercepted before the env is assembled, so any release env
+	// key of that exact name would be permanently shadowed — the name is reserved
+	// and must not be used in app releases.
 	Key string `json:"key"`
 }
 
@@ -161,6 +165,25 @@ const (
 	initDataPath     = "/run/peerpod/initdata"
 )
 
+// appPrivateKeyKey is a reserved Key value that makes the helper emit the
+// threshold-recovered app_private_key itself (hex of its compressed G1 bytes)
+// rather than an environment variable. This is the KMS-derived root a
+// signing daemon seeds from (app_private_key = S·H(appID)); it travels the
+// exact same eigenx-snp attestation path as a sealed env var, so it is only
+// ever recoverable inside an attested TEE. Because it is not part of the
+// release env, it bypasses the merged-env assembly, the IBE-decrypt, and the
+// tmpfs env cache entirely (the root must never be written to disk).
+const appPrivateKeyKey = "__EIGENX_APP_PRIVATE_KEY__"
+
+// cacheable reports whether a request key may be served from / written to the
+// tmpfs env cache. The app_private_key root is never cached: it is not part of
+// the release env and must not be persisted to disk, so its request always
+// re-attests. This single predicate is the one place the invariant lives — add
+// any future reserved sentinels to the exclusion here.
+func cacheable(key string) bool {
+	return key != appPrivateKeyKey
+}
+
 func main() {
 	if err := run(); err != nil {
 		log.Printf("kmsCDHHelper: %v", err)
@@ -180,10 +203,15 @@ func run() error {
 	// is held across the read so we don't race a concurrent first-call writer
 	// (kata-agent unseals sequentially today, but a multi-container pod shares
 	// the podVM). See env_cache.go.
-	if env, ok, cerr := loadCachedEnv(req.AppID); cerr != nil {
-		return fmt.Errorf("read env cache: %w", cerr)
-	} else if ok {
-		return emitKey(env, req.Key)
+	//
+	// The app_private_key root is never cached (it is not part of the env map),
+	// so its request always attests fresh and never consults the cache.
+	if cacheable(req.Key) {
+		if env, ok, cerr := loadCachedEnv(req.AppID); cerr != nil {
+			return fmt.Errorf("read env cache: %w", cerr)
+		} else if ok {
+			return emitKey(env, req.Key)
+		}
 	}
 
 	rsaPriv, rsaPubPEM, err := generateRSAKeypair()
@@ -251,8 +279,14 @@ func run() error {
 	// Cache the whole merged env so sibling sealed vars for this app this pod
 	// boot hit the fast path above. Best-effort: a cache write failure must not
 	// fail the unseal — we already have the value in hand.
-	if cerr := storeCachedEnv(req.AppID, env); cerr != nil {
-		log.Printf("warning: cache merged env for app %q: %v", req.AppID, cerr)
+	//
+	// Never cache the app_private_key root: it is not part of the release env,
+	// and it must not be persisted to the tmpfs cache. Its request always
+	// re-attests (see the fast-path guard above).
+	if cacheable(req.Key) {
+		if cerr := storeCachedEnv(req.AppID, env); cerr != nil {
+			log.Printf("warning: cache merged env for app %q: %v", req.AppID, cerr)
+		}
 	}
 
 	return emitKey(env, req.Key)
@@ -570,6 +604,28 @@ func fetchAAEvidence(reportData [reportDataLength]byte) ([]byte, error) {
 	return body, nil
 }
 
+// appPrivateKeyG1Bytes is the compressed size of a BLS12-381 G1 point — the
+// exact length of a well-formed app_private_key.
+const appPrivateKeyG1Bytes = 48
+
+// emitAppPrivateKey validates a threshold-recovery result and returns the raw
+// app_private_key (hex of its compressed G1 bytes) keyed by the sentinel. It is
+// the root secret a signing daemon seeds from, so it is emitted only when it was
+// validated against the master public key — never on the degraded (no-BFT-retry)
+// path where a Byzantine operator could yield a corrupted key — and only when it
+// has the exact G1 point length.
+func emitAppPrivateKey(result *kmsClient.SecretsResult, appID string) (map[string]string, error) {
+	if !result.Verified {
+		return nil, fmt.Errorf("refusing to emit app_private_key for app %q: not verified against master public key (degraded recovery)", appID)
+	}
+	if len(result.AppPrivateKey.CompressedBytes) != appPrivateKeyG1Bytes {
+		return nil, fmt.Errorf("KMS returned app_private_key of %d bytes for app %q, want %d", len(result.AppPrivateKey.CompressedBytes), appID, appPrivateKeyG1Bytes)
+	}
+	return map[string]string{
+		appPrivateKeyKey: hex.EncodeToString(result.AppPrivateKey.CompressedBytes),
+	}, nil
+}
+
 // retrieveAndDecrypt drives the on-chain operator discovery, the eigenx-snp
 // secret-retrieval flow, and the IBE-decrypt of the KMS-returned encrypted_env.
 // It returns the app's full environment as a merged key→value map:
@@ -580,6 +636,9 @@ func fetchAAEvidence(reportData [reportDataLength]byte) ([]byte, error) {
 // AppPrivateKey from the threshold partial sigs and returns the still-encrypted
 // EncryptedEnv. The IBE-decrypt of that encrypted_env happens here via
 // crypto.DecryptForApp(appID, AppPrivateKey, ...).
+//
+// When the sentinel key (appPrivateKeyKey) is requested, the function returns
+// the raw app_private_key and skips the IBE-decrypt step entirely.
 func retrieveAndDecrypt(
 	req *Request,
 	evidence, ccInitData, rsaPubPEM []byte,
@@ -651,6 +710,14 @@ func retrieveAndDecrypt(
 	result, err := client.RetrieveSecretsWithOptions(req.AppID, opts)
 	if err != nil {
 		return nil, fmt.Errorf("RetrieveSecretsWithOptions: %w", err)
+	}
+
+	// Root-key request: emit the threshold-recovered app_private_key itself
+	// (hex of its compressed G1 bytes) and stop. This is the KMS-derived root a
+	// signing daemon seeds from; it does not depend on the release's
+	// encrypted_env, so we return before the IBE-decrypt below.
+	if req.Key == appPrivateKeyKey {
+		return emitAppPrivateKey(result, req.AppID)
 	}
 
 	// Per the KMS design (docs/references/new_kms.md, "Application Decryption"):

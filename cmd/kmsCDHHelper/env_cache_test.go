@@ -1,10 +1,14 @@
 package main
 
 import (
+	"encoding/hex"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/kmsClient"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -66,6 +70,64 @@ func TestEmitKey_MissingKeyFailsLoud(t *testing.T) {
 	err := emitKey(map[string]string{"A": "1"}, "NOPE")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not present in app env")
+}
+
+func TestCacheable_AppPrivateKeyNeverCached(t *testing.T) {
+	// The root key must bypass the tmpfs env cache entirely (never read, never
+	// written); any other key is cacheable. This is the invariant both cache
+	// sites in run() gate on.
+	assert.False(t, cacheable(appPrivateKeyKey), "app_private_key root must never be cached")
+	assert.True(t, cacheable("DB_PASSWORD"), "ordinary env keys are cacheable")
+	assert.True(t, cacheable("API_KEY"), "ordinary env keys are cacheable")
+}
+
+func TestEmitAppPrivateKey_RefusesUnverified(t *testing.T) {
+	// The root key must never be emitted on the degraded (unverified) recovery
+	// path, even when the bytes have a valid length.
+	result := &kmsClient.SecretsResult{
+		AppPrivateKey: types.G1Point{CompressedBytes: make([]byte, appPrivateKeyG1Bytes)},
+		Verified:      false,
+	}
+	_, err := emitAppPrivateKey(result, "0xapp")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not verified")
+}
+
+func TestEmitAppPrivateKey_RejectsWrongLength(t *testing.T) {
+	// A verified result whose key isn't a 48-byte compressed G1 point is
+	// malformed and must be rejected rather than emitted. Covers the empty case.
+	for _, n := range []int{0, 32, 47, 49} {
+		result := &kmsClient.SecretsResult{
+			AppPrivateKey: types.G1Point{CompressedBytes: make([]byte, n)},
+			Verified:      true,
+		}
+		_, err := emitAppPrivateKey(result, "0xapp")
+		require.Errorf(t, err, "expected error for %d-byte key", n)
+		assert.Contains(t, err.Error(), "want 48")
+	}
+
+	// A nil slice is len 0, so it takes the same reject path — assert explicitly.
+	_, err := emitAppPrivateKey(&kmsClient.SecretsResult{
+		AppPrivateKey: types.G1Point{CompressedBytes: nil},
+		Verified:      true,
+	}, "0xapp")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "want 48")
+}
+
+func TestEmitAppPrivateKey_EmitsVerified48Byte(t *testing.T) {
+	raw := make([]byte, appPrivateKeyG1Bytes)
+	for i := range raw {
+		raw[i] = byte(i)
+	}
+	result := &kmsClient.SecretsResult{
+		AppPrivateKey: types.G1Point{CompressedBytes: raw},
+		Verified:      true,
+	}
+	out, err := emitAppPrivateKey(result, "0xapp")
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{appPrivateKeyKey: hex.EncodeToString(raw)}, out)
+	assert.False(t, strings.Contains(out[appPrivateKeyKey], " "), "hex must be bare")
 }
 
 func TestCacheRoundTrip(t *testing.T) {
