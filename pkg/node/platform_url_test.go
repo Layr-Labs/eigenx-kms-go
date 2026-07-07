@@ -5,8 +5,11 @@ import (
 	"errors"
 	"testing"
 
+	chainPoller "github.com/Layr-Labs/chain-indexer/pkg/chainPollers"
+	"github.com/Layr-Labs/chain-indexer/pkg/transactionLogParser/log"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/registrarabi"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -71,6 +74,106 @@ func TestRefreshPlatformConfig_UnsafeURLIgnored(t *testing.T) {
 			fake.cfg = &caller.AvsConfig{PlatformRpcUrl: unsafe}
 			n.refreshPlatformConfig(context.Background())
 			require.Equal(t, "p.example:9002", n.PlatformRpcURL())
+		})
+	}
+}
+
+// logWithURL builds an AvsConfigSet LogWithBlock carrying the given platformRpcUrl.
+func logWithURL(url string) *chainPoller.LogWithBlock {
+	return &chainPoller.LogWithBlock{
+		Log: &log.DecodedLog{
+			EventName:  registrarabi.AvsConfigSetEventName,
+			OutputData: map[string]interface{}{"platformRpcUrl": url},
+		},
+	}
+}
+
+func TestHandlePlatformConfigLog(t *testing.T) {
+	tests := []struct {
+		name    string
+		seed    string // pre-seeded cached URL
+		lwb     *chainPoller.LogWithBlock
+		wantURL string
+	}{
+		{
+			name:    "valid url updates cache",
+			seed:    "",
+			lwb:     logWithURL("p.example:9002"),
+			wantURL: "p.example:9002",
+		},
+		{
+			name:    "valid url replaces existing",
+			seed:    "old.example:9002",
+			lwb:     logWithURL("new.example:9002"),
+			wantURL: "new.example:9002",
+		},
+		{
+			name:    "nil LogWithBlock ignored",
+			seed:    "keep.example:9002",
+			lwb:     nil,
+			wantURL: "keep.example:9002",
+		},
+		{
+			name:    "nil inner log ignored",
+			seed:    "keep.example:9002",
+			lwb:     &chainPoller.LogWithBlock{Log: nil},
+			wantURL: "keep.example:9002",
+		},
+		{
+			name: "non-AvsConfigSet event ignored",
+			seed: "keep.example:9002",
+			lwb: &chainPoller.LogWithBlock{Log: &log.DecodedLog{
+				EventName:  "SomethingElse",
+				OutputData: map[string]interface{}{"platformRpcUrl": "evil.example:9002"},
+			}},
+			wantURL: "keep.example:9002",
+		},
+		{
+			name: "missing platformRpcUrl key ignored",
+			seed: "keep.example:9002",
+			lwb: &chainPoller.LogWithBlock{Log: &log.DecodedLog{
+				EventName:  registrarabi.AvsConfigSetEventName,
+				OutputData: map[string]interface{}{"operatorSetId": uint32(0)},
+			}},
+			wantURL: "keep.example:9002",
+		},
+		{
+			name: "non-string platformRpcUrl ignored",
+			seed: "keep.example:9002",
+			lwb: &chainPoller.LogWithBlock{Log: &log.DecodedLog{
+				EventName:  registrarabi.AvsConfigSetEventName,
+				OutputData: map[string]interface{}{"platformRpcUrl": 42},
+			}},
+			wantURL: "keep.example:9002",
+		},
+		{
+			name:    "unsafe file url ignored",
+			seed:    "keep.example:9002",
+			lwb:     logWithURL("file:///etc/passwd"),
+			wantURL: "keep.example:9002",
+		},
+		{
+			name:    "unsafe unix url ignored",
+			seed:    "keep.example:9002",
+			lwb:     logWithURL("unix:/var/run/docker.sock"),
+			wantURL: "keep.example:9002",
+		},
+		{
+			name:    "whitespace trimmed",
+			seed:    "",
+			lwb:     logWithURL("  p.example:9002  "),
+			wantURL: "p.example:9002",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			n := &Node{logger: zap.NewNop()}
+			if tc.seed != "" {
+				n.platformURL.Store(tc.seed)
+			}
+			n.handlePlatformConfigLog(tc.lwb)
+			require.Equal(t, tc.wantURL, n.PlatformRpcURL())
 		})
 	}
 }

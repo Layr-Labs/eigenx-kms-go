@@ -78,7 +78,7 @@ func newTestSecretsFixture(t *testing.T) *testSecretsFixture {
 	persistence := memory.NewMemoryPersistence()
 	t.Cleanup(func() { _ = persistence.Close() })
 
-	n, err := NewNode(cfg, peeringDataFetcher, bh, nil, imts, mockManager, stub, mockRegistryAddress, persistence, testLogger)
+	n, err := NewNode(cfg, peeringDataFetcher, bh, nil, imts, mockManager, stub, nil, mockRegistryAddress, persistence, testLogger)
 	if err != nil {
 		t.Fatalf("Failed to create node: %v", err)
 	}

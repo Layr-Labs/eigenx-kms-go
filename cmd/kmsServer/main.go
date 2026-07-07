@@ -653,6 +653,9 @@ func runKMSServer(c *cli.Context) error {
 		transportSignerInstance,
 		attestationManager,
 		baseContractCaller,
+		// platformConfigCaller: the EigenKMSRegistrar (and its AvsConfig) lives on L1, the
+		// same chain the AvsConfigSet event logs come from, so the startup seed must read L1.
+		l1ContractCaller,
 		commitmentRegistryAddr,
 		nodePersistence,
 		l,

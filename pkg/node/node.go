@@ -37,6 +37,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/merkle"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/persistence"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/registrarabi"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/reshare"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transport"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
@@ -96,6 +97,15 @@ type Node struct {
 	// Base chain integration (for commitment registry)
 	baseContractCaller        contractCaller.IContractCaller
 	commitmentRegistryAddress common.Address
+
+	// platformConfigCaller reads the EigenKMSRegistrar's AvsConfig for the one-shot
+	// startup seed of the platform RPC URL. The registrar lives on L1 (the same chain
+	// the AvsConfigSet event logs come from), while baseContractCaller is bound to the
+	// L2/Base client — so seeding via baseContractCaller would read the registrar on the
+	// wrong chain. This is an L1-bound caller injected at construction; if nil, we fall
+	// back to baseContractCaller (used by unit tests that don't distinguish chains).
+	// Steady-state updates arrive via AvsConfigSet event logs and need no contract read.
+	platformConfigCaller contractCaller.IContractCaller
 
 	// Access control
 	appAllowlist map[string]bool // nil means all apps allowed
@@ -457,6 +467,7 @@ func NewNode(
 	tps transportSigner.ITransportSigner,
 	attestationManager *attestation.AttestationManager,
 	baseContractCaller contractCaller.IContractCaller,
+	platformConfigCaller contractCaller.IContractCaller,
 	commitmentRegistryAddress common.Address,
 	p persistence.INodePersistence,
 	l *zap.Logger,
@@ -495,6 +506,7 @@ func NewNode(
 		lastProcessedBoundary:     0,
 		transportSigner:           tps,
 		baseContractCaller:        baseContractCaller,
+		platformConfigCaller:      platformConfigCaller,
 		commitmentRegistryAddress: commitmentRegistryAddress,
 		persistence:               p,
 	}
@@ -547,8 +559,17 @@ func isSafePlatformURL(u string) bool {
 
 // refreshPlatformConfig reads AvsConfig from chain and updates the cached URL.
 // Non-fatal: on error it leaves the current value in place and logs.
+//
+// It reads via platformConfigCaller when set (an L1-bound caller — the registrar lives
+// on L1, the same chain the AvsConfigSet event logs come from), falling back to
+// baseContractCaller when nil. This is used only for the one-shot startup seed;
+// steady-state updates arrive via handlePlatformConfigLog (no contract read).
 func (n *Node) refreshPlatformConfig(ctx context.Context) {
-	cfg, err := n.baseContractCaller.GetAvsConfig(ctx, n.AVSAddress)
+	cc := n.platformConfigCaller
+	if cc == nil {
+		cc = n.baseContractCaller
+	}
+	cfg, err := cc.GetAvsConfig(ctx, n.AVSAddress)
 	if err != nil {
 		n.logger.Sugar().Warnw("Failed to read AvsConfig for platform URL",
 			"operator_address", n.OperatorAddress.Hex(), "error", err)
@@ -572,9 +593,50 @@ func (n *Node) refreshPlatformConfig(ctx context.Context) {
 	n.platformURL.Store(cfg.PlatformRpcUrl)
 }
 
+// handlePlatformConfigLog updates the cached platform RPC URL from an AvsConfigSet
+// event emitted by the EigenKMSRegistrar (on L1). This is the steady-state source of
+// platform-URL updates — no contract read required. Non-AvsConfigSet logs are ignored.
+//
+// The AvsConfigSet event's `platformRpcUrl` is a non-indexed string arg, so the log
+// parser's UnpackIntoMap places it in OutputData as a native Go string.
+func (n *Node) handlePlatformConfigLog(lwb *chainPoller.LogWithBlock) {
+	if lwb == nil || lwb.Log == nil || lwb.Log.EventName != registrarabi.AvsConfigSetEventName {
+		return
+	}
+	raw, ok := lwb.Log.OutputData["platformRpcUrl"]
+	if !ok {
+		n.logger.Sugar().Warnw("AvsConfigSet log missing platformRpcUrl",
+			"operator_address", n.OperatorAddress.Hex())
+		return
+	}
+	url, ok := raw.(string)
+	if !ok {
+		n.logger.Sugar().Warnw("AvsConfigSet platformRpcUrl is not a string",
+			"operator_address", n.OperatorAddress.Hex(),
+			"type", fmt.Sprintf("%T", raw))
+		return
+	}
+	url = strings.TrimSpace(url)
+	// Validate the event-sourced URL. A non-empty URL with a dangerous scheme
+	// (file/unix/http/etc.) is ignored — leave the cached value untouched so the client
+	// fails closed rather than reaching the local filesystem. An empty URL is allowed
+	// (it clears the cached target so the platform client fails closed).
+	if url != "" && !isSafePlatformURL(url) {
+		n.logger.Sugar().Warnw("Ignoring unsafe platform RPC URL from AvsConfigSet event",
+			"operator_address", n.OperatorAddress.Hex(), "url", url)
+		return
+	}
+	if n.PlatformRpcURL() != url {
+		n.logger.Sugar().Infow("Platform RPC URL updated from AvsConfigSet event",
+			"operator_address", n.OperatorAddress.Hex(), "url", url)
+	}
+	n.platformURL.Store(url)
+}
+
 // startScheduler starts the automatic protocol scheduler with context
 func (n *Node) startScheduler(ctx context.Context) {
 	go n.blockHandler.ListenToChannel(ctx, n.checkScheduledOperations)
+	go n.blockHandler.ListenToLogChannel(ctx, n.handlePlatformConfigLog)
 }
 
 // checkScheduledOperations checks for block interval boundaries and executes appropriate protocol
@@ -584,16 +646,6 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 
 	// Step 1: Get block interval for this chain
 	blockInterval := config.GetReshareBlockIntervalForChain(n.ChainID)
-
-	// Refresh the platform RPC URL from chain on reshare-interval boundaries
-	// (cheap eth_call, bounded to that cadence to limit RPC load).
-	// Platform-URL refresh and the reshare trigger below both fire on the same
-	// reshare-interval boundary; this shared %blockInterval gate is intentional.
-	if blockNumber%blockInterval == 0 {
-		refreshCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		n.refreshPlatformConfig(refreshCtx)
-	}
 
 	// Step 2: Check if this block is an interval boundary
 	if blockNumber%blockInterval != 0 {
@@ -727,6 +779,14 @@ func (n *Node) Start() error {
 	if err := n.poller.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start chain poller: %w", err)
 	}
+
+	// Seed the platform RPC URL once at startup (covers config changes made while the
+	// node was offline); subsequent updates arrive via AvsConfigSet event logs. Best-effort:
+	// refreshPlatformConfig logs and leaves the cache untouched on error, so the node still
+	// starts and events will populate the URL later.
+	seedCtx, seedCancel := context.WithTimeout(ctx, 5*time.Second)
+	n.refreshPlatformConfig(seedCtx)
+	seedCancel()
 
 	// Start scheduler in goroutine
 	go n.startScheduler(ctx)

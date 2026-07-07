@@ -125,7 +125,7 @@ func newPlatformTestNode(t *testing.T, manager *attestation.AttestationManager) 
 	persistence := memory.NewMemoryPersistence()
 	t.Cleanup(func() { _ = persistence.Close() })
 
-	n, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, manager, mockBaseContractCaller, mockRegistryAddress, persistence, testLogger)
+	n, err := NewNode(cfg, peeringDataFetcher, bh, mockPoller, imts, manager, mockBaseContractCaller, nil, mockRegistryAddress, persistence, testLogger)
 	require.NoError(t, err)
 
 	// Seed an active key share so partial signing succeeds.
