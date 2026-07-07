@@ -199,6 +199,52 @@ func (_c *MockIBlockHandler_HandleReorgBlock_Call) RunAndReturn(run func(ctx con
 	return _c
 }
 
+// ListenToLogChannel provides a mock function for the type MockIBlockHandler
+func (_mock *MockIBlockHandler) ListenToLogChannel(ctx context.Context, handleFunc func(*chainPoller.LogWithBlock)) {
+	_mock.Called(ctx, handleFunc)
+	return
+}
+
+// MockIBlockHandler_ListenToLogChannel_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'ListenToLogChannel'
+type MockIBlockHandler_ListenToLogChannel_Call struct {
+	*mock.Call
+}
+
+// ListenToLogChannel is a helper method to define mock.On call
+//   - ctx context.Context
+//   - handleFunc func(*chainPoller.LogWithBlock)
+func (_e *MockIBlockHandler_Expecter) ListenToLogChannel(ctx interface{}, handleFunc interface{}) *MockIBlockHandler_ListenToLogChannel_Call {
+	return &MockIBlockHandler_ListenToLogChannel_Call{Call: _e.mock.On("ListenToLogChannel", ctx, handleFunc)}
+}
+
+func (_c *MockIBlockHandler_ListenToLogChannel_Call) Run(run func(ctx context.Context, handleFunc func(*chainPoller.LogWithBlock))) *MockIBlockHandler_ListenToLogChannel_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 func(*chainPoller.LogWithBlock)
+		if args[1] != nil {
+			arg1 = args[1].(func(*chainPoller.LogWithBlock))
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIBlockHandler_ListenToLogChannel_Call) Return() *MockIBlockHandler_ListenToLogChannel_Call {
+	_c.Call.Return()
+	return _c
+}
+
+func (_c *MockIBlockHandler_ListenToLogChannel_Call) RunAndReturn(run func(ctx context.Context, handleFunc func(*chainPoller.LogWithBlock))) *MockIBlockHandler_ListenToLogChannel_Call {
+	_c.Run(run)
+	return _c
+}
+
 // ListenToChannel provides a mock function for the type MockIBlockHandler
 func (_mock *MockIBlockHandler) ListenToChannel(ctx context.Context, handleFunc func(*ethereum.EthereumBlock)) {
 	_mock.Called(ctx, handleFunc)

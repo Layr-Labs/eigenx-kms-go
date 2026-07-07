@@ -11,10 +11,12 @@ import (
 type IBlockHandler interface {
 	chainPoller.IBlockHandler
 	ListenToChannel(ctx context.Context, handleFunc func(*ethereum.EthereumBlock))
+	ListenToLogChannel(ctx context.Context, handleFunc func(*chainPoller.LogWithBlock))
 }
 
 type BlockHandler struct {
 	BlockChannel chan *ethereum.EthereumBlock
+	LogChannel   chan *chainPoller.LogWithBlock
 	logger       *zap.Logger
 }
 
@@ -24,7 +26,9 @@ func NewBlockHandler(
 	return &BlockHandler{
 		// 100 block capacity should be more than enough to handle finalized blocks
 		BlockChannel: make(chan *ethereum.EthereumBlock, 100),
-		logger:       logger,
+		// 100 log capacity should be more than enough to handle decoded logs
+		LogChannel: make(chan *chainPoller.LogWithBlock, 100),
+		logger:     logger,
 	}
 }
 
@@ -55,8 +59,38 @@ func (h *BlockHandler) HandleBlock(ctx context.Context, block *ethereum.Ethereum
 	return nil
 }
 
+func (h *BlockHandler) ListenToLogChannel(ctx context.Context, handleFunc func(*chainPoller.LogWithBlock)) {
+	for {
+		select {
+		// read logs from the channel and call handleFunc
+		case logWithBlock := <-h.LogChannel:
+			eventName := ""
+			if logWithBlock.Log != nil {
+				eventName = logWithBlock.Log.EventName
+			}
+			h.logger.Sugar().Debugf("BlockHandler received log %q from channel", eventName)
+			handleFunc(logWithBlock)
+		case <-ctx.Done():
+			h.logger.Sugar().Info("BlockHandler log channel listener exiting due to context done")
+			return
+		}
+	}
+}
+
 func (h *BlockHandler) HandleLog(ctx context.Context, logWithBlock *chainPoller.LogWithBlock) error {
-	// we dont care about logs, so just return nil
+	// deliver the decoded log to the log channel for consumption by listeners
+	select {
+	case h.LogChannel <- logWithBlock:
+		h.logger.Sugar().Debug("Log sent to channel")
+	case <-ctx.Done():
+		h.logger.Sugar().Warn("Context done before sending log to channel")
+	default:
+		eventName := ""
+		if logWithBlock != nil && logWithBlock.Log != nil {
+			eventName = logWithBlock.Log.EventName
+		}
+		h.logger.Sugar().Warnw("Log channel is full, dropping log", "eventName", eventName)
+	}
 	return nil
 }
 
