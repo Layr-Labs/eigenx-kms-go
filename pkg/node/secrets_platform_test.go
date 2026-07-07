@@ -329,3 +329,19 @@ func TestSecretsPlatform_NonSha256Digest(t *testing.T) {
 
 	assert.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
 }
+
+func TestSecretsPlatform_EmptyDigest(t *testing.T) {
+	// An empty attested ImageDigest fails the sha256: prefix guard and must be
+	// rejected (fails closed via errPlatformDigestMismatch → 403).
+	n := newPlatformTestNode(t, newPlatformManager(t, ""))
+	fake := &fakePlatformClient{rel: &platformClient.Release{
+		StackID: platformTestStackID,
+		Apps:    []platformClient.App{{Name: "app", Image: "registry/app@" + platformTestDigest}},
+	}}
+	n.platformClient = fake
+
+	req := buildPlatformSecretsRequest(t, platformTestAppID, "gcp", platformTestStackID)
+	w := servePlatformSecrets(t, n, req)
+
+	assert.Equal(t, http.StatusForbidden, w.Code, "body: %s", w.Body.String())
+}

@@ -209,6 +209,7 @@ func TestIsSafePlatformURL(t *testing.T) {
 		"https://example.com",
 		"passthrough:///x",
 		"dns:///nohostport",
+		"[::1]", // bracketed IPv6 without a port has no host:port form
 	}
 	for _, u := range rejected {
 		require.False(t, isSafePlatformURL(u), "expected %q to be rejected", u)
@@ -219,6 +220,7 @@ func TestIsSafePlatformURL(t *testing.T) {
 		"dns:///p.example:9002",
 		"dns:///x:9002",
 		"dns://authority/x:9002",
+		"[::1]:9002", // bracketed IPv6 host:port (net.SplitHostPort handles it)
 	}
 	for _, u := range accepted {
 		require.True(t, isSafePlatformURL(u), "expected %q to be accepted", u)

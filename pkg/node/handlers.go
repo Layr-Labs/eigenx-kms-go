@@ -332,12 +332,12 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 		}
 		// release stays nil -> response env fields stay empty (share-only).
 	} else if req.AttestationMethod == "ecdsa" {
-		if status, ownErr := s.verifyECDSAOwnership(req.AppID, claims.PublicKey); ownErr != nil {
+		if httpStatus, ownErr := s.verifyECDSAOwnership(req.AppID, claims.PublicKey); ownErr != nil {
 			s.node.logger.Sugar().Warnw("ECDSA ownership check failed",
 				"operator_address", s.node.OperatorAddress.Hex(),
 				"app_id", req.AppID,
 				"error", ownErr)
-			http.Error(w, ownErr.Error(), status)
+			http.Error(w, ownErr.Error(), httpStatus)
 			return
 		}
 
