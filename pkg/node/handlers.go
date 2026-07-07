@@ -3,17 +3,22 @@ package node
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"slices"
+	"strings"
 	"time"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
+	platformClient "github.com/Layr-Labs/eigenx-kms-go/pkg/clients/platformClient"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/ethereum/go-ethereum/common"
 	ethcrypto "github.com/ethereum/go-ethereum/crypto"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 )
 
 // validateAuthenticatedMessage validates an incoming authenticated message
@@ -97,6 +102,91 @@ func (s *Server) verifyECDSAOwnership(appID string, publicKey []byte) (int, erro
 		return http.StatusForbidden, fmt.Errorf("ecdsa signer is not the app creator")
 	}
 	return 0, nil
+}
+
+// errPlatformDigestMismatch signals the attested image digest did not match any
+// app image in the platform release for the requested stack.
+var errPlatformDigestMismatch = errors.New("image digest not authorized by platform release")
+
+// authorizeViaPlatform fetches the platform release for stackID and requires the
+// attested image digest to match one of the release's app images. Returns nil on
+// success, ErrPlatformURLNotConfigured / a gRPC status error / a digest-mismatch
+// sentinel otherwise.
+func (s *Server) authorizeViaPlatform(ctx context.Context, stackID string, claims *types.AttestationClaims) error {
+	if s.node.platformClient == nil {
+		return platformClient.ErrPlatformURLNotConfigured
+	}
+	// Defense-in-depth: only a well-formed TEE-measured digest may match. This
+	// rejects "ecdsa:unverified" and any non-sha256 placeholder even if the ecdsa
+	// guard in the caller is ever bypassed.
+	if !strings.HasPrefix(claims.ImageDigest, "sha256:") {
+		return errPlatformDigestMismatch
+	}
+	rel, err := s.node.platformClient.GetLatestDeployedRelease(ctx, stackID)
+	if err != nil {
+		return err
+	}
+	for _, app := range rel.Apps {
+		if digest := digestFromImageRef(app.Image); digest != "" && digest == claims.ImageDigest {
+			return nil
+		}
+	}
+	return errPlatformDigestMismatch
+}
+
+// digestFromImageRef extracts "sha256:<hex>" from a full ref "...@sha256:<hex>".
+// It requires a full 64-char hex tail: a malformed ref like "app@sha256:" (empty
+// tail) or one whose tail contains a non-hex character yields "" so the app-loop
+// skips it and can never match an attested digest.
+func digestFromImageRef(ref string) string {
+	i := strings.Index(ref, "@sha256:")
+	if i < 0 {
+		return ""
+	}
+	digest := ref[i+1:] // "sha256:<hex>"
+	if len(digest) != len("sha256:")+64 {
+		return ""
+	}
+	for _, c := range digest[len("sha256:"):] {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
+			return ""
+		}
+	}
+	return digest
+}
+
+// writePlatformAuthError maps a platform authorization failure to an HTTP status.
+func (s *Server) writePlatformAuthError(w http.ResponseWriter, req types.SecretsRequestV1, err error) {
+	switch {
+	case errors.Is(err, platformClient.ErrPlatformURLNotConfigured):
+		http.Error(w, "platform RPC URL not configured", http.StatusServiceUnavailable)
+	case errors.Is(err, errPlatformDigestMismatch):
+		http.Error(w, "image digest not authorized by platform release", http.StatusForbidden)
+	default:
+		// gRPC status error from the platform.
+		switch status.Code(err) {
+		case codes.PermissionDenied:
+			http.Error(w, "operator not authorized by platform", http.StatusForbidden)
+		case codes.NotFound:
+			http.Error(w, "no deployed release for stack", http.StatusNotFound)
+		case codes.Unavailable:
+			http.Error(w, "platform unavailable", http.StatusServiceUnavailable)
+		case codes.DeadlineExceeded:
+			http.Error(w, "platform request timed out", http.StatusServiceUnavailable)
+		case codes.Unauthenticated:
+			// The platform rejected our signed request (bad sig / stale / tampered) —
+			// this is an OPERATOR-side misconfiguration (clock skew, wrong signing key,
+			// key not the registered ECDSAAddress), not the caller's fault. Map to 500
+			// so the caller retries elsewhere while the operator is alerted via logs.
+			s.node.logger.Sugar().Errorw("platform rejected operator signature (Unauthenticated) — check operator clock/signing key",
+				"operator_address", s.node.OperatorAddress.Hex(), "stack_id", req.StackID, "error", err)
+			http.Error(w, "platform authorization failed", http.StatusInternalServerError)
+		default:
+			s.node.logger.Sugar().Warnw("platform authorization error",
+				"operator_address", s.node.OperatorAddress.Hex(), "stack_id", req.StackID, "error", err)
+			http.Error(w, "platform authorization failed", http.StatusInternalServerError)
+		}
+	}
 }
 
 // handleSecretsRequest handles the /secrets endpoint for application secret retrieval
@@ -222,14 +312,32 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 	// app's on-chain creator and does NOT depend on a release (best-effort env,
 	// no digest/registry/container-policy checks). All other methods keep the
 	// full release + image-digest + registry + container-policy enforcement.
-	var release *types.Release
-	if req.AttestationMethod == "ecdsa" {
-		if status, ownErr := s.verifyECDSAOwnership(req.AppID, claims.PublicKey); ownErr != nil {
+	var release *types.Release // stays nil on the platform path (no secrets returned)
+	if req.StackID != "" {
+		// The platform path authorizes SOLELY by matching the attested image digest
+		// (no registry/policy check). ECDSA attestation proves only key ownership, not
+		// the running image (its claims.ImageDigest is either "ecdsa:unverified" or an
+		// operator-configured AllowedImageDigest — neither is a TEE-measured digest).
+		// Reject it outright so a configured AllowedImageDigest can never satisfy the
+		// platform digest match. Require a TEE method (gcp/intel/eigenx-snp).
+		if req.AttestationMethod == "ecdsa" {
+			s.node.logger.Sugar().Warnw("ecdsa attestation not allowed on the platform (stack_id) path",
+				"operator_address", s.node.OperatorAddress.Hex(), "stack_id", req.StackID)
+			http.Error(w, "ecdsa attestation is not permitted for stack_id requests", http.StatusForbidden)
+			return
+		}
+		if err := s.authorizeViaPlatform(r.Context(), req.StackID, claims); err != nil {
+			s.writePlatformAuthError(w, req, err)
+			return
+		}
+		// release stays nil -> response env fields stay empty (share-only).
+	} else if req.AttestationMethod == "ecdsa" {
+		if httpStatus, ownErr := s.verifyECDSAOwnership(req.AppID, claims.PublicKey); ownErr != nil {
 			s.node.logger.Sugar().Warnw("ECDSA ownership check failed",
 				"operator_address", s.node.OperatorAddress.Hex(),
 				"app_id", req.AppID,
 				"error", ownErr)
-			http.Error(w, ownErr.Error(), status)
+			http.Error(w, ownErr.Error(), httpStatus)
 			return
 		}
 
@@ -360,10 +468,12 @@ func (s *Server) handleSecretsRequest(w http.ResponseWriter, r *http.Request) {
 
 	// Step 10: Create response
 	response := types.SecretsResponseV1{
-		EncryptedEnv:        release.EncryptedEnv,
-		PublicEnv:           release.PublicEnv,
 		EncryptedPartialSig: encryptedPartialSig,
 		ExtraData:           req.ExtraData,
+	}
+	if release != nil {
+		response.EncryptedEnv = release.EncryptedEnv
+		response.PublicEnv = release.PublicEnv
 	}
 
 	// Return JSON response

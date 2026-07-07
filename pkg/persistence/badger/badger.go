@@ -22,6 +22,8 @@ const (
 	keyPrefixActiveVersion = "active:version"
 	keyPrefixNodeState     = "nodestate:main"
 	keyPrefixSession       = "session:"
+	keyPrefixBlockRecord   = "blockRecord:"
+	keyPrefixLastBlock     = "lastBlock:"
 	keySchemaVersion       = "metadata:schema_version"
 	currentSchemaVersion   = "v1"
 )
@@ -556,6 +558,149 @@ func (b *BadgerPersistence) ListProtocolSessions() ([]*persistence.ProtocolSessi
 	}
 
 	return sessions, nil
+}
+
+// SaveBlockRecord upserts a block record and advances the last-processed
+// pointer for the chain to the saved block.
+func (b *BadgerPersistence) SaveBlockRecord(record *persistence.BlockRecord) error {
+	if record == nil {
+		return fmt.Errorf("cannot save nil BlockRecord")
+	}
+
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.closed {
+		return fmt.Errorf("persistence layer is closed")
+	}
+
+	// Serialize to JSON
+	data, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("failed to marshal BlockRecord: %w", err)
+	}
+
+	recordKey := fmt.Sprintf("%s%d:%d", keyPrefixBlockRecord, record.ChainId, record.Number)
+	lastKey := fmt.Sprintf("%s%d", keyPrefixLastBlock, record.ChainId)
+
+	// Store block number pointer as big-endian uint64
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, record.Number)
+
+	return b.db.Update(func(txn *badgerdb.Txn) error {
+		if err := txn.Set([]byte(recordKey), data); err != nil {
+			return err
+		}
+		return txn.Set([]byte(lastKey), buf)
+	})
+}
+
+// GetLastProcessedBlockRecord returns the highest-processed block for the chain,
+// or (nil, nil) if none has been processed yet.
+func (b *BadgerPersistence) GetLastProcessedBlockRecord(chainId uint64) (*persistence.BlockRecord, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.closed {
+		return nil, fmt.Errorf("persistence layer is closed")
+	}
+
+	lastKey := fmt.Sprintf("%s%d", keyPrefixLastBlock, chainId)
+
+	var blockNumber uint64
+	var found bool
+
+	err := b.db.View(func(txn *badgerdb.Txn) error {
+		item, err := txn.Get([]byte(lastKey))
+		if err == badgerdb.ErrKeyNotFound {
+			return nil // No block processed yet
+		}
+		if err != nil {
+			return err
+		}
+		return item.Value(func(val []byte) error {
+			if len(val) != 8 {
+				return fmt.Errorf("invalid last block data length: %d", len(val))
+			}
+			blockNumber = binary.BigEndian.Uint64(val)
+			found = true
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to get last processed block: %w", err)
+	}
+
+	if !found {
+		return nil, nil // Not found
+	}
+
+	return b.getBlockRecordLocked(chainId, blockNumber)
+}
+
+// GetBlockRecord returns a specific block record, or (nil, nil) if it does not exist.
+func (b *BadgerPersistence) GetBlockRecord(chainId uint64, blockNumber uint64) (*persistence.BlockRecord, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.closed {
+		return nil, fmt.Errorf("persistence layer is closed")
+	}
+
+	return b.getBlockRecordLocked(chainId, blockNumber)
+}
+
+// getBlockRecordLocked reads a block record. Callers must hold b.mu.
+func (b *BadgerPersistence) getBlockRecordLocked(chainId uint64, blockNumber uint64) (*persistence.BlockRecord, error) {
+	key := fmt.Sprintf("%s%d:%d", keyPrefixBlockRecord, chainId, blockNumber)
+
+	var data []byte
+	err := b.db.View(func(txn *badgerdb.Txn) error {
+		item, err := txn.Get([]byte(key))
+		if err == badgerdb.ErrKeyNotFound {
+			return nil // Not found is not an error
+		}
+		if err != nil {
+			return err
+		}
+		return item.Value(func(val []byte) error {
+			data = append([]byte{}, val...) // Copy value
+			return nil
+		})
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to load BlockRecord: %w", err)
+	}
+
+	if data == nil {
+		return nil, nil // Not found
+	}
+
+	var record *persistence.BlockRecord
+	if err := json.Unmarshal(data, &record); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal BlockRecord: %w", err)
+	}
+	if record == nil {
+		return nil, fmt.Errorf("stored BlockRecord at key %q is a JSON null", key)
+	}
+
+	return record, nil
+}
+
+// DeleteBlockRecord removes a block record. Idempotent.
+func (b *BadgerPersistence) DeleteBlockRecord(chainId uint64, blockNumber uint64) error {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.closed {
+		return fmt.Errorf("persistence layer is closed")
+	}
+
+	key := fmt.Sprintf("%s%d:%d", keyPrefixBlockRecord, chainId, blockNumber)
+
+	return b.db.Update(func(txn *badgerdb.Txn) error {
+		return txn.Delete([]byte(key))
+	})
 }
 
 // Close shuts down the persistence layer

@@ -10,3 +10,6 @@
 [submodule "contracts/lib/zeus-templates"]
 	path = contracts/lib/zeus-templates
 	url = https://github.com/Layr-Labs/zeus-templates
+[submodule "third_party/ecloud-platform"]
+	path = third_party/ecloud-platform
+	url = https://github.com/Layr-Labs/ecloud-platform

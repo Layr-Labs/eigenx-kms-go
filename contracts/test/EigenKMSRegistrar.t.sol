@@ -4,6 +4,8 @@ pragma solidity ^0.8.27;
 import {Test, console} from "forge-std/Test.sol";
 import {EigenKMSRegistrar} from "../src/EigenKMSRegistrar.sol";
 import {IEigenKMSRegistrarTypes} from "../src/interfaces/IEigenKMSRegistrar.sol";
+import {ProxyAdmin} from "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
+import {TransparentUpgradeableProxy} from "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 // Mock contracts for testing
 import {IAllocationManager} from "@eigenlayer-contracts/src/contracts/interfaces/IAllocationManager.sol";
@@ -11,6 +13,8 @@ import {IKeyRegistrar} from "@eigenlayer-contracts/src/contracts/interfaces/IKey
 import {IPermissionController} from "@eigenlayer-contracts/src/contracts/interfaces/IPermissionController.sol";
 
 contract EigenKMSRegistrarTest is Test {
+    event AvsConfigSet(uint32 operatorSetId, string platformRpcUrl);
+
     EigenKMSRegistrar public registrar;
 
     // Test addresses
@@ -42,7 +46,8 @@ contract EigenKMSRegistrarTest is Test {
 
     function test_SetAvsConfig() public {
         // Create test AVS configuration
-        IEigenKMSRegistrarTypes.AvsConfig memory config = IEigenKMSRegistrarTypes.AvsConfig({operatorSetId: 1});
+        IEigenKMSRegistrarTypes.AvsConfig memory config =
+            IEigenKMSRegistrarTypes.AvsConfig({operatorSetId: 1, platformRpcUrl: ""});
 
         // Test that only owner can set config (this will fail since we haven't initialized ownership)
         vm.expectRevert();
@@ -70,7 +75,7 @@ contract EigenKMSRegistrarTest is Test {
 
         for (uint256 i = 0; i < testIds.length; i++) {
             IEigenKMSRegistrarTypes.AvsConfig memory config =
-                IEigenKMSRegistrarTypes.AvsConfig({operatorSetId: testIds[i]});
+                IEigenKMSRegistrarTypes.AvsConfig({operatorSetId: testIds[i], platformRpcUrl: ""});
 
             // This will revert due to ownership, but we're testing the function signature
             vm.expectRevert();
@@ -78,6 +83,52 @@ contract EigenKMSRegistrarTest is Test {
         }
 
         console.log("OperatorSetId boundary test passed");
+    }
+
+    /// @dev Deploys an initialized registrar behind a proxy so `owner` can set config.
+    ///      The raw implementation disables initializers in its constructor.
+    function _deployInitializedRegistrar() internal returns (EigenKMSRegistrar) {
+        EigenKMSRegistrar impl = new EigenKMSRegistrar(allocationManager, keyRegistrar, permissionController);
+        ProxyAdmin proxyAdmin = new ProxyAdmin();
+        TransparentUpgradeableProxy proxy = new TransparentUpgradeableProxy(
+            address(impl),
+            address(proxyAdmin),
+            abi.encodeWithSelector(
+                EigenKMSRegistrar.initialize.selector,
+                avsAddress,
+                owner,
+                IEigenKMSRegistrarTypes.AvsConfig({operatorSetId: 0, platformRpcUrl: ""})
+            )
+        );
+        return EigenKMSRegistrar(address(proxy));
+    }
+
+    function test_AvsConfig_PersistsPlatformRpcUrl() public {
+        EigenKMSRegistrar reg = _deployInitializedRegistrar();
+
+        IEigenKMSRegistrarTypes.AvsConfig memory config =
+            IEigenKMSRegistrarTypes.AvsConfig({operatorSetId: 2, platformRpcUrl: "platform.example:9002"});
+
+        vm.prank(owner);
+        reg.setAvsConfig(config);
+
+        IEigenKMSRegistrarTypes.AvsConfig memory got = reg.getAvsConfig();
+        assertEq(got.operatorSetId, uint32(2));
+        assertEq(got.platformRpcUrl, "platform.example:9002");
+
+        console.log("PlatformRpcUrl round-trip test passed");
+    }
+
+    function test_AvsConfig_EmitsEvent() public {
+        EigenKMSRegistrar reg = _deployInitializedRegistrar();
+
+        vm.expectEmit(true, true, true, true);
+        emit AvsConfigSet(3, "p.example:9002");
+
+        vm.prank(owner);
+        reg.setAvsConfig(IEigenKMSRegistrarTypes.AvsConfig({operatorSetId: 3, platformRpcUrl: "p.example:9002"}));
+
+        console.log("AvsConfigSet event test passed");
     }
 
     function test_ContractInterfaces() public {
@@ -101,7 +152,7 @@ contract EigenKMSRegistrarTest is Test {
 
         for (uint256 i = 0; i < operatorSetIds.length; i++) {
             IEigenKMSRegistrarTypes.AvsConfig memory config =
-                IEigenKMSRegistrarTypes.AvsConfig({operatorSetId: operatorSetIds[i]});
+                IEigenKMSRegistrarTypes.AvsConfig({operatorSetId: operatorSetIds[i], platformRpcUrl: ""});
 
             // Verify we can create the config struct
             assertTrue(config.operatorSetId == operatorSetIds[i], "OperatorSetId should match");
@@ -152,8 +203,8 @@ contract EigenKMSRegistrarTest is Test {
         uint256 getConfigGas = gasBefore - gasAfter;
         console.log("getAvsConfig gas usage:", getConfigGas);
 
-        // Should be relatively low gas (just reading storage)
-        assertTrue(getConfigGas < 10_000, "getAvsConfig should use reasonable gas");
+        // Should be relatively low gas (reads a uint32 plus a dynamic-length string)
+        assertTrue(getConfigGas < 20_000, "getAvsConfig should use reasonable gas");
 
         console.log("Gas usage test passed");
     }

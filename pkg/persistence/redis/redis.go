@@ -21,6 +21,8 @@ const (
 	keyPrefixActiveVersion = "kms:active:version"
 	keyPrefixNodeState     = "kms:nodestate:main"
 	keyPrefixSession       = "kms:session:"
+	keyPrefixBlockRecord   = "kms:blockRecord:"
+	keyPrefixLastBlock     = "kms:lastBlock:"
 	keySchemaVersion       = "kms:metadata:schema_version"
 	currentSchemaVersion   = "v1"
 
@@ -561,6 +563,126 @@ func (r *RedisPersistence) ListProtocolSessions() ([]*persistence.ProtocolSessio
 	}
 
 	return sessions, nil
+}
+
+// SaveBlockRecord upserts a block record and advances the last-processed
+// pointer for the chain to the saved block.
+func (r *RedisPersistence) SaveBlockRecord(record *persistence.BlockRecord) error {
+	if record == nil {
+		return fmt.Errorf("cannot save nil BlockRecord")
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if r.closed {
+		return fmt.Errorf("persistence layer is closed")
+	}
+
+	ctx := context.Background()
+
+	// Serialize to JSON
+	data, err := json.Marshal(record)
+	if err != nil {
+		return fmt.Errorf("failed to marshal BlockRecord: %w", err)
+	}
+
+	recordKey := r.prefixKey(fmt.Sprintf("%s%d:%d", keyPrefixBlockRecord, record.ChainId, record.Number))
+	lastKey := r.prefixKey(fmt.Sprintf("%s%d", keyPrefixLastBlock, record.ChainId))
+
+	// Store block number pointer as big-endian uint64
+	buf := make([]byte, 8)
+	binary.BigEndian.PutUint64(buf, record.Number)
+
+	// Store using pipeline for atomicity
+	pipe := r.client.Pipeline()
+	pipe.Set(ctx, recordKey, data, 0)
+	pipe.Set(ctx, lastKey, buf, 0)
+
+	if _, err := pipe.Exec(ctx); err != nil {
+		return fmt.Errorf("failed to save BlockRecord: %w", err)
+	}
+
+	return nil
+}
+
+// GetLastProcessedBlockRecord returns the highest-processed block for the chain,
+// or (nil, nil) if none has been processed yet.
+func (r *RedisPersistence) GetLastProcessedBlockRecord(chainId uint64) (*persistence.BlockRecord, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if r.closed {
+		return nil, fmt.Errorf("persistence layer is closed")
+	}
+
+	ctx := context.Background()
+	lastKey := r.prefixKey(fmt.Sprintf("%s%d", keyPrefixLastBlock, chainId))
+
+	data, err := r.client.Get(ctx, lastKey).Bytes()
+	if err == redis.Nil {
+		return nil, nil // No block processed yet
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to get last processed block: %w", err)
+	}
+
+	if len(data) != 8 {
+		return nil, fmt.Errorf("invalid last block data length: %d", len(data))
+	}
+
+	blockNumber := binary.BigEndian.Uint64(data)
+	return r.getBlockRecord(ctx, chainId, blockNumber)
+}
+
+// GetBlockRecord returns a specific block record, or (nil, nil) if it does not exist.
+func (r *RedisPersistence) GetBlockRecord(chainId uint64, blockNumber uint64) (*persistence.BlockRecord, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if r.closed {
+		return nil, fmt.Errorf("persistence layer is closed")
+	}
+
+	return r.getBlockRecord(context.Background(), chainId, blockNumber)
+}
+
+// getBlockRecord reads a block record by (chainId, number).
+func (r *RedisPersistence) getBlockRecord(ctx context.Context, chainId uint64, blockNumber uint64) (*persistence.BlockRecord, error) {
+	key := r.prefixKey(fmt.Sprintf("%s%d:%d", keyPrefixBlockRecord, chainId, blockNumber))
+
+	data, err := r.client.Get(ctx, key).Bytes()
+	if err == redis.Nil {
+		return nil, nil // Not found is not an error
+	}
+	if err != nil {
+		return nil, fmt.Errorf("failed to load BlockRecord: %w", err)
+	}
+
+	var record *persistence.BlockRecord
+	if err := json.Unmarshal(data, &record); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal BlockRecord: %w", err)
+	}
+	if record == nil {
+		return nil, fmt.Errorf("stored BlockRecord at key %q is a JSON null", key)
+	}
+
+	return record, nil
+}
+
+// DeleteBlockRecord removes a block record. Idempotent.
+func (r *RedisPersistence) DeleteBlockRecord(chainId uint64, blockNumber uint64) error {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if r.closed {
+		return fmt.Errorf("persistence layer is closed")
+	}
+
+	ctx := context.Background()
+	key := r.prefixKey(fmt.Sprintf("%s%d:%d", keyPrefixBlockRecord, chainId, blockNumber))
+
+	return r.client.Del(ctx, key).Err()
 }
 
 // Close shuts down the persistence layer

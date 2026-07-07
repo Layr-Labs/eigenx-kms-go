@@ -126,6 +126,10 @@ func (m *MockContractCallerStub) GetLatestReleaseAsRelease(ctx context.Context, 
 	}, nil
 }
 
+func (m *MockContractCallerStub) GetAvsConfig(ctx context.Context, avsAddress string) (*caller.AvsConfig, error) {
+	return &caller.AvsConfig{}, nil
+}
+
 // TestableContractCallerStub extends MockContractCallerStub with test data configuration.
 // It simulates the two-phase upgrade flow: upgradeApp() writes to pendingReleases,
 // confirmUpgrade() promotes the pending release to the confirmed releases map.

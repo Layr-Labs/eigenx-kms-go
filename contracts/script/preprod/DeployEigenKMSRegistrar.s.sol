@@ -38,7 +38,8 @@ contract DeployEigenKMSRegistrar is Script {
 
         // Create initial config
         IEigenKMSRegistrarTypes.AvsConfig memory initialConfig = IEigenKMSRegistrarTypes.AvsConfig({
-            operatorSetId: operatorSetId
+            operatorSetId: operatorSetId,
+            platformRpcUrl: ""
         });
 
         // Deploy ProxyAdmin

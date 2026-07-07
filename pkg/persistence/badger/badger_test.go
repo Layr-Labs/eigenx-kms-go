@@ -685,3 +685,60 @@ func TestBadgerPersistence_ListProtocolSessions_SkipsNull(t *testing.T) {
 	require.Len(t, sessions, 1)
 	assert.Equal(t, int64(1000), sessions[0].SessionTimestamp)
 }
+
+func TestBadgerPersistence_BlockRecordRoundTrip(t *testing.T) {
+	tmpDir := t.TempDir()
+	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
+
+	bp, err := NewBadgerPersistence(tmpDir, testLogger)
+	require.NoError(t, err)
+	defer func() { _ = bp.Close() }()
+
+	const chainId = uint64(1)
+
+	last, err := bp.GetLastProcessedBlockRecord(chainId)
+	require.NoError(t, err)
+	assert.Nil(t, last)
+
+	block1 := &persistence.BlockRecord{Number: 100, Hash: "0xaaa", ParentHash: "0x999", Timestamp: 1000, ChainId: chainId}
+	block2 := &persistence.BlockRecord{Number: 101, Hash: "0xbbb", ParentHash: "0xaaa", Timestamp: 1012, ChainId: chainId}
+
+	require.NoError(t, bp.SaveBlockRecord(block1))
+	require.NoError(t, bp.SaveBlockRecord(block2))
+
+	last, err = bp.GetLastProcessedBlockRecord(chainId)
+	require.NoError(t, err)
+	require.NotNil(t, last)
+	assert.Equal(t, block2.Number, last.Number)
+	assert.Equal(t, block2.Hash, last.Hash)
+	assert.Equal(t, block2.ParentHash, last.ParentHash)
+	assert.Equal(t, block2.Timestamp, last.Timestamp)
+	assert.Equal(t, block2.ChainId, last.ChainId)
+
+	got, err := bp.GetBlockRecord(chainId, 100)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, block1.Hash, got.Hash)
+
+	missing, err := bp.GetBlockRecord(chainId, 999)
+	require.NoError(t, err)
+	assert.Nil(t, missing)
+
+	require.NoError(t, bp.DeleteBlockRecord(chainId, 100))
+	got, err = bp.GetBlockRecord(chainId, 100)
+	require.NoError(t, err)
+	assert.Nil(t, got)
+	require.NoError(t, bp.DeleteBlockRecord(chainId, 100))
+}
+
+func TestBadgerPersistence_SaveBlockRecord_Nil(t *testing.T) {
+	tmpDir := t.TempDir()
+	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
+
+	bp, err := NewBadgerPersistence(tmpDir, testLogger)
+	require.NoError(t, err)
+	defer func() { _ = bp.Close() }()
+
+	err = bp.SaveBlockRecord(nil)
+	assert.Error(t, err)
+}

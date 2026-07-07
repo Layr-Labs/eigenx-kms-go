@@ -8,16 +8,20 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	chainPoller "github.com/Layr-Labs/chain-indexer/pkg/chainPollers"
 	"github.com/Layr-Labs/chain-indexer/pkg/clients/ethereum"
 	"github.com/Layr-Labs/crypto-libs/pkg/ecdsa"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
+	platformClient "github.com/Layr-Labs/eigenx-kms-go/pkg/clients/platformClient"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/crypto"
@@ -35,6 +39,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/merkle"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/persistence"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/registrarabi"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/reshare"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transport"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
@@ -95,8 +100,21 @@ type Node struct {
 	baseContractCaller        contractCaller.IContractCaller
 	commitmentRegistryAddress common.Address
 
+	// platformConfigCaller reads the EigenKMSRegistrar's AvsConfig for the one-shot
+	// startup seed of the platform RPC URL. The registrar lives on L1 (the same chain
+	// the AvsConfigSet event logs come from), while baseContractCaller is bound to the
+	// L2/Base client — so seeding via baseContractCaller would read the registrar on the
+	// wrong chain. This is an L1-bound caller injected at construction; if nil, we fall
+	// back to baseContractCaller (used by unit tests that don't distinguish chains).
+	// Steady-state updates arrive via AvsConfigSet event logs and need no contract read.
+	platformConfigCaller contractCaller.IContractCaller
+
 	// Access control
 	appAllowlist map[string]bool // nil means all apps allowed
+
+	// ecloud-platform integration
+	platformClient platformClient.Client
+	platformURL    atomic.Value // string; current on-chain platformRpcUrl
 }
 
 // ProtocolSession tracks state for a DKG or reshare session
@@ -451,6 +469,7 @@ func NewNode(
 	tps transportSigner.ITransportSigner,
 	attestationManager *attestation.AttestationManager,
 	baseContractCaller contractCaller.IContractCaller,
+	platformConfigCaller contractCaller.IContractCaller,
 	commitmentRegistryAddress common.Address,
 	p persistence.INodePersistence,
 	l *zap.Logger,
@@ -489,6 +508,7 @@ func NewNode(
 		lastProcessedBoundary:     0,
 		transportSigner:           tps,
 		baseContractCaller:        baseContractCaller,
+		platformConfigCaller:      platformConfigCaller,
 		commitmentRegistryAddress: commitmentRegistryAddress,
 		persistence:               p,
 	}
@@ -504,6 +524,10 @@ func NewNode(
 	// Set node reference in server
 	n.server.node = n
 
+	// Build the ecloud-platform client using the node's own PlatformRpcURL accessor as
+	// the live URL provider, so the client always reads the freshest cached on-chain URL.
+	n.platformClient = platformClient.NewClient(n.PlatformRpcURL, operatorAddress, tps, l)
+
 	// Initialize transport with authenticated messaging
 	// TODO(seanmcgary): this should be injected, not created here
 	n.transport = transport.NewClient(operatorAddress, tps)
@@ -511,9 +535,145 @@ func NewNode(
 	return n, nil
 }
 
+// PlatformRpcURL returns the cached on-chain platform RPC URL ("" if unset).
+func (n *Node) PlatformRpcURL() string {
+	v := n.platformURL.Load()
+	if v == nil {
+		return ""
+	}
+	return v.(string)
+}
+
+// isSafePlatformURL accepts only plain host:port or dns:// gRPC targets, rejecting
+// schemes that could reach the local filesystem/sockets or arbitrary grpc-go resolvers
+// (file://, unix:, unix-abstract:, http(s)://, passthrough:, etc.). Defense-in-depth
+// against a malicious/misconfigured on-chain platformRpcUrl.
+func isSafePlatformURL(u string) bool {
+	u = strings.TrimSpace(u)
+	if u == "" {
+		return false // callers treat empty separately (clears the cache); never dialed
+	}
+	// Allow an explicit dns:/// target: strip the dns scheme + optional authority, then
+	// validate the remaining host:port.
+	if rest, ok := strings.CutPrefix(u, "dns://"); ok {
+		// forms: dns:///host:port  or  dns://authority/host:port
+		if i := strings.LastIndex(rest, "/"); i >= 0 {
+			rest = rest[i+1:]
+		}
+		return isHostPort(rest)
+	}
+	// Reject anything else containing a scheme separator "://" or a leading "<scheme>:".
+	if strings.Contains(u, "://") {
+		return false
+	}
+	if i := strings.Index(u, ":"); i >= 0 {
+		// A leading token that is a known non-host scheme (unix, unix-abstract, passthrough,
+		// file, http, https) must be rejected. host:port has a numeric port after the colon.
+		// Simplest robust check: require host:port shape.
+		return isHostPort(u)
+	}
+	return false
+}
+
+// isHostPort reports whether s is host:port with a non-empty host and a numeric port 1-65535.
+func isHostPort(s string) bool {
+	host, port, err := net.SplitHostPort(s)
+	if err != nil || host == "" {
+		return false
+	}
+	p, err := strconv.Atoi(port)
+	return err == nil && p >= 1 && p <= 65535
+}
+
+// refreshPlatformConfig reads AvsConfig from chain and updates the cached URL.
+// Non-fatal: on error it leaves the current value in place and logs.
+//
+// It reads via platformConfigCaller when set (an L1-bound caller — the registrar lives
+// on L1, the same chain the AvsConfigSet event logs come from), falling back to
+// baseContractCaller when nil. This is used only for the one-shot startup seed;
+// steady-state updates arrive via handlePlatformConfigLog (no contract read).
+func (n *Node) refreshPlatformConfig(ctx context.Context) {
+	cc := n.platformConfigCaller
+	if cc == nil {
+		// In production platformConfigCaller is ALWAYS set to the L1 caller (see
+		// cmd/kmsServer/main.go); this nil -> baseContractCaller fallback is only
+		// exercised by unit tests that don't distinguish L1/L2.
+		cc = n.baseContractCaller
+	}
+	cfg, err := cc.GetAvsConfig(ctx, n.AVSAddress)
+	if err != nil {
+		n.logger.Sugar().Warnw("Failed to read AvsConfig for platform URL",
+			"operator_address", n.OperatorAddress.Hex(), "error", err)
+		return
+	}
+	if cfg == nil {
+		return
+	}
+	// Validate the fetched URL at ingestion. A non-empty URL with a dangerous scheme
+	// (file/unix/http/etc.) is ignored — leave the cached value untouched so the client
+	// fails closed on the empty/previous URL rather than reaching the local filesystem.
+	if cfg.PlatformRpcUrl != "" && !isSafePlatformURL(cfg.PlatformRpcUrl) {
+		n.logger.Sugar().Warnw("Ignoring unsafe platform RPC URL from chain",
+			"operator_address", n.OperatorAddress.Hex(), "url", cfg.PlatformRpcUrl)
+		return
+	}
+	if cfg.PlatformRpcUrl == "" {
+		// First-run / unconfigured: the "updated" wording is misleading when there is
+		// nothing configured on chain yet. Store (to keep the cache consistent) and log
+		// distinctly.
+		n.logger.Sugar().Infow("Platform RPC URL not yet configured on chain (empty)",
+			"operator_address", n.OperatorAddress.Hex())
+	} else if n.PlatformRpcURL() != cfg.PlatformRpcUrl {
+		n.logger.Sugar().Infow("Platform RPC URL updated from chain",
+			"operator_address", n.OperatorAddress.Hex(), "url", cfg.PlatformRpcUrl)
+	}
+	n.platformURL.Store(cfg.PlatformRpcUrl)
+}
+
+// handlePlatformConfigLog updates the cached platform RPC URL from an AvsConfigSet
+// event emitted by the EigenKMSRegistrar (on L1). This is the steady-state source of
+// platform-URL updates — no contract read required. Non-AvsConfigSet logs are ignored.
+//
+// The AvsConfigSet event's `platformRpcUrl` is a non-indexed string arg, so the log
+// parser's UnpackIntoMap places it in OutputData as a native Go string.
+func (n *Node) handlePlatformConfigLog(lwb *chainPoller.LogWithBlock) {
+	if lwb == nil || lwb.Log == nil || lwb.Log.EventName != registrarabi.AvsConfigSetEventName {
+		return
+	}
+	raw, ok := lwb.Log.OutputData["platformRpcUrl"]
+	if !ok {
+		n.logger.Sugar().Warnw("AvsConfigSet log missing platformRpcUrl",
+			"operator_address", n.OperatorAddress.Hex())
+		return
+	}
+	url, ok := raw.(string)
+	if !ok {
+		n.logger.Sugar().Warnw("AvsConfigSet platformRpcUrl is not a string",
+			"operator_address", n.OperatorAddress.Hex(),
+			"type", fmt.Sprintf("%T", raw))
+		return
+	}
+	url = strings.TrimSpace(url)
+	// Validate the event-sourced URL. A non-empty URL with a dangerous scheme
+	// (file/unix/http/etc.) is ignored — leave the cached value untouched so the client
+	// fails closed rather than reaching the local filesystem. An empty URL is allowed
+	// (it clears the cached target so the platform client fails closed).
+	if url != "" && !isSafePlatformURL(url) {
+		n.logger.Sugar().Warnw("Ignoring unsafe platform RPC URL from AvsConfigSet event",
+			"operator_address", n.OperatorAddress.Hex(), "url", url)
+		return
+	}
+	if n.PlatformRpcURL() != url {
+		n.logger.Sugar().Infow("Platform RPC URL updated from AvsConfigSet event",
+			"operator_address", n.OperatorAddress.Hex(), "url", url)
+	}
+	n.platformURL.Store(url)
+}
+
 // startScheduler starts the automatic protocol scheduler with context
 func (n *Node) startScheduler(ctx context.Context) {
 	go n.blockHandler.ListenToChannel(ctx, n.checkScheduledOperations)
+	go n.blockHandler.ListenToLogChannel(ctx, n.handlePlatformConfigLog)
 }
 
 // checkScheduledOperations checks for block interval boundaries and executes appropriate protocol
@@ -656,6 +816,14 @@ func (n *Node) Start() error {
 	if err := n.poller.Start(ctx); err != nil {
 		return fmt.Errorf("failed to start chain poller: %w", err)
 	}
+
+	// Seed the platform RPC URL once at startup (covers config changes made while the
+	// node was offline); subsequent updates arrive via AvsConfigSet event logs. Best-effort:
+	// refreshPlatformConfig logs and leaves the cache untouched on error, so the node still
+	// starts and events will populate the URL later.
+	seedCtx, seedCancel := context.WithTimeout(ctx, 5*time.Second)
+	n.refreshPlatformConfig(seedCtx)
+	seedCancel()
 
 	// Start scheduler in goroutine
 	go n.startScheduler(ctx)

@@ -75,6 +75,33 @@ type INodePersistence interface {
 	// Used during startup to detect and clean up incomplete sessions.
 	ListProtocolSessions() ([]*ProtocolSessionState, error)
 
+	// Chain Poller Block Cursor
+
+	// SaveBlockRecord upserts a block record keyed by (chainId, number) and
+	// unconditionally advances the "last processed" pointer for that chain to
+	// this block. The poller invokes this in-order per block, so the most
+	// recently saved block is always the highest processed one (this matches
+	// the chain-indexer in-memory implementation's semantics).
+	// Returns error only on storage failure.
+	SaveBlockRecord(record *BlockRecord) error
+
+	// GetLastProcessedBlockRecord returns the highest-processed block record for
+	// the given chain, i.e. the block most recently passed to SaveBlockRecord.
+	// Returns (nil, nil) if no block has been processed for the chain yet.
+	// Returns error only on storage failure.
+	GetLastProcessedBlockRecord(chainId uint64) (*BlockRecord, error)
+
+	// GetBlockRecord returns a specific block record by (chainId, number).
+	// Returns (nil, nil) if the block does not exist.
+	// Returns error only on storage failure.
+	GetBlockRecord(chainId uint64, blockNumber uint64) (*BlockRecord, error)
+
+	// DeleteBlockRecord removes a block record by (chainId, number).
+	// Idempotent - returns nil if the block does not exist (used for reorg
+	// handling). Does not modify the last-processed pointer.
+	// Returns error only on storage failure.
+	DeleteBlockRecord(chainId uint64, blockNumber uint64) error
+
 	// Lifecycle Management
 
 	// Close cleanly shuts down the persistence layer.

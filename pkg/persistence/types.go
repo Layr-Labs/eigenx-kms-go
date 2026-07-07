@@ -37,6 +37,20 @@ func (ns *NodeState) UnmarshalJSON(data []byte) error {
 	return json.Unmarshal(data, (*Alias)(ns))
 }
 
+// BlockRecord is a node-local representation of a chain-poller block cursor
+// entry. It intentionally mirrors the shape of the chain-indexer
+// chainPoller.BlockRecord but uses only primitive fields (in particular a
+// plain uint64 ChainId) so that the persistence package remains free of any
+// chain-indexer dependency. Translation to/from the chain-indexer type is
+// performed exclusively by the chainpolleradapter package.
+type BlockRecord struct {
+	Number     uint64 `json:"number"`
+	Hash       string `json:"hash"`
+	ParentHash string `json:"parentHash"`
+	Timestamp  uint64 `json:"timestamp"`
+	ChainId    uint64 `json:"chainId"`
+}
+
 // ProtocolSessionState captures ephemeral state of a DKG or reshare session.
 // This enables crash recovery - if a node restarts mid-protocol, it can
 // detect incomplete sessions and clean them up appropriately.

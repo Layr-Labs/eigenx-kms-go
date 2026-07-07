@@ -1,0 +1,18 @@
+// Copied from github.com/Layr-Labs/ecloud-platform
+//   protos/eigenlayer/platform/v1/kms/rpc.proto @ 815540f4
+// Regenerate with: make protos-sync && make protos
+// Do not edit by hand; this is the KMS-facing wire contract.
+syntax = "proto3";
+
+package eigenlayer.platform.v1.kms;
+
+option go_package = "github.com/Layr-Labs/ecloud-platform/gen/protos/eigenlayer/platform/v1/kms"; // NOTE: overridden at gen time by buf.gen.yaml managed mode (go_package_prefix) to the eigenx-kms-go module path.
+
+import "eigenlayer/platform/v1/kms/kms.proto";
+
+// KMSService is called by eigenx-KMS operators. It lives on the internal server
+// and authenticates the operator signature in-handler (signature is in the
+// request body). No google.api.http binding: gRPC only.
+service KMSService {
+  rpc GetLatestDeployedRelease(GetLatestDeployedReleaseRequest) returns (GetLatestDeployedReleaseResponse);
+}

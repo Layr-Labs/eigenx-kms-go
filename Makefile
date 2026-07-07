@@ -108,6 +108,19 @@ mocks:
 	mockery
 
 # -----------------------------------------------------------------------------
+# Protobuf / gRPC codegen
+# -----------------------------------------------------------------------------
+.PHONY: protos
+protos:
+	buf generate
+
+.PHONY: protos-sync
+protos-sync:
+	@cp third_party/ecloud-platform/protos/eigenlayer/platform/v1/kms/kms.proto protos/eigenlayer/platform/v1/kms/kms.proto
+	@cp third_party/ecloud-platform/protos/eigenlayer/platform/v1/kms/rpc.proto protos/eigenlayer/platform/v1/kms/rpc.proto
+	@echo "Re-run 'make protos' and restore the header comments."
+
+# -----------------------------------------------------------------------------
 # Contract targets
 # -----------------------------------------------------------------------------
 

@@ -11,10 +11,10 @@ import (
 	"time"
 
 	EVMChainPoller "github.com/Layr-Labs/chain-indexer/pkg/chainPollers/evm"
-	"github.com/Layr-Labs/chain-indexer/pkg/chainPollers/persistence/memory"
 	"github.com/Layr-Labs/chain-indexer/pkg/clients/ethereum"
 	chainIndexerConfig "github.com/Layr-Labs/chain-indexer/pkg/config"
 	"github.com/Layr-Labs/chain-indexer/pkg/contractStore/inMemoryContractStore"
+	"github.com/Layr-Labs/chain-indexer/pkg/contracts"
 	"github.com/Layr-Labs/chain-indexer/pkg/transactionLogParser"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/attestation"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/blockHandler"
@@ -26,8 +26,10 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering/peeringDataFetcher"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/persistence"
 	persistenceBadger "github.com/Layr-Labs/eigenx-kms-go/pkg/persistence/badger"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/persistence/chainpolleradapter"
 	persistenceMemory "github.com/Layr-Labs/eigenx-kms-go/pkg/persistence/memory"
 	persistenceRedis "github.com/Layr-Labs/eigenx-kms-go/pkg/persistence/redis"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/registrarabi"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transactionSigner"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner/inMemoryTransportSigner"
@@ -309,25 +311,6 @@ func runKMSServer(c *cli.Context) error {
 	}
 
 	bh := blockHandler.NewBlockHandler(l)
-
-	// we're not going to parse logs, but these are required for the chain poller
-	cs := inMemoryContractStore.NewInMemoryContractStore(nil, l)
-	logParser := transactionLogParser.NewTransactionLogParser(cs, l)
-
-	// TODO(seanmcgary): This persistence should be swapped out for a more permanent solution that will also hold the node's state
-	pollerStore := memory.NewInMemoryChainPollerPersistence()
-
-	poller, err := EVMChainPoller.NewEVMChainPoller(
-		ethClient,
-		logParser,
-		&EVMChainPoller.EVMChainPollerConfig{
-			ChainId:         chainIndexerConfig.ChainId(kmsConfig.ChainID),
-			PollingInterval: config.GetDefaultPollerIntervalForChainId(kmsConfig.ChainID),
-		},
-		pollerStore, bh, l)
-	if err != nil {
-		l.Sugar().Fatalw("Failed to create EVM chain poller", "error", err)
-	}
 
 	// Create transport signer based on OperatorConfig
 	var transportSignerInstance transportSigner.ITransportSigner
@@ -616,6 +599,51 @@ func runKMSServer(c *cli.Context) error {
 		l.Sugar().Fatalw("Persistence health check failed", "error", err)
 	}
 
+	// Resolve the EigenKMSRegistrar address on L1 so the chain poller can fetch and
+	// decode its logs (notably AvsConfigSet). The registrar is deployed on the L1
+	// chain (the --rpc-url chain that the poller runs against) and is resolved via
+	// the AllocationManager. This whole feature (on-chain platform config listening)
+	// depends on it, so fail fast if it can't be resolved.
+	avsAddr := common.HexToAddress(kmsConfig.AVSAddress)
+	registrarAddr, err := l1ContractCaller.GetAvsRegistrar(ctx, avsAddr)
+	if err != nil {
+		l.Sugar().Fatalw("Failed to resolve EigenKMSRegistrar address on L1", "error", err, "avsAddress", avsAddr.Hex())
+	}
+	if registrarAddr == (common.Address{}) {
+		l.Sugar().Fatalw("EigenKMSRegistrar not found for AVS", "avsAddress", avsAddr.Hex())
+	}
+	l.Sugar().Infow("Resolved EigenKMSRegistrar address", "registrarAddress", registrarAddr.Hex())
+
+	// Register the registrar contract with the poller's contract store so the log
+	// parser can decode its events. InterestingContracts drives which addresses the
+	// poller fetches logs for.
+	registrarContract := &contracts.Contract{
+		Name:        "EigenKMSRegistrar",
+		Address:     registrarAddr.Hex(),
+		AbiVersions: []string{registrarabi.EigenKMSRegistrarABI},
+		ChainId:     chainIndexerConfig.ChainId(kmsConfig.ChainID),
+	}
+	cs := inMemoryContractStore.NewInMemoryContractStore([]*contracts.Contract{registrarContract}, l)
+	logParser := transactionLogParser.NewTransactionLogParser(cs, l)
+
+	// Durable poller persistence over the node's INodePersistence (R1 adapter), so
+	// the last-processed block survives restarts.
+	pollerStore := chainpolleradapter.NewChainPollerPersistenceAdapter(nodePersistence)
+
+	poller, err := EVMChainPoller.NewEVMChainPoller(
+		ethClient,
+		logParser,
+		&EVMChainPoller.EVMChainPollerConfig{
+			ChainId:              chainIndexerConfig.ChainId(kmsConfig.ChainID),
+			PollingInterval:      config.GetDefaultPollerIntervalForChainId(kmsConfig.ChainID),
+			InterestingContracts: []string{registrarAddr.Hex()},
+			AvsAddress:           kmsConfig.AVSAddress,
+		},
+		pollerStore, bh, l)
+	if err != nil {
+		l.Sugar().Fatalw("Failed to create EVM chain poller", "error", err)
+	}
+
 	// Create and configure the node with attestation manager
 	n, err := node.NewNode(
 		nodeConfig,
@@ -625,6 +653,9 @@ func runKMSServer(c *cli.Context) error {
 		transportSignerInstance,
 		attestationManager,
 		baseContractCaller,
+		// platformConfigCaller: the EigenKMSRegistrar (and its AvsConfig) lives on L1, the
+		// same chain the AvsConfigSet event logs come from, so the startup seed must read L1.
+		l1ContractCaller,
 		commitmentRegistryAddr,
 		nodePersistence,
 		l,

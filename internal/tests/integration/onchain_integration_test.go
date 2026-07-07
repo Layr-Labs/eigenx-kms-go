@@ -266,6 +266,7 @@ func Test_OnChainIntegration(t *testing.T) {
 			tportSigner,
 			attestationManager,
 			nodeCc,
+			nil,
 			commitmentRegistryAddress,
 			nodePersistence,
 			l,

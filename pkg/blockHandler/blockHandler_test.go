@@ -6,12 +6,14 @@ import (
 	"testing"
 	"time"
 
+	chainPoller "github.com/Layr-Labs/chain-indexer/pkg/chainPollers"
 	EVMChainPoller "github.com/Layr-Labs/chain-indexer/pkg/chainPollers/evm"
 	"github.com/Layr-Labs/chain-indexer/pkg/chainPollers/persistence/memory"
 	"github.com/Layr-Labs/chain-indexer/pkg/clients/ethereum"
 	chainIndexerConfig "github.com/Layr-Labs/chain-indexer/pkg/config"
 	"github.com/Layr-Labs/chain-indexer/pkg/contractStore/inMemoryContractStore"
 	"github.com/Layr-Labs/chain-indexer/pkg/transactionLogParser"
+	"github.com/Layr-Labs/chain-indexer/pkg/transactionLogParser/log"
 	"github.com/Layr-Labs/eigenx-kms-go/internal/tests"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller/caller"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
@@ -86,6 +88,74 @@ func Test_BlockHandler(t *testing.T) {
 		}
 
 		t.Logf("✓ Successfully received and processed %d blocks", len(receivedBlocks))
+	})
+
+	t.Run("ReceiveLogFromPoller", func(t *testing.T) {
+		logger, _ := zap.NewDevelopment()
+
+		bh := NewBlockHandler(logger)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// receive the delivered log via a channel to avoid sleep-based sync
+		received := make(chan *chainPoller.LogWithBlock, 1)
+
+		go bh.ListenToLogChannel(ctx, func(logWithBlock *chainPoller.LogWithBlock) {
+			received <- logWithBlock
+		})
+
+		expected := &chainPoller.LogWithBlock{
+			Log: &log.DecodedLog{
+				EventName:  "AvsConfigSet",
+				OutputData: map[string]interface{}{"platformRpcUrl": "x:9002"},
+			},
+		}
+
+		if err := bh.HandleLog(ctx, expected); err != nil {
+			t.Fatalf("HandleLog failed: %v", err)
+		}
+
+		select {
+		case got := <-received:
+			if got != expected {
+				t.Errorf("expected to receive the same log pointer")
+			}
+			if got.Log == nil || got.Log.EventName != "AvsConfigSet" {
+				t.Errorf("expected EventName AvsConfigSet, got %+v", got.Log)
+			}
+			if got.Log.OutputData["platformRpcUrl"] != "x:9002" {
+				t.Errorf("unexpected OutputData: %+v", got.Log.OutputData)
+			}
+			t.Logf("✓ Successfully received log %q", got.Log.EventName)
+		case <-time.After(2 * time.Second):
+			t.Fatal("timed out waiting for log to be delivered")
+		}
+	})
+
+	t.Run("HandleLogNilDecodedLogDoesNotPanic", func(t *testing.T) {
+		logger, _ := zap.NewDevelopment()
+
+		bh := NewBlockHandler(logger)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+
+		// nil Log must not panic HandleLog (delivered to channel path)
+		if err := bh.HandleLog(ctx, &chainPoller.LogWithBlock{Log: nil}); err != nil {
+			t.Fatalf("HandleLog with nil Log failed: %v", err)
+		}
+
+		// fill the channel so the drop-with-warning path is exercised with a nil Log
+		for i := 0; i < 100; i++ {
+			_ = bh.HandleLog(ctx, &chainPoller.LogWithBlock{Log: nil})
+		}
+		// this one should hit the default (full) branch and must not panic
+		if err := bh.HandleLog(ctx, &chainPoller.LogWithBlock{Log: nil}); err != nil {
+			t.Fatalf("HandleLog on full channel failed: %v", err)
+		}
+
+		t.Logf("✓ HandleLog handled nil DecodedLog without panicking")
 	})
 
 	t.Run("MultipleListeners", func(t *testing.T) {
@@ -482,6 +552,7 @@ func Test_BlockHandler(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to start L1 Anvil: %v", err)
 		}
+		defer func() { _ = tests.KillAnvil(l1Anvil) }()
 		go tests.WaitForAnvil(anvilWg, anvilCtx, t, l1EthereumClient, startErrorsChan)
 
 		anvilWg.Wait()
@@ -550,6 +621,28 @@ func Test_BlockHandler(t *testing.T) {
 
 		assert.False(t, hasErrors)
 		assert.GreaterOrEqual(t, receivedBlocks, 5, "Expected to receive at least 5 blocks")
-		_ = tests.KillAnvil(l1Anvil)
 	})
+}
+
+// TestHandleLog_DropsWhenFull verifies that HandleLog increments DroppedLogCount when
+// the LogChannel (cap 100) is full and a log cannot be delivered.
+func TestHandleLog_DropsWhenFull(t *testing.T) {
+	l := zap.NewNop()
+	bh := NewBlockHandler(l)
+	ctx := context.Background()
+
+	mkLog := func() *chainPoller.LogWithBlock {
+		return &chainPoller.LogWithBlock{Log: &log.DecodedLog{EventName: "AvsConfigSet"}}
+	}
+
+	// Fill the channel to capacity (100); none should drop.
+	for i := 0; i < 100; i++ {
+		assert.NoError(t, bh.HandleLog(ctx, mkLog()))
+	}
+	assert.Equal(t, uint64(0), bh.DroppedLogCount())
+
+	// The next sends hit the full channel and drop.
+	assert.NoError(t, bh.HandleLog(ctx, mkLog()))
+	assert.NoError(t, bh.HandleLog(ctx, mkLog()))
+	assert.Equal(t, uint64(2), bh.DroppedLogCount())
 }

@@ -75,6 +75,7 @@ contract EigenKMSRegistrar is AVSRegistrar, SocketRegistry, Allowlist, EigenKMSR
         IEigenKMSRegistrarTypes.AvsConfig memory config
     ) internal {
         avsConfig = config;
+        emit IEigenKMSRegistrarTypes.AvsConfigSet(config.operatorSetId, config.platformRpcUrl);
     }
 
     /**
