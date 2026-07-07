@@ -201,11 +201,11 @@ func TestSecretsPlatform_DigestMatch(t *testing.T) {
 	require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
 
 	var resp types.SecretsResponseV1
-	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp))
-	assert.NotNil(t, resp.EncryptedPartialSig)
-	assert.NotEmpty(t, resp.EncryptedPartialSig)
-	assert.Equal(t, "", resp.EncryptedEnv, "platform path returns no env")
-	assert.Equal(t, "", resp.PublicEnv, "platform path returns no env")
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&resp), "body: %s", w.Body.String())
+	require.NotNil(t, resp.EncryptedPartialSig)
+	require.NotEmpty(t, resp.EncryptedPartialSig)
+	require.Equal(t, "", resp.EncryptedEnv, "platform path returns no env")
+	require.Equal(t, "", resp.PublicEnv, "platform path returns no env")
 	assert.Equal(t, 1, fake.calls)
 }
 

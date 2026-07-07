@@ -53,6 +53,23 @@ func TestRefreshPlatformConfig_ErrorLeavesCache(t *testing.T) {
 	require.Equal(t, "p.example:9002", n.PlatformRpcURL())
 }
 
+// TestRefreshPlatformConfig_EmptyURLClearsCache verifies that an empty URL fetched
+// from chain clears the previously-cached target (fails closed rather than dialing a
+// stale endpoint).
+func TestRefreshPlatformConfig_EmptyURLClearsCache(t *testing.T) {
+	fake := &fakeCallerWithAvsConfig{cfg: &caller.AvsConfig{PlatformRpcUrl: "p.example:9002"}}
+	n := &Node{baseContractCaller: fake, AVSAddress: "0xavs", logger: zap.NewNop()}
+
+	// Seed a non-empty URL via a good refresh.
+	n.refreshPlatformConfig(context.Background())
+	require.Equal(t, "p.example:9002", n.PlatformRpcURL())
+
+	// Chain now reports an empty URL; the refresh must clear the cache.
+	fake.cfg = &caller.AvsConfig{PlatformRpcUrl: ""}
+	n.refreshPlatformConfig(context.Background())
+	require.Equal(t, "", n.PlatformRpcURL())
+}
+
 // TestRefreshPlatformConfig_UnsafeURLIgnored verifies that a fetched URL with a
 // dangerous scheme (e.g. file://, or the grpc-go single-colon unix:path form) is
 // ignored and the cached value is unchanged.
@@ -182,6 +199,7 @@ func TestHandlePlatformConfigLog(t *testing.T) {
 // unix: forms (single-colon grpc-go target and unix:// URL) which must be rejected.
 func TestIsSafePlatformURL(t *testing.T) {
 	rejected := []string{
+		"",
 		"file:///etc/passwd",
 		"unix:/x",
 		"unix:///x",
@@ -189,6 +207,8 @@ func TestIsSafePlatformURL(t *testing.T) {
 		"unix-abstract://x",
 		"http://example.com",
 		"https://example.com",
+		"passthrough:///x",
+		"dns:///nohostport",
 	}
 	for _, u := range rejected {
 		require.False(t, isSafePlatformURL(u), "expected %q to be rejected", u)
@@ -197,6 +217,8 @@ func TestIsSafePlatformURL(t *testing.T) {
 	accepted := []string{
 		"p.example:9002",
 		"dns:///p.example:9002",
+		"dns:///x:9002",
+		"dns://authority/x:9002",
 	}
 	for _, u := range accepted {
 		require.True(t, isSafePlatformURL(u), "expected %q to be accepted", u)

@@ -12,6 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/proto"
 )
 
@@ -65,6 +67,43 @@ func (f *fakeConn) Invoke(_ context.Context, _ string, _, reply any, _ ...grpc.C
 }
 func (f *fakeConn) NewStream(_ context.Context, _ *grpc.StreamDesc, _ string, _ ...grpc.CallOption) (grpc.ClientStream, error) {
 	return nil, nil
+}
+
+// errConn implements grpc.ClientConnInterface; Invoke returns a fixed error so we can
+// assert the client propagates gRPC status codes unmodified.
+type errConn struct {
+	err error
+}
+
+func (e *errConn) Invoke(_ context.Context, _ string, _, _ any, _ ...grpc.CallOption) error {
+	return e.err
+}
+func (e *errConn) NewStream(_ context.Context, _ *grpc.StreamDesc, _ string, _ ...grpc.CallOption) (grpc.ClientStream, error) {
+	return nil, nil
+}
+
+// TestGetLatestDeployedRelease_PropagatesStatusError verifies the client returns the
+// gRPC status error unmodified (same code), not swallowing or rewrapping it.
+func TestGetLatestDeployedRelease_PropagatesStatusError(t *testing.T) {
+	priv, err := gethcrypto.GenerateKey()
+	require.NoError(t, err)
+	signer, err := inMemoryTransportSigner.NewECDSAInMemoryTransportSigner(gethcrypto.FromECDSA(priv), zap.NewNop())
+	require.NoError(t, err)
+
+	wantErr := status.Error(codes.PermissionDenied, "nope")
+	c := &client{
+		urlProvider:     func() string { return "platform.example:9002" },
+		operatorAddress: gethcrypto.PubkeyToAddress(priv.PublicKey),
+		signer:          signer,
+		logger:          zap.NewNop(),
+		nowUnix:         func() int64 { return 1_700_000_000 },
+		dial: func(string) (grpc.ClientConnInterface, func() error, error) {
+			return &errConn{err: wantErr}, func() error { return nil }, nil
+		},
+	}
+	_, err = c.GetLatestDeployedRelease(context.Background(), "stack-123")
+	require.Error(t, err)
+	require.Equal(t, codes.PermissionDenied, status.Code(err), "status code must be propagated unmodified")
 }
 
 func TestGetLatestDeployedRelease_MapsResponse(t *testing.T) {

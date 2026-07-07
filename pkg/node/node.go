@@ -8,8 +8,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -542,19 +544,45 @@ func (n *Node) PlatformRpcURL() string {
 	return v.(string)
 }
 
-// isSafePlatformURL rejects gRPC targets that could reach the local filesystem or
-// unix sockets (defense-in-depth against a malicious/misconfigured on-chain URL).
-// A valid platform target is host:port or a dns:/// target — never file://, unix:
-// (blocks both the grpc-go unix:path and unix://path forms), unix-abstract://,
-// http://, or https://.
+// isSafePlatformURL accepts only plain host:port or dns:// gRPC targets, rejecting
+// schemes that could reach the local filesystem/sockets or arbitrary grpc-go resolvers
+// (file://, unix:, unix-abstract:, http(s)://, passthrough:, etc.). Defense-in-depth
+// against a malicious/misconfigured on-chain platformRpcUrl.
 func isSafePlatformURL(u string) bool {
-	lower := strings.ToLower(strings.TrimSpace(u))
-	for _, bad := range []string{"file://", "unix:", "unix-abstract://", "http://", "https://"} {
-		if strings.HasPrefix(lower, bad) {
-			return false
-		}
+	u = strings.TrimSpace(u)
+	if u == "" {
+		return false // callers treat empty separately (clears the cache); never dialed
 	}
-	return true
+	// Allow an explicit dns:/// target: strip the dns scheme + optional authority, then
+	// validate the remaining host:port.
+	if rest, ok := strings.CutPrefix(u, "dns://"); ok {
+		// forms: dns:///host:port  or  dns://authority/host:port
+		if i := strings.LastIndex(rest, "/"); i >= 0 {
+			rest = rest[i+1:]
+		}
+		return isHostPort(rest)
+	}
+	// Reject anything else containing a scheme separator "://" or a leading "<scheme>:".
+	if strings.Contains(u, "://") {
+		return false
+	}
+	if i := strings.Index(u, ":"); i >= 0 {
+		// A leading token that is a known non-host scheme (unix, unix-abstract, passthrough,
+		// file, http, https) must be rejected. host:port has a numeric port after the colon.
+		// Simplest robust check: require host:port shape.
+		return isHostPort(u)
+	}
+	return false
+}
+
+// isHostPort reports whether s is host:port with a non-empty host and a numeric port 1-65535.
+func isHostPort(s string) bool {
+	host, port, err := net.SplitHostPort(s)
+	if err != nil || host == "" {
+		return false
+	}
+	p, err := strconv.Atoi(port)
+	return err == nil && p >= 1 && p <= 65535
 }
 
 // refreshPlatformConfig reads AvsConfig from chain and updates the cached URL.
@@ -567,6 +595,9 @@ func isSafePlatformURL(u string) bool {
 func (n *Node) refreshPlatformConfig(ctx context.Context) {
 	cc := n.platformConfigCaller
 	if cc == nil {
+		// In production platformConfigCaller is ALWAYS set to the L1 caller (see
+		// cmd/kmsServer/main.go); this nil -> baseContractCaller fallback is only
+		// exercised by unit tests that don't distinguish L1/L2.
 		cc = n.baseContractCaller
 	}
 	cfg, err := cc.GetAvsConfig(ctx, n.AVSAddress)
@@ -586,7 +617,13 @@ func (n *Node) refreshPlatformConfig(ctx context.Context) {
 			"operator_address", n.OperatorAddress.Hex(), "url", cfg.PlatformRpcUrl)
 		return
 	}
-	if n.PlatformRpcURL() != cfg.PlatformRpcUrl {
+	if cfg.PlatformRpcUrl == "" {
+		// First-run / unconfigured: the "updated" wording is misleading when there is
+		// nothing configured on chain yet. Store (to keep the cache consistent) and log
+		// distinctly.
+		n.logger.Sugar().Infow("Platform RPC URL not yet configured on chain (empty)",
+			"operator_address", n.OperatorAddress.Hex())
+	} else if n.PlatformRpcURL() != cfg.PlatformRpcUrl {
 		n.logger.Sugar().Infow("Platform RPC URL updated from chain",
 			"operator_address", n.OperatorAddress.Hex(), "url", cfg.PlatformRpcUrl)
 	}

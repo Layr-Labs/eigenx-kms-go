@@ -552,6 +552,7 @@ func Test_BlockHandler(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Failed to start L1 Anvil: %v", err)
 		}
+		defer func() { _ = tests.KillAnvil(l1Anvil) }()
 		go tests.WaitForAnvil(anvilWg, anvilCtx, t, l1EthereumClient, startErrorsChan)
 
 		anvilWg.Wait()
@@ -620,6 +621,28 @@ func Test_BlockHandler(t *testing.T) {
 
 		assert.False(t, hasErrors)
 		assert.GreaterOrEqual(t, receivedBlocks, 5, "Expected to receive at least 5 blocks")
-		_ = tests.KillAnvil(l1Anvil)
 	})
+}
+
+// TestHandleLog_DropsWhenFull verifies that HandleLog increments DroppedLogCount when
+// the LogChannel (cap 100) is full and a log cannot be delivered.
+func TestHandleLog_DropsWhenFull(t *testing.T) {
+	l := zap.NewNop()
+	bh := NewBlockHandler(l)
+	ctx := context.Background()
+
+	mkLog := func() *chainPoller.LogWithBlock {
+		return &chainPoller.LogWithBlock{Log: &log.DecodedLog{EventName: "AvsConfigSet"}}
+	}
+
+	// Fill the channel to capacity (100); none should drop.
+	for i := 0; i < 100; i++ {
+		assert.NoError(t, bh.HandleLog(ctx, mkLog()))
+	}
+	assert.Equal(t, uint64(0), bh.DroppedLogCount())
+
+	// The next sends hit the full channel and drop.
+	assert.NoError(t, bh.HandleLog(ctx, mkLog()))
+	assert.NoError(t, bh.HandleLog(ctx, mkLog()))
+	assert.Equal(t, uint64(2), bh.DroppedLogCount())
 }

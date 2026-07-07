@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	kmsv1 "github.com/Layr-Labs/eigenx-kms-go/gen/protos/eigenlayer/platform/v1/kms"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/transportSigner"
@@ -95,6 +96,10 @@ func (c *client) GetLatestDeployedRelease(ctx context.Context, stackID string) (
 	if err != nil {
 		return nil, err
 	}
+	// Bound both the dial and the RPC: a missing HTTP-side deadline must not hang the
+	// call. Defense-in-depth; the platform-side freshness window is separate.
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	conn, closeFn, err := c.dial(url)
 	if err != nil {
 		return nil, fmt.Errorf("dial platform: %w", err)

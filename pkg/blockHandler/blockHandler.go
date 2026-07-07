@@ -2,6 +2,7 @@ package blockHandler
 
 import (
 	"context"
+	"sync/atomic"
 
 	chainPoller "github.com/Layr-Labs/chain-indexer/pkg/chainPollers"
 	"github.com/Layr-Labs/chain-indexer/pkg/clients/ethereum"
@@ -18,7 +19,14 @@ type BlockHandler struct {
 	BlockChannel chan *ethereum.EthereumBlock
 	LogChannel   chan *chainPoller.LogWithBlock
 	logger       *zap.Logger
+
+	// droppedLogs counts logs dropped by HandleLog because LogChannel was full.
+	// Exposed via DroppedLogCount() so operators can diagnose dropped AvsConfigSet logs.
+	droppedLogs atomic.Uint64
 }
+
+// DroppedLogCount returns the running total of logs dropped because the LogChannel was full.
+func (h *BlockHandler) DroppedLogCount() uint64 { return h.droppedLogs.Load() }
 
 func NewBlockHandler(
 	logger *zap.Logger,
@@ -89,7 +97,8 @@ func (h *BlockHandler) HandleLog(ctx context.Context, logWithBlock *chainPoller.
 		if logWithBlock != nil && logWithBlock.Log != nil {
 			eventName = logWithBlock.Log.EventName
 		}
-		h.logger.Sugar().Warnw("Log channel is full, dropping log", "eventName", eventName)
+		h.logger.Sugar().Warnw("Log channel is full, dropping log",
+			"eventName", eventName, "dropped_total", h.droppedLogs.Add(1))
 	}
 	return nil
 }
