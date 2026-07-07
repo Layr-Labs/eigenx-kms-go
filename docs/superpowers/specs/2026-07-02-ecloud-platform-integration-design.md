@@ -30,7 +30,7 @@ key); the caller uses it to decrypt secrets it fetches from the platform out of 
 | # | Piece | Where | Purpose |
 | --- | --- | --- | --- |
 | A | `platformRpcUrl` in `AvsConfig` + change event | `contracts/` (Solidity) | On-chain publication of the platform endpoint for operator discovery |
-| B | On-chain config read + cached refresh | `pkg/contractCaller`, `pkg/node` | Node reads `AvsConfig`, keeps the platform URL current as it changes |
+| B | Event-driven config listening + startup seed | `pkg/contractCaller`, `pkg/node`, `pkg/registrarabi`, chain-indexer poller | Node listens for `AvsConfigSet` logs from the registrar and keeps the cached platform URL current; a one-shot startup read seeds it for offline changes |
 | C | Signed platform gRPC client + `/secrets` switch | `pkg/clients/platformClient`, `pkg/node/handlers.go`, `gen/`, `protos/` | Call the platform, validate the attested digest against its release |
 
 ### Decisions locked during brainstorming
@@ -43,7 +43,7 @@ key); the caller uses it to decrypt secrets it fetches from the platform out of 
 | Behavior when the platform URL is not configured on-chain, or the platform is unreachable | **Fail closed:** return an error to the caller that the platform URL was not configured (or that the platform is unreachable). No silent fallback to the on-chain path when a `stack_id` was supplied. |
 | Proto acquisition (avoid the `eigenx-kms-go` ⇄ `ecloud-platform` module cycle) | **Git submodule** of `ecloud-platform` for proto provenance + **copy** the two `.proto` files into this repo's `protos/` tree + **generate the gRPC client locally** into this module's own path + **commit** the generated code. No `go.mod` dependency edge to `ecloud-platform` — the module cycle is fully avoided. |
 | Generated client import path | `github.com/Layr-Labs/eigenx-kms-go/gen/protos/...` (self-contained; the only coherent choice for local compilation). Revisitable during planning. |
-| Config-refresh mechanism | **Poll `GetAvsConfig` on the existing per-block ticker** (`checkScheduledOperations`) and update the cached URL when it changes. The on-chain event is emitted for external observability/tooling; the node's own refresh is a lightweight config re-read, avoiding a new log-subscription pipeline (which would require registering the contract in the chain-indexer store and implementing the currently no-op `HandleLog`). More robust to missed logs, far less code. |
+| Config-refresh mechanism | **Event-driven listening for the `AvsConfigSet` log** (the original brainstorming intent). The KMS node registers the registrar contract with its existing L1 chain-indexer poller: the registrar address is resolved at startup via `l1ContractCaller.GetAvsRegistrar(avsAddr)`, added to `EVMChainPollerConfig.InterestingContracts`, and registered in the `InMemoryContractStore` with the registrar ABI (embedded as JSON in `pkg/registrarabi` via `go:embed` from the concrete `EigenKMSRegistrar.sol`). The poller fetches the registrar's logs (address filter), decodes them (`abi.UnpackIntoMap`), and delivers them via `blockHandler.HandleLog` → a buffered `LogChannel` → `blockHandler.ListenToLogChannel`. The node consumes them in `startScheduler` via `go n.blockHandler.ListenToLogChannel(ctx, n.handlePlatformConfigLog)`; `handlePlatformConfigLog` ignores non-`AvsConfigSet` logs, reads `OutputData["platformRpcUrl"]`, validates via `isSafePlatformURL`, and stores into the `platformURL atomic.Value` cache (an empty URL clears it → "unconfigured"). A **one-shot startup seed** (`refreshPlatformConfig`, bounded 5s ctx, non-fatal, reading `GetAvsConfig` via the L1 contract caller) covers config changes made while the node was offline; steady-state updates come purely from events with no contract read. The poller's block cursor is persisted durably (`pkg/persistence/chainpolleradapter` over `INodePersistence`) so the cursor resumes across restarts and the startup seed bounds any missed-event gap. **Reversal note:** an earlier draft chose poll-refresh (per-block `GetAvsConfig` on the `checkScheduledOperations` modulus boundary) to avoid building the log-subscription pipeline; the shipped design reverts to event-listening per the original brainstorming intent, and the modulus-refresh block was removed. |
 | Digest match rule | The attested `claims.ImageDigest` must match the `@sha256:<digest>` of **any** app in the platform's returned release (`Apps[].Image`). |
 | Response on the platform path | Return **only** the encrypted partial key share (`EncryptedPartialSig` + echoed `ExtraData`); leave `EncryptedEnv`/`PublicEnv` **empty**. The platform owns secrets and its release response carries none. The on-chain path is unchanged (still returns on-chain `EncryptedEnv`/`PublicEnv`). |
 
@@ -64,15 +64,16 @@ key); the caller uses it to decrypt secrets it fetches from the platform out of 
 
 ### Request/response flow
 
-The node discovers the platform URL from chain (background, per-block), then uses it
-to authorize `/secrets` requests that carry a `stack_id`. Requests without a `stack_id`
-never touch the platform.
+The node seeds the platform URL once at startup, then keeps it current by listening
+for `AvsConfigSet` events emitted by the registrar, and uses it to authorize `/secrets`
+requests that carry a `stack_id`. Requests without a `stack_id` never touch the platform.
 
 ```mermaid
 sequenceDiagram
     autonumber
-    participant Chain as EigenKMSRegistrar chain
-    participant Node as KMS Node per-block loop
+    participant Chain as EigenKMSRegistrar L1 chain
+    participant Poll as KMS chain-indexer poller
+    participant Node as KMS Node cache
     participant App as App caller
     participant Sec as secrets handler
     participant Att as attestationManager
@@ -80,12 +81,16 @@ sequenceDiagram
     participant Plat as ecloud-platform KMSService 9002
     participant AC as AppController chain
 
-    Note over Node,Chain: Background on-chain config discovery Piece B
-    loop every N blocks
-        Node->>Chain: GetAvsConfig avsAddress
-        Chain-->>Node: operatorSetId, platformRpcUrl
-        Node->>Node: update cached platformRpcUrl if changed
-    end
+    Note over Node,Chain: Startup one-shot seed Piece B
+    Node->>Chain: refreshPlatformConfig GetAvsConfig on L1 bounded 5s
+    Chain-->>Node: operatorSetId, platformRpcUrl
+    Node->>Node: seed cached platformRpcUrl non-fatal on error
+
+    Note over Chain,Node: Steady-state event listening Piece B
+    Chain->>Poll: emit AvsConfigSet operatorSetId, platformRpcUrl
+    Poll->>Poll: fetch registrar logs, decode via UnpackIntoMap
+    Poll->>Node: HandleLog then LogChannel then ListenToLogChannel
+    Node->>Node: handlePlatformConfigLog validate isSafePlatformURL, store in cache
 
     Note over App,AC: secrets request Piece C switch
     App->>Sec: POST secrets with app_id, optional stack_id, attestation
@@ -201,9 +206,12 @@ sequenceDiagram
   `{ OperatorSetId uint32 }` today. There is **no** `AvsConfig` event yet and **no**
   `ContractCaller.GetAvsConfig` wrapper — both are added here.
 - **Block reactions:** the node polls blocks (chain-indexer) and runs
-  `checkScheduledOperations` per block (`pkg/node/node.go:400`); `HandleLog` is a
-  deliberate no-op (`pkg/blockHandler/blockHandler.go:58`). No contract-log
-  subscription exists. The reshare scheduler is block-number-modulo driven.
+  `checkScheduledOperations` per block (`pkg/node/node.go:400`). The reshare scheduler is
+  block-number-modulo driven. As shipped, the registrar contract **is** registered with
+  the chain-indexer poller (its `InterestingContracts` + `InMemoryContractStore` with the
+  registrar ABI), and `HandleLog` is **no longer a no-op** — it decodes and delivers
+  matched logs onto a buffered `LogChannel`, drained by `ListenToLogChannel`. This is the
+  log-subscription pipeline the node uses to react to `AvsConfigSet`.
 - **Bindings regeneration:** `./scripts/compileMiddlewareBindings.sh` runs
   `forge build` + `abigen` + `jq`, regenerating
   `pkg/middleware-bindings/IEigenKMSRegistrar/binding.go` (and others). Contracts use
@@ -264,10 +272,11 @@ type IEigenKMSRegistrarTypesAvsConfig struct {
 func (_IEigenKMSRegistrar *IEigenKMSRegistrarCaller) GetAvsConfig(opts *bind.CallOpts) (IEigenKMSRegistrarTypesAvsConfig, error)
 ```
 
-## 4. Piece B — On-chain config read + cached refresh
+## 4. Piece B — Event-driven config listening + startup seed
 
 ### ContractCaller: read `AvsConfig`
-Add to `pkg/contractCaller` (interface `contractCaller.go`) and its `caller`
+`GetAvsConfig` is still added (it backs the one-shot startup seed below). Add to
+`pkg/contractCaller` (interface `contractCaller.go`) and its `caller`
 implementation, mirroring the socket-read block (`caller.go:144-170`):
 ```go
 // AvsConfig is the platform-relevant slice of the on-chain registrar config.
@@ -283,26 +292,55 @@ Implementation: `GetAVSRegistrar(avsAddr)` → `NewIEigenKMSRegistrarCaller(addr
 ethclient)` → `caller.GetAvsConfig(&bind.CallOpts{Context: ctx})`; map to
 `*AvsConfig`.
 
-### Node: cache + per-block refresh
-- New node field: a small concurrency-safe holder for the current platform URL
-  (e.g. `platformRpcURL atomic.Value` or a mutex-guarded string) plus the `avsAddress`
-  (already available to the node) needed to read config.
-- In `checkScheduledOperations` (the existing per-block callback), add a lightweight
-  step that calls `baseContractCaller.GetAvsConfig(ctx, avsAddress)` and updates the
-  cached URL if it changed. To avoid a chain read every block, gate it on the same
-  interval idiom already used for reshare (a modest block modulus, e.g. reuse or add a
-  small constant) OR read every block (cheap `eth_call`); **decision: gate on a small
-  interval constant** to bound RPC load — the exact interval is a plan-time detail.
-  A change is logged (URL values are not secret).
-- On node startup, perform one initial `GetAvsConfig` read so the URL is populated
-  before the first request (do not hard-fail startup if the read fails or the URL is
-  empty — the `/secrets` handler enforces fail-closed per request).
+### Node: event-driven cache + startup seed
+The URL cache (`platformURL atomic.Value`, exposed via `PlatformRpcURL()`) stays; the
+`platformClient` reads it live at call time. What changed is how it is populated: the
+node **listens** for `AvsConfigSet` events rather than polling per block. The old
+`blockNumber%blockInterval == 0` modulus-refresh block in `checkScheduledOperations`
+was **removed**.
 
-**Rationale for poll-not-subscribe:** `HandleLog` is a no-op and no contract is
-registered with the chain-indexer store, so log-subscription would be a new subsystem.
-A per-interval `GetAvsConfig` read is a few lines, is naturally reorg/missed-log safe,
-and matches the block-driven idiom the node already uses. The on-chain event still
-exists for external observers.
+**Registering the registrar with the chain-indexer poller (on L1):** the registrar
+lives on the L1 (`--rpc-url`) chain, the same chain the node's existing chain-indexer
+poller (built on the L1 `ethClient`) polls. At startup the node:
+- resolves the registrar address via `l1ContractCaller.GetAvsRegistrar(avsAddr)`;
+- adds that address to `EVMChainPollerConfig.InterestingContracts`;
+- registers it in the `InMemoryContractStore` with the registrar's ABI, embedded as
+  JSON in a new `pkg/registrarabi` package via `go:embed` (the ABI comes from the
+  concrete `EigenKMSRegistrar.sol`, which declares the `AvsConfigSet` event).
+
+**Log path:** the poller fetches logs for the registrar (address filter), decodes them
+with go-ethereum `abi.UnpackIntoMap`, and delivers each decoded log via
+`blockHandler.HandleLog` → a new buffered `LogChannel` → `blockHandler.ListenToLogChannel`.
+The node subscribes in `startScheduler`:
+```go
+go n.blockHandler.ListenToLogChannel(ctx, n.handlePlatformConfigLog)
+```
+`handlePlatformConfigLog` ignores non-`AvsConfigSet` logs, reads
+`OutputData["platformRpcUrl"]` (a Go `string`; both event args are non-indexed so they
+land in `OutputData`), validates it via `isSafePlatformURL` (rejects `file://`,
+`unix:`, `unix-abstract://`, and `http(s)://`), and stores the result into the
+`platformURL atomic.Value`. An **empty** URL is stored, clearing the cache back to
+"unconfigured".
+
+**Startup seed:** `Start()` performs ONE `refreshPlatformConfig` call (bounded 5s ctx,
+non-fatal) so the URL is populated before the first request AND to cover any config
+change made while the node was offline. `refreshPlatformConfig` reads via a new
+`platformConfigCaller` node field bound to the **L1** contract caller — so the seed
+reads the same chain the events come from — falling back to `baseContractCaller` when
+nil (tests). Steady-state updates thereafter come from `AvsConfigSet` events with no
+contract read.
+
+**Durable persistence:** the chain-indexer poller's block cursor is persisted via a new
+`pkg/persistence/chainpolleradapter` over the node's `INodePersistence` (block-record
+CRUD added to the memory/badger/redis backends), so the cursor survives restarts. This
+closes the old `TODO(seanmcgary)` and is what bounds "missed events across restarts":
+the cursor resumes where it left off, and the startup seed covers any residual gap.
+
+**Rationale for subscribe-not-poll:** this is the original brainstorming intent —
+react to the emitted event rather than re-reading config on a timer. Registering the
+contract with the chain-indexer store and implementing the (previously no-op)
+`HandleLog` is the pipeline that makes it work; the durable cursor + startup seed
+handle reorg/missed-log/offline concerns that the poll approach was chosen to sidestep.
 
 ## 5. Piece C — Platform gRPC client + `/secrets` switch
 
@@ -486,8 +524,11 @@ Modified:
 
 ## 10. Open items (resolve during planning/impl)
 
-1. **Config-refresh interval.** Exact block modulus (or every-block) for the
-   `GetAvsConfig` poll — bound RPC load vs. freshness. Plan-time constant.
+1. ~~**Config-refresh interval.** Exact block modulus (or every-block) for the
+   `GetAvsConfig` poll — bound RPC load vs. freshness. Plan-time constant.~~ **Resolved
+   by the event-driven rework:** there is no poll interval; updates arrive via
+   `AvsConfigSet` events (§4) and a one-shot startup seed. `GetAvsConfig` is read only
+   once at startup.
 2. **gRPC error → HTTP code mapping** for the platform path (esp. Unauthenticated,
    which indicates operator misconfig rather than caller fault).
 3. **buf vs protoc invocation** for `make protos` (buf is installed; either works).

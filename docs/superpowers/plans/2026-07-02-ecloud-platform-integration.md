@@ -4,7 +4,7 @@
 
 **Goal:** Let a KMS operator authorize `/secrets` requests that carry a `stack_id` against the ecloud-platform's deployed release (returning only the key share, not secrets), discovering the platform's gRPC URL on-chain from `EigenKMSRegistrar`.
 
-**Architecture:** Three layers. (A) Solidity: add `platformRpcUrl` to `AvsConfig` and emit `AvsConfigSet` on change; regenerate Go bindings. (B) The node reads `AvsConfig` via a new `ContractCaller.GetAvsConfig` and refreshes a cached platform URL on the existing per-block callback. (C) A signed gRPC `platformClient` (protos vendored locally, no module dependency on ecloud-platform) is called by `handleSecretsRequest` when the request carries a `stack_id`; the attested image digest is matched against the platform release's app images, and only the encrypted partial key share is returned.
+**Architecture:** Three layers. (A) Solidity: add `platformRpcUrl` to `AvsConfig` and emit `AvsConfigSet` on change; regenerate Go bindings. (B) The node registers the registrar contract with its existing L1 chain-indexer poller (address via `l1ContractCaller.GetAvsRegistrar`, ABI embedded in `pkg/registrarabi`) and **listens** for `AvsConfigSet` events: the poller decodes matched logs and delivers them via `blockHandler.HandleLog` → `LogChannel` → `ListenToLogChannel` to `handlePlatformConfigLog`, which validates and updates a cached platform URL. A one-shot startup seed (`refreshPlatformConfig` via `ContractCaller.GetAvsConfig` on L1) covers offline changes, and the poller's block cursor is persisted durably (`pkg/persistence/chainpolleradapter`) across restarts. (C) A signed gRPC `platformClient` (protos vendored locally, no module dependency on ecloud-platform) is called by `handleSecretsRequest` when the request carries a `stack_id`; the attested image digest is matched against the platform release's app images, and only the encrypted partial key share is returned.
 
 **Tech Stack:** Go 1.25, Foundry/forge (Solidity 0.8.27), `abigen`, `buf` 1.53 + `protoc-gen-go`/`protoc-gen-go-grpc`, `google.golang.org/grpc`, `github.com/Layr-Labs/crypto-libs/pkg/ecdsa`, urfave/cli v2, zap.
 
@@ -36,7 +36,7 @@ Modified:
 - `pkg/contractCaller/contractCaller.go` — add `AvsConfig` type + `GetAvsConfig` to the interface.
 - `pkg/contractCaller/caller/caller.go` — implement `GetAvsConfig`.
 - `pkg/types/types.go` — add `SecretsRequestV1.StackID`.
-- `pkg/node/node.go` — cached platform-URL holder, `platformClient` field/param in `NewNode`, per-block refresh, initial read.
+- `pkg/node/node.go` — cached platform-URL holder, `platformClient` field/param in `NewNode`, `handlePlatformConfigLog` event handler + `AvsConfigSet` listener wiring in `startScheduler`, one-shot startup seed (`refreshPlatformConfig` on L1). **Reworked from the originally-planned per-block modulus refresh to event-listening** — see the Rework note in Task 7. Also adds `pkg/registrarabi` (embedded registrar ABI), the `blockHandler` `LogChannel`/`ListenToLogChannel`, and `pkg/persistence/chainpolleradapter` (durable poller cursor over `INodePersistence`).
 - `pkg/node/handlers.go` — `/secrets` `stack_id` switch + platform digest match + key-share-only response.
 - `cmd/kmsServer/main.go` — flag (optional), construct and inject `platformClient`.
 - `Makefile` — `protos` (+ `protos-sync`) target.
@@ -885,6 +885,38 @@ git commit -m "feat(types): add StackID to SecretsRequestV1"
 
 ## Task 7: Node — platform-URL cache, refresh, and `platformClient` wiring
 
+> **REWORK NOTE (post-execution, PR #120):** The refresh mechanism below was
+> implemented as originally written (per-block modulus polling of `GetAvsConfig` in
+> `checkScheduledOperations`, Step 4) and then **reworked to true event-driven
+> listening** for the `AvsConfigSet` event — the original brainstorming intent. As
+> shipped:
+> - The registrar contract is **registered with the node's existing L1 chain-indexer
+>   poller** (address resolved at startup via `l1ContractCaller.GetAvsRegistrar(avsAddr)`,
+>   added to `EVMChainPollerConfig.InterestingContracts`, registered in the
+>   `InMemoryContractStore` with the registrar ABI embedded as JSON in a new
+>   **`pkg/registrarabi`** package via `go:embed`).
+> - The poller decodes matched logs (`abi.UnpackIntoMap`) and delivers them via
+>   `blockHandler.HandleLog` → a buffered **`LogChannel`** → `blockHandler.ListenToLogChannel`.
+> - `startScheduler` runs `go n.blockHandler.ListenToLogChannel(ctx, n.handlePlatformConfigLog)`.
+>   **`handlePlatformConfigLog`** ignores non-`AvsConfigSet` logs, reads
+>   `OutputData["platformRpcUrl"]`, validates via `isSafePlatformURL` (rejects
+>   `file://`/`unix:`/`unix-abstract://`/`http(s)://`), and stores into `platformURL`
+>   (empty clears → "unconfigured").
+> - **Step 4 below (per-block modulus refresh) is SUPERSEDED and was removed** from
+>   `checkScheduledOperations`. The `PlatformRpcURL()` accessor + `platformURL
+>   atomic.Value` cache (Step 3) **stay**.
+> - `refreshPlatformConfig` remains, but is now called **once at startup** (`Start()`,
+>   bounded 5s ctx, non-fatal) as a **seed** for config changes made while offline; it
+>   reads via a new `platformConfigCaller` node field bound to the **L1** contract caller
+>   (falls back to `baseContractCaller` when nil, for tests).
+> - Durable poller persistence was added (**`pkg/persistence/chainpolleradapter`** over
+>   `INodePersistence`, with block-record CRUD on memory/badger/redis) so the poller
+>   cursor survives restarts, bounding missed events across restarts. Closes the old
+>   `TODO(seanmcgary)`.
+>
+> The `GetAvsConfig` ContractCaller method (Task 3) is still used — by the startup seed.
+> Steps 1–3, 5, 7 below are accurate as shipped; Step 4 is historical/superseded.
+
 **Files:**
 - Modify: `pkg/node/node.go` (fields, `NewNode` param, refresh in `checkScheduledOperations`, initial read)
 - Test: `pkg/node/platform_url_test.go` (new)
@@ -1007,7 +1039,13 @@ func (n *Node) refreshPlatformConfig(ctx context.Context) {
   setter or constructor param is needed. This is why the field is an interface, not a
   concrete `*client`.
 
-- [ ] **Step 4: Refresh on the per-block callback (reshare-interval cadence)**
+- [ ] **Step 4: Refresh on the per-block callback (reshare-interval cadence)** — **SUPERSEDED (see Rework note above)**
+
+> This step was executed, then **reverted**. The modulus-refresh block was removed from
+> `checkScheduledOperations`; the platform URL is now updated by the `AvsConfigSet` event
+> listener (`handlePlatformConfigLog`), with `refreshPlatformConfig` retained only as a
+> one-shot startup seed. The description below is kept as a historical record of the
+> abandoned poll-refresh approach.
 
 The platform URL is refreshed on the same reshare-interval boundaries the scheduler
 already keys on — a cheap `eth_call` bounded to that cadence to limit RPC load (NOT
@@ -1377,3 +1415,31 @@ grounding and how each was handled:
    binding, `checkScheduledOperations`/`blockInterval`, `NewNode` signature, config
    env-const pattern, `SecretsRequestV1` (no `StackID` yet), `pkg/clients/` layout — Tasks
    1, 2, 4, 5, 6 and the Task 7 refresh mechanics need no change.
+
+### Post-execution rework (PR #120 — poll-refresh → event-driven listening)
+
+After the plan was executed, the Piece B config-refresh mechanism was **reworked from
+poll-refresh to event-driven listening** for the `AvsConfigSet` event.
+
+- **Why:** the original brainstorming asked for event listening (react to the emitted
+  `AvsConfigSet` log), not a per-block config re-read. An interim draft had chosen
+  poll-refresh to avoid building the log-subscription pipeline; that decision was
+  reversed to match the original intent.
+- **What changed (Task 7):** the `blockNumber%blockInterval == 0` modulus-refresh block
+  (Task 7 Step 4) was **removed** from `checkScheduledOperations`. The node now registers
+  the registrar contract with its L1 chain-indexer poller (`pkg/registrarabi` embedded
+  ABI, `InterestingContracts` + `InMemoryContractStore`), the poller decodes matched
+  logs and delivers them via `blockHandler.HandleLog` → `LogChannel` →
+  `ListenToLogChannel`, and `handlePlatformConfigLog` validates (`isSafePlatformURL`) and
+  updates the cache. `refreshPlatformConfig` was kept as a **one-shot startup seed** (on
+  L1, via a new `platformConfigCaller` field) for offline config changes.
+- **Durability:** the poller's block cursor is now persisted via
+  `pkg/persistence/chainpolleradapter` over `INodePersistence` (block-record CRUD added
+  to memory/badger/redis), closing the old `TODO(seanmcgary)` and bounding missed events
+  across restarts (cursor resumes; startup seed covers the residual gap).
+- **Unchanged:** `PlatformRpcURL()` accessor + `platformURL atomic.Value` cache, the
+  `GetAvsConfig` ContractCaller method (now backs the seed), Piece C, and the contract
+  event itself.
+- The spec (`docs/superpowers/specs/2026-07-02-ecloud-platform-integration-design.md`)
+  §4 and the decisions table were updated to match; the sequence diagram now shows the
+  startup seed + event path instead of the per-block loop.
