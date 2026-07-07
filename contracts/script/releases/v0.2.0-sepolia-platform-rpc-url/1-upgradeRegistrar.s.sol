@@ -22,9 +22,27 @@ import {IEigenKMSRegistrarTypes} from "../../../src/interfaces/IEigenKMSRegistra
  *      so the impl deploy, the proxy upgrade, and setAvsConfig all run as that EOA.
  *
  *      The new platformRpcUrl is injected via the Zeus env var `platformRpcUrl`
- *      (Env.platformRpcUrl()). `operatorSetId` is read from the live proxy so the upgrade
- *      never clobbers it.
+ *      (Env.platformRpcUrl()). `operatorSetId` is read from the live proxy (post-upgrade,
+ *      via the new signature) so the upgrade never clobbers it.
+ *
+ *      Non-atomic window: the proxy upgrade (tx 1) and setAvsConfig (tx 2) are separate
+ *      transactions, so between them getAvsConfig().platformRpcUrl reads empty. Acceptable
+ *      for sepolia-dev (no live operators); for mainnet, land both txs in one block (or use
+ *      ProxyAdmin.upgradeAndCall once the registrar exposes a suitable initializer).
  */
+/// @dev The v0.1.0 (pre-upgrade) AvsConfig had only `operatorSetId` — a STATIC return
+/// tuple. The new `getAvsConfig()` returns a DYNAMIC tuple (it added a `string`), which is
+/// ABI-encoded as an offset pointer. Decoding the old impl's static return with the new
+/// signature mis-reads the offset and reverts/garbles, so any read of the config BEFORE the
+/// upgrade must use this old-shaped signature.
+interface IEigenKMSRegistrarV1 {
+    struct AvsConfigV1 {
+        uint32 operatorSetId;
+    }
+
+    function getAvsConfig() external view returns (AvsConfigV1 memory);
+}
+
 contract UpgradeRegistrar is EOADeployer {
     using Env for *;
 
@@ -72,7 +90,11 @@ contract UpgradeRegistrar is EOADeployer {
         ProxyAdmin proxyAdmin = Env.proxyAdmin();
 
         // Capture the pre-upgrade operatorSetId so we can prove the upgrade preserves it.
-        uint32 preOperatorSetId = registrar.getAvsConfig().operatorSetId;
+        // Read via the v0.1.0 (old-shaped) signature: before the upgrade the proxy still
+        // points at the old impl, whose getAvsConfig() returns a STATIC (uint32) tuple —
+        // decoding it with the new dynamic-tuple signature would revert (see note above).
+        uint32 preOperatorSetId =
+            IEigenKMSRegistrarV1(address(registrar)).getAvsConfig().operatorSetId;
         assertTrue(preOperatorSetId != 0, "sanity: proxy not initialised");
 
         runAsEOA();
