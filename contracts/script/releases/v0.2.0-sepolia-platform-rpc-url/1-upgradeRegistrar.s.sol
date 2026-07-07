@@ -14,10 +14,10 @@ import {IEigenKMSRegistrarTypes} from "../../../src/interfaces/IEigenKMSRegistra
 
 /**
  * @title UpgradeRegistrar (v0.2.0, sepolia-dev)
- * @notice Upgrades the EigenKMSRegistrar implementation to the version built in PR #120,
- *         which adds `AvsConfig.platformRpcUrl` + the `AvsConfigSet` event so KMS operators
- *         can discover the ecloud-platform gRPC endpoint on-chain, then sets the
- *         platformRpcUrl on the live proxy while preserving the existing operatorSetId.
+ * @notice Upgrades the EigenKMSRegistrar implementation to add `AvsConfig.platformRpcUrl`
+ *         + the `AvsConfigSet` event so KMS operators can discover the ecloud-platform
+ *         gRPC endpoint on-chain, then sets the platformRpcUrl on the live proxy while
+ *         preserving the existing operatorSetId.
  * @dev EOA phase: the operator EOA owns both the ProxyAdmin and the registrar (Ownable),
  *      so the impl deploy, the proxy upgrade, and setAvsConfig all run as that EOA.
  *
@@ -73,6 +73,7 @@ contract UpgradeRegistrar is EOADeployer {
 
         // Capture the pre-upgrade operatorSetId so we can prove the upgrade preserves it.
         uint32 preOperatorSetId = registrar.getAvsConfig().operatorSetId;
+        assertTrue(preOperatorSetId != 0, "sanity: proxy not initialised");
 
         runAsEOA();
 
