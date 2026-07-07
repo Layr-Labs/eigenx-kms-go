@@ -32,8 +32,20 @@ type MemoryPersistence struct {
 	// Protocol sessions: sessionTimestamp -> ProtocolSessionState
 	sessions map[int64]*persistence.ProtocolSessionState
 
+	// Chain poller block records: (chainId, number) -> BlockRecord
+	blockRecords map[blockRecordKey]*persistence.BlockRecord
+
+	// Chain poller last processed block: chainId -> block number
+	lastProcessedBlocks map[uint64]uint64
+
 	// Closed flag
 	closed bool
+}
+
+// blockRecordKey is the composite map key for block record storage.
+type blockRecordKey struct {
+	chainId uint64
+	number  uint64
 }
 
 // NewMemoryPersistence creates a new in-memory persistence layer.
@@ -43,9 +55,11 @@ func NewMemoryPersistence() *MemoryPersistence {
 	fmt.Println("WARNING: This should ONLY be used for testing. Set KMS_PERSISTENCE_TYPE=badger for production")
 
 	return &MemoryPersistence{
-		keyShares: make(map[int64]*types.KeyShareVersion),
-		sessions:  make(map[int64]*persistence.ProtocolSessionState),
-		nodeState: &persistence.NodeState{},
+		keyShares:           make(map[int64]*types.KeyShareVersion),
+		sessions:            make(map[int64]*persistence.ProtocolSessionState),
+		blockRecords:        make(map[blockRecordKey]*persistence.BlockRecord),
+		lastProcessedBlocks: make(map[uint64]uint64),
+		nodeState:           &persistence.NodeState{},
 	}
 }
 
@@ -264,6 +278,83 @@ func (m *MemoryPersistence) ListProtocolSessions() ([]*persistence.ProtocolSessi
 	return result, nil
 }
 
+// SaveBlockRecord upserts a block record and advances the last-processed
+// pointer for the chain to the saved block.
+func (m *MemoryPersistence) SaveBlockRecord(record *persistence.BlockRecord) error {
+	if record == nil {
+		return fmt.Errorf("cannot save nil BlockRecord")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.closed {
+		return fmt.Errorf("persistence layer is closed")
+	}
+
+	// Deep copy to prevent external mutation
+	key := blockRecordKey{chainId: record.ChainId, number: record.Number}
+	m.blockRecords[key] = deepCopyBlockRecord(record)
+	m.lastProcessedBlocks[record.ChainId] = record.Number
+
+	return nil
+}
+
+// GetLastProcessedBlockRecord returns the highest-processed block for the chain,
+// or (nil, nil) if none has been processed yet.
+func (m *MemoryPersistence) GetLastProcessedBlockRecord(chainId uint64) (*persistence.BlockRecord, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.closed {
+		return nil, fmt.Errorf("persistence layer is closed")
+	}
+
+	blockNum, exists := m.lastProcessedBlocks[chainId]
+	if !exists {
+		return nil, nil // Not found is not an error
+	}
+
+	record, exists := m.blockRecords[blockRecordKey{chainId: chainId, number: blockNum}]
+	if !exists {
+		return nil, nil // Not found is not an error
+	}
+
+	// Deep copy to prevent external mutation
+	return deepCopyBlockRecord(record), nil
+}
+
+// GetBlockRecord returns a specific block record, or (nil, nil) if it does not exist.
+func (m *MemoryPersistence) GetBlockRecord(chainId uint64, blockNumber uint64) (*persistence.BlockRecord, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.closed {
+		return nil, fmt.Errorf("persistence layer is closed")
+	}
+
+	record, exists := m.blockRecords[blockRecordKey{chainId: chainId, number: blockNumber}]
+	if !exists {
+		return nil, nil // Not found is not an error
+	}
+
+	// Deep copy to prevent external mutation
+	return deepCopyBlockRecord(record), nil
+}
+
+// DeleteBlockRecord removes a block record. Idempotent.
+func (m *MemoryPersistence) DeleteBlockRecord(chainId uint64, blockNumber uint64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.closed {
+		return fmt.Errorf("persistence layer is closed")
+	}
+
+	delete(m.blockRecords, blockRecordKey{chainId: chainId, number: blockNumber})
+	return nil
+}
+
 // Close shuts down the persistence layer.
 func (m *MemoryPersistence) Close() error {
 	m.mu.Lock()
@@ -327,6 +418,15 @@ func deepCopyKeyShareVersion(v *types.KeyShareVersion) *types.KeyShareVersion {
 		IsActive:        v.IsActive,
 		ParticipantIDs:  participantIDs,
 	}
+}
+
+func deepCopyBlockRecord(r *persistence.BlockRecord) *persistence.BlockRecord {
+	if r == nil {
+		return nil
+	}
+	// BlockRecord contains only value-type fields, so a struct copy suffices.
+	cp := *r
+	return &cp
 }
 
 func deepCopyProtocolSessionState(s *persistence.ProtocolSessionState) *persistence.ProtocolSessionState {

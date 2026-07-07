@@ -462,3 +462,62 @@ func TestMemoryPersistence_DeepCopy_Mutation(t *testing.T) {
 	assert.Equal(t, common.HexToAddress("0x01"), loaded2.ParticipantIDs[0])
 	assert.Equal(t, byte(1), loaded2.Commitments[0].CompressedBytes[0])
 }
+
+func TestMemoryPersistence_BlockRecordRoundTrip(t *testing.T) {
+	mp := NewMemoryPersistence()
+	defer func() { _ = mp.Close() }()
+
+	const chainId = uint64(1)
+
+	// No blocks processed yet.
+	last, err := mp.GetLastProcessedBlockRecord(chainId)
+	require.NoError(t, err)
+	assert.Nil(t, last)
+
+	block1 := &persistence.BlockRecord{Number: 100, Hash: "0xaaa", ParentHash: "0x999", Timestamp: 1000, ChainId: chainId}
+	block2 := &persistence.BlockRecord{Number: 101, Hash: "0xbbb", ParentHash: "0xaaa", Timestamp: 1012, ChainId: chainId}
+
+	require.NoError(t, mp.SaveBlockRecord(block1))
+	require.NoError(t, mp.SaveBlockRecord(block2))
+
+	// Last processed should be the last-saved block.
+	last, err = mp.GetLastProcessedBlockRecord(chainId)
+	require.NoError(t, err)
+	require.NotNil(t, last)
+	assert.Equal(t, block2.Number, last.Number)
+	assert.Equal(t, block2.Hash, last.Hash)
+	assert.Equal(t, block2.ParentHash, last.ParentHash)
+	assert.Equal(t, block2.Timestamp, last.Timestamp)
+	assert.Equal(t, block2.ChainId, last.ChainId)
+
+	// GetBlockRecord for a specific block.
+	got, err := mp.GetBlockRecord(chainId, 100)
+	require.NoError(t, err)
+	require.NotNil(t, got)
+	assert.Equal(t, block1.Hash, got.Hash)
+
+	// Missing block returns (nil, nil).
+	missing, err := mp.GetBlockRecord(chainId, 999)
+	require.NoError(t, err)
+	assert.Nil(t, missing)
+
+	// Missing block for another chain returns (nil, nil).
+	otherChain, err := mp.GetLastProcessedBlockRecord(uint64(17000))
+	require.NoError(t, err)
+	assert.Nil(t, otherChain)
+
+	// Delete removes the block; idempotent.
+	require.NoError(t, mp.DeleteBlockRecord(chainId, 100))
+	got, err = mp.GetBlockRecord(chainId, 100)
+	require.NoError(t, err)
+	assert.Nil(t, got)
+	require.NoError(t, mp.DeleteBlockRecord(chainId, 100))
+}
+
+func TestMemoryPersistence_SaveBlockRecord_Nil(t *testing.T) {
+	mp := NewMemoryPersistence()
+	defer func() { _ = mp.Close() }()
+
+	err := mp.SaveBlockRecord(nil)
+	assert.Error(t, err)
+}
