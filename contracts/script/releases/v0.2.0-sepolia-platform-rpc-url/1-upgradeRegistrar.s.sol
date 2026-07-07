@@ -5,7 +5,6 @@ import {EOADeployer} from "zeus-templates/templates/EOADeployer.sol";
 import "../Env.sol";
 
 import "@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol";
-import "@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol";
 
 import {IAllocationManager} from "@eigenlayer-contracts/src/contracts/interfaces/IAllocationManager.sol";
 import {IKeyRegistrar} from "@eigenlayer-contracts/src/contracts/interfaces/IKeyRegistrar.sol";
@@ -32,6 +31,10 @@ contract UpgradeRegistrar is EOADeployer {
     function _runAsEOA() internal override {
         ProxyAdmin proxyAdmin = Env.proxyAdmin();
         EigenKMSRegistrar registrar = Env.proxy.eigenKMSRegistrar();
+
+        // Fail fast (at dry-run time) if the platform endpoint wasn't injected — an empty
+        // platformRpcUrl would silently leave operator discovery broken.
+        require(bytes(Env.platformRpcUrl()).length > 0, "platformRpcUrl env var not set");
 
         // On-chain transactions run inside the broadcast segment: deploy the new impl,
         // repoint the proxy, and set the platform URL. Zeus state recording (deployImpl)
@@ -65,10 +68,13 @@ contract UpgradeRegistrar is EOADeployer {
     }
 
     function testScript() public virtual {
-        runAsEOA();
-
         EigenKMSRegistrar registrar = Env.proxy.eigenKMSRegistrar();
         ProxyAdmin proxyAdmin = Env.proxyAdmin();
+
+        // Capture the pre-upgrade operatorSetId so we can prove the upgrade preserves it.
+        uint32 preOperatorSetId = registrar.getAvsConfig().operatorSetId;
+
+        runAsEOA();
 
         // Proxy now points at the newly deployed implementation.
         assertEq(
@@ -80,5 +86,6 @@ contract UpgradeRegistrar is EOADeployer {
         // platformRpcUrl is set to the injected value; operatorSetId is preserved (non-clobbered).
         IEigenKMSRegistrarTypes.AvsConfig memory cfg = registrar.getAvsConfig();
         assertEq(cfg.platformRpcUrl, Env.platformRpcUrl(), "platformRpcUrl not set");
+        assertEq(cfg.operatorSetId, preOperatorSetId, "operatorSetId must not change");
     }
 }
