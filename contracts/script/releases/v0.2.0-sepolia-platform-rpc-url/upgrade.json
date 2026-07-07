@@ -1,0 +1,11 @@
+{
+    "name": "sepolia-platform-rpc-url",
+    "from": "0.1.0",
+    "to": "0.2.0",
+    "phases": [
+        {
+            "type": "eoa",
+            "filename": "1-upgradeRegistrar.s.sol"
+        }
+    ]
+}
