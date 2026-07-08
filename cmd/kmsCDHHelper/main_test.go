@@ -13,7 +13,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
+	fr "github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/google/go-sev-guest/abi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -535,4 +537,67 @@ func TestRSAKeypairRoundTripsThroughEncryption(t *testing.T) {
 	got, err := rsaEnc.Decrypt(ciphertext, privPEM)
 	require.NoError(t, err, "Decrypt must accept the PKCS#1 RSA PRIVATE KEY PEM the helper hands the client")
 	assert.Equal(t, plaintext, got)
+}
+
+func TestAssembleEnvFromSecrets_RoundTrip(t *testing.T) {
+	const stackID = "stack-xyz"
+
+	// Build a synthetic master key + the app-private-key threshold recovery
+	// would yield for this stackID (mirrors pkg/crypto/ibe_test.go:259-272).
+	masterSecret, err := new(fr.Element).SetRandom()
+	require.NoError(t, err)
+	masterPubKey, err := crypto.ScalarMulG2(crypto.G2Generator, masterSecret)
+	require.NoError(t, err)
+	appHash, err := crypto.HashToG1(stackID)
+	require.NoError(t, err)
+	appPrivateKey, err := crypto.ScalarMulG1(*appHash, masterSecret)
+	require.NoError(t, err)
+
+	// Seal two secrets the way the ecloud CLI does: EncryptForApp(stackID, master, v).
+	ct1, err := crypto.EncryptForApp(stackID, *masterPubKey, []byte("hunter2"))
+	require.NoError(t, err)
+	ct2, err := crypto.EncryptForApp(stackID, *masterPubKey, []byte("token-abc"))
+	require.NoError(t, err)
+
+	env, err := assembleEnvFromSecrets(stackID, *appPrivateKey, []stackSecret{
+		{Name: "DB_PASSWORD", Value: ct1},
+		{Name: "API_KEY", Value: ct2},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"DB_PASSWORD": "hunter2", "API_KEY": "token-abc"}, env)
+}
+
+func TestAssembleEnvFromSecrets_EmptyList(t *testing.T) {
+	appHash, err := crypto.HashToG1("stack-1")
+	require.NoError(t, err)
+	masterSecret, err := new(fr.Element).SetRandom()
+	require.NoError(t, err)
+	appPrivateKey, err := crypto.ScalarMulG1(*appHash, masterSecret)
+	require.NoError(t, err)
+
+	env, err := assembleEnvFromSecrets("stack-1", *appPrivateKey, nil)
+	require.NoError(t, err)
+	assert.Empty(t, env)
+}
+
+func TestAssembleEnvFromSecrets_UndecryptableValueFailsClosed(t *testing.T) {
+	// A value sealed to a DIFFERENT identity must fail — a sealed value we
+	// can't open is a real fault, not an empty secret.
+	const stackID = "stack-real"
+	masterSecret, err := new(fr.Element).SetRandom()
+	require.NoError(t, err)
+	masterPubKey, err := crypto.ScalarMulG2(crypto.G2Generator, masterSecret)
+	require.NoError(t, err)
+	appHash, err := crypto.HashToG1(stackID)
+	require.NoError(t, err)
+	appPrivateKey, err := crypto.ScalarMulG1(*appHash, masterSecret)
+	require.NoError(t, err)
+
+	// Sealed to "other-stack", not stackID.
+	wrongCT, err := crypto.EncryptForApp("other-stack", *masterPubKey, []byte("v"))
+	require.NoError(t, err)
+
+	_, err = assembleEnvFromSecrets(stackID, *appPrivateKey, []stackSecret{{Name: "X", Value: wrongCT}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "X")
 }

@@ -51,6 +51,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/google/go-sev-guest/abi"
 	spb "github.com/google/go-sev-guest/proto/sevsnp"
@@ -639,6 +640,24 @@ func emitAppPrivateKey(result *kmsClient.SecretsResult, appID string) (map[strin
 //
 // When the sentinel key (appPrivateKeyKey) is requested, the function returns
 // the raw app_private_key and skips the IBE-decrypt step entirely.
+// assembleEnvFromSecrets IBE-decrypts each platform secret with the
+// threshold-recovered app-private-key and returns the app's environment as a
+// flat name→plaintext map. The IBE identity is the stackID (the ecloud CLI
+// seals each value with EncryptForApp(stackID, master, …)), so the recovered
+// key S·H(stackID) opens them. A value that fails to decrypt is a hard error:
+// a sealed secret we cannot open is a real fault, not an empty value.
+func assembleEnvFromSecrets(stackID string, appPrivateKey types.G1Point, secrets []stackSecret) (map[string]string, error) {
+	env := make(map[string]string, len(secrets))
+	for _, s := range secrets {
+		plaintext, err := crypto.DecryptForApp(stackID, appPrivateKey, s.Value)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt secret %q for stack %q: %w", s.Name, stackID, err)
+		}
+		env[s.Name] = string(plaintext)
+	}
+	return env, nil
+}
+
 func retrieveAndDecrypt(
 	req *Request,
 	evidence, ccInitData, rsaPubPEM []byte,
