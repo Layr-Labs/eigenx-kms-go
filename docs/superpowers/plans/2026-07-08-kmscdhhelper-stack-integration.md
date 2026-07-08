@@ -1151,7 +1151,10 @@ git commit -m "docs(kmsCDHHelper): sync helper docs to stack model"
 
 | Field   | Value                          |
 |---------|--------------------------------|
-| stage   | 2 (plan review) — awaiting human gate |
+| stage   | 5 (pr feedback loop)           |
 | branch  | sm-updateHelper                |
-| pr      | n/a                            |
+| pr      | #122 (draft)                   |
 | round   | 0                              |
+| gate    | approved 2026-07-08 (user: push + implement) |
+
+All 6 tasks implemented + per-task-reviewed (spec ✅ / quality approved each). Final whole-branch review (ea6adce..e0f745e): READY — 0 findings at/above Minor; fail-closed platform auth, path-injection double-guard (validateStackID + url.PathEscape), IBE identity=stackID consistent, on-chain env fully removed, sentinel skips fetch+cache. One below-Minor stale comment fixed in 532b279. Gates: build clean, gofmt clean, lint 0 on touched pkgs, `cmd/kmsCDHHelper` + `pkg/clients/kmsClient` tests PASS. (Pre-existing unrelated flake: `pkg/blockHandler` anvil-RPC test — feature does not touch that package.)
