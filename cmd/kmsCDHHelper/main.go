@@ -422,8 +422,11 @@ func decodeInitdata(in []byte) ([]byte, error) {
 // point the workload at a malicious KMS without invalidating the
 // attestation.
 //
-// stdin remains the ONLY source for the per-secret fields (app_id,
-// ciphertext_hex) — those don't carry a redirect-the-world risk.
+// In the stack model, identity (stack_id) and the platform secrets endpoint
+// (platform_secrets_url, platform_internal_api_key) are ALSO sourced only from
+// SNP-bound cc_init_data — never stdin — for the same redirect/SSRF reasons.
+// The only stdin field the helper trusts is key (which env var to return),
+// which carries no redirect-the-world risk.
 func applyInitdataKMSConfig(req *Request, cfg *initdataKMSConfig) error {
 	if cfg == nil {
 		return fmt.Errorf("cc_init_data missing [data].\"eigenx.toml\"; KMS coords cannot be sourced safely")

@@ -107,12 +107,12 @@ func TestCacheRoundTrip(t *testing.T) {
 	assert.Equal(t, cacheFileMode, info.Mode().Perm())
 }
 
-func TestCachePath_SanitizesAppID(t *testing.T) {
+func TestCachePath_SanitizesStackID(t *testing.T) {
 	orig := envCacheDir
 	setEnvCacheDir("/run/eigenx")
 	defer setEnvCacheDir(orig)
 
-	// A path-separator in app_id must not escape the cache dir.
+	// A path-separator in stack_id must not escape the cache dir.
 	p := cachePath("../../etc/evil")
 	assert.True(t, filepath.Dir(p) == "/run/eigenx", "cache path must stay in envCacheDir, got %s", p)
 }
