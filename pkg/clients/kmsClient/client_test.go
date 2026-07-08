@@ -726,3 +726,39 @@ func TestEigenXSNP_WireFormat(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, ccInitData, decodedInit)
 }
+
+func TestCreateEigenXSNPAttestationRequest_SetsStackID(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	c := &Client{logger: logger}
+
+	opts := &SecretsOptions{
+		AttestationMethod: "eigenx-snp",
+		RawSNPEvidence:    []byte(`{"attestation_report":"x"}`),
+		CCInitData:        []byte("initdata"),
+		RSAPublicKeyPEM:   []byte("-----BEGIN PUBLIC KEY-----"),
+		StackID:           "stack-123",
+	}
+
+	req := c.createEigenXSNPAttestationRequest("stack-123", opts)
+
+	assert.Equal(t, "stack-123", req.StackID, "StackID must flow into the request to select the platform path")
+	assert.Equal(t, "eigenx-snp", req.AttestationMethod)
+	assert.Equal(t, "stack-123", req.AppID)
+}
+
+func TestCreateEigenXSNPAttestationRequest_EmptyStackIDLeavesItUnset(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	c := &Client{logger: logger}
+
+	opts := &SecretsOptions{
+		AttestationMethod: "eigenx-snp",
+		RawSNPEvidence:    []byte(`{"attestation_report":"x"}`),
+		CCInitData:        []byte("initdata"),
+		RSAPublicKeyPEM:   []byte("-----BEGIN PUBLIC KEY-----"),
+		// StackID omitted
+	}
+
+	req := c.createEigenXSNPAttestationRequest("app-1", opts)
+
+	assert.Empty(t, req.StackID, "empty StackID must leave the request on the on-chain path")
+}

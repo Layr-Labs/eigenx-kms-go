@@ -86,6 +86,12 @@ type SecretsOptions struct {
 	RSAPrivateKeyPEM []byte // Required: RSA private key in PEM format
 	RSAPublicKeyPEM  []byte // Required: RSA public key in PEM format
 	ExtraData        []byte // optional caller-supplied data bound into attestation (max 1 MB)
+
+	// StackID, when non-empty, switches the KMS /secrets authorization to the
+	// ecloud-platform release for this stack (the platform path) instead of the
+	// on-chain AppController. On that path the KMS returns only the recovered
+	// app-private-key (no env). Empty preserves the on-chain behavior.
+	StackID string
 }
 
 // NewClient creates a new KMS client instance with dependency injection
@@ -934,6 +940,7 @@ func (c *Client) createEigenXSNPAttestationRequest(appID string, opts *SecretsOp
 
 	return types.SecretsRequestV1{
 		AppID:             appID,
+		StackID:           opts.StackID,
 		AttestationMethod: "eigenx-snp",
 		Attestation:       opts.RawSNPEvidence,
 		RSAPubKeyTmp:      opts.RSAPublicKeyPEM,
