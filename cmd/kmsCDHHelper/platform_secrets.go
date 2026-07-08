@@ -103,7 +103,7 @@ func fetchStackSecrets(baseURL, apiKey, stackID string) ([]stackSecret, error) {
 
 	out := make([]stackSecret, 0, len(parsed.Secrets))
 	for _, s := range parsed.Secrets {
-		out = append(out, stackSecret{Name: s.Name, Value: s.Value})
+		out = append(out, stackSecret(s))
 	}
 	return out, nil
 }
