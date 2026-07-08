@@ -215,32 +215,17 @@ func run() error {
 		return fmt.Errorf("read request: %w", err)
 	}
 
-	// Fast path: another sealed env var for this same app already attested and
-	// cached the full merged env this pod boot. Serve the requested key from
-	// the cache and skip attestation + the KMS round trip entirely. The lock
-	// is held across the read so we don't race a concurrent first-call writer
-	// (kata-agent unseals sequentially today, but a multi-container pod shares
-	// the podVM). See env_cache.go.
-	//
-	// The app_private_key root is never cached (it is not part of the env map),
-	// so its request always attests fresh and never consults the cache.
-	if cacheable(req.Key) {
-		if env, ok, cerr := loadCachedEnv(req.StackID); cerr != nil {
-			return fmt.Errorf("read env cache: %w", cerr)
-		} else if ok {
-			return emitKey(env, req.Key)
-		}
-	}
-
-	rsaPriv, rsaPubPEM, err := generateRSAKeypair()
-	if err != nil {
-		return fmt.Errorf("generate RSA keypair: %w", err)
-	}
-
 	// CDH plugin loads /run/peerpod/initdata before spawning us; the bytes are
 	// supplied via stdin in a future revision. For now we read it here so the
 	// helper is self-contained. Stat first to bound memory before reading
 	// (cap: maxInitDataFileSize, defined with the other package constants).
+	//
+	// This MUST happen before the cache lookup below: applyInitdataKMSConfig
+	// overwrites req.StackID with the SNP-bound value, and the cache is keyed by
+	// stack_id. Looking up the cache with the (untrusted) stdin stack_id would
+	// miss on every call whenever stdin and initdata disagree, forcing a fresh
+	// TEE attestation per sealed var — an availability foot-gun an attacker with
+	// stdin control could trigger. Resolve identity first, then consult the cache.
 	info, err := os.Stat(initDataPath)
 	if err != nil {
 		return fmt.Errorf("stat %s: %w", initDataPath, err)
@@ -253,15 +238,39 @@ func run() error {
 		return fmt.Errorf("read %s: %w", initDataPath, err)
 	}
 
-	// Pull KMS coordinates (kms_url/avs_address/operator_set_id/rpc_url) from
-	// cc_init_data's [data]."eigenx.toml" key when the caller didn't include
-	// them on stdin. cc_init_data is SNP-bound (folded into REPORT_DATA upper
-	// 32 via SHA-384), so values sourced from there can't be tampered with by
-	// the K8s control plane.
+	// Pull KMS coordinates (kms_url/avs_address/operator_set_id/rpc_url) and the
+	// stack identity + platform secrets endpoint from cc_init_data's
+	// [data]."eigenx.toml" key. cc_init_data is SNP-bound (folded into REPORT_DATA
+	// upper 32 via SHA-384), so values sourced from there can't be tampered with
+	// by the K8s control plane; initdata wins over any stdin value.
 	if cfg, perr := parseInitdataKMSConfig(ccInitData); perr != nil {
 		return fmt.Errorf("parse cc_init_data KMS config: %w", perr)
 	} else if perr = applyInitdataKMSConfig(req, cfg); perr != nil {
 		return perr
+	}
+
+	// Fast path: another sealed env var for this same stack already attested and
+	// cached the full env this pod boot. Serve the requested key from the cache
+	// and skip attestation + the KMS round trip entirely. Keyed by the SNP-bound
+	// req.StackID (set just above). The lock is held across the read so we don't
+	// race a concurrent first-call writer (kata-agent unseals sequentially today,
+	// but a multi-container pod shares the podVM). See env_cache.go.
+	//
+	// The app_private_key root is never cached (it is not part of the env map),
+	// so its request always attests fresh and never consults the cache.
+	if cacheable(req.Key) {
+		if env, ok, cerr := loadCachedEnv(req.StackID); cerr != nil {
+			return fmt.Errorf("read env cache: %w", cerr)
+		} else if ok {
+			return emitKey(env, req.Key)
+		}
+	}
+
+	// Cache miss (or uncacheable root-key request): generate the ephemeral RSA
+	// keypair only now, so a cache hit above avoids the entropy draw entirely.
+	rsaPriv, rsaPubPEM, err := generateRSAKeypair()
+	if err != nil {
+		return fmt.Errorf("generate RSA keypair: %w", err)
 	}
 
 	// extraData is currently empty; reserved for the CDH plugin to bind extra

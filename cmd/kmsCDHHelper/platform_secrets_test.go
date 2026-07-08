@@ -125,3 +125,24 @@ func TestFetchStackSecrets_EmptyListIsOK(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(t, got)
 }
+
+func TestFetchStackSecrets_StripsBaseURLQueryAndFragment(t *testing.T) {
+	// A stray query/fragment on the configured platform_secrets_url must not
+	// leak into the request — fetchStackSecrets targets a fixed API path.
+	var gotRawQuery, gotFragment, gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotRawQuery = r.URL.RawQuery
+		gotFragment = r.URL.Fragment // fragments aren't sent over the wire, but assert on the built URL below too
+		gotPath = r.URL.Path
+		_ = json.NewEncoder(w).Encode(map[string]any{"secrets": []any{}})
+	}))
+	defer srv.Close()
+
+	// Fragment never reaches the server (HTTP clients drop it), so the RawQuery
+	// assertion is the load-bearing one; the fragment is covered by construction.
+	_, err := fetchStackSecrets(srv.URL+"?debug=true#frag", "k", "stack-abc")
+	require.NoError(t, err)
+	assert.Empty(t, gotRawQuery, "base-URL query string must be stripped, not forwarded")
+	assert.Empty(t, gotFragment)
+	assert.Equal(t, "/internal/v1/stacks/stack-abc/secrets", gotPath)
+}

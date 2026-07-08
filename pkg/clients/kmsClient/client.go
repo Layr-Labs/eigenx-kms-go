@@ -714,7 +714,11 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 	// guarantee beyond what the caller already has. Returning opts.ExtraData keeps
 	// the contract explicit: callers get back exactly what they sent.
 	return &SecretsResult{
-		AppPrivateKey:   *appPrivateKey,
+		AppPrivateKey: *appPrivateKey,
+		// EncryptedEnv/PublicEnv are populated only on the on-chain path. On the
+		// platform (stack_id) path the KMS returns just the key share and these
+		// are always empty for honest operators — the stack's secrets are fetched
+		// out-of-band from the platform. Retained for on-chain caller compatibility.
 		EncryptedEnv:    responses[0].EncryptedEnv,
 		PublicEnv:       responses[0].PublicEnv,
 		PartialSigs:     partialSigs,
