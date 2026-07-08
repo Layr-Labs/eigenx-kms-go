@@ -176,6 +176,11 @@ const (
 	rsaKeyBits       = 2048
 	reportDataLength = 64
 	initDataPath     = "/run/peerpod/initdata"
+	// maxInitDataFileSize bounds the /run/peerpod/initdata read: /run/peerpod is
+	// host-controlled and a malicious CAA could plant a multi-GB file. Real CoCo
+	// init-data is base64(gzip(toml)) — kilobytes — so 1 MiB is a generous
+	// compressed-size cap matching the KMS handler's wire-side cc_init_data limit.
+	maxInitDataFileSize = 1 << 20 // 1 MiB
 )
 
 // appPrivateKeyKey is a reserved Key value that makes the helper emit the
@@ -234,12 +239,8 @@ func run() error {
 
 	// CDH plugin loads /run/peerpod/initdata before spawning us; the bytes are
 	// supplied via stdin in a future revision. For now we read it here so the
-	// helper is self-contained. Stat first to bound memory: /run/peerpod is
-	// host-controlled and a malicious CAA could plant a multi-GB file. Real
-	// CoCo init-data is base64(gzip(toml)) — kilobytes — so 1 MiB is a
-	// generous compressed-size cap that matches the KMS handler's wire-side
-	// cc_init_data limit.
-	const maxInitDataFileSize = 1 << 20 // 1 MiB
+	// helper is self-contained. Stat first to bound memory before reading
+	// (cap: maxInitDataFileSize, defined with the other package constants).
 	info, err := os.Stat(initDataPath)
 	if err != nil {
 		return fmt.Errorf("stat %s: %w", initDataPath, err)

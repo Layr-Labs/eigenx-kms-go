@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -19,6 +20,25 @@ func TestEmitKey_MissingKeyFailsLoud(t *testing.T) {
 	err := emitKey(map[string]string{"A": "1"}, "NOPE")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not present in app env")
+}
+
+func TestEmitKey_HappyPathWritesValueToStdout(t *testing.T) {
+	// The success path writes exactly the key's value (no trailing newline) to
+	// stdout — that raw byte stream is the unseal_secret return kata-agent
+	// substitutes into the sealed env var.
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+
+	emitErr := emitKey(map[string]string{"FOO": "bar", "OTHER": "x"}, "FOO")
+	require.NoError(t, w.Close())
+	require.NoError(t, emitErr)
+
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+	assert.Equal(t, "bar", string(out))
 }
 
 func TestCacheable_AppPrivateKeyNeverCached(t *testing.T) {

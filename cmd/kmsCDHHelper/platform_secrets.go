@@ -33,6 +33,9 @@ const (
 )
 
 // stackSecret is one platform secret: a name and its opaque IBE ciphertext.
+// Its field layout is intentionally identical to internalSecret so the
+// conversion stackSecret(internalSecret{...}) is legal and cheap — keep the two
+// in sync if either gains a field, or the conversion in fetchStackSecrets breaks.
 type stackSecret struct {
 	Name  string
 	Value []byte
@@ -55,6 +58,10 @@ type listSecretsResponse struct {
 // baseURL is the gateway root; the stack path is appended here. apiKey is the
 // static internal API key, presented as a Bearer token.
 func fetchStackSecrets(baseURL, apiKey, stackID string) ([]stackSecret, error) {
+	// baseURL was already scheme-validated by validateHTTPURL in
+	// applyInitdataKMSConfig; re-parsing here is defense-in-depth so this
+	// function is safe to call independently (and in tests) without assuming a
+	// prior validation pass.
 	u, err := url.Parse(baseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse platform secrets URL: %w", err)
@@ -68,6 +75,11 @@ func fetchStackSecrets(baseURL, apiKey, stackID string) ([]stackSecret, error) {
 	// defense-in-depth at the request boundary.)
 	base := strings.TrimRight(u.Path, "/")
 	u.Path = base + "/internal/v1/stacks/" + url.PathEscape(stackID) + "/secrets"
+	// Drop any query/fragment carried on the configured base URL: this is a
+	// fixed internal API path and stray params (e.g. a "?debug=true" left on
+	// platform_secrets_url) must not leak into the request.
+	u.RawQuery = ""
+	u.Fragment = ""
 
 	req, err := http.NewRequest(http.MethodGet, u.String(), nil)
 	if err != nil {

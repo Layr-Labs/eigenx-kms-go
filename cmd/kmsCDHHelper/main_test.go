@@ -657,6 +657,29 @@ func TestResolveEnv_SentinelSkipsFetch(t *testing.T) {
 	assert.True(t, ok, "sentinel path emits the app_private_key under the sentinel key")
 }
 
+func TestResolveEnv_SentinelUnverifiedErrors(t *testing.T) {
+	// On the degraded (unverified) recovery path the root key must not be
+	// emitted. Drive it through resolveEnv (not emitAppPrivateKey directly) to
+	// pin that the error propagates up the sentinel branch, and that the fetch
+	// is still never called.
+	result := &kmsClient.SecretsResult{
+		Verified:      false,
+		AppPrivateKey: types.G1Point{CompressedBytes: make([]byte, appPrivateKeyG1Bytes)},
+	}
+	req := &Request{StackID: "stack-1", Key: appPrivateKeyKey}
+
+	fetchCalled := false
+	fetch := func(baseURL, apiKey, stackID string) ([]stackSecret, error) {
+		fetchCalled = true
+		return nil, nil
+	}
+
+	_, err := resolveEnv(req, result, fetch)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not verified")
+	assert.False(t, fetchCalled, "sentinel path must NOT fetch even when unverified")
+}
+
 func TestResolveEnv_NormalPathFetchesAndAssembles(t *testing.T) {
 	const stackID = "stack-xyz"
 	masterSecret, err := new(fr.Element).SetRandom()

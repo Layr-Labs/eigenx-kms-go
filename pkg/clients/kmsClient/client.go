@@ -830,7 +830,11 @@ func (c *Client) requestSecretsFromKMS(serverURL string, req types.SecretsReques
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		// Cap the error-body read: this client runs in a memory-constrained
+		// peer-pod, and a Byzantine operator returning gigabytes on a non-200
+		// response must not OOM us. 64 KiB matches GetMasterPublicKey /
+		// CollectPartialSignatures and is enough to surface any error message.
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 		return nil, fmt.Errorf("KMS server returned status %d: %s", resp.StatusCode, string(body))
 	}
 
