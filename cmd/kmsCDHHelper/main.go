@@ -41,6 +41,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -108,38 +109,44 @@ func (s *singleOperatorContractCaller) GetOperatorSetMembersWithPeering(avsAddre
 
 // Request is the JSON payload read from stdin from CDH's eigenx plugin.
 //
-// app_id is the only field the caller supplies. The KMS coordinates (kms_url,
-// avs_address, operator_set_id, rpc_url) are sourced from the SNP-bound
-// /run/peerpod/initdata document, so they carry the same integrity guarantees
-// as the policy.rego image-digest binding; values for those keys on stdin are
-// ignored in favour of initdata (see applyInitdataKMSConfig). The struct tags
-// remain so a request carrying them still parses.
+// In the stack model, stack_id is the app identity: it selects the KMS
+// platform path AND is the IBE identity secrets are sealed to. The KMS
+// coordinates (kms_url, avs_address, operator_set_id, rpc_url) and the
+// stack/platform fields are all sourced from the SNP-bound /run/peerpod/initdata
+// document, so they carry the same integrity guarantees as the policy.rego
+// image-digest binding; a stdin stack_id is tolerated for parsing but overridden
+// by initdata (see applyInitdataKMSConfig).
 //
-// The secret is the on-chain release's encrypted_env, returned by the KMS and
-// IBE-decrypted with the threshold-recovered app_private_key inside this TEE
-// (docs/references/new_kms.md) — it is not carried in the request.
+// Secrets are NOT carried in this request and are NOT part of the KMS response:
+// they are fetched from the ecloud-platform InternalSecretsService
+// (PlatformSecretsURL) and IBE-decrypted with the threshold-recovered
+// app_private_key inside this TEE (docs/references/new_kms.md).
 //
-// Key selects which environment variable to return. The app's environment is a
-// flat key→value map assembled from the release's public_env (plaintext) and
-// the IBE-decrypted encrypted_env (secret); secret keys win on collision. CDH
-// calls the helper once per sealed env var in the pod spec, each carrying the
-// Key it wants. The first call attests + fetches and caches the whole merged
-// map to tmpfs; later calls for the same app read the cache (one attestation
-// per pod, not per key). See env_cache.go.
+// Key selects which environment variable to return from the assembled stack
+// env, or the reserved sentinel appPrivateKeyKey to return the app_private_key
+// itself. CDH calls the helper once per sealed env var in the pod spec, each
+// carrying the Key it wants. The first call attests + fetches and caches the
+// whole env map to tmpfs; later calls for the same stack read the cache (one
+// attestation per pod, not per key). See env_cache.go.
 type Request struct {
 	KMSURL        string `json:"kms_url,omitempty"`
 	AVSAddress    string `json:"avs_address,omitempty"`
 	OperatorSetID uint32 `json:"operator_set_id,omitempty"`
 	RPCURL        string `json:"rpc_url,omitempty"`
-	// OperatorAddress is only consulted on the single-operator (kms_url)
-	// override path; empty falls back to defaultSingleOperatorAddress.
+	// OperatorAddress is only consulted on the single-operator (kms_url) override path.
 	OperatorAddress string `json:"operator_address,omitempty"`
-	AppID           string `json:"app_id"`
-	// Key is the environment-variable name to return from the merged app env,
-	// or the reserved sentinel appPrivateKeyKey to return the app_private_key itself.
-	// The sentinel is intercepted before the env is assembled, so any release env
-	// key of that exact name would be permanently shadowed — the name is reserved
-	// and must not be used in app releases.
+	// StackID is the app identity in the stack model. It selects the KMS
+	// platform path AND is the IBE identity secrets are sealed to. Sourced from
+	// SNP-bound cc_init_data (applyInitdataKMSConfig); a stdin value is tolerated
+	// but overridden.
+	StackID string `json:"stack_id"`
+	// PlatformSecretsURL / PlatformInternalAPIKey address the ecloud-platform
+	// InternalSecretsService. Sourced ONLY from SNP-bound cc_init_data — never
+	// from stdin — for the same SSRF/redirect reasons as the KMS coords.
+	PlatformSecretsURL     string `json:"-"`
+	PlatformInternalAPIKey string `json:"-"`
+	// Key is the environment-variable name to return from the assembled stack
+	// env, or the reserved sentinel appPrivateKeyKey to return the app_private_key.
 	Key string `json:"key"`
 }
 
@@ -155,6 +162,10 @@ type initdataKMSConfig struct {
 	// OperatorAddress pins the single-operator shim's peer address when
 	// kms_url is set; optional, defaults to defaultSingleOperatorAddress.
 	OperatorAddress string `toml:"operator_address"`
+	// Stack model: identity + platform secrets endpoint, SNP-bound.
+	StackID                string `toml:"stack_id"`
+	PlatformSecretsURL     string `toml:"platform_secrets_url"`
+	PlatformInternalAPIKey string `toml:"platform_internal_api_key"`
 }
 
 const (
@@ -208,7 +219,7 @@ func run() error {
 	// The app_private_key root is never cached (it is not part of the env map),
 	// so its request always attests fresh and never consults the cache.
 	if cacheable(req.Key) {
-		if env, ok, cerr := loadCachedEnv(req.AppID); cerr != nil {
+		if env, ok, cerr := loadCachedEnv(req.StackID); cerr != nil {
 			return fmt.Errorf("read env cache: %w", cerr)
 		} else if ok {
 			return emitKey(env, req.Key)
@@ -285,8 +296,8 @@ func run() error {
 	// and it must not be persisted to the tmpfs cache. Its request always
 	// re-attests (see the fast-path guard above).
 	if cacheable(req.Key) {
-		if cerr := storeCachedEnv(req.AppID, env); cerr != nil {
-			log.Printf("warning: cache merged env for app %q: %v", req.AppID, cerr)
+		if cerr := storeCachedEnv(req.StackID, env); cerr != nil {
+			log.Printf("warning: cache merged env for app %q: %v", req.StackID, cerr)
 		}
 	}
 
@@ -309,8 +320,8 @@ func readRequest(r io.Reader) (*Request, error) {
 	if err := dec.Decode(&req); err != nil {
 		return nil, fmt.Errorf("decode JSON: %w", err)
 	}
-	if req.AppID == "" {
-		return nil, fmt.Errorf("app_id is required")
+	if req.StackID == "" {
+		return nil, fmt.Errorf("stack_id is required")
 	}
 	if req.Key == "" {
 		return nil, fmt.Errorf("key is required")
@@ -463,11 +474,57 @@ func applyInitdataKMSConfig(req *Request, cfg *initdataKMSConfig) error {
 		// SNP-bound config. Continue with initdata values regardless.
 		log.Printf("kmsCDHHelper: ignoring stdin KMS-coord overrides; SNP-bound initdata wins")
 	}
+
+	// Stack model: identity + platform secrets endpoint are mandatory and
+	// SNP-bound. Fail closed if any is absent so the helper can never fall back
+	// to an unauthenticated or unintended secrets source.
+	if cfg.StackID == "" {
+		return fmt.Errorf("[data].\"eigenx.toml\" must set stack_id")
+	}
+	if err := validateStackID(cfg.StackID); err != nil {
+		return fmt.Errorf("[data].\"eigenx.toml\" %w", err)
+	}
+	if cfg.PlatformSecretsURL == "" {
+		return fmt.Errorf("[data].\"eigenx.toml\" must set platform_secrets_url")
+	}
+	if cfg.PlatformInternalAPIKey == "" {
+		return fmt.Errorf("[data].\"eigenx.toml\" must set platform_internal_api_key")
+	}
+	if err := validateHTTPURL(cfg.PlatformSecretsURL, "platform_secrets_url"); err != nil {
+		return err
+	}
+
 	req.KMSURL = cfg.KMSURL
 	req.AVSAddress = cfg.AVSAddress
 	req.OperatorSetID = cfg.OperatorSetID
 	req.RPCURL = cfg.RPCURL
 	req.OperatorAddress = cfg.OperatorAddress
+	req.StackID = cfg.StackID
+	req.PlatformSecretsURL = cfg.PlatformSecretsURL
+	req.PlatformInternalAPIKey = cfg.PlatformInternalAPIKey
+	return nil
+}
+
+// stackIDPattern restricts stack_id to characters that are always a single,
+// safe URL path segment: alphanumerics plus - _ . (covers UUIDs and slugs).
+// This blocks path-injection/traversal (/, .., %2e, spaces, query/fragment
+// metacharacters) before stack_id is used to build the platform ListSecrets
+// path. Defense-in-depth alongside url.PathEscape at the request boundary.
+var stackIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+// validateStackID rejects an empty or path-unsafe stack_id. "." and ".." are
+// rejected explicitly because they are traversal segments even though each
+// char is in the allowed set.
+func validateStackID(stackID string) error {
+	if stackID == "" {
+		return fmt.Errorf("stack_id: empty")
+	}
+	if stackID == "." || stackID == ".." {
+		return fmt.Errorf("stack_id: %q is not a valid path segment", stackID)
+	}
+	if !stackIDPattern.MatchString(stackID) {
+		return fmt.Errorf("stack_id: %q contains characters outside [A-Za-z0-9._-]", stackID)
+	}
 	return nil
 }
 
@@ -726,7 +783,7 @@ func retrieveAndDecrypt(
 		RSAPublicKeyPEM:   rsaPubPEM,
 	}
 
-	result, err := client.RetrieveSecretsWithOptions(req.AppID, opts)
+	result, err := client.RetrieveSecretsWithOptions(req.StackID, opts)
 	if err != nil {
 		return nil, fmt.Errorf("RetrieveSecretsWithOptions: %w", err)
 	}
@@ -736,7 +793,7 @@ func retrieveAndDecrypt(
 	// signing daemon seeds from; it does not depend on the release's
 	// encrypted_env, so we return before the IBE-decrypt below.
 	if req.Key == appPrivateKeyKey {
-		return emitAppPrivateKey(result, req.AppID)
+		return emitAppPrivateKey(result, req.StackID)
 	}
 
 	// Per the KMS design (docs/references/new_kms.md, "Application Decryption"):
@@ -757,7 +814,7 @@ func retrieveAndDecrypt(
 			return nil, fmt.Errorf("decode encrypted_env: %w", err)
 		}
 
-		secretPlaintext, err = crypto.DecryptForApp(req.AppID, result.AppPrivateKey, ciphertext)
+		secretPlaintext, err = crypto.DecryptForApp(req.StackID, result.AppPrivateKey, ciphertext)
 		if err != nil {
 			return nil, fmt.Errorf("decrypt encrypted_env with app_private_key: %w", err)
 		}
@@ -767,7 +824,7 @@ func retrieveAndDecrypt(
 	// secret keys win on collision so a public default can't shadow a secret.
 	env, err := mergeEnv(result.PublicEnv, secretPlaintext)
 	if err != nil {
-		return nil, fmt.Errorf("merge release env for app %q: %w", req.AppID, err)
+		return nil, fmt.Errorf("merge release env for app %q: %w", req.StackID, err)
 	}
 	return env, nil
 }

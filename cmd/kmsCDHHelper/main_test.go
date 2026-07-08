@@ -27,7 +27,7 @@ func TestReadRequest_HappyPath(t *testing.T) {
 		AVSAddress:    "0xabc",
 		OperatorSetID: 0,
 		RPCURL:        "https://eth.example/v2/key",
-		AppID:         "app-id",
+		StackID:       "stack-id",
 		Key:           "DB_PASSWORD",
 	}
 	body, err := json.Marshal(in)
@@ -39,7 +39,7 @@ func TestReadRequest_HappyPath(t *testing.T) {
 	assert.Equal(t, in.AVSAddress, got.AVSAddress)
 	assert.Equal(t, in.OperatorSetID, got.OperatorSetID)
 	assert.Equal(t, in.RPCURL, got.RPCURL)
-	assert.Equal(t, in.AppID, got.AppID)
+	assert.Equal(t, in.StackID, got.StackID)
 	assert.Equal(t, in.Key, got.Key)
 }
 
@@ -47,10 +47,10 @@ func TestReadRequest_IgnoresUnknownFields(t *testing.T) {
 	// The CDH plugin and helper are versioned independently, so readRequest
 	// must tolerate stdin keys it doesn't model (no DisallowUnknownFields)
 	// and still parse the fields it needs.
-	body := []byte(`{"app_id":"x","key":"K","some_future_field":"deadbeef"}`)
+	body := []byte(`{"stack_id":"x","key":"K","some_future_field":"deadbeef"}`)
 	got, err := readRequest(bytes.NewReader(body))
 	require.NoError(t, err)
-	assert.Equal(t, "x", got.AppID)
+	assert.Equal(t, "x", got.StackID)
 	assert.Equal(t, "K", got.Key)
 }
 
@@ -64,18 +64,17 @@ func TestReadRequest_MissingFields(t *testing.T) {
 		expectedErr string
 	}{
 		{
-			name: "missing app_id",
+			name: "missing stack_id",
 			req: Request{
-				AVSAddress: "0xabc",
-				RPCURL:     "https://eth.example",
-				Key:        "K",
+				RPCURL: "https://eth.example",
+				Key:    "K",
 			},
-			expectedErr: "app_id is required",
+			expectedErr: "stack_id is required",
 		},
 		{
 			name: "missing key",
 			req: Request{
-				AppID: "app-id",
+				StackID: "stack-id",
 			},
 			expectedErr: "key is required",
 		},
@@ -102,10 +101,11 @@ func TestApplyInitdataKMSConfig(t *testing.T) {
 	t.Setenv(envAllowSingleOperatorKMS, "1")
 
 	t.Run("initdata populates empty request", func(t *testing.T) {
-		req := &Request{AppID: "x"}
+		req := &Request{}
 		cfg := &initdataKMSConfig{
 			KMSURL: "http://kms.example", AVSAddress: "0xabc",
 			OperatorSetID: 7, RPCURL: "http://rpc.example",
+			StackID: "s", PlatformSecretsURL: "http://p.internal", PlatformInternalAPIKey: "k",
 		}
 		require.NoError(t, applyInitdataKMSConfig(req, cfg))
 		assert.Equal(t, "http://kms.example", req.KMSURL)
@@ -117,7 +117,6 @@ func TestApplyInitdataKMSConfig(t *testing.T) {
 		// stdin pretends to redirect to an attacker-controlled KMS;
 		// initdata is SNP-bound and authoritative.
 		req := &Request{
-			AppID:         "x",
 			KMSURL:        "http://attacker.example",
 			AVSAddress:    "0xattacker",
 			OperatorSetID: 99,
@@ -126,6 +125,7 @@ func TestApplyInitdataKMSConfig(t *testing.T) {
 		cfg := &initdataKMSConfig{
 			KMSURL: "http://kms.example", AVSAddress: "0xabc",
 			OperatorSetID: 7, RPCURL: "http://rpc.example",
+			StackID: "s", PlatformSecretsURL: "http://p.internal", PlatformInternalAPIKey: "k",
 		}
 		require.NoError(t, applyInitdataKMSConfig(req, cfg))
 		assert.Equal(t, "http://kms.example", req.KMSURL,
@@ -138,20 +138,20 @@ func TestApplyInitdataKMSConfig(t *testing.T) {
 			"stdin must NOT override initdata rpc_url")
 	})
 	t.Run("nil cfg fails closed", func(t *testing.T) {
-		req := &Request{AppID: "x"}
+		req := &Request{}
 		err := applyInitdataKMSConfig(req, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "eigenx.toml")
 	})
 	t.Run("missing avs_address fails", func(t *testing.T) {
 		cfg := &initdataKMSConfig{KMSURL: "http://kms.example"}
-		err := applyInitdataKMSConfig(&Request{AppID: "x"}, cfg)
+		err := applyInitdataKMSConfig(&Request{}, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "avs_address")
 	})
 	t.Run("missing rpc_url and kms_url fails", func(t *testing.T) {
 		cfg := &initdataKMSConfig{AVSAddress: "0xabc"}
-		err := applyInitdataKMSConfig(&Request{AppID: "x"}, cfg)
+		err := applyInitdataKMSConfig(&Request{}, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "kms_url or rpc_url")
 	})
@@ -159,7 +159,7 @@ func TestApplyInitdataKMSConfig(t *testing.T) {
 		cfg := &initdataKMSConfig{
 			KMSURL: "file:///etc/passwd", AVSAddress: "0xabc",
 		}
-		err := applyInitdataKMSConfig(&Request{AppID: "x"}, cfg)
+		err := applyInitdataKMSConfig(&Request{}, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "scheme")
 	})
@@ -167,7 +167,7 @@ func TestApplyInitdataKMSConfig(t *testing.T) {
 		cfg := &initdataKMSConfig{
 			AVSAddress: "0xabc", RPCURL: "gopher://internal.example/",
 		}
-		err := applyInitdataKMSConfig(&Request{AppID: "x"}, cfg)
+		err := applyInitdataKMSConfig(&Request{}, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "scheme")
 	})
@@ -175,7 +175,7 @@ func TestApplyInitdataKMSConfig(t *testing.T) {
 		cfg := &initdataKMSConfig{
 			KMSURL: "http:///path", AVSAddress: "0xabc",
 		}
-		err := applyInitdataKMSConfig(&Request{AppID: "x"}, cfg)
+		err := applyInitdataKMSConfig(&Request{}, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "host")
 	})
@@ -190,7 +190,7 @@ func TestApplyInitdataKMSConfig_SingleOperatorGate(t *testing.T) {
 		cfg := &initdataKMSConfig{
 			KMSURL: "http://kms.example", AVSAddress: "0xabc",
 		}
-		err := applyInitdataKMSConfig(&Request{AppID: "x"}, cfg)
+		err := applyInitdataKMSConfig(&Request{}, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), envAllowSingleOperatorKMS)
 		assert.Contains(t, err.Error(), "trust downgrade")
@@ -198,9 +198,10 @@ func TestApplyInitdataKMSConfig_SingleOperatorGate(t *testing.T) {
 
 	t.Run("kms_url with opt-in succeeds", func(t *testing.T) {
 		t.Setenv(envAllowSingleOperatorKMS, "1")
-		req := &Request{AppID: "x"}
+		req := &Request{}
 		cfg := &initdataKMSConfig{
 			KMSURL: "http://kms.example", AVSAddress: "0xabc",
+			StackID: "s", PlatformSecretsURL: "http://p.internal", PlatformInternalAPIKey: "k",
 		}
 		require.NoError(t, applyInitdataKMSConfig(req, cfg))
 		assert.Equal(t, "http://kms.example", req.KMSURL)
@@ -208,9 +209,10 @@ func TestApplyInitdataKMSConfig_SingleOperatorGate(t *testing.T) {
 
 	t.Run("production rpc_url path needs no opt-in", func(t *testing.T) {
 		// env var unset; rpc_url only, no kms_url → on-chain discovery path.
-		req := &Request{AppID: "x"}
+		req := &Request{}
 		cfg := &initdataKMSConfig{
 			RPCURL: "http://rpc.example", AVSAddress: "0xabc",
+			StackID: "s", PlatformSecretsURL: "http://p.internal", PlatformInternalAPIKey: "k",
 		}
 		require.NoError(t, applyInitdataKMSConfig(req, cfg))
 		assert.Equal(t, "http://rpc.example", req.RPCURL)
@@ -222,10 +224,101 @@ func TestApplyInitdataKMSConfig_SingleOperatorGate(t *testing.T) {
 		cfg := &initdataKMSConfig{
 			KMSURL: "http://kms.example", AVSAddress: "0xabc",
 		}
-		err := applyInitdataKMSConfig(&Request{AppID: "x"}, cfg)
+		err := applyInitdataKMSConfig(&Request{}, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), envAllowSingleOperatorKMS)
 	})
+}
+
+func TestApplyInitdataKMSConfig_PlatformFields(t *testing.T) {
+	t.Run("populates stack + platform fields from initdata", func(t *testing.T) {
+		req := &Request{}
+		cfg := &initdataKMSConfig{
+			RPCURL:                 "http://rpc.example",
+			AVSAddress:             "0xabc",
+			StackID:                "stack-123",
+			PlatformSecretsURL:     "http://platform.internal:9003",
+			PlatformInternalAPIKey: "internal-key",
+		}
+		require.NoError(t, applyInitdataKMSConfig(req, cfg))
+		assert.Equal(t, "stack-123", req.StackID)
+		assert.Equal(t, "http://platform.internal:9003", req.PlatformSecretsURL)
+		assert.Equal(t, "internal-key", req.PlatformInternalAPIKey)
+	})
+
+	t.Run("missing stack_id fails closed", func(t *testing.T) {
+		cfg := &initdataKMSConfig{
+			RPCURL: "http://rpc.example", AVSAddress: "0xabc",
+			PlatformSecretsURL: "http://p.internal", PlatformInternalAPIKey: "k",
+		}
+		err := applyInitdataKMSConfig(&Request{}, cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "stack_id")
+	})
+
+	t.Run("missing platform_secrets_url fails closed", func(t *testing.T) {
+		cfg := &initdataKMSConfig{
+			RPCURL: "http://rpc.example", AVSAddress: "0xabc",
+			StackID: "s", PlatformInternalAPIKey: "k",
+		}
+		err := applyInitdataKMSConfig(&Request{}, cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "platform_secrets_url")
+	})
+
+	t.Run("missing platform_internal_api_key fails closed", func(t *testing.T) {
+		cfg := &initdataKMSConfig{
+			RPCURL: "http://rpc.example", AVSAddress: "0xabc",
+			StackID: "s", PlatformSecretsURL: "http://p.internal",
+		}
+		err := applyInitdataKMSConfig(&Request{}, cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "platform_internal_api_key")
+	})
+
+	t.Run("non-http platform_secrets_url rejected", func(t *testing.T) {
+		cfg := &initdataKMSConfig{
+			RPCURL: "http://rpc.example", AVSAddress: "0xabc",
+			StackID: "s", PlatformSecretsURL: "file:///etc/passwd", PlatformInternalAPIKey: "k",
+		}
+		err := applyInitdataKMSConfig(&Request{}, cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "scheme")
+	})
+
+	t.Run("malformed stack_id rejected (path-injection guard)", func(t *testing.T) {
+		for _, bad := range []string{"a/b", "..", "../etc", "has space", "semi;colon", "q?uery"} {
+			cfg := &initdataKMSConfig{
+				RPCURL: "http://rpc.example", AVSAddress: "0xabc",
+				StackID: bad, PlatformSecretsURL: "http://p.internal", PlatformInternalAPIKey: "k",
+			}
+			err := applyInitdataKMSConfig(&Request{}, cfg)
+			require.Error(t, err, "stack_id %q must be rejected", bad)
+			assert.Contains(t, err.Error(), "stack_id")
+		}
+	})
+
+	t.Run("valid stack_id shapes accepted", func(t *testing.T) {
+		for _, ok := range []string{
+			"stack-123",
+			"3f2504e0-4f89-11d3-9a0c-0305e82c3301", // UUID
+			"Stack_ID.v2",
+		} {
+			cfg := &initdataKMSConfig{
+				RPCURL: "http://rpc.example", AVSAddress: "0xabc",
+				StackID: ok, PlatformSecretsURL: "http://p.internal", PlatformInternalAPIKey: "k",
+			}
+			require.NoError(t, applyInitdataKMSConfig(&Request{}, cfg), "stack_id %q must be accepted", ok)
+		}
+	})
+}
+
+func TestValidateStackID(t *testing.T) {
+	require.NoError(t, validateStackID("stack-123"))
+	require.NoError(t, validateStackID("3f2504e0-4f89-11d3-9a0c-0305e82c3301"))
+	for _, bad := range []string{"", "a/b", "..", "../x", "a b", "a;b", "a?b", "a#b"} {
+		require.Error(t, validateStackID(bad), "%q must be rejected", bad)
+	}
 }
 
 // TestParseInitdataKMSConfig round-trips the schema we expect inside
