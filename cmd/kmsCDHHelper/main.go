@@ -469,15 +469,21 @@ func applyInitdataKMSConfig(req *Request, cfg *initdataKMSConfig) error {
 			"but %s is not enabled; refusing trust downgrade — production must use on-chain "+
 			"operator discovery (set rpc_url, leave kms_url empty)", envAllowSingleOperatorKMS)
 	}
+	// stack_id is included: it is equally security-sensitive (it is the KMS
+	// signing identity, the IBE-decrypt identity, and the platform path
+	// segment), so a stdin value differing from the SNP-bound initdata must be
+	// audited too. req.StackID here still holds any stdin-decoded value; the
+	// initdata value (cfg.StackID) is assigned below and wins.
 	stdinOverridden := (req.KMSURL != "" && req.KMSURL != cfg.KMSURL) ||
 		(req.AVSAddress != "" && req.AVSAddress != cfg.AVSAddress) ||
 		(req.OperatorSetID != 0 && req.OperatorSetID != cfg.OperatorSetID) ||
-		(req.RPCURL != "" && req.RPCURL != cfg.RPCURL)
+		(req.RPCURL != "" && req.RPCURL != cfg.RPCURL) ||
+		(req.StackID != "" && req.StackID != cfg.StackID)
 	if stdinOverridden {
 		// Log to stderr — the CDH plugin pipes stderr to journal so
 		// operators can audit whether a workload is trying to bypass the
 		// SNP-bound config. Continue with initdata values regardless.
-		log.Printf("kmsCDHHelper: ignoring stdin KMS-coord overrides; SNP-bound initdata wins")
+		log.Printf("kmsCDHHelper: ignoring stdin config overrides; SNP-bound initdata wins")
 	}
 
 	// Stack model: identity + platform secrets endpoint are mandatory and

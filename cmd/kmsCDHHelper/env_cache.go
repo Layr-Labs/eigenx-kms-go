@@ -57,9 +57,14 @@ func emitKey(env map[string]string, key string) error {
 
 func cachePath(stackID string) string {
 	// stack_id is a UUID/slug (content-validated in applyInitdataKMSConfig) and
-	// is filesystem-safe. Sanitize anyway so a surprising stack_id can't escape
-	// envCacheDir via path separators.
-	safe := strings.NewReplacer("/", "_", "..", "_", string(os.PathSeparator), "_").Replace(stackID)
+	// is filesystem-safe. Sanitize path separators anyway so a surprising
+	// stack_id can't escape envCacheDir. We deliberately do NOT substitute the
+	// substring ".." here: replacing it would map two distinct valid IDs
+	// (e.g. "ver..2" and "ver_2") to the same cache file, silently serving one
+	// stack's env to the other. Traversal is not a risk to defend here anyway —
+	// validateStackID rejects the exact "." / ".." segments, and stripping the
+	// separators below means no ".." can act as a traversal component.
+	safe := strings.NewReplacer("/", "_", string(os.PathSeparator), "_").Replace(stackID)
 	return filepath.Join(envCacheDir, safe+".json")
 }
 

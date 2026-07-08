@@ -136,3 +136,14 @@ func TestCachePath_SanitizesStackID(t *testing.T) {
 	p := cachePath("../../etc/evil")
 	assert.True(t, filepath.Dir(p) == "/run/eigenx", "cache path must stay in envCacheDir, got %s", p)
 }
+
+func TestCachePath_DistinctValidIDsDoNotCollide(t *testing.T) {
+	// Two valid, distinct stack_ids must map to distinct cache files. "ver..2"
+	// and "ver_2" both pass validateStackID; an earlier ".." -> "_" substitution
+	// collapsed them onto the same file, which would silently serve one stack's
+	// env to the other. Guard against that regression.
+	require.NoError(t, validateStackID("ver..2"))
+	require.NoError(t, validateStackID("ver_2"))
+	assert.NotEqual(t, cachePath("ver..2"), cachePath("ver_2"),
+		"distinct valid stack_ids must not share a cache file")
+}

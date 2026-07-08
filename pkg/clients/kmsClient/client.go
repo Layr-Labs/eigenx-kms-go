@@ -658,15 +658,23 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 		return nil, fmt.Errorf("insufficient responses: got %d, need %d", len(responses), threshold)
 	}
 
-	// Step 5: Verify all responses have consistent environment data
-	expectedEnv := responses[0].EncryptedEnv
-	for i, resp := range responses {
-		if resp.EncryptedEnv != expectedEnv {
-			return nil, fmt.Errorf("environment data mismatch from server %d", i+1)
+	// Step 5: Verify all responses have consistent environment data.
+	//
+	// Skip on the platform (stack_id) path: there the KMS returns only the key
+	// share and EncryptedEnv is always empty for honest operators (secrets are
+	// fetched out-of-band and this field is ignored downstream). Enforcing
+	// cross-response equality there would be a Byzantine DoS vector — a single
+	// malicious operator returning a non-empty EncryptedEnv (especially as
+	// responses[0]) could fail the whole recovery for a value nobody consumes.
+	if opts.StackID == "" {
+		expectedEnv := responses[0].EncryptedEnv
+		for i, resp := range responses {
+			if resp.EncryptedEnv != expectedEnv {
+				return nil, fmt.Errorf("environment data mismatch from server %d", i+1)
+			}
 		}
+		c.logger.Sugar().Info("Verified threshold agreement on environment data")
 	}
-
-	c.logger.Sugar().Info("Verified threshold agreement on environment data")
 
 	// Step 6: Recover application private key with retry to tolerate invalid partial signatures.
 	// Attempt pairing-based validation using master public key. If the master public key
@@ -1029,7 +1037,10 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
+				// Cap the error-body read (64 KiB), matching GetMasterPublicKey /
+				// CollectPartialSignatures / requestSecretsFromKMS, so a misbehaving
+				// operator can't OOM us on a non-200 response.
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 				c.logger.Sugar().Warnw("Operator returned error", "operator_index", idx, "status", resp.StatusCode, "body", string(body))
 				return
 			}
