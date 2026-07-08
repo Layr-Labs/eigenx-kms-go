@@ -16,11 +16,12 @@
 //     KBS-EAR nonce so KMS server-side nonce binding is identical.
 //  3. Fetches raw SEV-SNP evidence from the in-pod AA at 127.0.0.1:8006.
 //  4. Calls RetrieveSecretsWithOptions with attestation_method=eigenx-snp; the
-//     KMS client recovers the AppPrivateKey and returns the release's
-//     encrypted_env (no IBE-decrypt on its own).
-//  5. IBE-decrypts the KMS-returned encrypted_env with crypto.DecryptForApp,
-//     using the recovered AppPrivateKey — so the plaintext only exists inside
-//     this attested TEE (docs/references/new_kms.md).
+//     KMS client recovers the AppPrivateKey (the platform path returns only the
+//     recovered key, no env).
+//  5. Fetches the stack's sealed secrets from the ecloud-platform
+//     InternalSecretsService and IBE-decrypts each with crypto.DecryptForApp
+//     under the stackID identity, using the recovered AppPrivateKey — so the
+//     plaintext only exists inside this attested TEE (docs/references/new_kms.md).
 package main
 
 import (
@@ -297,7 +298,7 @@ func run() error {
 	// re-attests (see the fast-path guard above).
 	if cacheable(req.Key) {
 		if cerr := storeCachedEnv(req.StackID, env); cerr != nil {
-			log.Printf("warning: cache merged env for app %q: %v", req.StackID, cerr)
+			log.Printf("warning: cache stack env for stack %q: %v", req.StackID, cerr)
 		}
 	}
 
@@ -306,8 +307,8 @@ func run() error {
 
 // readRequest parses the stdin JSON request. KMS-coord fields are NOT
 // validated here; they're filled in from cc_init_data later (see
-// applyInitdataKMSConfig). app_id and key are required; the values come from
-// the KMS's release env (public_env + encrypted_env), not the caller.
+// applyInitdataKMSConfig). stack_id and key are required; the env values come
+// from the ecloud-platform stack secrets, not the caller.
 func readRequest(r io.Reader) (*Request, error) {
 	var req Request
 	dec := json.NewDecoder(r)
@@ -684,19 +685,6 @@ func emitAppPrivateKey(result *kmsClient.SecretsResult, appID string) (map[strin
 	}, nil
 }
 
-// retrieveAndDecrypt drives the on-chain operator discovery, the eigenx-snp
-// secret-retrieval flow, and the IBE-decrypt of the KMS-returned encrypted_env.
-// It returns the app's full environment as a merged key→value map:
-// release.public_env (plaintext) overlaid with the decrypted encrypted_env
-// (secret), secret keys winning on collision.
-//
-// Note: RetrieveSecretsWithOptions does NOT IBE-decrypt — it recovers the
-// AppPrivateKey from the threshold partial sigs and returns the still-encrypted
-// EncryptedEnv. The IBE-decrypt of that encrypted_env happens here via
-// crypto.DecryptForApp(appID, AppPrivateKey, ...).
-//
-// When the sentinel key (appPrivateKeyKey) is requested, the function returns
-// the raw app_private_key and skips the IBE-decrypt step entirely.
 // assembleEnvFromSecrets IBE-decrypts each platform secret with the
 // threshold-recovered app-private-key and returns the app's environment as a
 // flat name→plaintext map. The IBE identity is the stackID (the ecloud CLI
@@ -715,6 +703,47 @@ func assembleEnvFromSecrets(stackID string, appPrivateKey types.G1Point, secrets
 	return env, nil
 }
 
+// resolveEnv turns a recovered SecretsResult into the app's environment map.
+// The secrets-fetch is injected so the sentinel/no-fetch path is unit-testable
+// without a live KMS client or network. On the app_private_key sentinel it
+// returns the raw key and never fetches; otherwise it fetches the stack's
+// sealed secrets and IBE-decrypts each under the stackID identity.
+func resolveEnv(
+	req *Request,
+	result *kmsClient.SecretsResult,
+	fetch func(baseURL, apiKey, stackID string) ([]stackSecret, error),
+) (map[string]string, error) {
+	// Root-key request: emit the threshold-recovered app_private_key itself and
+	// stop — it does not depend on the platform secrets, so return before the fetch.
+	if req.Key == appPrivateKeyKey {
+		return emitAppPrivateKey(result, req.StackID)
+	}
+
+	// Stack model: the KMS platform path returns ONLY the recovered
+	// app-private-key (no env). Fetch the sealed secrets from the ecloud-platform
+	// InternalSecretsService and IBE-decrypt each with the recovered key. The IBE
+	// identity is the stackID (the ecloud CLI seals with EncryptForApp(stackID, …)).
+	secrets, err := fetch(req.PlatformSecretsURL, req.PlatformInternalAPIKey, req.StackID)
+	if err != nil {
+		return nil, fmt.Errorf("fetch stack secrets: %w", err)
+	}
+	env, err := assembleEnvFromSecrets(req.StackID, result.AppPrivateKey, secrets)
+	if err != nil {
+		return nil, fmt.Errorf("assemble stack env for stack %q: %w", req.StackID, err)
+	}
+	return env, nil
+}
+
+// retrieveAndDecrypt drives operator discovery (on-chain or the single-operator
+// shim) and the eigenx-snp secret-retrieval flow, then delegates to resolveEnv
+// to turn the recovered app-private-key into the stack's environment map.
+//
+// In the stack model RetrieveSecretsWithOptions recovers only the AppPrivateKey;
+// the environment is NOT carried in the KMS response. resolveEnv fetches the
+// stack's sealed secrets from the ecloud-platform InternalSecretsService and
+// IBE-decrypts each under the stackID identity, so the plaintext only ever
+// exists inside this attested TEE. When the sentinel key (appPrivateKeyKey) is
+// requested, resolveEnv returns the raw app_private_key and skips the fetch.
 func retrieveAndDecrypt(
 	req *Request,
 	evidence, ccInitData, rsaPubPEM []byte,
@@ -781,6 +810,7 @@ func retrieveAndDecrypt(
 		CCInitData:        ccInitData,
 		RSAPrivateKeyPEM:  privPEM,
 		RSAPublicKeyPEM:   rsaPubPEM,
+		StackID:           req.StackID, // selects the KMS platform path
 	}
 
 	result, err := client.RetrieveSecretsWithOptions(req.StackID, opts)
@@ -788,69 +818,7 @@ func retrieveAndDecrypt(
 		return nil, fmt.Errorf("RetrieveSecretsWithOptions: %w", err)
 	}
 
-	// Root-key request: emit the threshold-recovered app_private_key itself
-	// (hex of its compressed G1 bytes) and stop. This is the KMS-derived root a
-	// signing daemon seeds from; it does not depend on the release's
-	// encrypted_env, so we return before the IBE-decrypt below.
-	if req.Key == appPrivateKeyKey {
-		return emitAppPrivateKey(result, req.StackID)
-	}
-
-	// Per the KMS design (docs/references/new_kms.md, "Application Decryption"):
-	// the secret is the on-chain release's encrypted_env, returned in the
-	// /secrets response and IBE-decrypted here with the threshold-recovered
-	// app_private_key. Because app_private_key can only be reconstructed from
-	// a quorum of operator partial signatures over an accepted attestation,
-	// the plaintext is only ever visible inside this attested TEE.
-	//
-	// encrypted_env may legitimately be empty: a public-only release (e.g. just
-	// LOG_LEVEL / ENVIRONMENT in public_env, no IBE secrets) has nothing to
-	// decrypt. In that case skip the IBE-decrypt and merge public_env alone —
-	// emitKey still fails loud if the requested key isn't present anywhere.
-	var secretPlaintext []byte
-	if result.EncryptedEnv != "" {
-		ciphertext, err := decodeEncryptedEnv(result.EncryptedEnv)
-		if err != nil {
-			return nil, fmt.Errorf("decode encrypted_env: %w", err)
-		}
-
-		secretPlaintext, err = crypto.DecryptForApp(req.StackID, result.AppPrivateKey, ciphertext)
-		if err != nil {
-			return nil, fmt.Errorf("decrypt encrypted_env with app_private_key: %w", err)
-		}
-	}
-
-	// Merge public_env (plaintext, on-chain) under the decrypted secret env;
-	// secret keys win on collision so a public default can't shadow a secret.
-	env, err := mergeEnv(result.PublicEnv, secretPlaintext)
-	if err != nil {
-		return nil, fmt.Errorf("merge release env for app %q: %w", req.StackID, err)
-	}
-	return env, nil
-}
-
-// decodeEncryptedEnv turns the KMS /secrets response's encrypted_env string
-// into the raw IBE ciphertext bytes that crypto.DecryptForApp expects.
-// encrypted_env is transported as a string; accept hex (optionally 0x-
-// prefixed) or base64, sniffed by content, since the wire encoding isn't
-// pinned by the spec. The decoded bytes are the IBE "magic||version||C1||
-// nonce||ct+tag" envelope (see pkg/crypto/bls.go).
-func decodeEncryptedEnv(s string) ([]byte, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil, fmt.Errorf("empty")
-	}
-	hexStr := strings.TrimPrefix(strings.TrimPrefix(s, "0x"), "0X")
-	if b, err := hex.DecodeString(hexStr); err == nil {
-		return b, nil
-	}
-	if b, err := base64.StdEncoding.DecodeString(s); err == nil {
-		return b, nil
-	}
-	if b, err := base64.RawStdEncoding.DecodeString(s); err == nil {
-		return b, nil
-	}
-	return nil, fmt.Errorf("encrypted_env is neither hex nor base64")
+	return resolveEnv(req, result, fetchStackSecrets)
 }
 
 // aaSnpEvidence mirrors the AA-emitted SNP evidence shape. The Rust source

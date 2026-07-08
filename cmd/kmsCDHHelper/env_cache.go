@@ -1,16 +1,16 @@
 package main
 
-// Per-app environment assembly + a per-pod-boot cache.
+// Per-stack environment cache (per-pod-boot).
 //
 // The eigenx CDH plugin calls this helper once per sealed env var in the pod
 // spec. Each invocation is a fresh process, so to keep attestation to ONE round
-// trip per pod (not one per env var) the first call caches the whole merged
-// environment to a tmpfs file and every later call for the same app serves its
-// requested key straight from that cache.
+// trip per pod (not one per env var) the first call caches the whole assembled
+// stack environment to a tmpfs file and every later call for the same stack
+// serves its requested key straight from that cache.
 //
 // The cache holds plaintext secrets at rest, so it MUST live on memory-backed
 // tmpfs inside the SEV-SNP guest (never the disk image), with owner-only perms.
-// /run is tmpfs in the podVM. The file is scoped per app_id and naturally
+// /run is tmpfs in the podVM. The file is scoped per stack_id and naturally
 // cleared on pod restart (tmpfs is volatile), giving per-boot freshness.
 
 import (
@@ -39,42 +39,6 @@ const (
 	cacheDirMode  os.FileMode = 0o700
 )
 
-// mergeEnv overlays the decrypted secret env on top of the release's public
-// env. Both are JSON objects of string→string. public_env is plaintext config
-// from the on-chain release; secretPlaintext is the IBE-decrypted encrypted_env.
-// Secret keys win on collision so a public default can never shadow a secret.
-//
-// Either side may be empty. publicEnvJSON is "" when the release pins no public
-// env; secretPlaintext is empty when the release has no encrypted_env (a
-// public-only release). A release with neither yields an empty map. When
-// present, each side must be a JSON object: the env is a flat key→value map,
-// which is what lets CDH address individual variables by name.
-func mergeEnv(publicEnvJSON string, secretPlaintext []byte) (map[string]string, error) {
-	env := map[string]string{}
-
-	if strings.TrimSpace(publicEnvJSON) != "" {
-		var pub map[string]string
-		if err := json.Unmarshal([]byte(publicEnvJSON), &pub); err != nil {
-			return nil, fmt.Errorf("public_env is not a JSON string map: %w", err)
-		}
-		for k, v := range pub {
-			env[k] = v
-		}
-	}
-
-	if len(secretPlaintext) > 0 {
-		var sec map[string]string
-		if err := json.Unmarshal(secretPlaintext, &sec); err != nil {
-			return nil, fmt.Errorf("decrypted encrypted_env is not a JSON string map: %w", err)
-		}
-		for k, v := range sec { // secret overrides public
-			env[k] = v
-		}
-	}
-
-	return env, nil
-}
-
 // emitKey writes the value for key to stdout (the unseal_secret return that
 // kata-agent substitutes into the one sealed env var that triggered this call).
 // A missing key is a hard error: the deployer listed a sealed env var whose
@@ -91,20 +55,20 @@ func emitKey(env map[string]string, key string) error {
 	return nil
 }
 
-func cachePath(appID string) string {
-	// app_id is an Ethereum address (0x + 40 hex) in production and a short
-	// slug under fakeKMS; both are filesystem-safe. Sanitize anyway so a
-	// surprising app_id can't escape envCacheDir via path separators.
-	safe := strings.NewReplacer("/", "_", "..", "_", string(os.PathSeparator), "_").Replace(appID)
+func cachePath(stackID string) string {
+	// stack_id is a UUID/slug (content-validated in applyInitdataKMSConfig) and
+	// is filesystem-safe. Sanitize anyway so a surprising stack_id can't escape
+	// envCacheDir via path separators.
+	safe := strings.NewReplacer("/", "_", "..", "_", string(os.PathSeparator), "_").Replace(stackID)
 	return filepath.Join(envCacheDir, safe+".json")
 }
 
-// loadCachedEnv returns the cached merged env for appID if a prior call this
+// loadCachedEnv returns the cached stack env for stackID if a prior call this
 // pod boot already fetched it. ok=false (nil error) means cache miss — the
 // caller should attest + fetch. A shared (read) flock is held across the read
 // so a concurrent first-call writer can't be observed mid-write.
-func loadCachedEnv(appID string) (env map[string]string, ok bool, err error) {
-	f, err := os.Open(cachePath(appID))
+func loadCachedEnv(stackID string) (env map[string]string, ok bool, err error) {
+	f, err := os.Open(cachePath(stackID))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, false, nil
@@ -127,15 +91,15 @@ func loadCachedEnv(appID string) (env map[string]string, ok bool, err error) {
 	return env, true, nil
 }
 
-// storeCachedEnv writes the merged env to the per-app tmpfs cache atomically
+// storeCachedEnv writes the stack env to the per-stack tmpfs cache atomically
 // (temp file + rename) under an exclusive flock, so a reader either sees the
 // old file or the fully-written new one, never a partial write.
-func storeCachedEnv(appID string, env map[string]string) error {
+func storeCachedEnv(stackID string, env map[string]string) error {
 	if err := os.MkdirAll(envCacheDir, cacheDirMode); err != nil {
 		return fmt.Errorf("mkdir %s: %w", envCacheDir, err)
 	}
 
-	final := cachePath(appID)
+	final := cachePath(stackID)
 
 	// Serialize writers on a lock file co-located with the target. We lock a
 	// dedicated .lock (not the target) so the atomic rename below can't swap

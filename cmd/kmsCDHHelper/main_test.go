@@ -10,11 +10,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/kmsClient"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	fr "github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/google/go-sev-guest/abi"
 	"github.com/stretchr/testify/assert"
@@ -630,6 +633,68 @@ func TestRSAKeypairRoundTripsThroughEncryption(t *testing.T) {
 	got, err := rsaEnc.Decrypt(ciphertext, privPEM)
 	require.NoError(t, err, "Decrypt must accept the PKCS#1 RSA PRIVATE KEY PEM the helper hands the client")
 	assert.Equal(t, plaintext, got)
+}
+
+func TestResolveEnv_SentinelSkipsFetch(t *testing.T) {
+	// A validated app_private_key result; emitAppPrivateKey requires Verified
+	// and a 48-byte compressed G1.
+	result := &kmsClient.SecretsResult{
+		Verified:      true,
+		AppPrivateKey: types.G1Point{CompressedBytes: make([]byte, appPrivateKeyG1Bytes)},
+	}
+	req := &Request{StackID: "stack-1", Key: appPrivateKeyKey}
+
+	fetchCalled := false
+	fetch := func(baseURL, apiKey, stackID string) ([]stackSecret, error) {
+		fetchCalled = true
+		return nil, nil
+	}
+
+	env, err := resolveEnv(req, result, fetch)
+	require.NoError(t, err)
+	assert.False(t, fetchCalled, "sentinel path must NOT fetch platform secrets")
+	_, ok := env[appPrivateKeyKey]
+	assert.True(t, ok, "sentinel path emits the app_private_key under the sentinel key")
+}
+
+func TestResolveEnv_NormalPathFetchesAndAssembles(t *testing.T) {
+	const stackID = "stack-xyz"
+	masterSecret, err := new(fr.Element).SetRandom()
+	require.NoError(t, err)
+	masterPubKey, err := crypto.ScalarMulG2(crypto.G2Generator, masterSecret)
+	require.NoError(t, err)
+	appHash, err := crypto.HashToG1(stackID)
+	require.NoError(t, err)
+	appPrivateKey, err := crypto.ScalarMulG1(*appHash, masterSecret)
+	require.NoError(t, err)
+	ct, err := crypto.EncryptForApp(stackID, *masterPubKey, []byte("v1"))
+	require.NoError(t, err)
+
+	result := &kmsClient.SecretsResult{AppPrivateKey: *appPrivateKey}
+	req := &Request{StackID: stackID, Key: "FOO", PlatformSecretsURL: "http://p", PlatformInternalAPIKey: "k"}
+
+	var gotURL, gotKey, gotStack string
+	fetch := func(baseURL, apiKey, s string) ([]stackSecret, error) {
+		gotURL, gotKey, gotStack = baseURL, apiKey, s
+		return []stackSecret{{Name: "FOO", Value: ct}}, nil
+	}
+
+	env, err := resolveEnv(req, result, fetch)
+	require.NoError(t, err)
+	assert.Equal(t, "http://p", gotURL)
+	assert.Equal(t, "k", gotKey)
+	assert.Equal(t, stackID, gotStack)
+	assert.Equal(t, map[string]string{"FOO": "v1"}, env)
+}
+
+func TestResolveEnv_FetchErrorPropagates(t *testing.T) {
+	result := &kmsClient.SecretsResult{AppPrivateKey: types.G1Point{CompressedBytes: make([]byte, appPrivateKeyG1Bytes)}}
+	req := &Request{StackID: "s", Key: "FOO", PlatformSecretsURL: "http://p", PlatformInternalAPIKey: "k"}
+	fetch := func(_, _, _ string) ([]stackSecret, error) { return nil, fmt.Errorf("boom") }
+
+	_, err := resolveEnv(req, result, fetch)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "boom")
 }
 
 func TestAssembleEnvFromSecrets_RoundTrip(t *testing.T) {
