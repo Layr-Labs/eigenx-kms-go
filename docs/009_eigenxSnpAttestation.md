@@ -31,7 +31,14 @@ envelope.
   `/run/peerpod/initdata`, sources SNP-bound KMS coords from
   `[data]."eigenx.toml"` (stdin overrides ignored), builds REPORT_DATA,
   pulls AA evidence, transforms AA's nested-JSON SNP shape into the legacy
-  raw-bytes wire format, calls `RetrieveSecretsWithOptions`, IBE-decrypts.
+  raw-bytes wire format, and recovers the app-private-key via the KMS
+  `stack_id` platform path (`RetrieveSecretsWithOptions` returns only the
+  recovered key, no env). It then fetches the stack's sealed secrets from
+  the ecloud-platform `InternalSecretsService` and IBE-decrypts each under
+  the stackID identity, emitting the requested key's plaintext. In the stack
+  model the `[data]."eigenx.toml"` block also carries `stack_id`,
+  `platform_secrets_url`, and `platform_internal_api_key` (all SNP-bound), and
+  the IBE identity secrets are sealed to is the `stack_id`, not the `app_id`.
 - **`cmd/fakeKMS/`** — single-node KMS test harness for the e2e flow.
 - **Bindings enforced server-side**: image digest, registry
   (`claims.Registry == release.Registry`), and REPORT_DATA nonce.

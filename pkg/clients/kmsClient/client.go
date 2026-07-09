@@ -86,6 +86,12 @@ type SecretsOptions struct {
 	RSAPrivateKeyPEM []byte // Required: RSA private key in PEM format
 	RSAPublicKeyPEM  []byte // Required: RSA public key in PEM format
 	ExtraData        []byte // optional caller-supplied data bound into attestation (max 1 MB)
+
+	// StackID, when non-empty, switches the KMS /secrets authorization to the
+	// ecloud-platform release for this stack (the platform path) instead of the
+	// on-chain AppController. On that path the KMS returns only the recovered
+	// app-private-key (no env). Empty preserves the on-chain behavior.
+	StackID string
 }
 
 // NewClient creates a new KMS client instance with dependency injection
@@ -652,15 +658,23 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 		return nil, fmt.Errorf("insufficient responses: got %d, need %d", len(responses), threshold)
 	}
 
-	// Step 5: Verify all responses have consistent environment data
-	expectedEnv := responses[0].EncryptedEnv
-	for i, resp := range responses {
-		if resp.EncryptedEnv != expectedEnv {
-			return nil, fmt.Errorf("environment data mismatch from server %d", i+1)
+	// Step 5: Verify all responses have consistent environment data.
+	//
+	// Skip on the platform (stack_id) path: there the KMS returns only the key
+	// share and EncryptedEnv is always empty for honest operators (secrets are
+	// fetched out-of-band and this field is ignored downstream). Enforcing
+	// cross-response equality there would be a Byzantine DoS vector — a single
+	// malicious operator returning a non-empty EncryptedEnv (especially as
+	// responses[0]) could fail the whole recovery for a value nobody consumes.
+	if opts.StackID == "" {
+		expectedEnv := responses[0].EncryptedEnv
+		for i, resp := range responses {
+			if resp.EncryptedEnv != expectedEnv {
+				return nil, fmt.Errorf("environment data mismatch from server %d", i+1)
+			}
 		}
+		c.logger.Sugar().Info("Verified threshold agreement on environment data")
 	}
-
-	c.logger.Sugar().Info("Verified threshold agreement on environment data")
 
 	// Step 6: Recover application private key with retry to tolerate invalid partial signatures.
 	// Attempt pairing-based validation using master public key. If the master public key
@@ -700,7 +714,11 @@ func (c *Client) RetrieveSecretsWithOptions(appID string, opts *SecretsOptions) 
 	// guarantee beyond what the caller already has. Returning opts.ExtraData keeps
 	// the contract explicit: callers get back exactly what they sent.
 	return &SecretsResult{
-		AppPrivateKey:   *appPrivateKey,
+		AppPrivateKey: *appPrivateKey,
+		// EncryptedEnv/PublicEnv are populated only on the on-chain path. On the
+		// platform (stack_id) path the KMS returns just the key share and these
+		// are always empty for honest operators — the stack's secrets are fetched
+		// out-of-band from the platform. Retained for on-chain caller compatibility.
 		EncryptedEnv:    responses[0].EncryptedEnv,
 		PublicEnv:       responses[0].PublicEnv,
 		PartialSigs:     partialSigs,
@@ -824,7 +842,11 @@ func (c *Client) requestSecretsFromKMS(serverURL string, req types.SecretsReques
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		// Cap the error-body read: this client runs in a memory-constrained
+		// peer-pod, and a Byzantine operator returning gigabytes on a non-200
+		// response must not OOM us. 64 KiB matches GetMasterPublicKey /
+		// CollectPartialSignatures and is enough to surface any error message.
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 		return nil, fmt.Errorf("KMS server returned status %d: %s", resp.StatusCode, string(body))
 	}
 
@@ -934,6 +956,7 @@ func (c *Client) createEigenXSNPAttestationRequest(appID string, opts *SecretsOp
 
 	return types.SecretsRequestV1{
 		AppID:             appID,
+		StackID:           opts.StackID,
 		AttestationMethod: "eigenx-snp",
 		Attestation:       opts.RawSNPEvidence,
 		RSAPubKeyTmp:      opts.RSAPublicKeyPEM,
@@ -1018,7 +1041,10 @@ func (c *Client) collectPartialSignaturesForDecrypt(appID string, operators *pee
 			defer func() { _ = resp.Body.Close() }()
 
 			if resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(resp.Body)
+				// Cap the error-body read (64 KiB), matching GetMasterPublicKey /
+				// CollectPartialSignatures / requestSecretsFromKMS, so a misbehaving
+				// operator can't OOM us on a non-200 response.
+				body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
 				c.logger.Sugar().Warnw("Operator returned error", "operator_index", idx, "status", resp.StatusCode, "body", string(body))
 				return
 			}

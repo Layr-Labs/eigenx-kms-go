@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/hex"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -13,63 +14,31 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestMergeEnv_SecretWinsOverPublic(t *testing.T) {
-	public := `{"LOG_LEVEL":"info","SHARED":"public-value"}`
-	secret := []byte(`{"DB_PASSWORD":"hunter2","SHARED":"secret-value"}`)
-
-	env, err := mergeEnv(public, secret)
-	require.NoError(t, err)
-
-	assert.Equal(t, "info", env["LOG_LEVEL"], "public-only key preserved")
-	assert.Equal(t, "hunter2", env["DB_PASSWORD"], "secret-only key preserved")
-	assert.Equal(t, "secret-value", env["SHARED"], "secret must override public on collision")
-	assert.Len(t, env, 3)
-}
-
-func TestMergeEnv_EmptyPublic(t *testing.T) {
-	env, err := mergeEnv("", []byte(`{"A":"1","B":"2"}`))
-	require.NoError(t, err)
-	assert.Equal(t, map[string]string{"A": "1", "B": "2"}, env)
-}
-
-func TestMergeEnv_PublicOnly_EmptySecret(t *testing.T) {
-	// A public-only release (no encrypted_env) passes an empty secretPlaintext.
-	// The public env must come through and there must be no JSON-parse error.
-	env, err := mergeEnv(`{"LOG_LEVEL":"info","ENVIRONMENT":"prod"}`, nil)
-	require.NoError(t, err)
-	assert.Equal(t, map[string]string{"LOG_LEVEL": "info", "ENVIRONMENT": "prod"}, env)
-
-	env, err = mergeEnv(`{"LOG_LEVEL":"info"}`, []byte{})
-	require.NoError(t, err)
-	assert.Equal(t, map[string]string{"LOG_LEVEL": "info"}, env)
-}
-
-func TestMergeEnv_BothEmpty(t *testing.T) {
-	env, err := mergeEnv("", nil)
-	require.NoError(t, err)
-	assert.Empty(t, env)
-}
-
-func TestMergeEnv_RejectsNonObjectSecret(t *testing.T) {
-	// A bare string (the old single-secret shape) is no longer valid — the
-	// decrypted blob must be a JSON object so keys are addressable.
-	_, err := mergeEnv("", []byte(`"just-a-string"`))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "JSON string map")
-}
-
-func TestMergeEnv_RejectsBadPublic(t *testing.T) {
-	_, err := mergeEnv(`{not json}`, []byte(`{"A":"1"}`))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "public_env")
-}
-
 func TestEmitKey_MissingKeyFailsLoud(t *testing.T) {
 	// A pod-spec sealed var whose name isn't in the release env is a
 	// misconfiguration; emitKey must error rather than inject "".
 	err := emitKey(map[string]string{"A": "1"}, "NOPE")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not present in app env")
+}
+
+func TestEmitKey_HappyPathWritesValueToStdout(t *testing.T) {
+	// The success path writes exactly the key's value (no trailing newline) to
+	// stdout — that raw byte stream is the unseal_secret return kata-agent
+	// substitutes into the sealed env var.
+	orig := os.Stdout
+	r, w, err := os.Pipe()
+	require.NoError(t, err)
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+
+	emitErr := emitKey(map[string]string{"FOO": "bar", "OTHER": "x"}, "FOO")
+	require.NoError(t, w.Close())
+	require.NoError(t, emitErr)
+
+	out, err := io.ReadAll(r)
+	require.NoError(t, err)
+	assert.Equal(t, "bar", string(out))
 }
 
 func TestCacheable_AppPrivateKeyNeverCached(t *testing.T) {
@@ -137,33 +106,44 @@ func TestCacheRoundTrip(t *testing.T) {
 	setEnvCacheDir(tmp)
 	defer setEnvCacheDir(orig)
 
-	appID := "0xabc123app"
+	stackID := "stack-abc123"
 	want := map[string]string{"DB_PASSWORD": "hunter2", "API_KEY": "sk-xyz"}
 
 	// Miss before any write.
-	_, ok, err := loadCachedEnv(appID)
+	_, ok, err := loadCachedEnv(stackID)
 	require.NoError(t, err)
 	assert.False(t, ok, "expected cache miss before store")
 
-	require.NoError(t, storeCachedEnv(appID, want))
+	require.NoError(t, storeCachedEnv(stackID, want))
 
-	got, ok, err := loadCachedEnv(appID)
+	got, ok, err := loadCachedEnv(stackID)
 	require.NoError(t, err)
 	require.True(t, ok, "expected cache hit after store")
 	assert.Equal(t, want, got)
 
 	// File is owner-only on tmpfs.
-	info, err := os.Stat(filepath.Join(tmp, "0xabc123app.json"))
+	info, err := os.Stat(filepath.Join(tmp, "stack-abc123.json"))
 	require.NoError(t, err)
 	assert.Equal(t, cacheFileMode, info.Mode().Perm())
 }
 
-func TestCachePath_SanitizesAppID(t *testing.T) {
+func TestCachePath_SanitizesStackID(t *testing.T) {
 	orig := envCacheDir
 	setEnvCacheDir("/run/eigenx")
 	defer setEnvCacheDir(orig)
 
-	// A path-separator in app_id must not escape the cache dir.
+	// A path-separator in stack_id must not escape the cache dir.
 	p := cachePath("../../etc/evil")
 	assert.True(t, filepath.Dir(p) == "/run/eigenx", "cache path must stay in envCacheDir, got %s", p)
+}
+
+func TestCachePath_DistinctValidIDsDoNotCollide(t *testing.T) {
+	// Two valid, distinct stack_ids must map to distinct cache files. "ver..2"
+	// and "ver_2" both pass validateStackID; an earlier ".." -> "_" substitution
+	// collapsed them onto the same file, which would silently serve one stack's
+	// env to the other. Guard against that regression.
+	require.NoError(t, validateStackID("ver..2"))
+	require.NoError(t, validateStackID("ver_2"))
+	assert.NotEqual(t, cachePath("ver..2"), cachePath("ver_2"),
+		"distinct valid stack_ids must not share a cache file")
 }

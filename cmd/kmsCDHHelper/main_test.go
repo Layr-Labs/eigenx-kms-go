@@ -10,10 +10,15 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/clients/kmsClient"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/encryption"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
+	fr "github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/google/go-sev-guest/abi"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -25,7 +30,7 @@ func TestReadRequest_HappyPath(t *testing.T) {
 		AVSAddress:    "0xabc",
 		OperatorSetID: 0,
 		RPCURL:        "https://eth.example/v2/key",
-		AppID:         "app-id",
+		StackID:       "stack-id",
 		Key:           "DB_PASSWORD",
 	}
 	body, err := json.Marshal(in)
@@ -37,7 +42,7 @@ func TestReadRequest_HappyPath(t *testing.T) {
 	assert.Equal(t, in.AVSAddress, got.AVSAddress)
 	assert.Equal(t, in.OperatorSetID, got.OperatorSetID)
 	assert.Equal(t, in.RPCURL, got.RPCURL)
-	assert.Equal(t, in.AppID, got.AppID)
+	assert.Equal(t, in.StackID, got.StackID)
 	assert.Equal(t, in.Key, got.Key)
 }
 
@@ -45,10 +50,10 @@ func TestReadRequest_IgnoresUnknownFields(t *testing.T) {
 	// The CDH plugin and helper are versioned independently, so readRequest
 	// must tolerate stdin keys it doesn't model (no DisallowUnknownFields)
 	// and still parse the fields it needs.
-	body := []byte(`{"app_id":"x","key":"K","some_future_field":"deadbeef"}`)
+	body := []byte(`{"stack_id":"x","key":"K","some_future_field":"deadbeef"}`)
 	got, err := readRequest(bytes.NewReader(body))
 	require.NoError(t, err)
-	assert.Equal(t, "x", got.AppID)
+	assert.Equal(t, "x", got.StackID)
 	assert.Equal(t, "K", got.Key)
 }
 
@@ -62,18 +67,17 @@ func TestReadRequest_MissingFields(t *testing.T) {
 		expectedErr string
 	}{
 		{
-			name: "missing app_id",
+			name: "missing stack_id",
 			req: Request{
-				AVSAddress: "0xabc",
-				RPCURL:     "https://eth.example",
-				Key:        "K",
+				RPCURL: "https://eth.example",
+				Key:    "K",
 			},
-			expectedErr: "app_id is required",
+			expectedErr: "stack_id is required",
 		},
 		{
 			name: "missing key",
 			req: Request{
-				AppID: "app-id",
+				StackID: "stack-id",
 			},
 			expectedErr: "key is required",
 		},
@@ -100,10 +104,11 @@ func TestApplyInitdataKMSConfig(t *testing.T) {
 	t.Setenv(envAllowSingleOperatorKMS, "1")
 
 	t.Run("initdata populates empty request", func(t *testing.T) {
-		req := &Request{AppID: "x"}
+		req := &Request{}
 		cfg := &initdataKMSConfig{
 			KMSURL: "http://kms.example", AVSAddress: "0xabc",
 			OperatorSetID: 7, RPCURL: "http://rpc.example",
+			StackID: "s", PlatformSecretsURL: "http://p.internal", PlatformInternalAPIKey: "k",
 		}
 		require.NoError(t, applyInitdataKMSConfig(req, cfg))
 		assert.Equal(t, "http://kms.example", req.KMSURL)
@@ -115,7 +120,6 @@ func TestApplyInitdataKMSConfig(t *testing.T) {
 		// stdin pretends to redirect to an attacker-controlled KMS;
 		// initdata is SNP-bound and authoritative.
 		req := &Request{
-			AppID:         "x",
 			KMSURL:        "http://attacker.example",
 			AVSAddress:    "0xattacker",
 			OperatorSetID: 99,
@@ -124,6 +128,7 @@ func TestApplyInitdataKMSConfig(t *testing.T) {
 		cfg := &initdataKMSConfig{
 			KMSURL: "http://kms.example", AVSAddress: "0xabc",
 			OperatorSetID: 7, RPCURL: "http://rpc.example",
+			StackID: "s", PlatformSecretsURL: "http://p.internal", PlatformInternalAPIKey: "k",
 		}
 		require.NoError(t, applyInitdataKMSConfig(req, cfg))
 		assert.Equal(t, "http://kms.example", req.KMSURL,
@@ -136,20 +141,20 @@ func TestApplyInitdataKMSConfig(t *testing.T) {
 			"stdin must NOT override initdata rpc_url")
 	})
 	t.Run("nil cfg fails closed", func(t *testing.T) {
-		req := &Request{AppID: "x"}
+		req := &Request{}
 		err := applyInitdataKMSConfig(req, nil)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "eigenx.toml")
 	})
 	t.Run("missing avs_address fails", func(t *testing.T) {
 		cfg := &initdataKMSConfig{KMSURL: "http://kms.example"}
-		err := applyInitdataKMSConfig(&Request{AppID: "x"}, cfg)
+		err := applyInitdataKMSConfig(&Request{}, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "avs_address")
 	})
 	t.Run("missing rpc_url and kms_url fails", func(t *testing.T) {
 		cfg := &initdataKMSConfig{AVSAddress: "0xabc"}
-		err := applyInitdataKMSConfig(&Request{AppID: "x"}, cfg)
+		err := applyInitdataKMSConfig(&Request{}, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "kms_url or rpc_url")
 	})
@@ -157,7 +162,7 @@ func TestApplyInitdataKMSConfig(t *testing.T) {
 		cfg := &initdataKMSConfig{
 			KMSURL: "file:///etc/passwd", AVSAddress: "0xabc",
 		}
-		err := applyInitdataKMSConfig(&Request{AppID: "x"}, cfg)
+		err := applyInitdataKMSConfig(&Request{}, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "scheme")
 	})
@@ -165,7 +170,7 @@ func TestApplyInitdataKMSConfig(t *testing.T) {
 		cfg := &initdataKMSConfig{
 			AVSAddress: "0xabc", RPCURL: "gopher://internal.example/",
 		}
-		err := applyInitdataKMSConfig(&Request{AppID: "x"}, cfg)
+		err := applyInitdataKMSConfig(&Request{}, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "scheme")
 	})
@@ -173,7 +178,7 @@ func TestApplyInitdataKMSConfig(t *testing.T) {
 		cfg := &initdataKMSConfig{
 			KMSURL: "http:///path", AVSAddress: "0xabc",
 		}
-		err := applyInitdataKMSConfig(&Request{AppID: "x"}, cfg)
+		err := applyInitdataKMSConfig(&Request{}, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "host")
 	})
@@ -188,7 +193,7 @@ func TestApplyInitdataKMSConfig_SingleOperatorGate(t *testing.T) {
 		cfg := &initdataKMSConfig{
 			KMSURL: "http://kms.example", AVSAddress: "0xabc",
 		}
-		err := applyInitdataKMSConfig(&Request{AppID: "x"}, cfg)
+		err := applyInitdataKMSConfig(&Request{}, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), envAllowSingleOperatorKMS)
 		assert.Contains(t, err.Error(), "trust downgrade")
@@ -196,9 +201,10 @@ func TestApplyInitdataKMSConfig_SingleOperatorGate(t *testing.T) {
 
 	t.Run("kms_url with opt-in succeeds", func(t *testing.T) {
 		t.Setenv(envAllowSingleOperatorKMS, "1")
-		req := &Request{AppID: "x"}
+		req := &Request{}
 		cfg := &initdataKMSConfig{
 			KMSURL: "http://kms.example", AVSAddress: "0xabc",
+			StackID: "s", PlatformSecretsURL: "http://p.internal", PlatformInternalAPIKey: "k",
 		}
 		require.NoError(t, applyInitdataKMSConfig(req, cfg))
 		assert.Equal(t, "http://kms.example", req.KMSURL)
@@ -206,9 +212,10 @@ func TestApplyInitdataKMSConfig_SingleOperatorGate(t *testing.T) {
 
 	t.Run("production rpc_url path needs no opt-in", func(t *testing.T) {
 		// env var unset; rpc_url only, no kms_url → on-chain discovery path.
-		req := &Request{AppID: "x"}
+		req := &Request{}
 		cfg := &initdataKMSConfig{
 			RPCURL: "http://rpc.example", AVSAddress: "0xabc",
+			StackID: "s", PlatformSecretsURL: "http://p.internal", PlatformInternalAPIKey: "k",
 		}
 		require.NoError(t, applyInitdataKMSConfig(req, cfg))
 		assert.Equal(t, "http://rpc.example", req.RPCURL)
@@ -220,10 +227,101 @@ func TestApplyInitdataKMSConfig_SingleOperatorGate(t *testing.T) {
 		cfg := &initdataKMSConfig{
 			KMSURL: "http://kms.example", AVSAddress: "0xabc",
 		}
-		err := applyInitdataKMSConfig(&Request{AppID: "x"}, cfg)
+		err := applyInitdataKMSConfig(&Request{}, cfg)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), envAllowSingleOperatorKMS)
 	})
+}
+
+func TestApplyInitdataKMSConfig_PlatformFields(t *testing.T) {
+	t.Run("populates stack + platform fields from initdata", func(t *testing.T) {
+		req := &Request{}
+		cfg := &initdataKMSConfig{
+			RPCURL:                 "http://rpc.example",
+			AVSAddress:             "0xabc",
+			StackID:                "stack-123",
+			PlatformSecretsURL:     "http://platform.internal:9003",
+			PlatformInternalAPIKey: "internal-key",
+		}
+		require.NoError(t, applyInitdataKMSConfig(req, cfg))
+		assert.Equal(t, "stack-123", req.StackID)
+		assert.Equal(t, "http://platform.internal:9003", req.PlatformSecretsURL)
+		assert.Equal(t, "internal-key", req.PlatformInternalAPIKey)
+	})
+
+	t.Run("missing stack_id fails closed", func(t *testing.T) {
+		cfg := &initdataKMSConfig{
+			RPCURL: "http://rpc.example", AVSAddress: "0xabc",
+			PlatformSecretsURL: "http://p.internal", PlatformInternalAPIKey: "k",
+		}
+		err := applyInitdataKMSConfig(&Request{}, cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "stack_id")
+	})
+
+	t.Run("missing platform_secrets_url fails closed", func(t *testing.T) {
+		cfg := &initdataKMSConfig{
+			RPCURL: "http://rpc.example", AVSAddress: "0xabc",
+			StackID: "s", PlatformInternalAPIKey: "k",
+		}
+		err := applyInitdataKMSConfig(&Request{}, cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "platform_secrets_url")
+	})
+
+	t.Run("missing platform_internal_api_key fails closed", func(t *testing.T) {
+		cfg := &initdataKMSConfig{
+			RPCURL: "http://rpc.example", AVSAddress: "0xabc",
+			StackID: "s", PlatformSecretsURL: "http://p.internal",
+		}
+		err := applyInitdataKMSConfig(&Request{}, cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "platform_internal_api_key")
+	})
+
+	t.Run("non-http platform_secrets_url rejected", func(t *testing.T) {
+		cfg := &initdataKMSConfig{
+			RPCURL: "http://rpc.example", AVSAddress: "0xabc",
+			StackID: "s", PlatformSecretsURL: "file:///etc/passwd", PlatformInternalAPIKey: "k",
+		}
+		err := applyInitdataKMSConfig(&Request{}, cfg)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "scheme")
+	})
+
+	t.Run("malformed stack_id rejected (path-injection guard)", func(t *testing.T) {
+		for _, bad := range []string{"a/b", "..", "../etc", "has space", "semi;colon", "q?uery"} {
+			cfg := &initdataKMSConfig{
+				RPCURL: "http://rpc.example", AVSAddress: "0xabc",
+				StackID: bad, PlatformSecretsURL: "http://p.internal", PlatformInternalAPIKey: "k",
+			}
+			err := applyInitdataKMSConfig(&Request{}, cfg)
+			require.Error(t, err, "stack_id %q must be rejected", bad)
+			assert.Contains(t, err.Error(), "stack_id")
+		}
+	})
+
+	t.Run("valid stack_id shapes accepted", func(t *testing.T) {
+		for _, ok := range []string{
+			"stack-123",
+			"3f2504e0-4f89-11d3-9a0c-0305e82c3301", // UUID
+			"Stack_ID.v2",
+		} {
+			cfg := &initdataKMSConfig{
+				RPCURL: "http://rpc.example", AVSAddress: "0xabc",
+				StackID: ok, PlatformSecretsURL: "http://p.internal", PlatformInternalAPIKey: "k",
+			}
+			require.NoError(t, applyInitdataKMSConfig(&Request{}, cfg), "stack_id %q must be accepted", ok)
+		}
+	})
+}
+
+func TestValidateStackID(t *testing.T) {
+	require.NoError(t, validateStackID("stack-123"))
+	require.NoError(t, validateStackID("3f2504e0-4f89-11d3-9a0c-0305e82c3301"))
+	for _, bad := range []string{"", "a/b", "..", "../x", "a b", "a;b", "a?b", "a#b"} {
+		require.Error(t, validateStackID(bad), "%q must be rejected", bad)
+	}
 }
 
 // TestParseInitdataKMSConfig round-trips the schema we expect inside
@@ -535,4 +633,152 @@ func TestRSAKeypairRoundTripsThroughEncryption(t *testing.T) {
 	got, err := rsaEnc.Decrypt(ciphertext, privPEM)
 	require.NoError(t, err, "Decrypt must accept the PKCS#1 RSA PRIVATE KEY PEM the helper hands the client")
 	assert.Equal(t, plaintext, got)
+}
+
+func TestResolveEnv_SentinelSkipsFetch(t *testing.T) {
+	// A validated app_private_key result; emitAppPrivateKey requires Verified
+	// and a 48-byte compressed G1.
+	result := &kmsClient.SecretsResult{
+		Verified:      true,
+		AppPrivateKey: types.G1Point{CompressedBytes: make([]byte, appPrivateKeyG1Bytes)},
+	}
+	req := &Request{StackID: "stack-1", Key: appPrivateKeyKey}
+
+	fetchCalled := false
+	fetch := func(baseURL, apiKey, stackID string) ([]stackSecret, error) {
+		fetchCalled = true
+		return nil, nil
+	}
+
+	env, err := resolveEnv(req, result, fetch)
+	require.NoError(t, err)
+	assert.False(t, fetchCalled, "sentinel path must NOT fetch platform secrets")
+	_, ok := env[appPrivateKeyKey]
+	assert.True(t, ok, "sentinel path emits the app_private_key under the sentinel key")
+}
+
+func TestResolveEnv_SentinelUnverifiedErrors(t *testing.T) {
+	// On the degraded (unverified) recovery path the root key must not be
+	// emitted. Drive it through resolveEnv (not emitAppPrivateKey directly) to
+	// pin that the error propagates up the sentinel branch, and that the fetch
+	// is still never called.
+	result := &kmsClient.SecretsResult{
+		Verified:      false,
+		AppPrivateKey: types.G1Point{CompressedBytes: make([]byte, appPrivateKeyG1Bytes)},
+	}
+	req := &Request{StackID: "stack-1", Key: appPrivateKeyKey}
+
+	fetchCalled := false
+	fetch := func(baseURL, apiKey, stackID string) ([]stackSecret, error) {
+		fetchCalled = true
+		return nil, nil
+	}
+
+	_, err := resolveEnv(req, result, fetch)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not verified")
+	assert.False(t, fetchCalled, "sentinel path must NOT fetch even when unverified")
+}
+
+func TestResolveEnv_NormalPathFetchesAndAssembles(t *testing.T) {
+	const stackID = "stack-xyz"
+	masterSecret, err := new(fr.Element).SetRandom()
+	require.NoError(t, err)
+	masterPubKey, err := crypto.ScalarMulG2(crypto.G2Generator, masterSecret)
+	require.NoError(t, err)
+	appHash, err := crypto.HashToG1(stackID)
+	require.NoError(t, err)
+	appPrivateKey, err := crypto.ScalarMulG1(*appHash, masterSecret)
+	require.NoError(t, err)
+	ct, err := crypto.EncryptForApp(stackID, *masterPubKey, []byte("v1"))
+	require.NoError(t, err)
+
+	result := &kmsClient.SecretsResult{AppPrivateKey: *appPrivateKey}
+	req := &Request{StackID: stackID, Key: "FOO", PlatformSecretsURL: "http://p", PlatformInternalAPIKey: "k"}
+
+	var gotURL, gotKey, gotStack string
+	fetch := func(baseURL, apiKey, s string) ([]stackSecret, error) {
+		gotURL, gotKey, gotStack = baseURL, apiKey, s
+		return []stackSecret{{Name: "FOO", Value: ct}}, nil
+	}
+
+	env, err := resolveEnv(req, result, fetch)
+	require.NoError(t, err)
+	assert.Equal(t, "http://p", gotURL)
+	assert.Equal(t, "k", gotKey)
+	assert.Equal(t, stackID, gotStack)
+	assert.Equal(t, map[string]string{"FOO": "v1"}, env)
+}
+
+func TestResolveEnv_FetchErrorPropagates(t *testing.T) {
+	result := &kmsClient.SecretsResult{AppPrivateKey: types.G1Point{CompressedBytes: make([]byte, appPrivateKeyG1Bytes)}}
+	req := &Request{StackID: "s", Key: "FOO", PlatformSecretsURL: "http://p", PlatformInternalAPIKey: "k"}
+	fetch := func(_, _, _ string) ([]stackSecret, error) { return nil, fmt.Errorf("boom") }
+
+	_, err := resolveEnv(req, result, fetch)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "boom")
+}
+
+func TestAssembleEnvFromSecrets_RoundTrip(t *testing.T) {
+	const stackID = "stack-xyz"
+
+	// Build a synthetic master key + the app-private-key threshold recovery
+	// would yield for this stackID (mirrors pkg/crypto/ibe_test.go:259-272).
+	masterSecret, err := new(fr.Element).SetRandom()
+	require.NoError(t, err)
+	masterPubKey, err := crypto.ScalarMulG2(crypto.G2Generator, masterSecret)
+	require.NoError(t, err)
+	appHash, err := crypto.HashToG1(stackID)
+	require.NoError(t, err)
+	appPrivateKey, err := crypto.ScalarMulG1(*appHash, masterSecret)
+	require.NoError(t, err)
+
+	// Seal two secrets the way the ecloud CLI does: EncryptForApp(stackID, master, v).
+	ct1, err := crypto.EncryptForApp(stackID, *masterPubKey, []byte("hunter2"))
+	require.NoError(t, err)
+	ct2, err := crypto.EncryptForApp(stackID, *masterPubKey, []byte("token-abc"))
+	require.NoError(t, err)
+
+	env, err := assembleEnvFromSecrets(stackID, *appPrivateKey, []stackSecret{
+		{Name: "DB_PASSWORD", Value: ct1},
+		{Name: "API_KEY", Value: ct2},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"DB_PASSWORD": "hunter2", "API_KEY": "token-abc"}, env)
+}
+
+func TestAssembleEnvFromSecrets_EmptyList(t *testing.T) {
+	appHash, err := crypto.HashToG1("stack-1")
+	require.NoError(t, err)
+	masterSecret, err := new(fr.Element).SetRandom()
+	require.NoError(t, err)
+	appPrivateKey, err := crypto.ScalarMulG1(*appHash, masterSecret)
+	require.NoError(t, err)
+
+	env, err := assembleEnvFromSecrets("stack-1", *appPrivateKey, nil)
+	require.NoError(t, err)
+	assert.Empty(t, env)
+}
+
+func TestAssembleEnvFromSecrets_UndecryptableValueFailsClosed(t *testing.T) {
+	// A value sealed to a DIFFERENT identity must fail — a sealed value we
+	// can't open is a real fault, not an empty secret.
+	const stackID = "stack-real"
+	masterSecret, err := new(fr.Element).SetRandom()
+	require.NoError(t, err)
+	masterPubKey, err := crypto.ScalarMulG2(crypto.G2Generator, masterSecret)
+	require.NoError(t, err)
+	appHash, err := crypto.HashToG1(stackID)
+	require.NoError(t, err)
+	appPrivateKey, err := crypto.ScalarMulG1(*appHash, masterSecret)
+	require.NoError(t, err)
+
+	// Sealed to "other-stack", not stackID.
+	wrongCT, err := crypto.EncryptForApp("other-stack", *masterPubKey, []byte("v"))
+	require.NoError(t, err)
+
+	_, err = assembleEnvFromSecrets(stackID, *appPrivateKey, []stackSecret{{Name: "X", Value: wrongCT}})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "X")
 }

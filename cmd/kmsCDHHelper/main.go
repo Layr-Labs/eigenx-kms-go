@@ -16,11 +16,12 @@
 //     KBS-EAR nonce so KMS server-side nonce binding is identical.
 //  3. Fetches raw SEV-SNP evidence from the in-pod AA at 127.0.0.1:8006.
 //  4. Calls RetrieveSecretsWithOptions with attestation_method=eigenx-snp; the
-//     KMS client recovers the AppPrivateKey and returns the release's
-//     encrypted_env (no IBE-decrypt on its own).
-//  5. IBE-decrypts the KMS-returned encrypted_env with crypto.DecryptForApp,
-//     using the recovered AppPrivateKey — so the plaintext only exists inside
-//     this attested TEE (docs/references/new_kms.md).
+//     KMS client recovers the AppPrivateKey (the platform path returns only the
+//     recovered key, no env).
+//  5. Fetches the stack's sealed secrets from the ecloud-platform
+//     InternalSecretsService and IBE-decrypts each with crypto.DecryptForApp
+//     under the stackID identity, using the recovered AppPrivateKey — so the
+//     plaintext only exists inside this attested TEE (docs/references/new_kms.md).
 package main
 
 import (
@@ -41,6 +42,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"regexp"
 	"strings"
 	"time"
 
@@ -51,6 +53,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/crypto"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/logger"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/peering"
+	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/google/go-sev-guest/abi"
 	spb "github.com/google/go-sev-guest/proto/sevsnp"
@@ -107,38 +110,44 @@ func (s *singleOperatorContractCaller) GetOperatorSetMembersWithPeering(avsAddre
 
 // Request is the JSON payload read from stdin from CDH's eigenx plugin.
 //
-// app_id is the only field the caller supplies. The KMS coordinates (kms_url,
-// avs_address, operator_set_id, rpc_url) are sourced from the SNP-bound
-// /run/peerpod/initdata document, so they carry the same integrity guarantees
-// as the policy.rego image-digest binding; values for those keys on stdin are
-// ignored in favour of initdata (see applyInitdataKMSConfig). The struct tags
-// remain so a request carrying them still parses.
+// In the stack model, stack_id is the app identity: it selects the KMS
+// platform path AND is the IBE identity secrets are sealed to. The KMS
+// coordinates (kms_url, avs_address, operator_set_id, rpc_url) and the
+// stack/platform fields are all sourced from the SNP-bound /run/peerpod/initdata
+// document, so they carry the same integrity guarantees as the policy.rego
+// image-digest binding; a stdin stack_id is tolerated for parsing but overridden
+// by initdata (see applyInitdataKMSConfig).
 //
-// The secret is the on-chain release's encrypted_env, returned by the KMS and
-// IBE-decrypted with the threshold-recovered app_private_key inside this TEE
-// (docs/references/new_kms.md) — it is not carried in the request.
+// Secrets are NOT carried in this request and are NOT part of the KMS response:
+// they are fetched from the ecloud-platform InternalSecretsService
+// (PlatformSecretsURL) and IBE-decrypted with the threshold-recovered
+// app_private_key inside this TEE (docs/references/new_kms.md).
 //
-// Key selects which environment variable to return. The app's environment is a
-// flat key→value map assembled from the release's public_env (plaintext) and
-// the IBE-decrypted encrypted_env (secret); secret keys win on collision. CDH
-// calls the helper once per sealed env var in the pod spec, each carrying the
-// Key it wants. The first call attests + fetches and caches the whole merged
-// map to tmpfs; later calls for the same app read the cache (one attestation
-// per pod, not per key). See env_cache.go.
+// Key selects which environment variable to return from the assembled stack
+// env, or the reserved sentinel appPrivateKeyKey to return the app_private_key
+// itself. CDH calls the helper once per sealed env var in the pod spec, each
+// carrying the Key it wants. The first call attests + fetches and caches the
+// whole env map to tmpfs; later calls for the same stack read the cache (one
+// attestation per pod, not per key). See env_cache.go.
 type Request struct {
 	KMSURL        string `json:"kms_url,omitempty"`
 	AVSAddress    string `json:"avs_address,omitempty"`
 	OperatorSetID uint32 `json:"operator_set_id,omitempty"`
 	RPCURL        string `json:"rpc_url,omitempty"`
-	// OperatorAddress is only consulted on the single-operator (kms_url)
-	// override path; empty falls back to defaultSingleOperatorAddress.
+	// OperatorAddress is only consulted on the single-operator (kms_url) override path.
 	OperatorAddress string `json:"operator_address,omitempty"`
-	AppID           string `json:"app_id"`
-	// Key is the environment-variable name to return from the merged app env,
-	// or the reserved sentinel appPrivateKeyKey to return the app_private_key itself.
-	// The sentinel is intercepted before the env is assembled, so any release env
-	// key of that exact name would be permanently shadowed — the name is reserved
-	// and must not be used in app releases.
+	// StackID is the app identity in the stack model. It selects the KMS
+	// platform path AND is the IBE identity secrets are sealed to. Sourced from
+	// SNP-bound cc_init_data (applyInitdataKMSConfig); a stdin value is tolerated
+	// but overridden.
+	StackID string `json:"stack_id"`
+	// PlatformSecretsURL / PlatformInternalAPIKey address the ecloud-platform
+	// InternalSecretsService. Sourced ONLY from SNP-bound cc_init_data — never
+	// from stdin — for the same SSRF/redirect reasons as the KMS coords.
+	PlatformSecretsURL     string `json:"-"`
+	PlatformInternalAPIKey string `json:"-"`
+	// Key is the environment-variable name to return from the assembled stack
+	// env, or the reserved sentinel appPrivateKeyKey to return the app_private_key.
 	Key string `json:"key"`
 }
 
@@ -154,6 +163,10 @@ type initdataKMSConfig struct {
 	// OperatorAddress pins the single-operator shim's peer address when
 	// kms_url is set; optional, defaults to defaultSingleOperatorAddress.
 	OperatorAddress string `toml:"operator_address"`
+	// Stack model: identity + platform secrets endpoint, SNP-bound.
+	StackID                string `toml:"stack_id"`
+	PlatformSecretsURL     string `toml:"platform_secrets_url"`
+	PlatformInternalAPIKey string `toml:"platform_internal_api_key"`
 }
 
 const (
@@ -163,6 +176,11 @@ const (
 	rsaKeyBits       = 2048
 	reportDataLength = 64
 	initDataPath     = "/run/peerpod/initdata"
+	// maxInitDataFileSize bounds the /run/peerpod/initdata read: /run/peerpod is
+	// host-controlled and a malicious CAA could plant a multi-GB file. Real CoCo
+	// init-data is base64(gzip(toml)) — kilobytes — so 1 MiB is a generous
+	// compressed-size cap matching the KMS handler's wire-side cc_init_data limit.
+	maxInitDataFileSize = 1 << 20 // 1 MiB
 )
 
 // appPrivateKeyKey is a reserved Key value that makes the helper emit the
@@ -197,36 +215,17 @@ func run() error {
 		return fmt.Errorf("read request: %w", err)
 	}
 
-	// Fast path: another sealed env var for this same app already attested and
-	// cached the full merged env this pod boot. Serve the requested key from
-	// the cache and skip attestation + the KMS round trip entirely. The lock
-	// is held across the read so we don't race a concurrent first-call writer
-	// (kata-agent unseals sequentially today, but a multi-container pod shares
-	// the podVM). See env_cache.go.
-	//
-	// The app_private_key root is never cached (it is not part of the env map),
-	// so its request always attests fresh and never consults the cache.
-	if cacheable(req.Key) {
-		if env, ok, cerr := loadCachedEnv(req.AppID); cerr != nil {
-			return fmt.Errorf("read env cache: %w", cerr)
-		} else if ok {
-			return emitKey(env, req.Key)
-		}
-	}
-
-	rsaPriv, rsaPubPEM, err := generateRSAKeypair()
-	if err != nil {
-		return fmt.Errorf("generate RSA keypair: %w", err)
-	}
-
 	// CDH plugin loads /run/peerpod/initdata before spawning us; the bytes are
 	// supplied via stdin in a future revision. For now we read it here so the
-	// helper is self-contained. Stat first to bound memory: /run/peerpod is
-	// host-controlled and a malicious CAA could plant a multi-GB file. Real
-	// CoCo init-data is base64(gzip(toml)) — kilobytes — so 1 MiB is a
-	// generous compressed-size cap that matches the KMS handler's wire-side
-	// cc_init_data limit.
-	const maxInitDataFileSize = 1 << 20 // 1 MiB
+	// helper is self-contained. Stat first to bound memory before reading
+	// (cap: maxInitDataFileSize, defined with the other package constants).
+	//
+	// This MUST happen before the cache lookup below: applyInitdataKMSConfig
+	// overwrites req.StackID with the SNP-bound value, and the cache is keyed by
+	// stack_id. Looking up the cache with the (untrusted) stdin stack_id would
+	// miss on every call whenever stdin and initdata disagree, forcing a fresh
+	// TEE attestation per sealed var — an availability foot-gun an attacker with
+	// stdin control could trigger. Resolve identity first, then consult the cache.
 	info, err := os.Stat(initDataPath)
 	if err != nil {
 		return fmt.Errorf("stat %s: %w", initDataPath, err)
@@ -239,15 +238,39 @@ func run() error {
 		return fmt.Errorf("read %s: %w", initDataPath, err)
 	}
 
-	// Pull KMS coordinates (kms_url/avs_address/operator_set_id/rpc_url) from
-	// cc_init_data's [data]."eigenx.toml" key when the caller didn't include
-	// them on stdin. cc_init_data is SNP-bound (folded into REPORT_DATA upper
-	// 32 via SHA-384), so values sourced from there can't be tampered with by
-	// the K8s control plane.
+	// Pull KMS coordinates (kms_url/avs_address/operator_set_id/rpc_url) and the
+	// stack identity + platform secrets endpoint from cc_init_data's
+	// [data]."eigenx.toml" key. cc_init_data is SNP-bound (folded into REPORT_DATA
+	// upper 32 via SHA-384), so values sourced from there can't be tampered with
+	// by the K8s control plane; initdata wins over any stdin value.
 	if cfg, perr := parseInitdataKMSConfig(ccInitData); perr != nil {
 		return fmt.Errorf("parse cc_init_data KMS config: %w", perr)
 	} else if perr = applyInitdataKMSConfig(req, cfg); perr != nil {
 		return perr
+	}
+
+	// Fast path: another sealed env var for this same stack already attested and
+	// cached the full env this pod boot. Serve the requested key from the cache
+	// and skip attestation + the KMS round trip entirely. Keyed by the SNP-bound
+	// req.StackID (set just above). The lock is held across the read so we don't
+	// race a concurrent first-call writer (kata-agent unseals sequentially today,
+	// but a multi-container pod shares the podVM). See env_cache.go.
+	//
+	// The app_private_key root is never cached (it is not part of the env map),
+	// so its request always attests fresh and never consults the cache.
+	if cacheable(req.Key) {
+		if env, ok, cerr := loadCachedEnv(req.StackID); cerr != nil {
+			return fmt.Errorf("read env cache: %w", cerr)
+		} else if ok {
+			return emitKey(env, req.Key)
+		}
+	}
+
+	// Cache miss (or uncacheable root-key request): generate the ephemeral RSA
+	// keypair only now, so a cache hit above avoids the entropy draw entirely.
+	rsaPriv, rsaPubPEM, err := generateRSAKeypair()
+	if err != nil {
+		return fmt.Errorf("generate RSA keypair: %w", err)
 	}
 
 	// extraData is currently empty; reserved for the CDH plugin to bind extra
@@ -284,8 +307,8 @@ func run() error {
 	// and it must not be persisted to the tmpfs cache. Its request always
 	// re-attests (see the fast-path guard above).
 	if cacheable(req.Key) {
-		if cerr := storeCachedEnv(req.AppID, env); cerr != nil {
-			log.Printf("warning: cache merged env for app %q: %v", req.AppID, cerr)
+		if cerr := storeCachedEnv(req.StackID, env); cerr != nil {
+			log.Printf("warning: cache stack env for stack %q: %v", req.StackID, cerr)
 		}
 	}
 
@@ -294,8 +317,8 @@ func run() error {
 
 // readRequest parses the stdin JSON request. KMS-coord fields are NOT
 // validated here; they're filled in from cc_init_data later (see
-// applyInitdataKMSConfig). app_id and key are required; the values come from
-// the KMS's release env (public_env + encrypted_env), not the caller.
+// applyInitdataKMSConfig). stack_id and key are required; the env values come
+// from the ecloud-platform stack secrets, not the caller.
 func readRequest(r io.Reader) (*Request, error) {
 	var req Request
 	dec := json.NewDecoder(r)
@@ -308,8 +331,8 @@ func readRequest(r io.Reader) (*Request, error) {
 	if err := dec.Decode(&req); err != nil {
 		return nil, fmt.Errorf("decode JSON: %w", err)
 	}
-	if req.AppID == "" {
-		return nil, fmt.Errorf("app_id is required")
+	if req.StackID == "" {
+		return nil, fmt.Errorf("stack_id is required")
 	}
 	if req.Key == "" {
 		return nil, fmt.Errorf("key is required")
@@ -409,8 +432,11 @@ func decodeInitdata(in []byte) ([]byte, error) {
 // point the workload at a malicious KMS without invalidating the
 // attestation.
 //
-// stdin remains the ONLY source for the per-secret fields (app_id,
-// ciphertext_hex) — those don't carry a redirect-the-world risk.
+// In the stack model, identity (stack_id) and the platform secrets endpoint
+// (platform_secrets_url, platform_internal_api_key) are ALSO sourced only from
+// SNP-bound cc_init_data — never stdin — for the same redirect/SSRF reasons.
+// The only stdin field the helper trusts is key (which env var to return),
+// which carries no redirect-the-world risk.
 func applyInitdataKMSConfig(req *Request, cfg *initdataKMSConfig) error {
 	if cfg == nil {
 		return fmt.Errorf("cc_init_data missing [data].\"eigenx.toml\"; KMS coords cannot be sourced safely")
@@ -452,21 +478,73 @@ func applyInitdataKMSConfig(req *Request, cfg *initdataKMSConfig) error {
 			"but %s is not enabled; refusing trust downgrade — production must use on-chain "+
 			"operator discovery (set rpc_url, leave kms_url empty)", envAllowSingleOperatorKMS)
 	}
+	// stack_id is included: it is equally security-sensitive (it is the KMS
+	// signing identity, the IBE-decrypt identity, and the platform path
+	// segment), so a stdin value differing from the SNP-bound initdata must be
+	// audited too. req.StackID here still holds any stdin-decoded value; the
+	// initdata value (cfg.StackID) is assigned below and wins.
 	stdinOverridden := (req.KMSURL != "" && req.KMSURL != cfg.KMSURL) ||
 		(req.AVSAddress != "" && req.AVSAddress != cfg.AVSAddress) ||
 		(req.OperatorSetID != 0 && req.OperatorSetID != cfg.OperatorSetID) ||
-		(req.RPCURL != "" && req.RPCURL != cfg.RPCURL)
+		(req.RPCURL != "" && req.RPCURL != cfg.RPCURL) ||
+		(req.StackID != "" && req.StackID != cfg.StackID)
 	if stdinOverridden {
 		// Log to stderr — the CDH plugin pipes stderr to journal so
 		// operators can audit whether a workload is trying to bypass the
 		// SNP-bound config. Continue with initdata values regardless.
-		log.Printf("kmsCDHHelper: ignoring stdin KMS-coord overrides; SNP-bound initdata wins")
+		log.Printf("kmsCDHHelper: ignoring stdin config overrides; SNP-bound initdata wins")
 	}
+
+	// Stack model: identity + platform secrets endpoint are mandatory and
+	// SNP-bound. Fail closed if any is absent so the helper can never fall back
+	// to an unauthenticated or unintended secrets source.
+	if cfg.StackID == "" {
+		return fmt.Errorf("[data].\"eigenx.toml\" must set stack_id")
+	}
+	if err := validateStackID(cfg.StackID); err != nil {
+		return fmt.Errorf("[data].\"eigenx.toml\" %w", err)
+	}
+	if cfg.PlatformSecretsURL == "" {
+		return fmt.Errorf("[data].\"eigenx.toml\" must set platform_secrets_url")
+	}
+	if cfg.PlatformInternalAPIKey == "" {
+		return fmt.Errorf("[data].\"eigenx.toml\" must set platform_internal_api_key")
+	}
+	if err := validateHTTPURL(cfg.PlatformSecretsURL, "platform_secrets_url"); err != nil {
+		return err
+	}
+
 	req.KMSURL = cfg.KMSURL
 	req.AVSAddress = cfg.AVSAddress
 	req.OperatorSetID = cfg.OperatorSetID
 	req.RPCURL = cfg.RPCURL
 	req.OperatorAddress = cfg.OperatorAddress
+	req.StackID = cfg.StackID
+	req.PlatformSecretsURL = cfg.PlatformSecretsURL
+	req.PlatformInternalAPIKey = cfg.PlatformInternalAPIKey
+	return nil
+}
+
+// stackIDPattern restricts stack_id to characters that are always a single,
+// safe URL path segment: alphanumerics plus - _ . (covers UUIDs and slugs).
+// This blocks path-injection/traversal (/, .., %2e, spaces, query/fragment
+// metacharacters) before stack_id is used to build the platform ListSecrets
+// path. Defense-in-depth alongside url.PathEscape at the request boundary.
+var stackIDPattern = regexp.MustCompile(`^[A-Za-z0-9._-]+$`)
+
+// validateStackID rejects an empty or path-unsafe stack_id. "." and ".." are
+// rejected explicitly because they are traversal segments even though each
+// char is in the allowed set.
+func validateStackID(stackID string) error {
+	if stackID == "" {
+		return fmt.Errorf("stack_id: empty")
+	}
+	if stackID == "." || stackID == ".." {
+		return fmt.Errorf("stack_id: %q is not a valid path segment", stackID)
+	}
+	if !stackIDPattern.MatchString(stackID) {
+		return fmt.Errorf("stack_id: %q contains characters outside [A-Za-z0-9._-]", stackID)
+	}
 	return nil
 }
 
@@ -626,19 +704,65 @@ func emitAppPrivateKey(result *kmsClient.SecretsResult, appID string) (map[strin
 	}, nil
 }
 
-// retrieveAndDecrypt drives the on-chain operator discovery, the eigenx-snp
-// secret-retrieval flow, and the IBE-decrypt of the KMS-returned encrypted_env.
-// It returns the app's full environment as a merged key→value map:
-// release.public_env (plaintext) overlaid with the decrypted encrypted_env
-// (secret), secret keys winning on collision.
+// assembleEnvFromSecrets IBE-decrypts each platform secret with the
+// threshold-recovered app-private-key and returns the app's environment as a
+// flat name→plaintext map. The IBE identity is the stackID (the ecloud CLI
+// seals each value with EncryptForApp(stackID, master, …)), so the recovered
+// key S·H(stackID) opens them. A value that fails to decrypt is a hard error:
+// a sealed secret we cannot open is a real fault, not an empty value.
+func assembleEnvFromSecrets(stackID string, appPrivateKey types.G1Point, secrets []stackSecret) (map[string]string, error) {
+	env := make(map[string]string, len(secrets))
+	for _, s := range secrets {
+		plaintext, err := crypto.DecryptForApp(stackID, appPrivateKey, s.Value)
+		if err != nil {
+			return nil, fmt.Errorf("decrypt secret %q for stack %q: %w", s.Name, stackID, err)
+		}
+		env[s.Name] = string(plaintext)
+	}
+	return env, nil
+}
+
+// resolveEnv turns a recovered SecretsResult into the app's environment map.
+// The secrets-fetch is injected so the sentinel/no-fetch path is unit-testable
+// without a live KMS client or network. On the app_private_key sentinel it
+// returns the raw key and never fetches; otherwise it fetches the stack's
+// sealed secrets and IBE-decrypts each under the stackID identity.
+func resolveEnv(
+	req *Request,
+	result *kmsClient.SecretsResult,
+	fetch func(baseURL, apiKey, stackID string) ([]stackSecret, error),
+) (map[string]string, error) {
+	// Root-key request: emit the threshold-recovered app_private_key itself and
+	// stop — it does not depend on the platform secrets, so return before the fetch.
+	if req.Key == appPrivateKeyKey {
+		return emitAppPrivateKey(result, req.StackID)
+	}
+
+	// Stack model: the KMS platform path returns ONLY the recovered
+	// app-private-key (no env). Fetch the sealed secrets from the ecloud-platform
+	// InternalSecretsService and IBE-decrypt each with the recovered key. The IBE
+	// identity is the stackID (the ecloud CLI seals with EncryptForApp(stackID, …)).
+	secrets, err := fetch(req.PlatformSecretsURL, req.PlatformInternalAPIKey, req.StackID)
+	if err != nil {
+		return nil, fmt.Errorf("fetch stack secrets: %w", err)
+	}
+	env, err := assembleEnvFromSecrets(req.StackID, result.AppPrivateKey, secrets)
+	if err != nil {
+		return nil, fmt.Errorf("assemble stack env for stack %q: %w", req.StackID, err)
+	}
+	return env, nil
+}
+
+// retrieveAndDecrypt drives operator discovery (on-chain or the single-operator
+// shim) and the eigenx-snp secret-retrieval flow, then delegates to resolveEnv
+// to turn the recovered app-private-key into the stack's environment map.
 //
-// Note: RetrieveSecretsWithOptions does NOT IBE-decrypt — it recovers the
-// AppPrivateKey from the threshold partial sigs and returns the still-encrypted
-// EncryptedEnv. The IBE-decrypt of that encrypted_env happens here via
-// crypto.DecryptForApp(appID, AppPrivateKey, ...).
-//
-// When the sentinel key (appPrivateKeyKey) is requested, the function returns
-// the raw app_private_key and skips the IBE-decrypt step entirely.
+// In the stack model RetrieveSecretsWithOptions recovers only the AppPrivateKey;
+// the environment is NOT carried in the KMS response. resolveEnv fetches the
+// stack's sealed secrets from the ecloud-platform InternalSecretsService and
+// IBE-decrypts each under the stackID identity, so the plaintext only ever
+// exists inside this attested TEE. When the sentinel key (appPrivateKeyKey) is
+// requested, resolveEnv returns the raw app_private_key and skips the fetch.
 func retrieveAndDecrypt(
 	req *Request,
 	evidence, ccInitData, rsaPubPEM []byte,
@@ -705,76 +829,15 @@ func retrieveAndDecrypt(
 		CCInitData:        ccInitData,
 		RSAPrivateKeyPEM:  privPEM,
 		RSAPublicKeyPEM:   rsaPubPEM,
+		StackID:           req.StackID, // selects the KMS platform path
 	}
 
-	result, err := client.RetrieveSecretsWithOptions(req.AppID, opts)
+	result, err := client.RetrieveSecretsWithOptions(req.StackID, opts)
 	if err != nil {
 		return nil, fmt.Errorf("RetrieveSecretsWithOptions: %w", err)
 	}
 
-	// Root-key request: emit the threshold-recovered app_private_key itself
-	// (hex of its compressed G1 bytes) and stop. This is the KMS-derived root a
-	// signing daemon seeds from; it does not depend on the release's
-	// encrypted_env, so we return before the IBE-decrypt below.
-	if req.Key == appPrivateKeyKey {
-		return emitAppPrivateKey(result, req.AppID)
-	}
-
-	// Per the KMS design (docs/references/new_kms.md, "Application Decryption"):
-	// the secret is the on-chain release's encrypted_env, returned in the
-	// /secrets response and IBE-decrypted here with the threshold-recovered
-	// app_private_key. Because app_private_key can only be reconstructed from
-	// a quorum of operator partial signatures over an accepted attestation,
-	// the plaintext is only ever visible inside this attested TEE.
-	//
-	// encrypted_env may legitimately be empty: a public-only release (e.g. just
-	// LOG_LEVEL / ENVIRONMENT in public_env, no IBE secrets) has nothing to
-	// decrypt. In that case skip the IBE-decrypt and merge public_env alone —
-	// emitKey still fails loud if the requested key isn't present anywhere.
-	var secretPlaintext []byte
-	if result.EncryptedEnv != "" {
-		ciphertext, err := decodeEncryptedEnv(result.EncryptedEnv)
-		if err != nil {
-			return nil, fmt.Errorf("decode encrypted_env: %w", err)
-		}
-
-		secretPlaintext, err = crypto.DecryptForApp(req.AppID, result.AppPrivateKey, ciphertext)
-		if err != nil {
-			return nil, fmt.Errorf("decrypt encrypted_env with app_private_key: %w", err)
-		}
-	}
-
-	// Merge public_env (plaintext, on-chain) under the decrypted secret env;
-	// secret keys win on collision so a public default can't shadow a secret.
-	env, err := mergeEnv(result.PublicEnv, secretPlaintext)
-	if err != nil {
-		return nil, fmt.Errorf("merge release env for app %q: %w", req.AppID, err)
-	}
-	return env, nil
-}
-
-// decodeEncryptedEnv turns the KMS /secrets response's encrypted_env string
-// into the raw IBE ciphertext bytes that crypto.DecryptForApp expects.
-// encrypted_env is transported as a string; accept hex (optionally 0x-
-// prefixed) or base64, sniffed by content, since the wire encoding isn't
-// pinned by the spec. The decoded bytes are the IBE "magic||version||C1||
-// nonce||ct+tag" envelope (see pkg/crypto/bls.go).
-func decodeEncryptedEnv(s string) ([]byte, error) {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil, fmt.Errorf("empty")
-	}
-	hexStr := strings.TrimPrefix(strings.TrimPrefix(s, "0x"), "0X")
-	if b, err := hex.DecodeString(hexStr); err == nil {
-		return b, nil
-	}
-	if b, err := base64.StdEncoding.DecodeString(s); err == nil {
-		return b, nil
-	}
-	if b, err := base64.RawStdEncoding.DecodeString(s); err == nil {
-		return b, nil
-	}
-	return nil, fmt.Errorf("encrypted_env is neither hex nor base64")
+	return resolveEnv(req, result, fetchStackSecrets)
 }
 
 // aaSnpEvidence mirrors the AA-emitted SNP evidence shape. The Rust source
