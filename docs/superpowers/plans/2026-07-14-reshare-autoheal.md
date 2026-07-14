@@ -528,8 +528,10 @@ git commit -m "feat(node): resolve deterministic L2 cutoff height from L1 deadli
 - Test: `pkg/node/dealer_cutoff_test.go` (extend)
 
 **Interfaces:**
-- Consumes: `resolveCutoffL2` (Task 4); `GetProtocolTimeoutForChain` (still the outer bound); `baseContractCaller.GetCommitmentAt(ctx, registry, epoch, dealer, cutoffL2)`.
-- Produces: `deriveAgreedDealerSet(ctx, operators, epoch, triggerBlock int64) ([]common.Address, map[common.Address][32]byte, error)` — signature changes from `(ctx, operators, epoch, pinnedBlock int64, expectedDealers []common.Address)` to include `triggerBlock` and drop the unused `pinnedBlock`/`expectedDealers` (verify no other caller passes `expectedDealers` non-nil first; if one does, keep it).
+- Consumes: `resolveCutoffL2` (Task 4); `baseContractCaller.GetCommitmentAt(ctx, registry, epoch, dealer, cutoffL2)`; `config.GetReshareBlockIntervalForChain`.
+- Produces: `deriveAgreedDealerSet(ctx, operators, epoch int64, triggerBlock int64, expectedDealers []common.Address) ([]common.Address, map[common.Address][32]byte, error)` — signature changes from `(ctx, operators, epoch, pinnedBlock int64, expectedDealers []common.Address)`: the `pinnedBlock` param becomes `triggerBlock` (used to compute the cutoff), and **`expectedDealers` is KEPT**. The new-operator call site at `node.go:2648` deliberately passes `existingOperatorDealers(operators, existingOpIDs)` (documented at node.go:2644-2647, PR #119 round 3) so a joining node with no active version scopes to the existing on-chain submitters, not the all-operators fallback `expectedReshareDealers` returns for `activeVersion == nil` (node.go:1109-1117). Dropping it would break the join path. The existing-operator call site passes `nil` (falls back to `expectedReshareDealers`).
+
+**Deadline note (Finding 3):** the cutoff-resolution/read retry is bounded by the round's **final boundary** `N + interval`, NOT `GetProtocolTimeoutForChain`. On Sepolia the cutoff block `N+8` lands ~96s after `N`, but the protocol timeout is only 90s — so bounding by the protocol timeout would abort every round before the cutoff block exists. The deadline is computed from block `N`'s observed timestamp: `deadlineTime = timestamp(N) + interval*avgBlockSecs`, or more simply anchored to the trigger block's wall-clock arrival plus the interval duration.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -562,7 +564,8 @@ func TestDeriveAgreedDealerSet_RetriesThenReadsAtPinnedHeight(t *testing.T) {
 	}
 	n := nodeWithDealers(t, l, stub, dealers) // helper: builds *Node with these expected dealers + stub callers
 
-	got, _, err := n.deriveAgreedDealerSet(context.Background(), n.testOperators, 12345, 100)
+	// Pass dealers explicitly as expectedDealers so the test doesn't depend on an active version.
+	got, _, err := n.deriveAgreedDealerSet(context.Background(), n.testOperators, 12345, 100, dealers)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -587,10 +590,10 @@ func TestDeriveAgreedDealerSet_AbortsWholeRoundOnPersistentReadFailure(t *testin
 		},
 	}
 	n := nodeWithDealers(t, l, stub, dealers)
-	// Use a short protocol timeout for the test via n.ChainID = Anvil (30s) or inject a ctx deadline.
+	// Cancel via ctx to bound the test quickly (the internal deadline is ~one interval).
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_, _, err := n.deriveAgreedDealerSet(ctx, n.testOperators, 12345, 100)
+	_, _, err := n.deriveAgreedDealerSet(ctx, n.testOperators, 12345, 100, dealers)
 	if err == nil {
 		t.Fatal("expected whole-round abort when a dealer read never succeeds, got nil error")
 	}
@@ -614,17 +617,32 @@ func (n *Node) deriveAgreedDealerSet(
 	operators []*peering.OperatorSetPeer,
 	epoch int64,
 	triggerBlock int64,
+	expectedDealers []common.Address,
 ) ([]common.Address, map[common.Address][32]byte, error) {
-	expected := n.expectedReshareDealers(operators)
+	// expectedDealers overrides the default when non-nil (the new-operator join
+	// path passes existingOperatorDealers(...) so a node with no active version
+	// scopes to existing on-chain submitters, not the all-operators fallback).
+	expected := expectedDealers
+	if expected == nil {
+		expected = n.expectedReshareDealers(operators)
+	}
 	if len(expected) == 0 {
 		return nil, nil, fmt.Errorf("no expected dealers for reshare")
 	}
 
-	deadline := time.Now().Add(config.GetProtocolTimeoutForChain(n.ChainID))
+	// Bound all retrying by the round's FINAL boundary (N + interval), NOT the
+	// protocol timeout: the cutoff block N + interval - buffer lands ~ (interval -
+	// buffer) blocks after N, which on Sepolia (~96s) exceeds the 90s protocol
+	// timeout — bounding by that shorter value would abort every round before the
+	// cutoff block exists. Budget ~ one full interval of wall clock (block time
+	// with margin), anchored at finalize start (~ block N).
+	intervalBlocks := config.GetReshareBlockIntervalForChain(n.ChainID)
+	roundBudget := time.Duration(intervalBlocks) * 13 * time.Second // ~13s/block gives margin over 12s
+	deadline := time.Now().Add(roundBudget)
 	pollInterval := 1 * time.Second
 
 	// Resolve the deterministic L2 cutoff height, retrying until the chain has
-	// advanced far enough (bounded by the protocol-timeout deadline).
+	// advanced far enough (bounded by the round's final-boundary deadline).
 	var cutoffL2 uint64
 	for {
 		h, err := n.resolveCutoffL2(ctx, triggerBlock)
@@ -684,15 +702,16 @@ func (n *Node) deriveAgreedDealerSet(
 
 - [ ] **Step 4: Update both call sites**
 
-At `node.go:2282` (existing-operator path):
+At `node.go:2282` (existing-operator path) — `nil` expectedDealers (uses `expectedReshareDealers`):
 ```go
-	agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, triggerBlock)
+	agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, triggerBlock, nil)
 ```
 (`triggerBlock` is the `RunReshareAsExistingOperator` parameter — already in scope.)
 
-At `node.go:2648` (new-operator path): temporarily pass `0`; Task 6 threads the real trigger block:
+At `node.go:2648` (new-operator path) — PRESERVE the `existingOperatorDealers(...)` override; temporarily pass `0` for triggerBlock (Task 6 threads the real one):
 ```go
-	agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, 0)
+	agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, 0,
+		existingOperatorDealers(operators, existingOpIDs))
 ```
 
 - [ ] **Step 5: Run tests to verify they pass**
@@ -761,7 +780,11 @@ Expected: PASS for the helper assertion (it already works); proceed to make the 
 
 In `pkg/node/node.go`:
 - Line 2459: `func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64, triggerBlock int64) error {`
-- Line 2648: `agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, triggerBlock)`
+- Line 2648 (keep the `existingOperatorDealers` override — Finding 2):
+```go
+	agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, triggerBlock,
+		existingOperatorDealers(operators, existingOpIDs))
+```
 
 - [ ] **Step 4: Update the scheduler call site**
 
@@ -870,7 +893,9 @@ Expected: PASS.
 
 - [ ] **Step 5: Verify memory/redis/badger NodeState copies carry the new fields**
 
-Check `pkg/persistence/memory/memory.go:182-190` and `206-210` — the memory backend copies `NodeState` field-by-field; add the three new fields to both the save-copy and load-copy structs. (Redis/Badger marshal the whole struct as JSON, so they need no change.) Run:
+Check `pkg/persistence/memory/memory.go:182-190` and `206-210` — the memory backend copies `NodeState` field-by-field; add the three new fields to both the save-copy and load-copy structs. (Redis/Badger marshal the whole struct as JSON, so they need no change.)
+
+**Also (Finding 4):** `LoadNodeState` returns `(nil, nil)` as a "first run" signal when `OperatorAddress == "" && LastProcessedBoundary == 0` (memory.go:201). The auto-heal writers (`persistAbortTracker`/`recordSuccessfulReshare`, Task 11) always set `OperatorAddress`, so a persisted state carrying auto-heal fields is never mistaken for "first run" in practice. Leave a code comment at that guard noting the auto-heal fields are also load-bearing, so a future edit doesn't reintroduce the drop. Run:
 `./scripts/goTest.sh ./pkg/persistence/... -v 2>&1 | tail -20`
 Expected: PASS.
 
@@ -1084,8 +1109,8 @@ Append to `pkg/keystore/keystore_test.go`:
 ```go
 func TestKeyStore_ExcludesPoisonedVersion(t *testing.T) {
 	ks := NewKeyStore()
-	good := &types.KeyShareVersion{Version: 100, PrivateShare: fr.NewElement(1)}
-	poison := &types.KeyShareVersion{Version: 200, PrivateShare: fr.NewElement(2)}
+	good := &types.KeyShareVersion{Version: 100, PrivateShare: new(fr.Element).SetInt64(1)}
+	poison := &types.KeyShareVersion{Version: 200, PrivateShare: new(fr.Element).SetInt64(2)}
 	ks.AddVersion(good)
 	ks.AddVersion(poison)
 	ks.MarkPoisoned(200)
@@ -1105,7 +1130,7 @@ func TestKeyStore_ExcludesPoisonedVersion(t *testing.T) {
 }
 ```
 
-(Confirm `fr.NewElement` construction matches existing keystore tests; if they use `new(fr.Element).SetUint64(1)`, use that form instead.)
+(Uses `new(fr.Element).SetInt64(...)`, the form the existing `pkg/keystore/keystore_test.go` uses at lines 11/104/143. Use this same form in all tasks that construct an `fr.Element`.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1397,8 +1422,8 @@ import (
 func TestAutoHeal_DemotesAndRollsBackToLKG(t *testing.T) {
 	l, _ := zap.NewDevelopment()
 	ks := keystore.NewKeyStore()
-	good := &types.KeyShareVersion{Version: 1783944444, PrivateShare: new(fr.Element).SetUint64(1), MasterPublicKey: nil}
-	poison := &types.KeyShareVersion{Version: 1783944564, PrivateShare: new(fr.Element).SetUint64(2)}
+	good := &types.KeyShareVersion{Version: 1783944444, PrivateShare: new(fr.Element).SetInt64(1), MasterPublicKey: nil}
+	poison := &types.KeyShareVersion{Version: 1783944564, PrivateShare: new(fr.Element).SetInt64(2)}
 	ks.AddVersion(good)
 	ks.AddVersion(poison)
 	ks.SetActiveVersion(poison)
@@ -1536,9 +1561,9 @@ func (n *Node) recordSuccessfulReshare(agreedSrcVersion int64) {
 
 At the MPK-abort site (`node.go:2423-2430`), inside the `if verr != nil` block, after the existing `Errorw` log and before `return`, add:
 ```go
-			n.onMPKValidationAbort(srcVersion, srcVersion, newThreshold)
+			n.onMPKValidationAbort(sourceVersion, srcVersion, newThreshold)
 ```
-(Here the node's active source version == `srcVersion` for this path — the round dealt from the agreed majority version. `srcVersion` and `newThreshold` are in scope from lines 2319/1890.)
+**CRITICAL (Finding 1): pass BOTH distinct variables.** `sourceVersion` (node.go:1915 = this node's LOCAL active source version, what it dealt from) and `srcVersion` (node.go:2319 = the agreed MAJORITY source version from `SelectMajoritySourceVersion`) are different values in exactly the staggered-rollback case: a node already rolled back to `V−1` has `sourceVersion = V−1` while the majority is still on `V`, so `srcVersion = V`. The majority-gating in `recordMPKAbort` only skips counting when `majoritySrcVersion != activeSourceVersion` — passing `srcVersion` for both args would make `active == majority` unconditionally and **silently defeat the entire staggered-rollback protection** (an early roller would over-walk to `V−2`). Both `sourceVersion` (1915), `srcVersion` (2319), and `newThreshold` (1890) are in scope at the abort site.
 
 At the successful-persist site (after `SaveKeyShareVersion` succeeds and `SetActiveVersionTimestamp` is set, around `node.go:2435-2443`), add:
 ```go
@@ -1559,7 +1584,7 @@ func TestAutoHeal_MinorityDoesNotOverWalk(t *testing.T) {
 	// A node already on V-1 while majority is on poisoned V must not demote V-1.
 	l, _ := zap.NewDevelopment()
 	ks := keystore.NewKeyStore()
-	vMinus1 := &types.KeyShareVersion{Version: 1783944444, PrivateShare: new(fr.Element).SetUint64(1)}
+	vMinus1 := &types.KeyShareVersion{Version: 1783944444, PrivateShare: new(fr.Element).SetInt64(1)}
 	ks.AddVersion(vMinus1)
 	ks.SetActiveVersion(vMinus1)
 	n := &Node{logger: l, keyStore: ks, persistence: memory.NewMemoryPersistence(), abortTracker: &abortTracker{}}
@@ -1574,7 +1599,7 @@ func TestAutoHeal_MinorityDoesNotOverWalk(t *testing.T) {
 func TestAutoHeal_FloorHaltsWithoutReDKG(t *testing.T) {
 	l, _ := zap.NewDevelopment()
 	ks := keystore.NewKeyStore()
-	only := &types.KeyShareVersion{Version: 100, PrivateShare: new(fr.Element).SetUint64(1)}
+	only := &types.KeyShareVersion{Version: 100, PrivateShare: new(fr.Element).SetInt64(1)}
 	ks.AddVersion(only)
 	ks.SetActiveVersion(only)
 	n := &Node{logger: l, keyStore: ks, persistence: memory.NewMemoryPersistence(), abortTracker: &abortTracker{}}
@@ -1625,20 +1650,35 @@ func TestRestoreState_HonorsAbortCounterOnlyIfVersionMatches(t *testing.T) {
 
 	// Case A: active version matches tracked (500) -> counter honored.
 	ksA := keystore.NewKeyStore()
-	vA := &types.KeyShareVersion{Version: 500, PrivateShare: new(fr.Element).SetUint64(1)}
+	vA := &types.KeyShareVersion{Version: 500, PrivateShare: new(fr.Element).SetInt64(1)}
 	ksA.AddVersion(vA)
-	nA := newTestNodeForRestore(t, l, ksA, p, 500) // helper sets GetActiveVersionTimestamp=500
+	require.NoError(t, p.SetActiveVersionTimestamp(500))
+	require.NoError(t, p.SaveKeyShareVersion(vA))
+	nA := &Node{logger: l, keyStore: ksA, persistence: p, abortTracker: &abortTracker{}, OperatorAddress: common.HexToAddress("0x0")}
 	require.NoError(t, nA.RestoreState())
-	require.Equal(t, 2, nA.abortTracker.ConsecutiveAborts)
+	require.Equal(t, 2, nA.abortTracker.ConsecutiveAborts, "counter honored when tracked version == active")
+	require.Equal(t, int64(500), nA.abortTracker.TrackedSourceVersion)
 	require.True(t, ksA.IsPoisoned(999))
 
-	// Case B: active version differs (600) -> counter reset to 0.
-	// (Rebuild persistence view or use a fresh store with active=600.)
-	// ... assert nB.abortTracker.ConsecutiveAborts == 0
+	// Case B: active version differs (600) from the tracked 500 -> counter reset to 0.
+	p2 := memory.NewMemoryPersistence()
+	require.NoError(t, p2.SaveNodeState(&persistence.NodeState{
+		OperatorAddress:      "0x0",
+		TrackedSourceVersion: 500, // stale: tracker was on 500...
+		ConsecutiveMPKAborts: 2,
+	}))
+	ksB := keystore.NewKeyStore()
+	vB := &types.KeyShareVersion{Version: 600, PrivateShare: new(fr.Element).SetInt64(1)} // ...but active is now 600
+	ksB.AddVersion(vB)
+	require.NoError(t, p2.SaveKeyShareVersion(vB))
+	require.NoError(t, p2.SetActiveVersionTimestamp(600))
+	nB := &Node{logger: l, keyStore: ksB, persistence: p2, abortTracker: &abortTracker{}, OperatorAddress: common.HexToAddress("0x0")}
+	require.NoError(t, nB.RestoreState())
+	require.Equal(t, 0, nB.abortTracker.ConsecutiveAborts, "counter reset when tracked version != active")
 }
 ```
 
-(Implement `newTestNodeForRestore` to set the memory store's active-version timestamp — use `p.SetActiveVersionTimestamp(500)` and add the version to the keystore/persistence so `RestoreState` finds it. Keep Case B minimal.)
+(This uses only real constructors — `memory.NewMemoryPersistence()`, `p.SetActiveVersionTimestamp`, `p.SaveKeyShareVersion` — so `RestoreState` finds the active version via the same path production uses. Add `"github.com/ethereum/go-ethereum/common"` to the test imports.)
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1716,9 +1756,14 @@ Expected: PASS. Pay special attention to:
 - `./pkg/node/...` (new auto-heal + cutoff tests)
 - `./internal/tests/integration -run Reshare` (cluster still reshares; `Test_Reshare_SucceedsWithExactlyThresholdAcks` still passes)
 
-- [ ] **Step 3: Fix any regressions**
+- [ ] **Step 3: Wire the cluster stub funcs (do NOT rely on defaults)**
 
-If the integration cluster fails because its mock callers don't implement `HeaderTimestampAt`/`FirstBlockAtOrAfterTimestamp` sensibly, wire the `testutil` cluster's contract-caller stub to return a deterministic cutoff (e.g. `FirstBlockAtOrAfterTimestampFunc` returns a fixed height and `GetCommitmentAt` ignores the height in the cluster's in-memory registry). Locate: `grep -rn "MockContractCallerStub\|NewTestCluster" pkg/testutil internal/tests`.
+The integration cluster builds `&contractCaller.MockContractCallerStub{}` (confirmed at `pkg/testutil/test_cluster.go:213`, `platformConfigCaller` passed `nil` at :241 so `resolveCutoffL2` uses the `baseContractCaller` fallback). The stub's default `HeaderTimestampAt`/`FirstBlockAtOrAfterTimestamp` return `(0, nil)` — which pins reads at head (block 0) and would only "work by accident." Set them explicitly so the cluster is deterministic:
+- `HeaderTimestampAtFunc`: return a monotonic timestamp derived from the requested block (e.g. `1_700_000_000 + blockNumber`), so a cutoff block maps to a stable timestamp.
+- `FirstBlockAtOrAfterTimestampFunc`: return a fixed non-zero height (e.g. the cluster's current registry height) so `GetCommitmentAt` reads the in-memory registry at a consistent, resolvable height.
+- Ensure the in-memory registry stub's `GetCommitmentAt` returns the submitted commitment regardless of the pinned height (the cluster registry has no historical state).
+
+Locate the wiring: `grep -rn "MockContractCallerStub\|NewTestCluster" pkg/testutil internal/tests`. Add the func fields where the stub is constructed. If `Test_Reshare_SucceedsWithExactlyThresholdAcks` still fails, confirm the failure is a timing/deadline issue (Finding 3) not a determinism one.
 
 - [ ] **Step 4: Run lint + fmt**
 
