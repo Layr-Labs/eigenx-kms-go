@@ -53,10 +53,16 @@ func (ks *KeyStore) SetActiveVersion(version *types.KeyShareVersion) {
 
 // GetActiveVersion returns the currently active key version.
 //
-// The active pointer is never set to a poisoned version (rollback on the write
-// side guarantees this invariant — see the auto-heal / rollback path), so this
-// accessor returns activeVersion unchanged and does not filter on the poisoned
-// set. Silently returning nil for a poisoned active would break serving.
+// The active pointer is normally never set to a poisoned version: on a
+// successful demotion the rollback re-points active to a non-poisoned target
+// (see the auto-heal / rollback path). The ONE exception is the floor case in
+// performRollback (autoheal.go): when no non-poisoned version below the poisoned
+// one exists — or the chosen target is missing from the persisted set — the
+// active pointer intentionally stays on the poisoned version. That is deliberate:
+// rotation is halted pending manual intervention (never auto re-DKG), but decrypt
+// must keep being served, so this accessor returns activeVersion unchanged and
+// does NOT filter on the poisoned set. Silently returning nil for a poisoned
+// active would break serving on the floor path.
 func (ks *KeyStore) GetActiveVersion() *types.KeyShareVersion {
 	ks.mu.RLock()
 	defer ks.mu.RUnlock()

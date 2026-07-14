@@ -1190,6 +1190,10 @@ func (n *Node) expectedReshareDealers(operators []*peering.OperatorSetPeer) []co
 func (n *Node) resolveCutoffL2(ctx context.Context, triggerBlock int64) (uint64, error) {
 	interval := config.GetReshareBlockIntervalForChain(n.ChainID)
 	buffer := config.GetReshareCutoffBufferForChain(n.ChainID)
+	// Precondition: triggerBlock is a real chain block number (non-negative), so
+	// triggerBlock + interval - buffer stays positive (interval > buffer by
+	// construction) and the int64 arithmetic never goes negative before the
+	// uint64 cast — no wrap-around to a huge block height.
 	deadlineL1 := uint64(triggerBlock + interval - buffer)
 
 	// The registrar/deadline block lives on L1, so read its header timestamp from
@@ -1266,6 +1270,11 @@ func (n *Node) deriveAgreedDealerSet(
 	// tight deadline: it is long enough (~130s on Sepolia) that the cutoff block is essentially
 	// guaranteed to exist by the time we resolve it, so resolution returns promptly and the
 	// ceiling is rarely approached.
+	// intervalBlocks is derived from the L1 chain (GetReshareBlockIntervalForChain on
+	// the L1 ChainID the scheduler polls), so measuring it at ~13s/block is correct by
+	// construction (L1 ~12s/block, +1s margin). This budget is only a generous CEILING
+	// on how long to keep retrying cutoff resolution — it is rarely approached (see the
+	// block-comment above) — so the hardcoded 13s/block is a safe, deliberate constant.
 	intervalBlocks := config.GetReshareBlockIntervalForChain(n.ChainID)
 	roundBudget := time.Duration(intervalBlocks) * 13 * time.Second // ~13s/block gives margin over 12s
 	deadline := time.Now().Add(roundBudget)
@@ -2542,7 +2551,7 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 			// These are DISTINCT: an early roller on V-1
 			// (sourceVersion=V-1) must not count aborts the majority incurs on the
 			// still-poisoned V (srcVersion=V), or it would over-walk to V-2.
-			n.onMPKValidationAbort(sourceVersion, srcVersion, newThreshold)
+			n.onMPKValidationAbort(sourceVersion, srcVersion)
 			return fmt.Errorf("reshare aborted: post-reshare MPK validation failed: %w; will retry next interval", verr)
 		}
 	}
@@ -2882,6 +2891,14 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64, triggerBlock int6
 
 	// Only add to keystore after successful persistence
 	n.keyStore.AddVersion(newKeyVersion)
+
+	// NOTE: we intentionally do NOT call recordSuccessfulReshare here. A newly
+	// joined operator has no prior last-known-good (LKG) source version to record
+	// — it dealt from nothing. Its NEXT reshare runs as an existing operator and
+	// will call recordSuccessfulReshare on success, setting LKG then. Until that
+	// happens LKG stays 0, and auto-heal's rollbackTarget correctly falls back to
+	// walk-back (the highest non-poisoned persisted version). This omission is
+	// deliberate, not a missing call.
 
 	n.logger.Sugar().Infow("Successfully joined cluster via reshare",
 		"operator_address", n.OperatorAddress.Hex(),

@@ -48,6 +48,9 @@ func firstBlockAtOrAfterTimestamp(
 		return 0, fmt.Errorf("head block %d timestamp %d is below target %d; chain not advanced yet", head, headTs, target)
 	}
 	// Binary search for the lowest n in [1, head] with tsAt(n) >= target.
+	// The search deliberately excludes block 0 (genesis): a genesis timestamp is
+	// always below any real cutoff target we resolve, so block 0 can never be the
+	// answer, and starting at 1 keeps the range to actual post-genesis blocks.
 	lo, hi := uint64(1), head
 	for lo < hi {
 		mid := lo + (hi-lo)/2

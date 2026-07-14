@@ -7,12 +7,12 @@ func TestAbortTracker_MajorityGatedIncrement(t *testing.T) {
 
 	// Majority attempting our active version V=100 -> increments.
 	for i := 1; i <= 2; i++ {
-		if demote := tr.recordMPKAbort(100, 100, 2); demote {
+		if demote := tr.recordMPKAbort(100, 100); demote {
 			t.Fatalf("premature demote at count %d", i)
 		}
 	}
 	// Third consecutive on same version -> demote.
-	if demote := tr.recordMPKAbort(100, 100, 2); !demote {
+	if demote := tr.recordMPKAbort(100, 100); !demote {
 		t.Fatal("expected demote at 3 consecutive aborts")
 	}
 }
@@ -22,7 +22,7 @@ func TestAbortTracker_DoesNotCountWhenMajorityOnDifferentVersion(t *testing.T) {
 	// We rolled back to 90, but the majority is still attempting 100.
 	// Our active (90) != majority (100) -> do NOT count (don't blame good 90).
 	for i := 0; i < 10; i++ {
-		if demote := tr.recordMPKAbort(90, 100, 2); demote {
+		if demote := tr.recordMPKAbort(90, 100); demote {
 			t.Fatal("must not demote our version when majority is on a different version")
 		}
 	}
@@ -33,8 +33,8 @@ func TestAbortTracker_DoesNotCountWhenMajorityOnDifferentVersion(t *testing.T) {
 
 func TestAbortTracker_ResetsOnActiveVersionChange(t *testing.T) {
 	tr := &abortTracker{}
-	tr.recordMPKAbort(100, 100, 2) // count=1 on v100
-	tr.recordMPKAbort(90, 90, 2)   // active changed -> reset, count=1 on v90
+	tr.recordMPKAbort(100, 100) // count=1 on v100
+	tr.recordMPKAbort(90, 90)   // active changed -> reset, count=1 on v90
 	if tr.TrackedSourceVersion != 90 || tr.ConsecutiveAborts != 1 {
 		t.Fatalf("expected tracked=90 count=1, got tracked=%d count=%d", tr.TrackedSourceVersion, tr.ConsecutiveAborts)
 	}
@@ -42,7 +42,7 @@ func TestAbortTracker_ResetsOnActiveVersionChange(t *testing.T) {
 
 func TestAbortTracker_ResetOnSuccess(t *testing.T) {
 	tr := &abortTracker{}
-	tr.recordMPKAbort(100, 100, 2)
+	tr.recordMPKAbort(100, 100)
 	tr.recordSuccess()
 	if tr.ConsecutiveAborts != 0 {
 		t.Fatalf("expected reset, got %d", tr.ConsecutiveAborts)

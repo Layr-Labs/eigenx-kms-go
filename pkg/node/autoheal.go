@@ -12,6 +12,13 @@ const demotionThreshold = 3
 
 // abortTracker counts consecutive Layer-1 MPK-validation aborts on the same
 // active source version, majority-gated so an early roller does not over-walk.
+//
+// Thread-safety: these fields are read/written without a mutex. This is safe
+// ONLY because checkScheduledOperations (node.go ~735) guarantees at most one
+// reshare goroutine runs at a time — it skips the boundary if any protocol
+// session is already active, so recordMPKAbort / recordSuccess never race. A
+// future change that permits overlapping reshare sessions MUST add
+// synchronization (or route mutations through a single owner) here.
 type abortTracker struct {
 	TrackedSourceVersion int64
 	ConsecutiveAborts    int
@@ -26,7 +33,7 @@ type abortTracker struct {
 //     active source version — i.e. the cluster is actually attempting OUR version.
 //     A node that has already rolled back to a lower version does not count aborts
 //     that the majority incurs on the still-poisoned higher version.
-func (t *abortTracker) recordMPKAbort(activeSourceVersion, majoritySrcVersion int64, threshold int) bool {
+func (t *abortTracker) recordMPKAbort(activeSourceVersion, majoritySrcVersion int64) bool {
 	if t.TrackedSourceVersion != activeSourceVersion {
 		t.TrackedSourceVersion = activeSourceVersion
 		t.ConsecutiveAborts = 0
@@ -64,8 +71,8 @@ func rollbackTarget(lkg int64, poisonedVersion int64, persistedVersions []int64,
 // onMPKValidationAbort records a Layer-1 MPK-validation abort against the active
 // source version (majority-gated) and, on reaching the demotion threshold,
 // demotes the active version and rolls back. Persists the counter each call.
-func (n *Node) onMPKValidationAbort(activeSourceVersion, majoritySrcVersion int64, threshold int) {
-	demote := n.abortTracker.recordMPKAbort(activeSourceVersion, majoritySrcVersion, threshold)
+func (n *Node) onMPKValidationAbort(activeSourceVersion, majoritySrcVersion int64) {
+	demote := n.abortTracker.recordMPKAbort(activeSourceVersion, majoritySrcVersion)
 	n.persistAbortTracker()
 	if !demote {
 		return
@@ -89,7 +96,11 @@ func (n *Node) performRollback(poisonedVersion int64) {
 	if st, err := n.persistence.LoadNodeState(); err == nil && st != nil {
 		lkg = st.LastKnownGoodSourceVersion
 	}
-	versions, _ := n.persistence.ListKeyShareVersions()
+	versions, verr := n.persistence.ListKeyShareVersions()
+	if verr != nil {
+		n.logger.Sugar().Errorw("Auto-heal: failed to list persisted versions for rollback; treating as floor",
+			"operator_address", n.OperatorAddress.Hex(), "error", verr)
+	}
 	nums := make([]int64, 0, len(versions))
 	for _, v := range versions {
 		nums = append(nums, v.Version)

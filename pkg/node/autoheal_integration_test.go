@@ -1,6 +1,7 @@
 package node
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/keystore"
@@ -13,6 +14,19 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
 )
+
+// listErrPersistence wraps the in-memory backend but forces ListKeyShareVersions
+// to fail, so tests can exercise performRollback's list-error handling with a
+// real error (not just by inspection). All other calls delegate to the embedded
+// MemoryPersistence.
+type listErrPersistence struct {
+	*memory.MemoryPersistence
+	listErr error
+}
+
+func (p *listErrPersistence) ListKeyShareVersions() ([]*types.KeyShareVersion, error) {
+	return nil, p.listErr
+}
 
 func TestAutoHeal_DemotesAndRollsBackToLKG(t *testing.T) {
 	l, _ := zap.NewDevelopment()
@@ -43,7 +57,7 @@ func TestAutoHeal_DemotesAndRollsBackToLKG(t *testing.T) {
 	const active = int64(1783944564)
 	const majority = int64(1783944564)
 	for i := 0; i < demotionThreshold; i++ {
-		n.onMPKValidationAbort(active, majority, 2)
+		n.onMPKValidationAbort(active, majority)
 	}
 
 	require.True(t, ks.IsPoisoned(1783944564), "poisoned version must be marked")
@@ -62,7 +76,7 @@ func TestAutoHeal_MinorityDoesNotOverWalk(t *testing.T) {
 	n := &Node{logger: l, keyStore: ks, persistence: memory.NewMemoryPersistence(), abortTracker: &abortTracker{}}
 
 	for i := 0; i < 10; i++ {
-		n.onMPKValidationAbort(1783944444, 1783944564, 2) // active=V-1, majority=V
+		n.onMPKValidationAbort(1783944444, 1783944564) // active=V-1, majority=V
 	}
 	require.False(t, ks.IsPoisoned(1783944444), "must not poison the good version we already rolled to")
 	require.Equal(t, int64(1783944444), ks.GetActiveVersion().Version)
@@ -76,7 +90,7 @@ func TestAutoHeal_FloorHaltsWithoutReDKG(t *testing.T) {
 	ks.SetActiveVersion(only)
 	n := &Node{logger: l, keyStore: ks, persistence: memory.NewMemoryPersistence(), abortTracker: &abortTracker{}}
 	for i := 0; i < demotionThreshold; i++ {
-		n.onMPKValidationAbort(100, 100, 2)
+		n.onMPKValidationAbort(100, 100)
 	}
 	// Poisoned, no lower version -> floor: active stays (still poisoned), no panic, no new version.
 	require.True(t, ks.IsPoisoned(100))
@@ -108,7 +122,7 @@ func TestAutoHeal_MissingRollbackTargetHaltsLoudly(t *testing.T) {
 	}))
 
 	for i := 0; i < demotionThreshold; i++ {
-		n.onMPKValidationAbort(200, 200, 2)
+		n.onMPKValidationAbort(200, 200)
 	}
 
 	require.True(t, ks.IsPoisoned(200), "poisoned version must be marked")
@@ -117,6 +131,48 @@ func TestAutoHeal_MissingRollbackTargetHaltsLoudly(t *testing.T) {
 	entries := observed.FilterMessageSnippet("AUTO-HEAL FLOOR").All()
 	require.NotEmpty(t, entries, "must emit a loud AUTO-HEAL FLOOR error when the rollback target is absent")
 	require.Equal(t, int64(100), entries[len(entries)-1].ContextMap()["target"], "log must name the missing target")
+}
+
+// TestAutoHeal_ListVersionsErrorLogsAndFloors is a regression test for
+// performRollback silently dropping the ListKeyShareVersions error. When the
+// persisted-version listing fails, the empty result forces rollbackTarget to
+// return false → the node takes the floor path (rotation halted, decrypt still
+// served). The error must be logged (so the operator learns WHY it floored)
+// rather than swallowed. This forces a REAL error via listErrPersistence, not
+// an assert-by-inspection.
+func TestAutoHeal_ListVersionsErrorLogsAndFloors(t *testing.T) {
+	core, observed := observer.New(zap.ErrorLevel)
+	l := zap.New(core)
+	ks := keystore.NewKeyStore()
+	poison := &types.KeyShareVersion{Version: 300, PrivateShare: new(fr.Element).SetInt64(3)}
+	ks.AddVersion(poison)
+	ks.SetActiveVersion(poison)
+
+	p := &listErrPersistence{
+		MemoryPersistence: memory.NewMemoryPersistence(),
+		listErr:           errors.New("boom: storage unavailable"),
+	}
+	// A usable LKG exists in state, but rollbackTarget only consults it after the
+	// version list — and here the list errors out, so we still floor.
+	require.NoError(t, p.SaveKeyShareVersion(poison))
+	n := &Node{logger: l, keyStore: ks, persistence: p, abortTracker: &abortTracker{}}
+
+	for i := 0; i < demotionThreshold; i++ {
+		n.onMPKValidationAbort(300, 300)
+	}
+
+	// Poisoned and floored: active unchanged, no re-DKG.
+	require.True(t, ks.IsPoisoned(300), "poisoned version must be marked")
+	require.Equal(t, int64(300), ks.GetActiveVersion().Version, "active must not move when the version list is unreadable")
+
+	// The dropped-error regression: the list failure must be logged, not swallowed.
+	listErrEntries := observed.FilterMessageSnippet("failed to list persisted versions").All()
+	require.NotEmpty(t, listErrEntries, "list-versions error must be logged, not silently dropped")
+	require.Equal(t, "boom: storage unavailable", listErrEntries[len(listErrEntries)-1].ContextMap()["error"], "log must carry the underlying error")
+
+	// And the node must still take the loud floor path so rotation is halted.
+	floorEntries := observed.FilterMessageSnippet("AUTO-HEAL FLOOR").All()
+	require.NotEmpty(t, floorEntries, "must floor loudly when the version list is unreadable")
 }
 
 func TestRestoreState_HonorsAbortCounterOnlyIfVersionMatches(t *testing.T) {
