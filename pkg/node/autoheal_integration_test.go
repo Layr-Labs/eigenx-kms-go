@@ -158,3 +158,51 @@ func TestRestoreState_HonorsAbortCounterOnlyIfVersionMatches(t *testing.T) {
 	require.NoError(t, nB.RestoreState())
 	require.Equal(t, 0, nB.abortTracker.ConsecutiveAborts, "counter reset when tracked version != active")
 }
+
+// TestBoundaryPersistPreservesAutoHealFields is a regression test for the boundary
+// handler clobbering persisted auto-heal fields. checkScheduledOperations persists
+// interval-boundary bookkeeping on every boundary — which fires on the same cycle a
+// reshare is triggered. Before the fix it wrote a FRESH NodeState, zeroing the
+// out-of-band auto-heal fields (TrackedSourceVersion / ConsecutiveMPKAborts /
+// LastKnownGoodSourceVersion) and losing the abort counter across a mid-interval
+// restart. persistBoundary must instead load-merge so those fields survive.
+func TestBoundaryPersistPreservesAutoHealFields(t *testing.T) {
+	l, _ := zap.NewDevelopment()
+	p := memory.NewMemoryPersistence()
+	n := &Node{
+		logger:          l,
+		persistence:     p,
+		abortTracker:    &abortTracker{},
+		OperatorAddress: common.HexToAddress("0xabc"),
+	}
+
+	// Simulate a mid-abort state persisted out-of-band by persistAbortTracker /
+	// recordSuccessfulReshare: counting 2 aborts against source version X and a
+	// recorded last-known-good marker.
+	const trackedVersion = int64(1783944564)
+	const lkg = int64(1783944444)
+	require.NoError(t, p.SaveNodeState(&persistence.NodeState{
+		OperatorAddress:            n.OperatorAddress.Hex(),
+		TrackedSourceVersion:       trackedVersion,
+		ConsecutiveMPKAborts:       2,
+		LastKnownGoodSourceVersion: lkg,
+	}))
+
+	// A boundary fires and persists its bookkeeping. With the old blind fresh-struct
+	// write this zeroed the auto-heal fields; the load-merge helper must preserve them.
+	const boundaryBlock = int64(9_000_000)
+	n.persistBoundary(boundaryBlock)
+
+	got, err := p.LoadNodeState()
+	require.NoError(t, err)
+	require.NotNil(t, got)
+
+	// Boundary bookkeeping was written.
+	require.Equal(t, boundaryBlock, got.LastProcessedBoundary, "boundary block must be recorded")
+	require.NotZero(t, got.NodeStartTime, "node start time must be recorded")
+
+	// Auto-heal fields SURVIVE the boundary write (the regression this guards against).
+	require.Equal(t, trackedVersion, got.TrackedSourceVersion, "tracked source version must survive boundary write")
+	require.Equal(t, 2, got.ConsecutiveMPKAborts, "abort counter must survive boundary write")
+	require.Equal(t, lkg, got.LastKnownGoodSourceVersion, "LKG marker must survive boundary write")
+}

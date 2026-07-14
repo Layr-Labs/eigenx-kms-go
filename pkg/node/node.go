@@ -712,18 +712,8 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 	// Step 5: Update last processed boundary
 	n.lastProcessedBoundary = blockNumber
 
-	// Persist block boundary
-	nodeState := &persistence.NodeState{
-		LastProcessedBoundary: blockNumber,
-		NodeStartTime:         time.Now().Unix(),
-		OperatorAddress:       n.OperatorAddress.Hex(),
-	}
-	if err := n.persistence.SaveNodeState(nodeState); err != nil {
-		n.logger.Sugar().Errorw("Failed to persist node state",
-			"operator_address", n.OperatorAddress.Hex(),
-			"error", err)
-		// Continue - non-fatal, can recover on next boundary
-	}
+	// Persist block boundary (load-merge so auto-heal fields survive; see persistBoundary).
+	n.persistBoundary(blockNumber)
 
 	n.logger.Sugar().Infow("Block interval boundary reached",
 		"operator_address", n.OperatorAddress.Hex(),
@@ -803,6 +793,30 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 					"error", err)
 			}
 		}()
+	}
+}
+
+// persistBoundary records the interval-boundary bookkeeping (LastProcessedBoundary,
+// NodeStartTime) using a load-merge so the auto-heal fields written out-of-band by
+// persistAbortTracker / recordSuccessfulReshare (TrackedSourceVersion,
+// ConsecutiveMPKAborts, LastKnownGoodSourceVersion) are PRESERVED. A boundary fires
+// on the same cycle a reshare is triggered, so a blind fresh-struct write here would
+// zero the persisted abort counter / LKG marker and a restart mid-interval would lose
+// them, defeating the restart-durability requirement those fields exist for. Mirrors
+// the load-modify-save pattern in persistAbortTracker.
+func (n *Node) persistBoundary(blockNumber int64) {
+	st, err := n.persistence.LoadNodeState()
+	if err != nil || st == nil {
+		st = &persistence.NodeState{OperatorAddress: n.OperatorAddress.Hex()}
+	}
+	st.LastProcessedBoundary = blockNumber
+	st.NodeStartTime = time.Now().Unix()
+	st.OperatorAddress = n.OperatorAddress.Hex()
+	if err := n.persistence.SaveNodeState(st); err != nil {
+		n.logger.Sugar().Errorw("Failed to persist node state",
+			"operator_address", n.OperatorAddress.Hex(),
+			"error", err)
+		// Continue - non-fatal, can recover on next boundary
 	}
 }
 
@@ -1247,8 +1261,11 @@ func (n *Node) deriveAgreedDealerSet(
 	// timeout: the cutoff block N + interval - buffer lands ~(interval - buffer) blocks
 	// after N, which on Sepolia (~96s) exceeds the 90s protocol timeout — bounding by that
 	// shorter value would abort every round before the cutoff block even exists. Budget one
-	// full interval of wall clock (block time with margin), anchored at finalize start
-	// (~block N).
+	// full interval of wall clock (block time with margin). This is a generous CEILING
+	// measured from finalize start (which is already well into the round, not block N), NOT a
+	// tight deadline: it is long enough (~130s on Sepolia) that the cutoff block is essentially
+	// guaranteed to exist by the time we resolve it, so resolution returns promptly and the
+	// ceiling is rarely approached.
 	intervalBlocks := config.GetReshareBlockIntervalForChain(n.ChainID)
 	roundBudget := time.Duration(intervalBlocks) * 13 * time.Second // ~13s/block gives margin over 12s
 	deadline := time.Now().Add(roundBudget)
@@ -2757,6 +2774,14 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64, triggerBlock int6
 	// operator computes — the join and existing paths agree on the same dealer set by reading
 	// the append-only registry at the same height. The existingOperatorDealers override MUST
 	// be preserved regardless of triggerBlock.
+	//
+	// NOTE: the cutoff-height determinism does NOT extend to the join-path CANDIDATE set.
+	// existingOperatorDealers(operators, existingOpIDs) is bounded by existingOpIDs, which is
+	// derived from a per-node runtime /pubkey read at join time — so under a transient /pubkey
+	// failure the candidate universe can still differ per node (pre-existing behavior, unlike
+	// the now-deterministic cutoff height). This divergence is backstopped by MPK validation
+	// (and auto-heal): a node that finalizes on a divergent set fails MPK validation and retries
+	// next interval rather than silently poisoning the cluster.
 	agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, triggerBlock,
 		existingOperatorDealers(operators, existingOpIDs))
 	if err != nil {
