@@ -184,11 +184,22 @@ Layer-1 MPK-validation gate — no new protocol messages, no new endpoints, MPK 
 
 ### Detection
 
-An in-memory counter of **consecutive MPK-validation aborts on the same active source version**.
+A **persisted** counter of **consecutive MPK-validation aborts on the same active source version**.
 Resets on any successful reshare (a round that persists) and whenever the active version changes.
 At **N = 3** consecutive aborts (~6 min at the 2-min interval) the node declares the current
 active source version *poisoned*. Consecutive-same-version tracking means a transient one-round
 abort never triggers demotion.
+
+**Persisted, not in-memory** (closes the restart-churn gap, review Finding 7). Store the counter as
+the pair `{trackedSourceVersion, consecutiveAborts}` in `NodeState` (`persistence/types.go`) — two
+new fields that round-trip through the existing `SaveNodeState`/`LoadNodeState`
+(`persistence/interface.go:51,55`), so **no new interface methods and no per-backend work** are
+required (unlike the poisoned-version set, which does need a new set-typed surface). On restart,
+the loaded count is trusted only if `trackedSourceVersion` still equals the current active source
+version; otherwise it resets to 0 — this preserves the "resets when the active version changes"
+semantics across a restart, so a node that restarts mid-stall resumes counting instead of losing
+~6 min of progress. Persist on each increment (cheap — `SaveNodeState` is already written every
+boundary, `node.go:711`).
 
 Increment/reset scope (review Finding 8): the counter increments **only** on the Layer-1
 MPK-validation abort (`node.go:2423`). Earlier aborts — dealer-set too small (`node.go:2286`),
@@ -201,8 +212,8 @@ unrecoverable / availability states, not the poison signature). This is stated e
 
 On every reshare round that passes MPK validation and persists, record the **agreed majority
 source version** it validated against — i.e. `srcVersion` from `SelectMajoritySourceVersion`
-(`node.go:2319`), the cross-node-consistent quantity — as the LKG marker (persisted via
-`INodePersistence`). This is NOT the node-local advertised source (which differs across nodes,
+(`node.go:2319`), the cross-node-consistent quantity — as the LKG marker (a single `int64`
+persisted as a `NodeState` field, alongside the abort counter). This is NOT the node-local advertised source (which differs across nodes,
 review Finding 4) and NOT "the last version whose finalize passed" (which would point at the
 poison, since `1783944564`'s own finalize passed — it dealt from the good `1783944444`). In the
 incident LKG = `1783944444`.
@@ -264,9 +275,10 @@ halt. Operators must be able to distinguish "auto-heal in progress" from "genuin
 
 ### Transient rollback window (review Finding 6)
 
-If nodes demote at staggered times (non-atomic rollout, or a single restart resetting one node's
-in-memory counter), there is a bounded window where some nodes serve/sign with the rolled-back
-version and others with the poisoned one. `/pubkey` MPK is unaffected (carried-forward MPK is
+If nodes demote at staggered times (e.g. a non-atomic rollout, or clock-independent per-node
+interval jitter), there is a bounded window where some nodes serve/sign with the rolled-back
+version and others with the poisoned one. (A single node restarting mid-stall no longer resets its
+progress, since the counter is now persisted — see Detection.) `/pubkey` MPK is unaffected (carried-forward MPK is
 identical and served directly), but app-signing partial-signature reconstruction may transiently
 fail until the window closes. This is bounded and non-corrupting; clients already retry. The spec
 acknowledges it rather than asserting simultaneity.
@@ -299,7 +311,9 @@ All via `./scripts/goTest.sh`.
   returned by `GetPrivateShareForVersion`.
 - **Auto-heal — floor.** History exhausted with no healing version: assert rotation halts,
   decrypt still works, and a loud error is logged (no auto-re-DKG).
-- **Auto-heal — restart durability.** Assert the poisoned-version set survives a restart (persisted).
+- **Auto-heal — restart durability.** Assert the poisoned-version set AND the abort counter
+  survive a restart: the persisted `{trackedSourceVersion, consecutiveAborts}` is honored when the
+  active source version is unchanged, and reset to 0 when it differs.
 
 ## Scope / non-goals
 
@@ -332,9 +346,13 @@ are design changes, but each is real work or a decision the plan must make expli
   `HeaderByNumber` read, to avoid an extra call and interface method.
 - **L2 header access.** The timestamp→height binary search needs L2 `HeaderByNumber`; it exists on
   the underlying client but is NOT on `IContractCaller` — a new interface method + mock is required.
-- **New persistence surface.** The LKG marker and the poisoned-version set need new
-  `INodePersistence` methods (interface + redis + memory + badger + mock); `NodeState`
-  (`persistence/types.go`) has no such fields today. Budget this explicitly.
+- **New persistence surface.** Split by shape:
+  - The **abort counter** `{trackedSourceVersion, consecutiveAborts}` and the **LKG marker** (a
+    single `int64`) are scalars — add them as `NodeState` fields
+    (`persistence/types.go`), reusing the existing `SaveNodeState`/`LoadNodeState`. No new interface
+    methods, no per-backend work.
+  - The **poisoned-version set** is a set/collection and does need new `INodePersistence` methods
+    (interface + redis + memory + badger + mock). Budget this explicitly.
 - **L2-freshness tolerance / buffer sizing.** With `buffer = 2`, the resolve+read budget is
   ~`N+8 → N+10` ≈ 24s (Sepolia), much tighter than the old 90s protocol timeout. A node whose Base
   RPC lags > ~24s aborts every round and becomes a permanent laggard; with n=3, two such nodes
