@@ -15,6 +15,7 @@ type KeyStore struct {
 	keyVersions    []*types.KeyShareVersion
 	activeVersion  *types.KeyShareVersion
 	pendingVersion *types.KeyShareVersion
+	poisoned       map[int64]struct{}
 }
 
 // NewKeyStore creates a new key store
@@ -50,12 +51,36 @@ func (ks *KeyStore) SetActiveVersion(version *types.KeyShareVersion) {
 	ks.activeVersion = version
 }
 
-// GetActiveVersion returns the currently active key version
+// GetActiveVersion returns the currently active key version.
+//
+// The active pointer is never set to a poisoned version (rollback on the write
+// side guarantees this invariant — see the auto-heal / rollback path), so this
+// accessor returns activeVersion unchanged and does not filter on the poisoned
+// set. Silently returning nil for a poisoned active would break serving.
 func (ks *KeyStore) GetActiveVersion() *types.KeyShareVersion {
 	ks.mu.RLock()
 	defer ks.mu.RUnlock()
 
 	return ks.activeVersion
+}
+
+// MarkPoisoned records a version as poisoned; poisoned versions are excluded
+// from all version-resolution accessors.
+func (ks *KeyStore) MarkPoisoned(version int64) {
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+	if ks.poisoned == nil {
+		ks.poisoned = map[int64]struct{}{}
+	}
+	ks.poisoned[version] = struct{}{}
+}
+
+// IsPoisoned reports whether a version has been marked poisoned.
+func (ks *KeyStore) IsPoisoned(version int64) bool {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+	_, ok := ks.poisoned[version]
+	return ok
 }
 
 // GetActivePrivateShare returns the active private key share
@@ -124,6 +149,11 @@ func (ks *KeyStore) GetPrivateShareForVersion(version int64) (*fr.Element, error
 	ks.mu.RLock()
 	defer ks.mu.RUnlock()
 
+	// Read the poisoned set inline under the RLock already held here; do NOT call
+	// IsPoisoned (which takes its own RLock) — that would be lock re-entrancy.
+	if _, bad := ks.poisoned[version]; bad {
+		return nil, fmt.Errorf("key version %d is poisoned and must not be used", version)
+	}
 	for _, v := range ks.keyVersions {
 		if v.Version == version {
 			if v.PrivateShare == nil {
@@ -143,6 +173,12 @@ func (ks *KeyStore) GetKeyVersionAtTime(timestamp int64) *types.KeyShareVersion 
 
 	var best *types.KeyShareVersion
 	for _, version := range ks.keyVersions {
+		// Skip poisoned versions so resolution falls back to the next-lower good
+		// version. Read the poisoned set inline under the RLock already held here;
+		// do NOT call IsPoisoned (which takes its own RLock) — lock re-entrancy.
+		if _, bad := ks.poisoned[version.Version]; bad {
+			continue
+		}
 		if version.Version <= timestamp {
 			if best == nil || version.Version > best.Version {
 				best = version

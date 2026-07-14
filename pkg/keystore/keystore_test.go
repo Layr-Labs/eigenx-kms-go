@@ -146,3 +146,25 @@ func TestGetPrivateShareForVersion(t *testing.T) {
 		}
 	})
 }
+
+func TestKeyStore_ExcludesPoisonedVersion(t *testing.T) {
+	ks := NewKeyStore()
+	good := &types.KeyShareVersion{Version: 100, PrivateShare: new(fr.Element).SetInt64(1)}
+	poison := &types.KeyShareVersion{Version: 200, PrivateShare: new(fr.Element).SetInt64(2)}
+	ks.AddVersion(good)
+	ks.AddVersion(poison)
+	ks.MarkPoisoned(200)
+
+	// GetKeyVersionAtTime(250) must skip 200 and return 100.
+	if got := ks.GetKeyVersionAtTime(250); got == nil || got.Version != 100 {
+		t.Fatalf("expected version 100 (skipping poisoned 200), got %+v", got)
+	}
+	// GetPrivateShareForVersion(200) must error.
+	if _, err := ks.GetPrivateShareForVersion(200); err == nil {
+		t.Fatal("expected error fetching share for poisoned version 200")
+	}
+	// IsPoisoned reflects state.
+	if !ks.IsPoisoned(200) || ks.IsPoisoned(100) {
+		t.Fatal("IsPoisoned wrong")
+	}
+}
