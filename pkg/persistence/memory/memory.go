@@ -180,9 +180,12 @@ func (m *MemoryPersistence) SaveNodeState(state *persistence.NodeState) error {
 
 	// Deep copy
 	m.nodeState = &persistence.NodeState{
-		LastProcessedBoundary: state.LastProcessedBoundary,
-		NodeStartTime:         state.NodeStartTime,
-		OperatorAddress:       state.OperatorAddress,
+		LastProcessedBoundary:      state.LastProcessedBoundary,
+		NodeStartTime:              state.NodeStartTime,
+		OperatorAddress:            state.OperatorAddress,
+		TrackedSourceVersion:       state.TrackedSourceVersion,
+		ConsecutiveMPKAborts:       state.ConsecutiveMPKAborts,
+		LastKnownGoodSourceVersion: state.LastKnownGoodSourceVersion,
 	}
 
 	return nil
@@ -197,16 +200,25 @@ func (m *MemoryPersistence) LoadNodeState() (*persistence.NodeState, error) {
 		return nil, fmt.Errorf("persistence layer is closed")
 	}
 
-	// Return nil if no state has been saved yet (first run)
+	// Return nil if no state has been saved yet (first run).
+	// NOTE: this guard also implicitly protects the auto-heal fields
+	// (TrackedSourceVersion, ConsecutiveMPKAborts, LastKnownGoodSourceVersion),
+	// which are load-bearing. The auto-heal writers always set OperatorAddress
+	// when persisting those fields, so a real persisted state is never mistaken
+	// for "first run" here. If this condition is ever revisited, take care not
+	// to drop a state that carries only auto-heal fields.
 	if m.nodeState.OperatorAddress == "" && m.nodeState.LastProcessedBoundary == 0 {
 		return nil, nil
 	}
 
 	// Deep copy
 	return &persistence.NodeState{
-		LastProcessedBoundary: m.nodeState.LastProcessedBoundary,
-		NodeStartTime:         m.nodeState.NodeStartTime,
-		OperatorAddress:       m.nodeState.OperatorAddress,
+		LastProcessedBoundary:      m.nodeState.LastProcessedBoundary,
+		NodeStartTime:              m.nodeState.NodeStartTime,
+		OperatorAddress:            m.nodeState.OperatorAddress,
+		TrackedSourceVersion:       m.nodeState.TrackedSourceVersion,
+		ConsecutiveMPKAborts:       m.nodeState.ConsecutiveMPKAborts,
+		LastKnownGoodSourceVersion: m.nodeState.LastKnownGoodSourceVersion,
 	}, nil
 }
 

@@ -21,6 +21,20 @@ type NodeState struct {
 	// OperatorAddress is the Ethereum address of this operator.
 	// Stored for verification that persistence data matches the operator.
 	OperatorAddress string `json:"operatorAddress"`
+
+	// TrackedSourceVersion is the active source version the MPK-abort counter is
+	// currently counting against. The counter is only trusted after restart when
+	// this equals the current active source version.
+	TrackedSourceVersion int64 `json:"trackedSourceVersion"`
+
+	// ConsecutiveMPKAborts counts consecutive Layer-1 MPK-validation aborts on
+	// TrackedSourceVersion. Reaching the demotion threshold marks that version poisoned.
+	ConsecutiveMPKAborts int `json:"consecutiveMpkAborts"`
+
+	// LastKnownGoodSourceVersion is the agreed majority source version (srcVersion)
+	// of the most recent reshare round that passed MPK validation and persisted.
+	// 0 means none recorded yet. Used as the preferred auto-heal rollback target.
+	LastKnownGoodSourceVersion int64 `json:"lastKnownGoodSourceVersion"`
 }
 
 // MarshalJSON implements json.Marshaler. The Alias type strips the method
