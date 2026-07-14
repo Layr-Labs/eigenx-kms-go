@@ -38,6 +38,10 @@ type MemoryPersistence struct {
 	// Chain poller last processed block: chainId -> block number
 	lastProcessedBlocks map[uint64]uint64
 
+	// Poisoned key-share versions: set of versions that must never be dealt
+	// from, activated, or served (cross-node-inconsistent shares).
+	poisoned map[int64]struct{}
+
 	// Closed flag
 	closed bool
 }
@@ -59,6 +63,7 @@ func NewMemoryPersistence() *MemoryPersistence {
 		sessions:            make(map[int64]*persistence.ProtocolSessionState),
 		blockRecords:        make(map[blockRecordKey]*persistence.BlockRecord),
 		lastProcessedBlocks: make(map[uint64]uint64),
+		poisoned:            make(map[int64]struct{}),
 		nodeState:           &persistence.NodeState{},
 	}
 }
@@ -138,6 +143,38 @@ func (m *MemoryPersistence) DeleteKeyShareVersion(timestamp int64) error {
 
 	delete(m.keyShares, timestamp)
 	return nil
+}
+
+// AddPoisonedVersion records a key-share version as poisoned. Idempotent.
+func (m *MemoryPersistence) AddPoisonedVersion(version int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.closed {
+		return fmt.Errorf("persistence layer is closed")
+	}
+
+	if m.poisoned == nil {
+		m.poisoned = make(map[int64]struct{})
+	}
+	m.poisoned[version] = struct{}{}
+	return nil
+}
+
+// ListPoisonedVersions returns all recorded poisoned versions (unordered).
+func (m *MemoryPersistence) ListPoisonedVersions() ([]int64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	if m.closed {
+		return nil, fmt.Errorf("persistence layer is closed")
+	}
+
+	out := make([]int64, 0, len(m.poisoned))
+	for v := range m.poisoned {
+		out = append(out, v)
+	}
+	return out, nil
 }
 
 // SetActiveVersionTimestamp stores the active version block timestamp.

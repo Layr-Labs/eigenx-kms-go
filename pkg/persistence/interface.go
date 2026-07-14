@@ -32,6 +32,15 @@ type INodePersistence interface {
 	// Returns error only on storage failure.
 	DeleteKeyShareVersion(timestamp int64) error
 
+	// AddPoisonedVersion records a key-share version as poisoned (its shares are
+	// cross-node-inconsistent and must never be dealt from, activated, or served).
+	// Idempotent. Returns error only on storage failure.
+	AddPoisonedVersion(version int64) error
+
+	// ListPoisonedVersions returns all recorded poisoned versions (unordered).
+	// Returns empty slice if none. Returns error only on storage failure.
+	ListPoisonedVersions() ([]int64, error)
+
 	// Active Version Tracking
 
 	// SetActiveVersionTimestamp stores which key version is currently active.
