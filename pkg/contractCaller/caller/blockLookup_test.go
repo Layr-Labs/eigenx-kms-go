@@ -59,3 +59,13 @@ func TestFirstBlockAtOrAfterTimestamp_HeadNotReached(t *testing.T) {
 		t.Fatal("expected error when head timestamp < target, got nil")
 	}
 }
+
+func TestFirstBlockAtOrAfterTimestamp_HeadZero(t *testing.T) {
+	// head == 0 means no blocks beyond genesis exist. The [1, head] search would
+	// otherwise return a bogus block 1 for a nonexistent block; the guard must
+	// return an error instead.
+	fc := &fakeChain{ts: map[uint64]uint64{}, head: 0}
+	if _, err := firstBlockAtOrAfterTimestamp(context.Background(), 1000, fc.head, fc.tsAt); err == nil {
+		t.Fatal("expected error when head is 0, got nil")
+	}
+}

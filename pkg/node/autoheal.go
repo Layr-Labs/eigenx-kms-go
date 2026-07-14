@@ -98,8 +98,16 @@ func (n *Node) performRollback(poisonedVersion int64) {
 	}
 	versions, verr := n.persistence.ListKeyShareVersions()
 	if verr != nil {
-		n.logger.Sugar().Errorw("Auto-heal: failed to list persisted versions for rollback; treating as floor",
-			"operator_address", n.OperatorAddress.Hex(), "error", verr)
+		// Cannot enumerate the persisted versions, so we cannot safely choose a
+		// rollback target. Floor loudly and RETURN here rather than continuing with
+		// an empty slice — otherwise rollbackTarget might return the LKG, the
+		// apply-loop would find no match, and we'd emit the misleading "target not
+		// present" floor log that blames a missing target instead of the real
+		// storage error. Leave the tracker untouched (as the other floor branches
+		// do) so it stays loud on every re-trigger.
+		n.logger.Sugar().Errorw("AUTO-HEAL FLOOR: could not list persisted versions to choose a rollback target; rotation halted, decrypt still served. MANUAL INTERVENTION REQUIRED (no auto re-DKG).",
+			"operator_address", n.OperatorAddress.Hex(), "poisoned_version", poisonedVersion, "error", verr)
+		return
 	}
 	nums := make([]int64, 0, len(versions))
 	for _, v := range versions {

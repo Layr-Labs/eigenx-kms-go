@@ -807,10 +807,16 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 func (n *Node) persistBoundary(blockNumber int64) {
 	st, err := n.persistence.LoadNodeState()
 	if err != nil || st == nil {
-		st = &persistence.NodeState{OperatorAddress: n.OperatorAddress.Hex()}
+		// No existing state: this is the first boundary write, so stamp the node
+		// start time. On subsequent boundaries the loaded state's NodeStartTime is
+		// PRESERVED below — re-stamping it here every boundary would drift it to the
+		// last boundary fire instead of the actual node start.
+		st = &persistence.NodeState{
+			OperatorAddress: n.OperatorAddress.Hex(),
+			NodeStartTime:   time.Now().Unix(),
+		}
 	}
 	st.LastProcessedBoundary = blockNumber
-	st.NodeStartTime = time.Now().Unix()
 	st.OperatorAddress = n.OperatorAddress.Hex()
 	if err := n.persistence.SaveNodeState(st); err != nil {
 		n.logger.Sugar().Errorw("Failed to persist node state",

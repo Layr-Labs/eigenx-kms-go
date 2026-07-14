@@ -125,6 +125,15 @@ func (ks *KeyStore) ActivatePendingVersion() error {
 		return fmt.Errorf("no pending version to activate")
 	}
 
+	// Defense-in-depth for the "active is never poisoned" invariant: refuse to
+	// promote a poisoned pending version. Read the poisoned set inline under the
+	// Lock already held here; do NOT call IsPoisoned (which takes its own RLock) —
+	// that would be lock re-entrancy (matches GetPrivateShareForVersion /
+	// GetKeyVersionAtTime).
+	if _, bad := ks.poisoned[ks.pendingVersion.Version]; bad {
+		return fmt.Errorf("cannot activate poisoned pending version %d", ks.pendingVersion.Version)
+	}
+
 	ks.pendingVersion.IsActive = true
 	if ks.activeVersion != nil {
 		ks.activeVersion.IsActive = false

@@ -134,12 +134,19 @@ func TestAutoHeal_MissingRollbackTargetHaltsLoudly(t *testing.T) {
 }
 
 // TestAutoHeal_ListVersionsErrorLogsAndFloors is a regression test for
-// performRollback silently dropping the ListKeyShareVersions error. When the
-// persisted-version listing fails, the empty result forces rollbackTarget to
-// return false → the node takes the floor path (rotation halted, decrypt still
-// served). The error must be logged (so the operator learns WHY it floored)
-// rather than swallowed. This forces a REAL error via listErrPersistence, not
-// an assert-by-inspection.
+// performRollback mishandling a ListKeyShareVersions failure. It exercises the
+// NEW combination the round-2 fix targets: a usable last-known-good version is
+// recorded (LKG > 0) AND the version listing errors out. Before the fix, the
+// code logged the storage error but continued with an empty slice; rollbackTarget
+// then returned the LKG, the apply-loop found no matching object, and the node
+// emitted the MISLEADING "chosen rollback target not present" floor log — blaming
+// a missing target when the real cause was the storage error.
+//
+// After the fix, performRollback floors immediately on the list error with a
+// single, clear storage-error floor log (naming the underlying error) and does
+// NOT reach the "target not present" branch. The active version must stay put
+// (rotation halted, decrypt still served, no auto re-DKG). Uses listErrPersistence
+// to force a REAL error, not an assert-by-inspection.
 func TestAutoHeal_ListVersionsErrorLogsAndFloors(t *testing.T) {
 	core, observed := observer.New(zap.ErrorLevel)
 	l := zap.New(core)
@@ -152,10 +159,15 @@ func TestAutoHeal_ListVersionsErrorLogsAndFloors(t *testing.T) {
 		MemoryPersistence: memory.NewMemoryPersistence(),
 		listErr:           errors.New("boom: storage unavailable"),
 	}
-	// A usable LKG exists in state, but rollbackTarget only consults it after the
-	// version list — and here the list errors out, so we still floor.
 	require.NoError(t, p.SaveKeyShareVersion(poison))
 	n := &Node{logger: l, keyStore: ks, persistence: p, abortTracker: &abortTracker{}}
+	// A usable LKG (< poisoned, not poisoned) IS recorded. rollbackTarget would
+	// happily return it — but the list error must floor us BEFORE that, otherwise
+	// the misleading "target not present" branch fires instead.
+	require.NoError(t, p.SaveNodeState(&persistence.NodeState{
+		LastKnownGoodSourceVersion: 250,
+		OperatorAddress:            n.OperatorAddress.Hex(),
+	}))
 
 	for i := 0; i < demotionThreshold; i++ {
 		n.onMPKValidationAbort(300, 300)
@@ -165,14 +177,13 @@ func TestAutoHeal_ListVersionsErrorLogsAndFloors(t *testing.T) {
 	require.True(t, ks.IsPoisoned(300), "poisoned version must be marked")
 	require.Equal(t, int64(300), ks.GetActiveVersion().Version, "active must not move when the version list is unreadable")
 
-	// The dropped-error regression: the list failure must be logged, not swallowed.
-	listErrEntries := observed.FilterMessageSnippet("failed to list persisted versions").All()
-	require.NotEmpty(t, listErrEntries, "list-versions error must be logged, not silently dropped")
-	require.Equal(t, "boom: storage unavailable", listErrEntries[len(listErrEntries)-1].ContextMap()["error"], "log must carry the underlying error")
-
-	// And the node must still take the loud floor path so rotation is halted.
-	floorEntries := observed.FilterMessageSnippet("AUTO-HEAL FLOOR").All()
-	require.NotEmpty(t, floorEntries, "must floor loudly when the version list is unreadable")
+	// Exactly one, clear floor log: the storage-error floor, naming the underlying
+	// error — NOT the misleading "target not present" floor.
+	listErrFloor := observed.FilterMessageSnippet("could not list persisted versions").All()
+	require.NotEmpty(t, listErrFloor, "must floor with the storage-error message when the version list is unreadable")
+	require.Equal(t, "boom: storage unavailable", listErrFloor[len(listErrFloor)-1].ContextMap()["error"], "floor log must carry the underlying error")
+	require.Empty(t, observed.FilterMessageSnippet("chosen rollback target not present").All(),
+		"must NOT emit the misleading target-not-present floor when the real cause is the storage error")
 }
 
 func TestRestoreState_HonorsAbortCounterOnlyIfVersionMatches(t *testing.T) {
@@ -237,11 +248,15 @@ func TestBoundaryPersistPreservesAutoHealFields(t *testing.T) {
 	// recorded last-known-good marker.
 	const trackedVersion = int64(1783944564)
 	const lkg = int64(1783944444)
+	// A NodeStartTime recorded at the ACTUAL node start. A boundary write must not
+	// re-stamp it to the boundary's time (the round-2 drift fix).
+	const startTime = int64(1_700_000_000)
 	require.NoError(t, p.SaveNodeState(&persistence.NodeState{
 		OperatorAddress:            n.OperatorAddress.Hex(),
 		TrackedSourceVersion:       trackedVersion,
 		ConsecutiveMPKAborts:       2,
 		LastKnownGoodSourceVersion: lkg,
+		NodeStartTime:              startTime,
 	}))
 
 	// A boundary fires and persists its bookkeeping. With the old blind fresh-struct
@@ -256,6 +271,10 @@ func TestBoundaryPersistPreservesAutoHealFields(t *testing.T) {
 	// Boundary bookkeeping was written.
 	require.Equal(t, boundaryBlock, got.LastProcessedBoundary, "boundary block must be recorded")
 	require.NotZero(t, got.NodeStartTime, "node start time must be recorded")
+
+	// NodeStartTime is PRESERVED, not re-stamped to the boundary fire time (the
+	// round-2 drift fix): a boundary write on an existing state must leave it alone.
+	require.Equal(t, startTime, got.NodeStartTime, "pre-existing NodeStartTime must survive a boundary write, not drift to the boundary time")
 
 	// Auto-heal fields SURVIVE the boundary write (the regression this guards against).
 	require.Equal(t, trackedVersion, got.TrackedSourceVersion, "tracked source version must survive boundary write")

@@ -40,6 +40,11 @@ func firstBlockAtOrAfterTimestamp(
 	head uint64,
 	tsAt func(context.Context, uint64) (uint64, error),
 ) (uint64, error) {
+	if head == 0 {
+		// No blocks beyond genesis exist yet. The [1, head] search below would
+		// return a bogus block 1 for a nonexistent block, so refuse explicitly.
+		return 0, fmt.Errorf("no blocks available (head is 0)")
+	}
 	headTs, err := tsAt(ctx, head)
 	if err != nil {
 		return 0, err

@@ -147,6 +147,48 @@ func TestGetPrivateShareForVersion(t *testing.T) {
 	})
 }
 
+// TestActivatePendingVersion_RejectsPoisoned guards the "active is never
+// poisoned" invariant at the promotion boundary: ActivatePendingVersion must
+// refuse to promote a pending version that has been MarkPoisoned'd, while a
+// clean pending version still promotes normally.
+func TestActivatePendingVersion_RejectsPoisoned(t *testing.T) {
+	t.Run("refuses to activate a poisoned pending version", func(t *testing.T) {
+		ks := NewKeyStore()
+		active := &types.KeyShareVersion{Version: 100, PrivateShare: new(fr.Element).SetInt64(1)}
+		ks.AddVersion(active)
+		ks.SetActiveVersion(active)
+
+		pending := &types.KeyShareVersion{Version: 200, PrivateShare: new(fr.Element).SetInt64(2)}
+		ks.SetPendingVersion(pending)
+		ks.MarkPoisoned(200)
+
+		if err := ks.ActivatePendingVersion(); err == nil {
+			t.Fatal("expected error activating a poisoned pending version, got nil")
+		}
+		// Active must not have moved to the poisoned version.
+		if got := ks.GetActiveVersion(); got == nil || got.Version != 100 {
+			t.Fatalf("active must stay on 100 when the pending version is poisoned, got %+v", got)
+		}
+	})
+
+	t.Run("activates a clean pending version normally", func(t *testing.T) {
+		ks := NewKeyStore()
+		active := &types.KeyShareVersion{Version: 100, PrivateShare: new(fr.Element).SetInt64(1)}
+		ks.AddVersion(active)
+		ks.SetActiveVersion(active)
+
+		pending := &types.KeyShareVersion{Version: 200, PrivateShare: new(fr.Element).SetInt64(2)}
+		ks.SetPendingVersion(pending)
+
+		if err := ks.ActivatePendingVersion(); err != nil {
+			t.Fatalf("unexpected error activating a clean pending version: %v", err)
+		}
+		if got := ks.GetActiveVersion(); got == nil || got.Version != 200 {
+			t.Fatalf("active must advance to 200, got %+v", got)
+		}
+	})
+}
+
 func TestKeyStore_ExcludesPoisonedVersion(t *testing.T) {
 	ks := NewKeyStore()
 	good := &types.KeyShareVersion{Version: 100, PrivateShare: new(fr.Element).SetInt64(1)}
