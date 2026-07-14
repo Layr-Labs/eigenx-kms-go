@@ -115,6 +115,14 @@ func (n *Node) performRollback(poisonedVersion int64) {
 			return
 		}
 	}
+	// rollbackTarget chose a version that is not present in the persisted set
+	// (defense-in-depth: e.g. a future change prunes versions below the LKG
+	// marker, or LKG points outside the persisted set). Treat this exactly like
+	// the floor: loudly halt rotation, never auto-re-DKG, never change the MPK,
+	// and — mirroring the floor branch — leave the tracker untouched so it stays
+	// loud on every re-trigger rather than silently stalling.
+	n.logger.Sugar().Errorw("AUTO-HEAL FLOOR: chosen rollback target not present in persisted versions; rotation halted, decrypt still served. MANUAL INTERVENTION REQUIRED (no auto re-DKG).",
+		"operator_address", n.OperatorAddress.Hex(), "poisoned_version", poisonedVersion, "target", target)
 }
 
 // persistAbortTracker writes the current tracker into NodeState (merging with

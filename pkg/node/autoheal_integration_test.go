@@ -10,6 +10,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
+	"go.uber.org/zap/zaptest/observer"
 )
 
 func TestAutoHeal_DemotesAndRollsBackToLKG(t *testing.T) {
@@ -78,4 +79,41 @@ func TestAutoHeal_FloorHaltsWithoutReDKG(t *testing.T) {
 	}
 	// Poisoned, no lower version -> floor: active stays (still poisoned), no panic, no new version.
 	require.True(t, ks.IsPoisoned(100))
+	// Halt is guaranteed, not just structural: the active version is unchanged
+	// (no rollback target existed) and no new version was created (no re-DKG).
+	require.Equal(t, int64(100), ks.GetActiveVersion().Version, "active must not change when rotation halts at the floor")
+}
+
+func TestAutoHeal_MissingRollbackTargetHaltsLoudly(t *testing.T) {
+	// Defense-in-depth: rollbackTarget picks LKG (below the poisoned version and
+	// not poisoned) but that LKG version is NOT in the persisted set, so the
+	// apply-loop finds no matching object. This must halt loudly, leave the
+	// active version poisoned/unchanged, and not silently no-op.
+	core, observed := observer.New(zap.ErrorLevel)
+	l := zap.New(core)
+	ks := keystore.NewKeyStore()
+	poison := &types.KeyShareVersion{Version: 200, PrivateShare: new(fr.Element).SetInt64(2)}
+	ks.AddVersion(poison)
+	ks.SetActiveVersion(poison)
+
+	p := memory.NewMemoryPersistence()
+	n := &Node{logger: l, keyStore: ks, persistence: p, abortTracker: &abortTracker{}}
+	// Persist ONLY the poisoned version; the LKG (100) is deliberately absent
+	// from the persisted key-share set.
+	require.NoError(t, p.SaveKeyShareVersion(poison))
+	require.NoError(t, p.SaveNodeState(&persistence.NodeState{
+		LastKnownGoodSourceVersion: 100,
+		OperatorAddress:            n.OperatorAddress.Hex(),
+	}))
+
+	for i := 0; i < demotionThreshold; i++ {
+		n.onMPKValidationAbort(200, 200, 2)
+	}
+
+	require.True(t, ks.IsPoisoned(200), "poisoned version must be marked")
+	require.Equal(t, int64(200), ks.GetActiveVersion().Version, "active must not move when the rollback target is absent")
+
+	entries := observed.FilterMessageSnippet("AUTO-HEAL FLOOR").All()
+	require.NotEmpty(t, entries, "must emit a loud AUTO-HEAL FLOOR error when the rollback target is absent")
+	require.Equal(t, int64(100), entries[len(entries)-1].ContextMap()["target"], "log must name the missing target")
 }
