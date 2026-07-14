@@ -1130,6 +1130,36 @@ func (n *Node) expectedReshareDealers(operators []*peering.OperatorSetPeer) []co
 	return dealers
 }
 
+// resolveCutoffL2 maps the L1 deadline block (triggerBlock + interval - buffer)
+// to the deterministic L2 registry read height: the first L2 block whose
+// timestamp is >= the L1 deadline block's timestamp. All honest nodes compute
+// the same value from the agreed triggerBlock number. Returns an error (retry)
+// if the L1 deadline block does not exist yet or the L2 head has not reached
+// the target timestamp.
+func (n *Node) resolveCutoffL2(ctx context.Context, triggerBlock int64) (uint64, error) {
+	interval := config.GetReshareBlockIntervalForChain(n.ChainID)
+	buffer := config.GetReshareCutoffBufferForChain(n.ChainID)
+	deadlineL1 := uint64(triggerBlock + interval - buffer)
+
+	// The registrar/deadline block lives on L1, so read its header timestamp from
+	// the L1-bound caller (falling back to baseContractCaller when nil, matching
+	// the seed pattern in refreshPlatformConfig).
+	l1 := n.platformConfigCaller
+	if l1 == nil {
+		l1 = n.baseContractCaller
+	}
+	deadlineTs, err := l1.HeaderTimestampAt(ctx, deadlineL1)
+	if err != nil {
+		return 0, fmt.Errorf("L1 deadline block %d not readable yet: %w", deadlineL1, err)
+	}
+	// The commitment registry lives on L2/Base, so resolve the cutoff height there.
+	cutoffL2, err := n.baseContractCaller.FirstBlockAtOrAfterTimestamp(ctx, deadlineTs)
+	if err != nil {
+		return 0, fmt.Errorf("L2 cutoff not resolvable for ts %d: %w", deadlineTs, err)
+	}
+	return cutoffL2, nil
+}
+
 // deriveAgreedDealerSet returns the dealer set all operators agree to finalize on,
 // derived from SHARED on-chain state (the commitment registry) rather than any node's
 // local receipt timing. A dealer is in the set iff it submitted a commitment for this
