@@ -208,6 +208,33 @@ verified-set too small (`node.go:2308`), no source-version-agreed (`node.go:2325
 unrecoverable / availability states, not the poison signature). This is stated explicitly so
 "consecutive" is unambiguous across interleaved non-MPK aborts.
 
+**Majority-gated increment (walk-back convergence).** The counter increments on an MPK-validation
+abort **only when the round's agreed majority source version equals this node's active source
+version** — i.e. `srcVersion` from `SelectMajoritySourceVersion` (`node.go:2319`) `==` the active
+version this node dealt from. This is the coordination that makes staggered rollback safe:
+
+- *Why it is needed.* Detection is not lock-step. Nodes can be a round or two apart (an interspersed
+  non-MPK abort on one node, per-node interval jitter), so they demote on different rounds. When an
+  early mover has rolled back to `V−1` while the majority is still on poisoned `V`,
+  `SelectMajoritySourceVersion` still picks `V` (it has the ≥threshold count), so the round deals
+  from poisoned `V` and aborts again. Without gating, the early mover would count that abort against
+  its **good** `V−1` and eventually demote `V−1` too — nodes scatter across `V/V−1/V−2`, no version
+  reaches threshold, and rotation thrashes worse than the original stall.
+- *What gating does.* A node only "blames" (counts against) its active version when the cluster is
+  actually attempting that version (`majority srcVersion == active`). The majority still on `V`
+  keeps accumulating and will demote `V`; a minority already on `V−1` does **not** increment while
+  the majority is on `V`, so it waits on the correct target without over-walking. Once a
+  **threshold** of nodes have rolled to `V−1`, `SelectMajoritySourceVersion` picks `V−1`, the round
+  deals from good `V−1`, validation passes, and the cluster heals; the last straggler on `V` is
+  dropped as a laggard and re-derives its share as a recipient of the `V−1` dealers.
+
+Convergence is therefore **eventual** (once a threshold aligns on the target), not simultaneous —
+bounded by the small detection skew at `N=3`. Target *agreement* still relies on nodes holding
+identical persisted-version histories (so "next-lower persisted version" resolves to the same
+value); a diverging history degrades to liveness thrash toward the floor, never corruption (see
+walk-back below). Removing that last dependency by agreeing the target on-chain via the same
+verified-majority mechanism is a deferred follow-up.
+
 ### Last-known-good (LKG) marker
 
 On every reshare round that passes MPK validation and persists, record the **agreed majority
@@ -230,7 +257,10 @@ state**, not local history:
    already-poisoned cluster, as in preprod), step the active pointer to the next-lower persisted
    version and let the next round attempt it. The next round's dealer-set derivation and
    source-version agreement (Part-1-deterministic) plus Layer-1 validation decide whether that
-   target heals; if it too is poisoned, demote and step again. **Safety** is fully enforced by the
+   target heals; if it too is poisoned, demote and step again. Staggered rollback is safe because
+   of the **majority-gated increment** (see Detection): a node that has already stepped to `V−1`
+   does not keep counting aborts while the majority is still attempting `V`, so early movers wait
+   on the correct target instead of over-walking to `V−2`. **Safety** is fully enforced by the
    shared on-chain agreement + MPK gate — a node can never persist a target the others reject.
    **Liveness** relies on nodes having matching persisted-version histories: persisted version
    *numbers* are session timestamps written only on cross-node-validated rounds, so histories
@@ -306,6 +336,11 @@ All via `./scripts/goTest.sh`.
   the next round validates and persists.
 - **Auto-heal — walk-back.** No usable LKG (first-deploy-onto-poison): assert the node steps to
   the next-lower persisted version, skips persisted-poisoned versions, and converges.
+- **Auto-heal — majority-gated increment (staggered rollback).** A node that has rolled back to
+  `V−1` while the majority is still on poisoned `V` does NOT increment its counter (majority
+  `srcVersion == V ≠ active V−1`), so it does not over-walk to `V−2`; assert it holds `V−1` until a
+  threshold aligns, then the round deals from `V−1` and heals. Include the skewed-detection case
+  (one node at 2 aborts, another at 3) and assert eventual convergence without scatter.
 - **Auto-heal — poisoned-version exclusion.** Assert a poisoned version is never returned by
   `GetKeyVersionAtTime`, never re-activated by `GetActiveVersion`/served at `/pubkey`, and never
   returned by `GetPrivateShareForVersion`.
