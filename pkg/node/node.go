@@ -67,6 +67,10 @@ type Node struct {
 	transportSigner    transportSigner.ITransportSigner
 	persistence        persistence.INodePersistence
 
+	// abortTracker counts consecutive Layer-1 MPK-validation aborts on the active
+	// source version (majority-gated) to drive auto-heal demotion/rollback.
+	abortTracker *abortTracker
+
 	// Dynamic components (created when needed)
 	dkg      *dkg.DKG
 	resharer *reshare.Reshare
@@ -511,6 +515,7 @@ func NewNode(
 		platformConfigCaller:      platformConfigCaller,
 		commitmentRegistryAddress: commitmentRegistryAddress,
 		persistence:               p,
+		abortTracker:              &abortTracker{},
 	}
 
 	// Build app allowlist if configured
@@ -2482,6 +2487,13 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 				"agreed_dealers", len(participantIDsForFinalize),
 				"new_version", newKeyVersion.Version,
 				"error", verr)
+			// Auto-heal: record this abort against our LOCAL active source version
+			// (sourceVersion, declared above = what we dealt FROM), majority-gated by the
+			// AGREED majority source version (srcVersion, from SelectMajoritySourceVersion).
+			// These are DISTINCT: an early roller on V-1
+			// (sourceVersion=V-1) must not count aborts the majority incurs on the
+			// still-poisoned V (srcVersion=V), or it would over-walk to V-2.
+			n.onMPKValidationAbort(sourceVersion, srcVersion, newThreshold)
 			return fmt.Errorf("reshare aborted: post-reshare MPK validation failed: %w; will retry next interval", verr)
 		}
 	}
@@ -2505,6 +2517,11 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 
 	// Only add to keystore after successful persistence
 	n.keyStore.AddVersion(newKeyVersion)
+
+	// Auto-heal: this round passed MPK validation and persisted, so reset the abort
+	// counter and record the agreed majority source version (srcVersion) as
+	// last-known-good for future rollback targeting.
+	n.recordSuccessfulReshare(srcVersion)
 
 	n.logger.Sugar().Infow("Reshare completed", "operator_address", n.OperatorAddress.Hex(), "new_version", newKeyVersion.Version)
 
