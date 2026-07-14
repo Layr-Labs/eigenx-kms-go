@@ -116,9 +116,13 @@ time, not from any finality tag.
    registry read height `cutoffL2` = the first Base block with `timestamp ≥ T`, resolved by binary
    search over L2 headers at `BlockType_Latest` (real-time head; no `safe`/`finalized` tag). Because
    `T` derives from an agreed L1 block *number* and `cutoffL2` is a deterministic function of block
-   timestamps, every node resolves the **same** `cutoffL2` once its own L2 view has reached that
-   height. `cutoffL2` is only seconds old by construction (the cutoff sits ~24s before the final
-   deadline), so it stays well within a non-archive Base node's state-retention window.
+   timestamps, every node resolves the **same** `cutoffL2`. **The wait-until-synced gate applies to
+   this resolution step, not only the read below:** a node must not resolve `cutoffL2` until its own
+   L2 head satisfies `head.timestamp ≥ T` — otherwise a lagging node would resolve a wrong (lower)
+   height against a partial view and diverge. Wait (bounded by the round's final deadline) until
+   `head.timestamp ≥ T`, then resolve. `cutoffL2` is only seconds old by construction (the cutoff
+   sits ~24s before the final deadline), so it stays well within a non-archive Base node's
+   state-retention window.
 
 4. **Derive D at the pinned height, with retry-until-readable.** Read the registry pinned at
    `cutoffL2` (via `GetCommitmentAt`, which already accepts a block height, `commitmentRegistry.go:64`):
@@ -133,11 +137,13 @@ time, not from any finality tag.
      reintroduction path (see Findings). Replace it: any per-dealer read that still fails after the
      retry budget aborts the **whole round** (all nodes fail together), never finalizes on a
      partial set.
-   - **Bounded by the final deadline.** All retrying is bounded by the round's final deadline
-     `N + interval`. If `cutoffL2` is not readable by then, the round aborts and the session is
-     cleaned up (so the next interval is not skipped by the "session in progress" guard,
-     `node.go:739`). Require `|D| ≥ newThreshold`; else abort+retry next interval (auto-heal
-     backstops a persistent stall).
+   - **Bounded by the final deadline.** All retrying (both the step-3 resolution wait and this read)
+     is bounded by the round's final deadline `N + interval`. If `cutoffL2` is not resolvable/readable
+     by then, the round aborts and the session is cleaned up. Because `N + interval` is itself the
+     next boundary, a round that runs to its deadline will typically resume at `N + 2·interval` (the
+     every-other-interval cadence noted under Caveats), not the very next boundary — aborting a block
+     or two before the deadline recovers the immediate next boundary if that matters. Require
+     `|D| ≥ newThreshold`; else abort+retry (auto-heal backstops a persistent stall).
 
 5. **New-operator join path.** `RunReshareAsNewOperator` (`node.go:2459`) also calls
    `deriveAgreedDealerSet` (`node.go:2648`) but currently receives only `sessionTimestamp`, no
@@ -154,9 +160,12 @@ shares.
 
 - **Shallow tip reorgs.** Because reads use `Latest` (by design, for real-time operation), a
   shallow L1 or L2 reorg around the cutoff could momentarily change `N` or `cutoffL2` across nodes.
-  This is accepted: Layer-1 MPK validation still refuses to persist a divergent result, and Part-2
-  auto-heal recovers if a reorg ever induces a one-round split. We do not use finality tags because
-  their lag (minutes on OP-stack `finalized`) exceeds the round and would stall rotation.
+  This is accepted, and the backstop is **Part-2 auto-heal** — NOT Layer-1 MPK validation. Note
+  precisely: for the n=3 / threshold-2 / degree-1 case this whole design addresses, a reorg-induced
+  divergent `D` would *pass* `ValidateReshareMasterPublicKey` (any ≥2-of-3 subset reconstructs the
+  same constant — see Root cause), so MPK validation cannot catch it; only auto-heal recovers such
+  a split. We do not use finality tags because their lag (minutes on OP-stack `finalized`) exceeds
+  the round and would stall rotation.
 - **Base RPC state retention.** `cutoffL2` is seconds old by construction, so a non-archive Base
   RPC (typical ~128-block / ~4-min retention) still serves state at that height. Archive RPC is
   therefore NOT required; the retry loop covers the only expected failure (local L2 view lagging
@@ -305,6 +314,32 @@ All via `./scripts/goTest.sh`.
 - **Deferred follow-up:** if subset-liveness under a genuinely-down operator (one that never
   submits within a round) becomes a requirement, the "abort if `|D| < threshold`" rule can be
   relaxed to finalize on the deterministic sub-threshold set; not needed now.
+
+## Implementation notes (for the plan)
+
+Carried forward from design review as concrete inputs the implementation plan must resolve — none
+are design changes, but each is real work or a decision the plan must make explicit:
+
+- **Reliable height observation (no hang).** The block-gate (observe `N + interval − buffer`) and
+  the final-deadline bound (`N + interval`) must not depend on the lossy single-consumer block
+  channel (`blockHandler.HandleBlock` drops blocks when full, `blockHandler.go:64`;
+  `checkScheduledOperations` is already its consumer, `node.go:675`). Poll the L1 client height
+  instead — polling a block *number* is deterministic and does NOT reintroduce the wall-clock drift
+  that caused the bug (all nodes converge on the same number). The wait must have a bound that
+  cannot itself hang (ctx + the `N + interval` deadline).
+- **Source of `T`.** Prefer the timestamp of the observed `N + interval − buffer` block object
+  (`ethereum.EthereumBlock.Timestamp`, already available at `node.go:682`) over a separate L1
+  `HeaderByNumber` read, to avoid an extra call and interface method.
+- **L2 header access.** The timestamp→height binary search needs L2 `HeaderByNumber`; it exists on
+  the underlying client but is NOT on `IContractCaller` — a new interface method + mock is required.
+- **New persistence surface.** The LKG marker and the poisoned-version set need new
+  `INodePersistence` methods (interface + redis + memory + badger + mock); `NodeState`
+  (`persistence/types.go`) has no such fields today. Budget this explicitly.
+- **L2-freshness tolerance / buffer sizing.** With `buffer = 2`, the resolve+read budget is
+  ~`N+8 → N+10` ≈ 24s (Sepolia), much tighter than the old 90s protocol timeout. A node whose Base
+  RPC lags > ~24s aborts every round and becomes a permanent laggard; with n=3, two such nodes
+  stall rotation. Validate 24s against preprod's Base RPC latency during implementation and raise
+  `buffer` if needed (it is per-chain config precisely so this is tunable without code change).
 
 ## Rollout
 
