@@ -1163,19 +1163,23 @@ func (n *Node) resolveCutoffL2(ctx context.Context, triggerBlock int64) (uint64,
 // deriveAgreedDealerSet returns the dealer set all operators agree to finalize on,
 // derived from SHARED on-chain state (the commitment registry) rather than any node's
 // local receipt timing. A dealer is in the set iff it submitted a commitment for this
-// epoch in the registry.
+// epoch in the registry, read at a DETERMINISTIC L2 cutoff height.
 //
-// Because reads happen at chain head (the registry is on Base/L2 while the reshare is
-// triggered by an Ethereum/L1 block, so the L1 trigger block cannot pin the L2 read —
-// see docs/011_reshareDealerSetAgreement.md), we converge by polling until every
-// EXPECTED dealer (on-chain ∩ prior participants) has submitted, or a bounded deadline
-// passes. `commitments[epoch]` is append-only and epoch-keyed, so the observed set only
-// grows and never changes a past entry — polling converges all honest nodes to the same
-// "all dealers that submitted for this epoch" set. A genuinely-offline operator never
-// submits, so it is uniformly absent on every node (preserving liveness).
+// The commitment registry lives on Base/L2 while the reshare is triggered by an
+// Ethereum/L1 block, so the L1 trigger block cannot directly pin the L2 read. Instead we
+// resolve triggerBlock to a deterministic L2 cutoff height (resolveCutoffL2: the first L2
+// block at/after the L1 deadline block's timestamp) and read EVERY expected dealer's
+// commitment pinned at that exact height. Because all honest nodes compute the same
+// triggerBlock → cutoff mapping and read the append-only registry at the same height, they
+// observe an IDENTICAL dealer set — closing the cross-node dealer-set split the head-read
+// convergence loop could not (docs/011, docs/013).
 //
-// pinnedBlock, when > 0, is used as the L2 read height (reserved for when an L2 block
-// feed is available); 0 means read at head.
+// A transient read failure (e.g. "missing trie node" — this node's L2 view has not yet
+// synced to the cutoff height) is RETRIED, never skipped: silently dropping a dealer on
+// one node only re-introduces the exact split this feature fixes. If any dealer still
+// cannot be read by the deadline, the WHOLE round is ABORTED (error) so every node fails
+// together and retries next interval — never a partial dealer set.
+//
 // Returns the agreed dealer set AND each submitter's on-chain commitment hash, so the
 // caller can verify each dealer's P2P-advertised (commitments, sourceVersion) against the
 // shared registry state (docs/013 Change 2).
@@ -1187,9 +1191,13 @@ func (n *Node) deriveAgreedDealerSet(
 	ctx context.Context,
 	operators []*peering.OperatorSetPeer,
 	epoch int64,
-	pinnedBlock int64,
+	triggerBlock int64,
 	expectedDealers []common.Address,
 ) ([]common.Address, map[common.Address][32]byte, error) {
+	// expectedDealers overrides the default when non-nil (the new-operator join path
+	// passes existingOperatorDealers(...) so a node with no active version scopes to the
+	// existing on-chain submitters, not the all-operators fallback expectedReshareDealers
+	// returns for activeVersion == nil).
 	expected := expectedDealers
 	if expected == nil {
 		expected = n.expectedReshareDealers(operators)
@@ -1198,43 +1206,28 @@ func (n *Node) deriveAgreedDealerSet(
 		return nil, nil, fmt.Errorf("no expected dealers for reshare")
 	}
 
-	deadline := time.Now().Add(config.GetProtocolTimeoutForChain(n.ChainID))
+	// Bound all retrying by the round's FINAL boundary (N + interval), NOT the protocol
+	// timeout: the cutoff block N + interval - buffer lands ~(interval - buffer) blocks
+	// after N, which on Sepolia (~96s) exceeds the 90s protocol timeout — bounding by that
+	// shorter value would abort every round before the cutoff block even exists. Budget one
+	// full interval of wall clock (block time with margin), anchored at finalize start
+	// (~block N).
+	intervalBlocks := config.GetReshareBlockIntervalForChain(n.ChainID)
+	roundBudget := time.Duration(intervalBlocks) * 13 * time.Second // ~13s/block gives margin over 12s
+	deadline := time.Now().Add(roundBudget)
 	pollInterval := 1 * time.Second
 
-	var submitted []common.Address
-	onChainHashes := make(map[common.Address][32]byte, len(expected))
+	// Resolve the deterministic L2 cutoff height, retrying until the chain has advanced far
+	// enough (bounded by the round's final-boundary deadline).
+	var cutoffL2 uint64
 	for {
-		submitted = submitted[:0]
-		for k := range onChainHashes {
-			delete(onChainHashes, k)
-		}
-		for _, dealer := range expected {
-			commitmentHash, _, _, err := n.baseContractCaller.GetCommitmentAt(
-				ctx, n.commitmentRegistryAddress, epoch, dealer, uint64(max(pinnedBlock, 0)),
-			)
-			if err != nil {
-				n.logger.Sugar().Debugw("registry read failed while deriving dealer set",
-					"operator_address", n.OperatorAddress.Hex(),
-					"dealer", dealer.Hex(), "error", err)
-				continue
-			}
-			if commitmentHash != ([32]byte{}) {
-				submitted = append(submitted, dealer)
-				onChainHashes[dealer] = commitmentHash
-			}
-		}
-
-		// Converged: every expected dealer has submitted on-chain.
-		if len(submitted) == len(expected) {
-			return submitted, onChainHashes, nil
+		h, err := n.resolveCutoffL2(ctx, triggerBlock)
+		if err == nil {
+			cutoffL2 = h
+			break
 		}
 		if time.Now().After(deadline) {
-			// Deadline reached: finalize on whoever submitted (uniform across nodes,
-			// since it's derived from the same registry). Caller enforces |D| >= threshold.
-			n.logger.Sugar().Infow("Dealer-set convergence deadline reached",
-				"operator_address", n.OperatorAddress.Hex(),
-				"submitted", len(submitted), "expected", len(expected))
-			return submitted, onChainHashes, nil
+			return nil, nil, fmt.Errorf("reshare aborted: L2 cutoff not resolvable before deadline: %w; will retry next interval", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -1242,6 +1235,41 @@ func (n *Node) deriveAgreedDealerSet(
 		case <-time.After(pollInterval):
 		}
 	}
+
+	// Read every expected dealer's commitment pinned at cutoffL2. A transient read failure
+	// is RETRIED (never skipped); persistent failure by the deadline ABORTS the whole round.
+	submitted := make([]common.Address, 0, len(expected))
+	onChainHashes := make(map[common.Address][32]byte, len(expected))
+	for _, dealer := range expected {
+		var lastErr error
+		for {
+			commitmentHash, _, _, err := n.baseContractCaller.GetCommitmentAt(
+				ctx, n.commitmentRegistryAddress, epoch, dealer, cutoffL2,
+			)
+			if err == nil {
+				if commitmentHash != ([32]byte{}) {
+					submitted = append(submitted, dealer)
+					onChainHashes[dealer] = commitmentHash
+				}
+				break
+			}
+			lastErr = err
+			if time.Now().After(deadline) {
+				return nil, nil, fmt.Errorf("reshare aborted: dealer %s not readable at cutoff L2 block %d before deadline: %w; will retry next interval",
+					dealer.Hex(), cutoffL2, lastErr)
+			}
+			select {
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			case <-time.After(pollInterval):
+			}
+		}
+	}
+
+	n.logger.Sugar().Infow("Derived agreed dealer set at pinned L2 cutoff",
+		"operator_address", n.OperatorAddress.Hex(),
+		"cutoff_l2_block", cutoffL2, "submitted", len(submitted), "expected", len(expected))
+	return submitted, onChainHashes, nil
 }
 
 // fetchAndVerifyReshareShare obtains the share `dealer` generated for THIS node via the
@@ -2302,14 +2330,12 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 	// each node's local receipt timing: D = operators that submitted a commitment for
 	// this epoch in the registry. See docs/011_reshareDealerSetAgreement.md.
 	//
-	// We read at L2 HEAD (pinnedBlock = 0), NOT session.TriggerBlockNumber. The trigger
-	// block is an Ethereum L1 block number, but the commitment registry lives on Base
-	// (L2) — the two block-number spaces are unrelated, so pinning the L2 read to an L1
-	// height would query Base at a wildly wrong (years-old) height and return empty,
-	// aborting every reshare. Head reads + the convergence/abort-retry below give
-	// agreement without a pinned height. session.TriggerBlockNumber is retained for when
-	// a real L2 block feed is plumbed; until then it must NOT be used as the read height.
-	agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, 0, nil)
+	// The read is pinned at a DETERMINISTIC L2 cutoff height that deriveAgreedDealerSet
+	// resolves from triggerBlock (the L1 interval-boundary block, identical across nodes):
+	// the L1 deadline block's timestamp maps to the first L2 block at/after it. All honest
+	// nodes therefore read the append-only registry at the same height and observe an
+	// identical dealer set. triggerBlock is threaded from RunReshareAsExistingOperator.
+	agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, triggerBlock, nil)
 	if err != nil {
 		return fmt.Errorf("failed to derive agreed dealer set: %w", err)
 	}
@@ -2675,6 +2701,10 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	// all-operators fallback expectedReshareDealers would return for a node with no active
 	// version — otherwise convergence can never complete and every join waits the full
 	// protocol timeout (docs/013; PR #119 round 3, finding 2).
+	//
+	// triggerBlock is 0 here (the join path does not yet thread it — that arrives in a
+	// follow-up; a 0 trigger resolves the cutoff at L2 head). The existingOperatorDealers
+	// override MUST be preserved regardless of triggerBlock.
 	agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, 0,
 		existingOperatorDealers(operators, existingOpIDs))
 	if err != nil {
