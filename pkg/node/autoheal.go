@@ -147,6 +147,14 @@ func (n *Node) recordSuccessfulReshare(agreedSrcVersion int64) {
 	if err != nil || st == nil {
 		st = &persistence.NodeState{OperatorAddress: n.OperatorAddress.Hex()}
 	}
+	// If the prior persisted state was mid-abort, this validated reshare confirms
+	// the cluster has healed: emit a distinct info log so the recovery is greppable.
+	if st.ConsecutiveMPKAborts > 0 {
+		n.logger.Sugar().Infow("Auto-heal: rotation resumed (reshare validated after prior aborts)",
+			"operator_address", n.OperatorAddress.Hex(),
+			"prior_consecutive_aborts", st.ConsecutiveMPKAborts,
+			"agreed_source_version", agreedSrcVersion)
+	}
 	st.ConsecutiveMPKAborts = 0
 	if agreedSrcVersion > 0 {
 		st.LastKnownGoodSourceVersion = agreedSrcVersion
