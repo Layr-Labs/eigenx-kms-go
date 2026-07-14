@@ -776,7 +776,7 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 				"block_timestamp", blockTimestamp)
 
 			go func() {
-				if err := n.RunReshareAsNewOperator(blockTimestamp); err != nil {
+				if err := n.RunReshareAsNewOperator(blockTimestamp, blockNumber); err != nil {
 					n.logger.Sugar().Errorw("Failed to join cluster via reshare",
 						"operator_address", n.OperatorAddress.Hex(),
 						"error", err)
@@ -2512,11 +2512,12 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 }
 
 // RunReshareAsNewOperator executes reshare protocol as a new operator (no existing shares).
-func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
+func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64, triggerBlock int64) error {
 	ctx := context.Background()
 	n.logger.Sugar().Infow("Starting reshare as new operator (joining existing cluster)",
 		"operator_address", n.OperatorAddress.Hex(),
-		"session_timestamp", sessionTimestamp)
+		"session_timestamp", sessionTimestamp,
+		"trigger_block", triggerBlock)
 
 	// Fetch current operators from peering system
 	operators, err := n.fetchCurrentOperators(ctx, n.AVSAddress, n.OperatorSetId)
@@ -2702,10 +2703,12 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	// version — otherwise convergence can never complete and every join waits the full
 	// protocol timeout (docs/013; PR #119 round 3, finding 2).
 	//
-	// triggerBlock is 0 here (the join path does not yet thread it — that arrives in a
-	// follow-up; a 0 trigger resolves the cutoff at L2 head). The existingOperatorDealers
-	// override MUST be preserved regardless of triggerBlock.
-	agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, 0,
+	// The join path threads the REAL trigger block (from the scheduler's block boundary), so
+	// resolveCutoffL2 maps it to the IDENTICAL deterministic L2 cutoff height every existing
+	// operator computes — the join and existing paths agree on the same dealer set by reading
+	// the append-only registry at the same height. The existingOperatorDealers override MUST
+	// be preserved regardless of triggerBlock.
+	agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, triggerBlock,
 		existingOperatorDealers(operators, existingOpIDs))
 	if err != nil {
 		return fmt.Errorf("failed to derive agreed dealer set (new operator): %w", err)

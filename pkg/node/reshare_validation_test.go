@@ -71,7 +71,7 @@ func TestRunReshareAsExistingOperator_PureRefreshPassesGuard(t *testing.T) {
 
 func TestRunReshareAsNewOperator_AllOperatorsNewRejected(t *testing.T) {
 	n := makeNodeForValidation(t, 3)
-	err := n.RunReshareAsNewOperator(1000)
+	err := n.RunReshareAsNewOperator(1000, 0)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "out of range")
 }

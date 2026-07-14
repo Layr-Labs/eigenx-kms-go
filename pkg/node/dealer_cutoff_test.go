@@ -9,6 +9,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/config"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/contractCaller"
 	"github.com/ethereum/go-ethereum/common"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
@@ -170,4 +171,29 @@ func TestDeriveAgreedDealerSet_AbortsWholeRoundOnPersistentReadFailure(t *testin
 	if got != nil {
 		t.Fatalf("expected no partial dealer set on abort, got %d dealers", len(got))
 	}
+}
+
+// TestNewOperatorPath_UsesTriggerBlockForCutoff asserts a joining node computes the same
+// deterministic L2 cutoff as an existing node given the same trigger block. The join path
+// (RunReshareAsNewOperator) threads the real trigger block into deriveAgreedDealerSet, which
+// calls the identical resolveCutoffL2 helper exercised here — so cutoff parity between the
+// join and existing paths is structural, not incidental.
+func TestNewOperatorPath_UsesTriggerBlockForCutoff(t *testing.T) {
+	l, _ := zap.NewDevelopment()
+	var seenDeadlineBlock uint64
+	stub := &contractCaller.MockContractCallerStub{
+		HeaderTimestampAtFunc: func(ctx context.Context, b uint64) (uint64, error) {
+			seenDeadlineBlock = b
+			return 1000, nil
+		},
+		FirstBlockAtOrAfterTimestampFunc: func(ctx context.Context, ts uint64) (uint64, error) { return 5000, nil },
+	}
+	n := &Node{logger: l, ChainID: config.ChainId_EthereumAnvil, baseContractCaller: stub, platformConfigCaller: stub}
+
+	got, err := n.resolveCutoffL2(context.Background(), 200)
+	require.NoError(t, err)
+	require.Equal(t, uint64(5000), got)
+	interval := config.GetReshareBlockIntervalForChain(config.ChainId_EthereumAnvil)
+	buffer := config.GetReshareCutoffBufferForChain(config.ChainId_EthereumAnvil)
+	require.Equal(t, uint64(200+interval-buffer), seenDeadlineBlock)
 }
