@@ -162,6 +162,32 @@ const (
 	ReshareBlockInterval_Anvil   = 10 // 10 blocks for testing (20 seconds with 2s blocks)
 )
 
+// Reshare dealer-set cutoff buffer, in L1 blocks before the round's final
+// boundary (N + interval). At block N + interval - buffer the dealer set is
+// snapshotted. The buffer leaves room after the cutoff to read the pinned
+// registry and finalize before the next boundary. Tunable per chain if a
+// chain's Base RPC latency needs a wider read window.
+const (
+	ReshareCutoffBuffer_Mainnet = 2
+	ReshareCutoffBuffer_Sepolia = 2
+	ReshareCutoffBuffer_Anvil   = 2
+)
+
+// GetReshareCutoffBufferForChain returns the dealer-set cutoff buffer (in L1
+// blocks) for a given chain.
+func GetReshareCutoffBufferForChain(chainId ChainId) int64 {
+	switch chainId {
+	case ChainId_EthereumMainnet:
+		return ReshareCutoffBuffer_Mainnet
+	case ChainId_EthereumSepolia:
+		return ReshareCutoffBuffer_Sepolia
+	case ChainId_EthereumAnvil:
+		return ReshareCutoffBuffer_Anvil
+	default:
+		return ReshareCutoffBuffer_Mainnet
+	}
+}
+
 func GetEnvironmentNameForChainName(chainName ChainName) (string, error) {
 	switch chainName {
 	case ChainName_EthereumMainnet:
