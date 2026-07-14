@@ -119,29 +119,28 @@ func (n *Node) performRollback(poisonedVersion int64) {
 			"operator_address", n.OperatorAddress.Hex(), "poisoned_version", poisonedVersion)
 		return
 	}
-	for _, v := range versions {
-		if v.Version == target {
-			n.keyStore.SetActiveVersion(v)
-			if err := n.persistence.SetActiveVersionTimestamp(target); err != nil {
-				n.logger.Sugar().Errorw("Auto-heal: failed to persist rolled-back active version", "target", target, "error", err)
-			}
-			// Reset the tracker to the new active version.
-			n.abortTracker.TrackedSourceVersion = target
-			n.abortTracker.ConsecutiveAborts = 0
-			n.persistAbortTracker()
-			n.logger.Sugar().Infow("Auto-heal: rolled active version back to recover rotation",
-				"operator_address", n.OperatorAddress.Hex(), "from", poisonedVersion, "to", target)
-			return
-		}
+	// Activate the keystore's OWN canonical object for the target version (single
+	// source of truth): this keeps ks.activeVersion and its ks.keyVersions entry
+	// the same object with a consistent IsActive flag, instead of pointing active
+	// at a persistence-layer deep copy while the canonical entry stays IsActive=false.
+	if err := n.keyStore.SetActiveVersionByTimestamp(target); err != nil {
+		// target came from rollbackTarget over the persisted version numbers, but
+		// the keystore doesn't hold it (defense-in-depth: pruning below LKG, or a
+		// mismatch). Treat exactly like the floor — loud halt, no re-DKG, no MPK
+		// change, tracker untouched so it stays loud on every re-trigger.
+		n.logger.Sugar().Errorw("AUTO-HEAL FLOOR: chosen rollback target not present in keystore; rotation halted, decrypt still served. MANUAL INTERVENTION REQUIRED (no auto re-DKG).",
+			"operator_address", n.OperatorAddress.Hex(), "poisoned_version", poisonedVersion, "target", target)
+		return
 	}
-	// rollbackTarget chose a version that is not present in the persisted set
-	// (defense-in-depth: e.g. a future change prunes versions below the LKG
-	// marker, or LKG points outside the persisted set). Treat this exactly like
-	// the floor: loudly halt rotation, never auto-re-DKG, never change the MPK,
-	// and — mirroring the floor branch — leave the tracker untouched so it stays
-	// loud on every re-trigger rather than silently stalling.
-	n.logger.Sugar().Errorw("AUTO-HEAL FLOOR: chosen rollback target not present in persisted versions; rotation halted, decrypt still served. MANUAL INTERVENTION REQUIRED (no auto re-DKG).",
-		"operator_address", n.OperatorAddress.Hex(), "poisoned_version", poisonedVersion, "target", target)
+	if err := n.persistence.SetActiveVersionTimestamp(target); err != nil {
+		n.logger.Sugar().Errorw("Auto-heal: failed to persist rolled-back active version", "target", target, "error", err)
+	}
+	// Reset the tracker to the new active version.
+	n.abortTracker.TrackedSourceVersion = target
+	n.abortTracker.ConsecutiveAborts = 0
+	n.persistAbortTracker()
+	n.logger.Sugar().Infow("Auto-heal: rolled active version back to recover rotation",
+		"operator_address", n.OperatorAddress.Hex(), "from", poisonedVersion, "to", target)
 }
 
 // persistAbortTracker writes the current tracker into NodeState (merging with

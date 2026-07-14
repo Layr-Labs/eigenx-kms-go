@@ -1281,6 +1281,12 @@ func (n *Node) deriveAgreedDealerSet(
 	// construction (L1 ~12s/block, +1s margin). This budget is only a generous CEILING
 	// on how long to keep retrying cutoff resolution — it is rarely approached (see the
 	// block-comment above) — so the hardcoded 13s/block is a safe, deliberate constant.
+	// Note: roundBudget is a ceiling for the cutoff-resolve + per-dealer retry loop
+	// measured from THIS finalize call, not from block N. On chains with large intervals
+	// it can nominally exceed GetProtocolTimeoutForChain (e.g. Mainnet intervalBlocks=50
+	// ⇒ ~650s vs the 8-min protocol timeout), which is harmless: finalize runs well into
+	// the round, so the cutoff block already exists by the time we resolve it and the loop
+	// returns promptly rather than actually spending the full budget.
 	intervalBlocks := config.GetReshareBlockIntervalForChain(n.ChainID)
 	roundBudget := time.Duration(intervalBlocks) * 13 * time.Second // ~13s/block gives margin over 12s
 	deadline := time.Now().Add(roundBudget)

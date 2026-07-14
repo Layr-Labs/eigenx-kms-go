@@ -51,6 +51,33 @@ func (ks *KeyStore) SetActiveVersion(version *types.KeyShareVersion) {
 	ks.activeVersion = version
 }
 
+// SetActiveVersionByTimestamp activates the keystore's own stored version with
+// the given timestamp (so ks.activeVersion and the ks.keyVersions entry are the
+// same object, keeping IsActive consistent). Refuses to activate a poisoned
+// version. Returns an error if no such version is stored.
+func (ks *KeyStore) SetActiveVersionByTimestamp(version int64) error {
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+
+	// Read the poisoned set inline under the Lock already held here; do NOT call
+	// IsPoisoned (which takes its own RLock) — that would be lock re-entrancy
+	// (matches ActivatePendingVersion / GetPrivateShareForVersion).
+	if _, bad := ks.poisoned[version]; bad {
+		return fmt.Errorf("cannot activate poisoned version %d", version)
+	}
+	for _, v := range ks.keyVersions {
+		if v.Version == version {
+			if ks.activeVersion != nil {
+				ks.activeVersion.IsActive = false
+			}
+			v.IsActive = true
+			ks.activeVersion = v
+			return nil
+		}
+	}
+	return fmt.Errorf("no key version %d in keystore", version)
+}
+
 // GetActiveVersion returns the currently active key version.
 //
 // The active pointer is normally never set to a poisoned version: on a

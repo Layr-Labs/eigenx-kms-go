@@ -64,6 +64,18 @@ func TestAutoHeal_DemotesAndRollsBackToLKG(t *testing.T) {
 	require.Equal(t, int64(1783944444), ks.GetActiveVersion().Version, "active must roll back to LKG")
 	poisoned, _ := p.ListPoisonedVersions()
 	require.Contains(t, poisoned, int64(1783944564))
+
+	// Object-identity consistency (round-3 fix): after rollback the keystore must
+	// activate its OWN canonical object, not a persistence-layer deep copy. So
+	// GetActiveVersion().IsActive must be true, and the active pointer must be the
+	// exact same object the keyVersions scan resolves — otherwise ks.activeVersion
+	// would point at a copy while the canonical keyVersions entry stayed IsActive=false.
+	av := ks.GetActiveVersion()
+	require.True(t, av.IsActive, "rolled-back active version must have IsActive=true")
+	scanned := ks.GetKeyVersionAtTime(1783944444)
+	require.NotNil(t, scanned, "keyVersions scan must resolve the rolled-back version")
+	require.Same(t, av, scanned, "active version must be the SAME object as its keyVersions entry (no deep-copy divergence)")
+	require.True(t, scanned.IsActive, "the keyVersions entry for the active version must also read IsActive=true")
 }
 
 func TestAutoHeal_MinorityDoesNotOverWalk(t *testing.T) {
