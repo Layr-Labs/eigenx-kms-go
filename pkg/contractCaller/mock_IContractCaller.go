@@ -273,6 +273,72 @@ func (_c *MockIContractCaller_FilterAppUpgraded_Call) RunAndReturn(run func(apps
 	return _c
 }
 
+// FirstBlockAtOrAfterTimestamp provides a mock function for the type MockIContractCaller
+func (_mock *MockIContractCaller) FirstBlockAtOrAfterTimestamp(ctx context.Context, targetTimestamp uint64) (uint64, error) {
+	ret := _mock.Called(ctx, targetTimestamp)
+
+	if len(ret) == 0 {
+		panic("no return value specified for FirstBlockAtOrAfterTimestamp")
+	}
+
+	var r0 uint64
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint64) (uint64, error)); ok {
+		return returnFunc(ctx, targetTimestamp)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint64) uint64); ok {
+		r0 = returnFunc(ctx, targetTimestamp)
+	} else {
+		r0 = ret.Get(0).(uint64)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, uint64) error); ok {
+		r1 = returnFunc(ctx, targetTimestamp)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockIContractCaller_FirstBlockAtOrAfterTimestamp_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'FirstBlockAtOrAfterTimestamp'
+type MockIContractCaller_FirstBlockAtOrAfterTimestamp_Call struct {
+	*mock.Call
+}
+
+// FirstBlockAtOrAfterTimestamp is a helper method to define mock.On call
+//   - ctx context.Context
+//   - targetTimestamp uint64
+func (_e *MockIContractCaller_Expecter) FirstBlockAtOrAfterTimestamp(ctx interface{}, targetTimestamp interface{}) *MockIContractCaller_FirstBlockAtOrAfterTimestamp_Call {
+	return &MockIContractCaller_FirstBlockAtOrAfterTimestamp_Call{Call: _e.mock.On("FirstBlockAtOrAfterTimestamp", ctx, targetTimestamp)}
+}
+
+func (_c *MockIContractCaller_FirstBlockAtOrAfterTimestamp_Call) Run(run func(ctx context.Context, targetTimestamp uint64)) *MockIContractCaller_FirstBlockAtOrAfterTimestamp_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 uint64
+		if args[1] != nil {
+			arg1 = args[1].(uint64)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIContractCaller_FirstBlockAtOrAfterTimestamp_Call) Return(v uint64, err error) *MockIContractCaller_FirstBlockAtOrAfterTimestamp_Call {
+	_c.Call.Return(v, err)
+	return _c
+}
+
+func (_c *MockIContractCaller_FirstBlockAtOrAfterTimestamp_Call) RunAndReturn(run func(ctx context.Context, targetTimestamp uint64) (uint64, error)) *MockIContractCaller_FirstBlockAtOrAfterTimestamp_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
 // GetAppCreator provides a mock function for the type MockIContractCaller
 func (_mock *MockIContractCaller) GetAppCreator(app common.Address, opts *bind.CallOpts) (common.Address, error) {
 	ret := _mock.Called(app, opts)
@@ -1409,6 +1475,72 @@ func (_c *MockIContractCaller_GetOperatorSetMembersWithPeering_Call) Return(oper
 }
 
 func (_c *MockIContractCaller_GetOperatorSetMembersWithPeering_Call) RunAndReturn(run func(avsAddress string, operatorSetId uint32) (*peering.OperatorSetPeers, error)) *MockIContractCaller_GetOperatorSetMembersWithPeering_Call {
+	_c.Call.Return(run)
+	return _c
+}
+
+// HeaderTimestampAt provides a mock function for the type MockIContractCaller
+func (_mock *MockIContractCaller) HeaderTimestampAt(ctx context.Context, blockNumber uint64) (uint64, error) {
+	ret := _mock.Called(ctx, blockNumber)
+
+	if len(ret) == 0 {
+		panic("no return value specified for HeaderTimestampAt")
+	}
+
+	var r0 uint64
+	var r1 error
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint64) (uint64, error)); ok {
+		return returnFunc(ctx, blockNumber)
+	}
+	if returnFunc, ok := ret.Get(0).(func(context.Context, uint64) uint64); ok {
+		r0 = returnFunc(ctx, blockNumber)
+	} else {
+		r0 = ret.Get(0).(uint64)
+	}
+	if returnFunc, ok := ret.Get(1).(func(context.Context, uint64) error); ok {
+		r1 = returnFunc(ctx, blockNumber)
+	} else {
+		r1 = ret.Error(1)
+	}
+	return r0, r1
+}
+
+// MockIContractCaller_HeaderTimestampAt_Call is a *mock.Call that shadows Run/Return methods with type explicit version for method 'HeaderTimestampAt'
+type MockIContractCaller_HeaderTimestampAt_Call struct {
+	*mock.Call
+}
+
+// HeaderTimestampAt is a helper method to define mock.On call
+//   - ctx context.Context
+//   - blockNumber uint64
+func (_e *MockIContractCaller_Expecter) HeaderTimestampAt(ctx interface{}, blockNumber interface{}) *MockIContractCaller_HeaderTimestampAt_Call {
+	return &MockIContractCaller_HeaderTimestampAt_Call{Call: _e.mock.On("HeaderTimestampAt", ctx, blockNumber)}
+}
+
+func (_c *MockIContractCaller_HeaderTimestampAt_Call) Run(run func(ctx context.Context, blockNumber uint64)) *MockIContractCaller_HeaderTimestampAt_Call {
+	_c.Call.Run(func(args mock.Arguments) {
+		var arg0 context.Context
+		if args[0] != nil {
+			arg0 = args[0].(context.Context)
+		}
+		var arg1 uint64
+		if args[1] != nil {
+			arg1 = args[1].(uint64)
+		}
+		run(
+			arg0,
+			arg1,
+		)
+	})
+	return _c
+}
+
+func (_c *MockIContractCaller_HeaderTimestampAt_Call) Return(v uint64, err error) *MockIContractCaller_HeaderTimestampAt_Call {
+	_c.Call.Return(v, err)
+	return _c
+}
+
+func (_c *MockIContractCaller_HeaderTimestampAt_Call) RunAndReturn(run func(ctx context.Context, blockNumber uint64) (uint64, error)) *MockIContractCaller_HeaderTimestampAt_Call {
 	_c.Call.Return(run)
 	return _c
 }

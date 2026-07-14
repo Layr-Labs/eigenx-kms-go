@@ -22,6 +22,12 @@ import (
 // model which operators submitted on-chain. When nil, reads return an empty commitment.
 type MockContractCallerStub struct {
 	GetCommitmentAtFunc func(ctx context.Context, registryAddress common.Address, epoch int64, operator common.Address, blockNumber uint64) (commitmentHash [32]byte, ackMerkleRoot [32]byte, submittedAt uint64, err error)
+	// HeaderTimestampAtFunc, when set, lets a test drive the block-header timestamp
+	// returned for a given block number. When nil, reads return (0, nil).
+	HeaderTimestampAtFunc func(ctx context.Context, blockNumber uint64) (uint64, error)
+	// FirstBlockAtOrAfterTimestampFunc, when set, lets a test drive the block-number
+	// lookup for a target timestamp. When nil, reads return (0, nil).
+	FirstBlockAtOrAfterTimestampFunc func(ctx context.Context, targetTimestamp uint64) (uint64, error)
 	// SubmitCommitmentFunc, when set, is invoked by SubmitCommitment so tests can record the
 	// real per-(epoch,operator) commitment hash (needed to serve authentic hashes back via
 	// GetCommitmentAt — docs/013 Change 2 verifies P2P commitments against the on-chain hash).
@@ -85,6 +91,20 @@ func (m *MockContractCallerStub) GetCommitmentAt(ctx context.Context, registryAd
 		return m.GetCommitmentAtFunc(ctx, registryAddress, epoch, operator, blockNumber)
 	}
 	return [32]byte{}, [32]byte{}, 0, nil
+}
+
+func (m *MockContractCallerStub) HeaderTimestampAt(ctx context.Context, blockNumber uint64) (uint64, error) {
+	if m.HeaderTimestampAtFunc != nil {
+		return m.HeaderTimestampAtFunc(ctx, blockNumber)
+	}
+	return 0, nil
+}
+
+func (m *MockContractCallerStub) FirstBlockAtOrAfterTimestamp(ctx context.Context, targetTimestamp uint64) (uint64, error) {
+	if m.FirstBlockAtOrAfterTimestampFunc != nil {
+		return m.FirstBlockAtOrAfterTimestampFunc(ctx, targetTimestamp)
+	}
+	return 0, nil
 }
 
 func (m *MockContractCallerStub) SetAppController(appController caller.AppControllerInterface) error {
