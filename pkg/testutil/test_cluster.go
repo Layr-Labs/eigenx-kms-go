@@ -28,6 +28,18 @@ import (
 	"github.com/ethereum/go-ethereum/common/hexutil"
 )
 
+const (
+	// mockL1BaseTimestamp is the base Unix timestamp the mock caller assigns to L1 header
+	// lookups; the deadline block's timestamp is mockL1BaseTimestamp + blockNumber so the
+	// mapping is deterministic and monotonic in block height.
+	mockL1BaseTimestamp = uint64(1_700_000_000)
+	// mockL2CutoffHeight is the fixed, non-zero L2 cutoff height every node's mock caller
+	// resolves the reshare cutoff to. A constant (rather than 0) ensures the integration
+	// suite exercises the real deterministic-cutoff read path, and being identical across
+	// nodes mirrors the on-chain invariant that all honest operators pin the same height.
+	mockL2CutoffHeight = uint64(1_000_000)
+)
+
 // TestCluster represents a cluster of KMS nodes for testing
 type TestCluster struct {
 	Nodes        []*node.Node
@@ -215,16 +227,26 @@ func NewTestCluster(t *testing.T, numNodes int) *TestCluster {
 			SubmitCommitmentFunc: func(epoch int64, operator common.Address, commitmentHash [32]byte, _ [32]byte) {
 				cluster.CommitmentRegistry.recordSubmission(epoch, operator, commitmentHash)
 			},
+			// Drive resolveCutoffL2 to a REAL non-zero cutoff so the dealer-set-agreement
+			// path is exercised end-to-end (not the degenerate cutoff==0 case that the
+			// default (0,nil) stubs used to yield). HeaderTimestampAt maps the L1 deadline
+			// block to a deterministic timestamp; FirstBlockAtOrAfterTimestamp pins every
+			// node to the SAME fixed L2 cutoff height, mirroring the deterministic mapping
+			// all honest operators compute from the shared trigger block.
+			HeaderTimestampAtFunc: func(_ context.Context, blockNumber uint64) (uint64, error) {
+				return mockL1BaseTimestamp + blockNumber, nil
+			},
+			FirstBlockAtOrAfterTimestampFunc: func(_ context.Context, _ uint64) (uint64, error) {
+				return mockL2CutoffHeight, nil
+			},
 			GetCommitmentAtFunc: func(_ context.Context, _ common.Address, epoch int64, operator common.Address, blockNumber uint64) ([32]byte, [32]byte, uint64, error) {
-				// Regression guard for the L1-block-as-L2-height bug: the registry is on
-				// Base (L2) but the reshare trigger block is an Ethereum (L1) block, so the
-				// finalize path MUST read at head (blockNumber == 0). If a non-zero block is
-				// ever threaded in again, fail loudly here rather than silently returning
-				// stale/empty results. See docs/011_reshareDealerSetAgreement.md.
-				if blockNumber != 0 {
-					t.Fatalf("GetCommitmentAt called with non-zero block %d; reshare must read the Base registry at head (the trigger block is an L1 height)", blockNumber)
-				}
-				// Serve the operator's REAL submitted hash (zero if not submitted/suppressed).
+				// The reshare finalize path pins reads at the deterministic L2 cutoff height
+				// (resolveCutoffL2), so blockNumber is expected to be non-zero here. The
+				// in-memory registry has no historical/height-indexed state, so height is
+				// ignored for the read: we serve the operator's current submitted hash
+				// regardless of blockNumber. (GetCommitment reads at head via blockNumber==0
+				// and is served identically.) All nodes read the same registry at the same
+				// pinned height, so they observe an identical dealer set. See docs/013.
 				h := cluster.CommitmentRegistry.commitmentHashFor(epoch, operator)
 				if h == ([32]byte{}) {
 					return [32]byte{}, [32]byte{}, 0, nil
