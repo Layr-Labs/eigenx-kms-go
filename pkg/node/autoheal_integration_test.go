@@ -8,6 +8,7 @@ import (
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/persistence/memory"
 	"github.com/Layr-Labs/eigenx-kms-go/pkg/types"
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
+	"github.com/ethereum/go-ethereum/common"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zaptest/observer"
@@ -116,4 +117,44 @@ func TestAutoHeal_MissingRollbackTargetHaltsLoudly(t *testing.T) {
 	entries := observed.FilterMessageSnippet("AUTO-HEAL FLOOR").All()
 	require.NotEmpty(t, entries, "must emit a loud AUTO-HEAL FLOOR error when the rollback target is absent")
 	require.Equal(t, int64(100), entries[len(entries)-1].ContextMap()["target"], "log must name the missing target")
+}
+
+func TestRestoreState_HonorsAbortCounterOnlyIfVersionMatches(t *testing.T) {
+	l, _ := zap.NewDevelopment()
+	p := memory.NewMemoryPersistence()
+	// Persist a tracker on version 500 with 2 aborts, and mark 999 poisoned.
+	require.NoError(t, p.SaveNodeState(&persistence.NodeState{
+		OperatorAddress:      "0x0",
+		TrackedSourceVersion: 500,
+		ConsecutiveMPKAborts: 2,
+	}))
+	require.NoError(t, p.AddPoisonedVersion(999))
+
+	// Case A: active version matches tracked (500) -> counter honored.
+	ksA := keystore.NewKeyStore()
+	vA := &types.KeyShareVersion{Version: 500, PrivateShare: new(fr.Element).SetInt64(1)}
+	ksA.AddVersion(vA)
+	require.NoError(t, p.SetActiveVersionTimestamp(500))
+	require.NoError(t, p.SaveKeyShareVersion(vA))
+	nA := &Node{logger: l, keyStore: ksA, persistence: p, abortTracker: &abortTracker{}, OperatorAddress: common.HexToAddress("0x0")}
+	require.NoError(t, nA.RestoreState())
+	require.Equal(t, 2, nA.abortTracker.ConsecutiveAborts, "counter honored when tracked version == active")
+	require.Equal(t, int64(500), nA.abortTracker.TrackedSourceVersion)
+	require.True(t, ksA.IsPoisoned(999))
+
+	// Case B: active version differs (600) from the tracked 500 -> counter reset to 0.
+	p2 := memory.NewMemoryPersistence()
+	require.NoError(t, p2.SaveNodeState(&persistence.NodeState{
+		OperatorAddress:      "0x0",
+		TrackedSourceVersion: 500, // stale: tracker was on 500...
+		ConsecutiveMPKAborts: 2,
+	}))
+	ksB := keystore.NewKeyStore()
+	vB := &types.KeyShareVersion{Version: 600, PrivateShare: new(fr.Element).SetInt64(1)} // ...but active is now 600
+	ksB.AddVersion(vB)
+	require.NoError(t, p2.SaveKeyShareVersion(vB))
+	require.NoError(t, p2.SetActiveVersionTimestamp(600))
+	nB := &Node{logger: l, keyStore: ksB, persistence: p2, abortTracker: &abortTracker{}, OperatorAddress: common.HexToAddress("0x0")}
+	require.NoError(t, nB.RestoreState())
+	require.Equal(t, 0, nB.abortTracker.ConsecutiveAborts, "counter reset when tracked version != active")
 }

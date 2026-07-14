@@ -860,6 +860,11 @@ func (n *Node) RestoreState() error {
 	n.logger.Sugar().Infow("Restoring node state from persistence",
 		"operator_address", n.OperatorAddress.Hex())
 
+	// Guard against construction paths that don't initialize the abort tracker.
+	if n.abortTracker == nil {
+		n.abortTracker = &abortTracker{}
+	}
+
 	// 1. Load node operational state
 	nodeState, err := n.persistence.LoadNodeState()
 	if err != nil {
@@ -920,6 +925,33 @@ func (n *Node) RestoreState() error {
 					"version", activeTimestamp)
 				break
 			}
+		}
+	}
+
+	// 3b. Restore poisoned-version set into the keystore.
+	if poisoned, perr := n.persistence.ListPoisonedVersions(); perr == nil {
+		for _, v := range poisoned {
+			n.keyStore.MarkPoisoned(v)
+		}
+		if len(poisoned) > 0 {
+			n.logger.Sugar().Infow("Restored poisoned key versions",
+				"operator_address", n.OperatorAddress.Hex(), "count", len(poisoned))
+		}
+	} else {
+		n.logger.Sugar().Errorw("Failed to load poisoned versions", "error", perr)
+	}
+
+	// 3c. Restore the MPK-abort tracker, but only trust the count if it still
+	// refers to the current active source version (else reset — the version
+	// changed while we were down, so a stale count must not carry over).
+	if nodeState != nil && n.abortTracker != nil {
+		active := n.keyStore.GetActiveVersion()
+		if active != nil && nodeState.TrackedSourceVersion == active.Version {
+			n.abortTracker.TrackedSourceVersion = nodeState.TrackedSourceVersion
+			n.abortTracker.ConsecutiveAborts = nodeState.ConsecutiveMPKAborts
+		} else {
+			n.abortTracker.TrackedSourceVersion = 0
+			n.abortTracker.ConsecutiveAborts = 0
 		}
 	}
 
