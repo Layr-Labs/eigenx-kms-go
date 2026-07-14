@@ -89,51 +89,84 @@ is.
 ## Part 1 — Prevention: deterministic dealer set
 
 Replace the wall-clock, local-head dealer-set cutoff with a **block-derived cutoff** that every
-node computes from shared, agreed inputs. All determinism flows from block state, never a local
-clock.
+node computes from a shared, agreed *block number*. L1 blocks are used only as a rough synchronized
+clock (a value all nodes agree on and that advances in real time) — **not** as a finality oracle.
+Determinism comes from pinning the registry read to a common computed height and reading it in real
+time, not from any finality tag.
 
 ### Determinism chain
 
-1. **L1 deadline block.** The reshare is triggered at L1 boundary block `N` (all nodes agree — it
-   is the finalized L1 boundary that fired the round; the poller runs on the L1 client and the
-   boundary is `blockNumber % interval == 0`, `node.go:688`). Define the dealer-set cutoff as an
-   **L1 deadline block**: `L1_deadline = N + interval − buffer`. On Sepolia `interval = 10`
-   (`GetReshareBlockIntervalForChain`); `buffer` is a new per-chain config (e.g. 2 → cutoff
-   `N+8`). The buffer leaves room for dealers to submit before the cutoff while keeping the cutoff
-   strictly inside the round.
+1. **L1 deadline block (shared clock).** The reshare is triggered at L1 boundary block `N`, where
+   `N % interval == 0` (`node.go:688`). All nodes agree on `N` because it is a deterministic block
+   *number*, independent of finality — the poller runs on the L1 client at `BlockType_Latest`
+   (`main.go:293`), and a shallow tip reorg at the boundary is an accepted risk backstopped by
+   Part-2 auto-heal (no finality dependency is claimed or needed). Define the dealer-set cutoff as
+   `L1_deadline = N + interval − buffer`. On Sepolia `interval = 10`
+   (`GetReshareBlockIntervalForChain`, ~120s); `buffer` is a new per-chain config, default **2**
+   (cutoff `N+8`, ~80% into the round). The buffer leaves ~2 L1 blocks (~24s) after the cutoff for
+   nodes to read the pinned registry and finalize before the round's final deadline `N + interval`.
 
-2. **Block gate, not time.** The round proceeds past dealer-set derivation only once the node has
-   observed L1 block `L1_deadline`. This *replaces* the `GetProtocolTimeoutForChain` wall-clock
-   deadline in `deriveAgreedDealerSet` — removing the clock drift that caused the split.
+2. **Block gate, not time.** Dealer-set derivation runs when the node observes L1 block
+   `L1_deadline`. This *replaces* the `GetProtocolTimeoutForChain` wall-clock deadline in
+   `deriveAgreedDealerSet` (`node.go:1171,1201`) — removing the per-node clock drift that caused
+   the split. The round's overall final deadline (`N + interval`) is the backstop that bounds all
+   waiting below (see step 4).
 
 3. **Map L1 deadline → L2 read height by timestamp.** Let `T = timestamp(L1_deadline)`. The L2
-   registry read height is **the first *safe* Base block with `timestamp ≥ T`** (binary search
-   over L2 headers using the `safe` tag). *Safe*, not *finalized*: OP-stack `finalized` is derived
-   from finalized L1 and can lag longer than a whole reshare round, which would stall every round;
-   `safe` (past the sequencer's unsafe head) is reorg-resistant enough for this purpose. Because
-   `T` is a property of an agreed L1 block and every node resolves against the same `safe`-tagged
-   L2 history, all nodes compute the **same** `cutoffL2`.
+   registry read height `cutoffL2` = the first Base block with `timestamp ≥ T`, resolved by binary
+   search over L2 headers at `BlockType_Latest` (real-time head; no `safe`/`finalized` tag). Because
+   `T` derives from an agreed L1 block *number* and `cutoffL2` is a deterministic function of block
+   timestamps, every node resolves the **same** `cutoffL2` once its own L2 view has reached that
+   height. `cutoffL2` is only seconds old by construction (the cutoff sits ~24s before the final
+   deadline), so it stays well within a non-archive Base node's state-retention window.
 
-4. **Derive D at the pinned height.** Read the registry pinned at `cutoffL2` (via
-   `GetCommitmentAt`, which already accepts a block height): `D = { expected dealers with a
-   commitment present at cutoffL2 }`. `expectedReshareDealers` (`node.go`, prior participants)
-   supplies the candidate set. Require `|D| ≥ newThreshold`; otherwise **abort and retry** next
-   interval (auto-heal backstops a persistent stall).
+4. **Derive D at the pinned height, with retry-until-readable.** Read the registry pinned at
+   `cutoffL2` (via `GetCommitmentAt`, which already accepts a block height, `commitmentRegistry.go:64`):
+   `D = { expected dealers with a commitment present at cutoffL2 }`; `expectedReshareDealers`
+   (prior participants) supplies the candidate set. A transient read failure — most importantly
+   `missing trie node` / "header not found", meaning *this node has not yet synced to `cutoffL2`* —
+   is **retried** (poll until the node's L2 view reaches `cutoffL2`), NOT skipped. This retry loop
+   IS the L2 availability gate: a node waits for the canonical `cutoffL2` rather than reading a
+   partial view. Two hard rules make this safe:
+   - **Never `continue` past a failed dealer read.** The current per-dealer `continue`
+     (`node.go:1185-1189`) silently drops a dealer *on one node only* and is the exact split-
+     reintroduction path (see Findings). Replace it: any per-dealer read that still fails after the
+     retry budget aborts the **whole round** (all nodes fail together), never finalizes on a
+     partial set.
+   - **Bounded by the final deadline.** All retrying is bounded by the round's final deadline
+     `N + interval`. If `cutoffL2` is not readable by then, the round aborts and the session is
+     cleaned up (so the next interval is not skipped by the "session in progress" guard,
+     `node.go:739`). Require `|D| ≥ newThreshold`; else abort+retry next interval (auto-heal
+     backstops a persistent stall).
 
-Every honest node computes identical `L1_deadline` → identical `T` → identical `cutoffL2` →
-identical `D`, or all abort together. No node can finalize on a different dealer subset than
-another, so the degree-1 / 2-of-3 reconstruction ambiguity can no longer produce divergent shares.
+5. **New-operator join path.** `RunReshareAsNewOperator` (`node.go:2459`) also calls
+   `deriveAgreedDealerSet` (`node.go:2648`) but currently receives only `sessionTimestamp`, no
+   trigger block. Plumb the trigger block through from the scheduler (already in scope at the call
+   site, `node.go:778`) so a joining operator computes the identical `L1_deadline`/`cutoffL2`/`D`
+   as existing operators. Without this a joiner would derive D differently and re-split.
+
+Every honest node computes identical `N` → identical `L1_deadline` → identical `T` → identical
+`cutoffL2` → identical `D`, or all abort together. No node can finalize on a different dealer subset
+than another, so the degree-1 / 2-of-3 reconstruction ambiguity can no longer produce divergent
+shares.
 
 ### Caveats (documented, accepted)
 
-- **Safe-block reorg window.** `safe` is not `finalized`; a deep L2 reorg below the safe head
-  could in principle change the resolved `cutoffL2` history. This is an accepted small risk versus
-  the liveness cost of `finalized`. Layer-1 MPK validation and Part-2 auto-heal remain backstops
-  if it ever occurs.
-- **New dependencies.** Per-chain `buffer` config; the block handler/poller exposing observation
-  of the L1 deadline block; the L2 caller resolving a safe block by timestamp (binary search over
-  `HeaderByNumber` with the `safe` tag as the upper bound). These are additive; no contract or
-  registry-schema change.
+- **Shallow tip reorgs.** Because reads use `Latest` (by design, for real-time operation), a
+  shallow L1 or L2 reorg around the cutoff could momentarily change `N` or `cutoffL2` across nodes.
+  This is accepted: Layer-1 MPK validation still refuses to persist a divergent result, and Part-2
+  auto-heal recovers if a reorg ever induces a one-round split. We do not use finality tags because
+  their lag (minutes on OP-stack `finalized`) exceeds the round and would stall rotation.
+- **Base RPC state retention.** `cutoffL2` is seconds old by construction, so a non-archive Base
+  RPC (typical ~128-block / ~4-min retention) still serves state at that height. Archive RPC is
+  therefore NOT required; the retry loop covers the only expected failure (local L2 view lagging
+  the cutoff).
+- **Cadence.** Gating finalize near `N + interval − buffer` can push a round's completion toward
+  `N + interval`, occasionally skipping the next boundary (rotation every other interval in the
+  worst case). Accepted; `buffer` is per-chain tunable if cadence needs adjustment.
+- **New dependencies.** Per-chain `buffer` config; the block handler/poller exposing observation of
+  the L1 deadline block; the L2 caller resolving a block by timestamp (binary search over
+  `HeaderByNumber`) and the retry-until-readable pinned read.
 
 ## Part 2 — Auto-heal
 
@@ -177,9 +210,15 @@ state**, not local history:
    already-poisoned cluster, as in preprod), step the active pointer to the next-lower persisted
    version and let the next round attempt it. The next round's dealer-set derivation and
    source-version agreement (Part-1-deterministic) plus Layer-1 validation decide whether that
-   target heals; if it too is poisoned, demote and step again. Convergence is enforced by the same
-   shared on-chain agreement + MPK gate as normal reshare — a node can never persist a target the
-   others reject.
+   target heals; if it too is poisoned, demote and step again. **Safety** is fully enforced by the
+   shared on-chain agreement + MPK gate — a node can never persist a target the others reject.
+   **Liveness** relies on nodes having matching persisted-version histories: persisted version
+   *numbers* are session timestamps written only on cross-node-validated rounds, so histories
+   normally match (this is why preprod's three 0-restart nodes all hold `1783944444`). If local
+   histories diverge (a late joiner, a restore gap), nodes can step to different versions and fail
+   to assemble `≥ threshold` on one — a liveness thrash toward the floor, never corruption (review
+   Finding 7). If this proves a real risk in practice, the walk-back target can be agreed via the
+   same majority-over-verified-state mechanism rather than chosen locally; deferred until observed.
 3. Mark the demoted version poisoned (persisted set, review Finding 7) so the walk never re-selects
    it, even across a restart.
 
@@ -194,7 +233,12 @@ Demoting the active pointer does not by itself remove a poisoned version from `G
 (`keystore.go:138`), which returns the latest version `≤ timestamp` and would still return the
 poisoned `1783944564` for attestation times in `[1783944564, next_good)`. A poisoned version MUST
 be excluded from time-indexed lookup so attestation-time decrypts never resolve onto divergent
-shares. The exclusion applies to the same persisted poisoned-version set used by rollback.
+shares. The exclusion is enforced consistently across **every** version-resolution accessor that
+consults the persisted poisoned-version set (review Finding 8): `GetKeyVersionAtTime`
+(`keystore.go:138`), `GetActiveVersion` (`keystore.go:53`, so a poisoned version can never be
+re-activated or served at `/pubkey`, `handlers.go:1017`), and `GetPrivateShareForVersion`
+(`keystore.go:123`). Falling back to the next-lower good version is safe because MPK is invariant
+across versions, so it reconstructs the same app key.
 
 ### Floor
 
@@ -227,6 +271,13 @@ All via `./scripts/goTest.sh`.
   which cannot reach `|D| ≥ threshold` by the cutoff aborts (rather than finalizing a partial
   set). Include a direct reproduction of the incident's asymmetry (op1 sees 2, op3 sees 3 at head)
   and assert the pinned-height derivation makes them agree.
+- **Prevention — retry vs abort (no silent drop).** Assert a transient pinned-read failure
+  (`missing trie node` / node not yet synced to `cutoffL2`) is retried and then succeeds; and that
+  a read still failing after the final-deadline budget aborts the whole round rather than dropping
+  a dealer and finalizing a partial set. Assert the round-final-deadline backstop cleans up the
+  session (next interval not skipped).
+- **Prevention — new-operator parity.** Assert a joining operator (`RunReshareAsNewOperator`) with
+  the trigger block plumbed computes the identical `cutoffL2`/`D` as existing operators.
 - **Prevention — liveness preserved.** `Test_Reshare_SucceedsWithExactlyThresholdAcks` and the
   existing dealer-agreement integration tests still pass (the ack-fallback is untouched).
 - **Auto-heal — detection + rollback.** N consecutive MPK-validation aborts on the same active
@@ -234,8 +285,9 @@ All via `./scripts/goTest.sh`.
   the next round validates and persists.
 - **Auto-heal — walk-back.** No usable LKG (first-deploy-onto-poison): assert the node steps to
   the next-lower persisted version, skips persisted-poisoned versions, and converges.
-- **Auto-heal — time-indexed exclusion.** Assert `GetKeyVersionAtTime` never returns a
-  poisoned version.
+- **Auto-heal — poisoned-version exclusion.** Assert a poisoned version is never returned by
+  `GetKeyVersionAtTime`, never re-activated by `GetActiveVersion`/served at `/pubkey`, and never
+  returned by `GetPrivateShareForVersion`.
 - **Auto-heal — floor.** History exhausted with no healing version: assert rotation halts,
   decrypt still works, and a loud error is logged (no auto-re-DKG).
 - **Auto-heal — restart durability.** Assert the poisoned-version set survives a restart (persisted).
@@ -248,10 +300,11 @@ All via `./scripts/goTest.sh`.
 - Once deployed, preprod heals on its own: Part 1 makes future rounds deterministic; Part 2
   demotes `1783944564`, walks back to `1783944444`, and rotation resumes.
 - **Not in scope:** pruning old key versions; changing the reshare interval; altering the on-chain
-  commitment-registry schema; a general finalized-L2 block feed (the `safe`-tag resolution here is
-  sufficient and self-contained).
-- **Deferred follow-up:** if subset-liveness under a genuinely-down operator becomes a requirement,
-  a fully general finalized-height cutoff can replace the `safe`-tag read; not needed now.
+  commitment-registry schema; introducing finality-tag (`safe`/`finalized`) reads — the design
+  deliberately uses real-time `Latest` reads pinned to a common computed height.
+- **Deferred follow-up:** if subset-liveness under a genuinely-down operator (one that never
+  submits within a round) becomes a requirement, the "abort if `|D| < threshold`" rule can be
+  relaxed to finalize on the deterministic sub-threshold set; not needed now.
 
 ## Rollout
 
