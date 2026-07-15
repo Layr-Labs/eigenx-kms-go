@@ -34,6 +34,11 @@ func (cc *ContractCaller) FirstBlockAtOrAfterTimestamp(ctx context.Context, targ
 
 // firstBlockAtOrAfterTimestamp is the pure binary search, injectable for tests.
 // tsAt(ctx, n) returns block n's timestamp (n==0 => head).
+//
+// Precondition: block timestamps must be monotonically non-decreasing, i.e.
+// tsAt(n) <= tsAt(n+1). This holds for mainnet/sepolia/Base in normal
+// operation. A reorg that produced a block with a lower timestamp than its
+// predecessor would violate this and could yield a wrong (lower) result.
 func firstBlockAtOrAfterTimestamp(
 	ctx context.Context,
 	target uint64,

@@ -35,6 +35,12 @@ type INodePersistence interface {
 	// AddPoisonedVersion records a key-share version as poisoned (its shares are
 	// cross-node-inconsistent and must never be dealt from, activated, or served).
 	// Idempotent. Returns error only on storage failure.
+	//
+	// The poisoned set is intentionally append-only: a version that was once
+	// cross-node-inconsistent must never be re-activated, so there is deliberately
+	// no removal API. Demotions are rare, non-steady-state events, so unbounded
+	// growth is a non-issue in practice; recovery from the floor case is via
+	// wipe-and-rejoin, not in-place cleanup of this set.
 	AddPoisonedVersion(version int64) error
 
 	// ListPoisonedVersions returns all recorded poisoned versions (unordered).

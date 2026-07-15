@@ -106,7 +106,7 @@ func (n *Node) performRollback(poisonedVersion int64) {
 		// storage error. Leave the tracker untouched (as the other floor branches
 		// do) so it stays loud on every re-trigger.
 		n.logger.Sugar().Errorw("AUTO-HEAL FLOOR: could not list persisted versions to choose a rollback target; rotation halted, decrypt still served. MANUAL INTERVENTION REQUIRED (no auto re-DKG).",
-			"operator_address", n.OperatorAddress.Hex(), "poisoned_version", poisonedVersion, "error", verr)
+			"operator_address", n.OperatorAddress.Hex(), "poisoned_version", poisonedVersion, "error", verr, "action", "MANUAL_INTERVENTION_REQUIRED")
 		return
 	}
 	nums := make([]int64, 0, len(versions))
@@ -116,7 +116,7 @@ func (n *Node) performRollback(poisonedVersion int64) {
 	target, ok := rollbackTarget(lkg, poisonedVersion, nums, n.keyStore.IsPoisoned)
 	if !ok {
 		n.logger.Sugar().Errorw("AUTO-HEAL FLOOR: no non-poisoned version below the poisoned one; rotation halted, decrypt still served. MANUAL INTERVENTION REQUIRED (no auto re-DKG).",
-			"operator_address", n.OperatorAddress.Hex(), "poisoned_version", poisonedVersion)
+			"operator_address", n.OperatorAddress.Hex(), "poisoned_version", poisonedVersion, "action", "MANUAL_INTERVENTION_REQUIRED")
 		return
 	}
 	// Activate the keystore's OWN canonical object for the target version (single
@@ -129,11 +129,11 @@ func (n *Node) performRollback(poisonedVersion int64) {
 		// mismatch). Treat exactly like the floor — loud halt, no re-DKG, no MPK
 		// change, tracker untouched so it stays loud on every re-trigger.
 		n.logger.Sugar().Errorw("AUTO-HEAL FLOOR: chosen rollback target not present in keystore; rotation halted, decrypt still served. MANUAL INTERVENTION REQUIRED (no auto re-DKG).",
-			"operator_address", n.OperatorAddress.Hex(), "poisoned_version", poisonedVersion, "target", target)
+			"operator_address", n.OperatorAddress.Hex(), "poisoned_version", poisonedVersion, "target", target, "action", "MANUAL_INTERVENTION_REQUIRED")
 		return
 	}
 	if err := n.persistence.SetActiveVersionTimestamp(target); err != nil {
-		n.logger.Sugar().Errorw("Auto-heal: failed to persist rolled-back active version", "target", target, "error", err)
+		n.logger.Sugar().Errorw("Auto-heal: failed to persist rolled-back active version; in-memory rollback applied but a restart will reload the poisoned pointer and self-heal after demotionThreshold more aborts", "target", target, "error", err)
 	}
 	// Reset the tracker to the new active version.
 	n.abortTracker.TrackedSourceVersion = target
