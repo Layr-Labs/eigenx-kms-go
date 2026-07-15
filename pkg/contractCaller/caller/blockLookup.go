@@ -66,6 +66,11 @@ func firstBlockAtOrAfterTimestamp(
 		mid := lo + (hi-lo)/2
 		ts, err := tsAt(ctx, mid)
 		if err != nil {
+			// A transient mid-point block lookup failure (e.g. an unsynced block whose
+			// trie node is not yet available) aborts the ENTIRE binary search here. That
+			// is intentional: the caller's retry loop (deriveAgreedDealerSet) reruns the
+			// full search on the next attempt, and block-lookup errors are not cached, so
+			// a later attempt against a more-synced view can still succeed.
 			return 0, err
 		}
 		if ts >= target {

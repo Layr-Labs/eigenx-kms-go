@@ -111,6 +111,12 @@ type Node struct {
 	// wrong chain. This is an L1-bound caller injected at construction; if nil, we fall
 	// back to baseContractCaller (used by unit tests that don't distinguish chains).
 	// Steady-state updates arrive via AvsConfigSet event logs and need no contract read.
+	//
+	// INVARIANT: this MUST be non-nil in production. resolveCutoffL2 reads the L1
+	// deadline block's timestamp through this caller; if it were nil, that read would
+	// fall through to the L2-bound baseContractCaller and, on chains where L1 and L2
+	// are distinct, return a WRONG timestamp that corrupts the deterministic reshare
+	// cutoff resolution.
 	platformConfigCaller contractCaller.IContractCaller
 
 	// Access control
@@ -939,6 +945,12 @@ func (n *Node) RestoreState() error {
 		// Find and set the active version in keystore
 		for _, version := range versions {
 			if version.Version == activeTimestamp {
+				// Use SetActiveVersion (NOT SetActiveVersionByTimestamp) and call it
+				// BEFORE the poisoned set is restored (step 3b below). SetActiveVersion
+				// does not consult the poisoned set, so it faithfully restores the FLOOR
+				// case where the active pointer intentionally points at a poisoned version
+				// so decrypt keeps serving. Swapping to SetActiveVersionByTimestamp here
+				// (which skips poisoned versions) would break that floor restoration.
 				n.keyStore.SetActiveVersion(version)
 				n.logger.Sugar().Infow("Restored active key version",
 					"operator_address", n.OperatorAddress.Hex(),
@@ -1205,6 +1217,13 @@ func (n *Node) resolveCutoffL2(ctx context.Context, triggerBlock int64) (uint64,
 	// The registrar/deadline block lives on L1, so read its header timestamp from
 	// the L1-bound caller (falling back to baseContractCaller when nil, matching
 	// the seed pattern in refreshPlatformConfig).
+	//
+	// platformConfigCaller MUST be the L1-bound caller in production (set by the
+	// constructor — see the Node.platformConfigCaller field invariant). The
+	// nil -> baseContractCaller fallback is only CORRECT when L1 and L2 are the same
+	// chain (single-chain unit tests). On chains where L1 and L2 are distinct (e.g.
+	// Sepolia L1 + Base L2), reading the L1 deadline block's timestamp from the L2
+	// client would return a wrong timestamp and corrupt the deterministic cutoff.
 	l1 := n.platformConfigCaller
 	if l1 == nil {
 		l1 = n.baseContractCaller
