@@ -1,6 +1,7 @@
 package redis
 
 import (
+	"context"
 	"fmt"
 	"math/big"
 	"os"
@@ -509,4 +510,29 @@ func TestRedisPersistence_Config_EmptyAddress(t *testing.T) {
 	_, err := NewRedisPersistence(cfg, testLogger)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "empty")
+}
+
+func TestRedisPersistence_PoisonedVersions(t *testing.T) {
+	rp := requireRedis(t)
+	defer func() { _ = rp.Close() }()
+
+	// The poisoned SET lives at a single fixed key on the shared test DB.
+	// Clear it before and after so the empty-check and idempotency assertions
+	// are deterministic across reruns.
+	ctx := context.Background()
+	require.NoError(t, rp.client.Del(ctx, rp.prefixKey(keyPrefixPoisoned)).Err())
+	defer func() { _ = rp.client.Del(ctx, rp.prefixKey(keyPrefixPoisoned)).Err() }()
+
+	empty, err := rp.ListPoisonedVersions()
+	require.NoError(t, err)
+	require.NotNil(t, empty)
+	require.Empty(t, empty)
+
+	require.NoError(t, rp.AddPoisonedVersion(1783944564))
+	require.NoError(t, rp.AddPoisonedVersion(1783944564)) // idempotent
+	require.NoError(t, rp.AddPoisonedVersion(1783944800))
+
+	got, err := rp.ListPoisonedVersions()
+	require.NoError(t, err)
+	require.ElementsMatch(t, []int64{1783944564, 1783944800}, got)
 }

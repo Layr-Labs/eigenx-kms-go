@@ -184,9 +184,12 @@ func TestMemoryPersistence_NodeState(t *testing.T) {
 
 	// Save state
 	newState := &persistence.NodeState{
-		LastProcessedBoundary: 12345,
-		NodeStartTime:         9876543210,
-		OperatorAddress:       "0x1234567890abcdef",
+		LastProcessedBoundary:      12345,
+		NodeStartTime:              9876543210,
+		OperatorAddress:            "0x1234567890abcdef",
+		TrackedSourceVersion:       1783944564,
+		ConsecutiveMPKAborts:       3,
+		LastKnownGoodSourceVersion: 1783944444,
 	}
 	err = mp.SaveNodeState(newState)
 	require.NoError(t, err)
@@ -199,6 +202,10 @@ func TestMemoryPersistence_NodeState(t *testing.T) {
 	assert.Equal(t, newState.LastProcessedBoundary, loaded.LastProcessedBoundary)
 	assert.Equal(t, newState.NodeStartTime, loaded.NodeStartTime)
 	assert.Equal(t, newState.OperatorAddress, loaded.OperatorAddress)
+	// Auto-heal fields must survive the memory backend's field-by-field copy.
+	assert.Equal(t, newState.TrackedSourceVersion, loaded.TrackedSourceVersion)
+	assert.Equal(t, newState.ConsecutiveMPKAborts, loaded.ConsecutiveMPKAborts)
+	assert.Equal(t, newState.LastKnownGoodSourceVersion, loaded.LastKnownGoodSourceVersion)
 }
 
 func TestMemoryPersistence_NodeState_Nil(t *testing.T) {

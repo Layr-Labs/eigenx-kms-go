@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -24,6 +25,7 @@ const (
 	keyPrefixSession       = "session:"
 	keyPrefixBlockRecord   = "blockRecord:"
 	keyPrefixLastBlock     = "lastBlock:"
+	keyPrefixPoisoned      = "poisoned:"
 	keySchemaVersion       = "metadata:schema_version"
 	currentSchemaVersion   = "v1"
 )
@@ -286,6 +288,58 @@ func (b *BadgerPersistence) DeleteKeyShareVersion(timestamp int64) error {
 	return b.db.Update(func(txn *badgerdb.Txn) error {
 		return txn.Delete([]byte(key))
 	})
+}
+
+// AddPoisonedVersion records a key-share version as poisoned. Idempotent.
+func (b *BadgerPersistence) AddPoisonedVersion(version int64) error {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.closed {
+		return fmt.Errorf("persistence layer is closed")
+	}
+
+	key := fmt.Sprintf("%s%d", keyPrefixPoisoned, version)
+	return b.db.Update(func(txn *badgerdb.Txn) error {
+		return txn.Set([]byte(key), []byte{1})
+	})
+}
+
+// ListPoisonedVersions returns all recorded poisoned versions (unordered).
+func (b *BadgerPersistence) ListPoisonedVersions() ([]int64, error) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	if b.closed {
+		return nil, fmt.Errorf("persistence layer is closed")
+	}
+
+	out := make([]int64, 0)
+
+	err := b.db.View(func(txn *badgerdb.Txn) error {
+		opts := badgerdb.DefaultIteratorOptions
+		opts.Prefix = []byte(keyPrefixPoisoned)
+
+		it := txn.NewIterator(opts)
+		defer it.Close()
+
+		for it.Rewind(); it.Valid(); it.Next() {
+			key := string(it.Item().Key())
+			v, perr := strconv.ParseInt(key[len(keyPrefixPoisoned):], 10, 64)
+			if perr != nil {
+				b.logger.Sugar().Warnw("skipping non-integer poisoned version key", "key", key)
+				continue
+			}
+			out = append(out, v)
+		}
+
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to list poisoned versions: %w", err)
+	}
+
+	return out, nil
 }
 
 // SetActiveVersionTimestamp stores the active version block timestamp

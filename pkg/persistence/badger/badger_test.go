@@ -742,3 +742,26 @@ func TestBadgerPersistence_SaveBlockRecord_Nil(t *testing.T) {
 	err = bp.SaveBlockRecord(nil)
 	assert.Error(t, err)
 }
+
+func TestBadgerPersistence_PoisonedVersions(t *testing.T) {
+	tmpDir := t.TempDir()
+	testLogger, _ := logger.NewLogger(&logger.LoggerConfig{Debug: false})
+
+	bp, err := NewBadgerPersistence(tmpDir, testLogger)
+	require.NoError(t, err)
+	defer func() { _ = bp.Close() }()
+
+	// Empty store returns an empty (non-nil) slice, not an error.
+	empty, err := bp.ListPoisonedVersions()
+	require.NoError(t, err)
+	require.NotNil(t, empty)
+	require.Empty(t, empty)
+
+	require.NoError(t, bp.AddPoisonedVersion(1783944564))
+	require.NoError(t, bp.AddPoisonedVersion(1783944564)) // idempotent
+	require.NoError(t, bp.AddPoisonedVersion(1783944800))
+
+	got, err := bp.ListPoisonedVersions()
+	require.NoError(t, err)
+	require.ElementsMatch(t, []int64{1783944564, 1783944800}, got)
+}

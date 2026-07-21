@@ -96,6 +96,14 @@ type IContractCaller interface {
 		blockNumber uint64,
 	) (commitmentHash [32]byte, ackMerkleRoot [32]byte, submittedAt uint64, err error)
 
+	// HeaderTimestampAt returns the Unix timestamp of the block at blockNumber
+	// (0 => latest head). Used to map an L1 deadline block to an L2 read height.
+	HeaderTimestampAt(ctx context.Context, blockNumber uint64) (uint64, error)
+
+	// FirstBlockAtOrAfterTimestamp returns the lowest block number whose timestamp
+	// is >= targetTimestamp, or an error if the head has not reached that timestamp.
+	FirstBlockAtOrAfterTimestamp(ctx context.Context, targetTimestamp uint64) (uint64, error)
+
 	// EigenCompute app management functions
 	SetAppController(appController caller.AppControllerInterface) error
 

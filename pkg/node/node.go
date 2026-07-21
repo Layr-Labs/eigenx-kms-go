@@ -67,6 +67,10 @@ type Node struct {
 	transportSigner    transportSigner.ITransportSigner
 	persistence        persistence.INodePersistence
 
+	// abortTracker counts consecutive Layer-1 MPK-validation aborts on the active
+	// source version (majority-gated) to drive auto-heal demotion/rollback.
+	abortTracker *abortTracker
+
 	// Dynamic components (created when needed)
 	dkg      *dkg.DKG
 	resharer *reshare.Reshare
@@ -107,6 +111,12 @@ type Node struct {
 	// wrong chain. This is an L1-bound caller injected at construction; if nil, we fall
 	// back to baseContractCaller (used by unit tests that don't distinguish chains).
 	// Steady-state updates arrive via AvsConfigSet event logs and need no contract read.
+	//
+	// INVARIANT: this MUST be non-nil in production. resolveCutoffL2 reads the L1
+	// deadline block's timestamp through this caller; if it were nil, that read would
+	// fall through to the L2-bound baseContractCaller and, on chains where L1 and L2
+	// are distinct, return a WRONG timestamp that corrupts the deterministic reshare
+	// cutoff resolution.
 	platformConfigCaller contractCaller.IContractCaller
 
 	// Access control
@@ -511,6 +521,7 @@ func NewNode(
 		platformConfigCaller:      platformConfigCaller,
 		commitmentRegistryAddress: commitmentRegistryAddress,
 		persistence:               p,
+		abortTracker:              &abortTracker{},
 	}
 
 	// Build app allowlist if configured
@@ -707,18 +718,8 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 	// Step 5: Update last processed boundary
 	n.lastProcessedBoundary = blockNumber
 
-	// Persist block boundary
-	nodeState := &persistence.NodeState{
-		LastProcessedBoundary: blockNumber,
-		NodeStartTime:         time.Now().Unix(),
-		OperatorAddress:       n.OperatorAddress.Hex(),
-	}
-	if err := n.persistence.SaveNodeState(nodeState); err != nil {
-		n.logger.Sugar().Errorw("Failed to persist node state",
-			"operator_address", n.OperatorAddress.Hex(),
-			"error", err)
-		// Continue - non-fatal, can recover on next boundary
-	}
+	// Persist block boundary (load-merge so auto-heal fields survive; see persistBoundary).
+	n.persistBoundary(blockNumber)
 
 	n.logger.Sugar().Infow("Block interval boundary reached",
 		"operator_address", n.OperatorAddress.Hex(),
@@ -776,7 +777,7 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 				"block_timestamp", blockTimestamp)
 
 			go func() {
-				if err := n.RunReshareAsNewOperator(blockTimestamp); err != nil {
+				if err := n.RunReshareAsNewOperator(blockTimestamp, blockNumber); err != nil {
 					n.logger.Sugar().Errorw("Failed to join cluster via reshare",
 						"operator_address", n.OperatorAddress.Hex(),
 						"error", err)
@@ -798,6 +799,36 @@ func (n *Node) checkScheduledOperations(block *ethereum.EthereumBlock) {
 					"error", err)
 			}
 		}()
+	}
+}
+
+// persistBoundary records the interval-boundary bookkeeping (LastProcessedBoundary,
+// NodeStartTime) using a load-merge so the auto-heal fields written out-of-band by
+// persistAbortTracker / recordSuccessfulReshare (TrackedSourceVersion,
+// ConsecutiveMPKAborts, LastKnownGoodSourceVersion) are PRESERVED. A boundary fires
+// on the same cycle a reshare is triggered, so a blind fresh-struct write here would
+// zero the persisted abort counter / LKG marker and a restart mid-interval would lose
+// them, defeating the restart-durability requirement those fields exist for. Mirrors
+// the load-modify-save pattern in persistAbortTracker.
+func (n *Node) persistBoundary(blockNumber int64) {
+	st, err := n.persistence.LoadNodeState()
+	if err != nil || st == nil {
+		// No existing state: this is the first boundary write, so stamp the node
+		// start time. On subsequent boundaries the loaded state's NodeStartTime is
+		// PRESERVED below — re-stamping it here every boundary would drift it to the
+		// last boundary fire instead of the actual node start.
+		st = &persistence.NodeState{
+			OperatorAddress: n.OperatorAddress.Hex(),
+			NodeStartTime:   time.Now().Unix(),
+		}
+	}
+	st.LastProcessedBoundary = blockNumber
+	st.OperatorAddress = n.OperatorAddress.Hex()
+	if err := n.persistence.SaveNodeState(st); err != nil {
+		n.logger.Sugar().Errorw("Failed to persist node state",
+			"operator_address", n.OperatorAddress.Hex(),
+			"error", err)
+		// Continue - non-fatal, can recover on next boundary
 	}
 }
 
@@ -855,6 +886,11 @@ func (n *Node) RestoreState() error {
 	n.logger.Sugar().Infow("Restoring node state from persistence",
 		"operator_address", n.OperatorAddress.Hex())
 
+	// Guard against construction paths that don't initialize the abort tracker.
+	if n.abortTracker == nil {
+		n.abortTracker = &abortTracker{}
+	}
+
 	// 1. Load node operational state
 	nodeState, err := n.persistence.LoadNodeState()
 	if err != nil {
@@ -909,12 +945,45 @@ func (n *Node) RestoreState() error {
 		// Find and set the active version in keystore
 		for _, version := range versions {
 			if version.Version == activeTimestamp {
+				// Use SetActiveVersion (NOT SetActiveVersionByTimestamp) and call it
+				// BEFORE the poisoned set is restored (step 3b below). SetActiveVersion
+				// does not consult the poisoned set, so it faithfully restores the FLOOR
+				// case where the active pointer intentionally points at a poisoned version
+				// so decrypt keeps serving. Swapping to SetActiveVersionByTimestamp here
+				// (which skips poisoned versions) would break that floor restoration.
 				n.keyStore.SetActiveVersion(version)
 				n.logger.Sugar().Infow("Restored active key version",
 					"operator_address", n.OperatorAddress.Hex(),
 					"version", activeTimestamp)
 				break
 			}
+		}
+	}
+
+	// 3b. Restore poisoned-version set into the keystore.
+	if poisoned, perr := n.persistence.ListPoisonedVersions(); perr == nil {
+		for _, v := range poisoned {
+			n.keyStore.MarkPoisoned(v)
+		}
+		if len(poisoned) > 0 {
+			n.logger.Sugar().Infow("Restored poisoned key versions",
+				"operator_address", n.OperatorAddress.Hex(), "count", len(poisoned))
+		}
+	} else {
+		n.logger.Sugar().Errorw("Failed to load poisoned versions", "error", perr)
+	}
+
+	// 3c. Restore the MPK-abort tracker, but only trust the count if it still
+	// refers to the current active source version (else reset — the version
+	// changed while we were down, so a stale count must not carry over).
+	if nodeState != nil && n.abortTracker != nil {
+		active := n.keyStore.GetActiveVersion()
+		if active != nil && nodeState.TrackedSourceVersion == active.Version {
+			n.abortTracker.TrackedSourceVersion = nodeState.TrackedSourceVersion
+			n.abortTracker.ConsecutiveAborts = nodeState.ConsecutiveMPKAborts
+		} else {
+			n.abortTracker.TrackedSourceVersion = 0
+			n.abortTracker.ConsecutiveAborts = 0
 		}
 	}
 
@@ -1130,22 +1199,67 @@ func (n *Node) expectedReshareDealers(operators []*peering.OperatorSetPeer) []co
 	return dealers
 }
 
+// resolveCutoffL2 maps the L1 deadline block (triggerBlock + interval - buffer)
+// to the deterministic L2 registry read height: the first L2 block whose
+// timestamp is >= the L1 deadline block's timestamp. All honest nodes compute
+// the same value from the agreed triggerBlock number. Returns an error (retry)
+// if the L1 deadline block does not exist yet or the L2 head has not reached
+// the target timestamp.
+func (n *Node) resolveCutoffL2(ctx context.Context, triggerBlock int64) (uint64, error) {
+	interval := config.GetReshareBlockIntervalForChain(n.ChainID)
+	buffer := config.GetReshareCutoffBufferForChain(n.ChainID)
+	// Precondition: triggerBlock is a real chain block number (non-negative), so
+	// triggerBlock + interval - buffer stays positive (interval > buffer by
+	// construction) and the int64 arithmetic never goes negative before the
+	// uint64 cast — no wrap-around to a huge block height.
+	deadlineL1 := uint64(triggerBlock + interval - buffer)
+
+	// The registrar/deadline block lives on L1, so read its header timestamp from
+	// the L1-bound caller (falling back to baseContractCaller when nil, matching
+	// the seed pattern in refreshPlatformConfig).
+	//
+	// platformConfigCaller MUST be the L1-bound caller in production (set by the
+	// constructor — see the Node.platformConfigCaller field invariant). The
+	// nil -> baseContractCaller fallback is only CORRECT when L1 and L2 are the same
+	// chain (single-chain unit tests). On chains where L1 and L2 are distinct (e.g.
+	// Sepolia L1 + Base L2), reading the L1 deadline block's timestamp from the L2
+	// client would return a wrong timestamp and corrupt the deterministic cutoff.
+	l1 := n.platformConfigCaller
+	if l1 == nil {
+		l1 = n.baseContractCaller
+	}
+	deadlineTs, err := l1.HeaderTimestampAt(ctx, deadlineL1)
+	if err != nil {
+		return 0, fmt.Errorf("L1 deadline block %d not readable yet: %w", deadlineL1, err)
+	}
+	// The commitment registry lives on L2/Base, so resolve the cutoff height there.
+	cutoffL2, err := n.baseContractCaller.FirstBlockAtOrAfterTimestamp(ctx, deadlineTs)
+	if err != nil {
+		return 0, fmt.Errorf("L2 cutoff not resolvable for ts %d: %w", deadlineTs, err)
+	}
+	return cutoffL2, nil
+}
+
 // deriveAgreedDealerSet returns the dealer set all operators agree to finalize on,
 // derived from SHARED on-chain state (the commitment registry) rather than any node's
 // local receipt timing. A dealer is in the set iff it submitted a commitment for this
-// epoch in the registry.
+// epoch in the registry, read at a DETERMINISTIC L2 cutoff height.
 //
-// Because reads happen at chain head (the registry is on Base/L2 while the reshare is
-// triggered by an Ethereum/L1 block, so the L1 trigger block cannot pin the L2 read —
-// see docs/011_reshareDealerSetAgreement.md), we converge by polling until every
-// EXPECTED dealer (on-chain ∩ prior participants) has submitted, or a bounded deadline
-// passes. `commitments[epoch]` is append-only and epoch-keyed, so the observed set only
-// grows and never changes a past entry — polling converges all honest nodes to the same
-// "all dealers that submitted for this epoch" set. A genuinely-offline operator never
-// submits, so it is uniformly absent on every node (preserving liveness).
+// The commitment registry lives on Base/L2 while the reshare is triggered by an
+// Ethereum/L1 block, so the L1 trigger block cannot directly pin the L2 read. Instead we
+// resolve triggerBlock to a deterministic L2 cutoff height (resolveCutoffL2: the first L2
+// block at/after the L1 deadline block's timestamp) and read EVERY expected dealer's
+// commitment pinned at that exact height. Because all honest nodes compute the same
+// triggerBlock → cutoff mapping and read the append-only registry at the same height, they
+// observe an IDENTICAL dealer set — closing the cross-node dealer-set split the head-read
+// convergence loop could not (docs/011, docs/013).
 //
-// pinnedBlock, when > 0, is used as the L2 read height (reserved for when an L2 block
-// feed is available); 0 means read at head.
+// A transient read failure (e.g. "missing trie node" — this node's L2 view has not yet
+// synced to the cutoff height) is RETRIED, never skipped: silently dropping a dealer on
+// one node only re-introduces the exact split this feature fixes. If any dealer still
+// cannot be read by the deadline, the WHOLE round is ABORTED (error) so every node fails
+// together and retries next interval — never a partial dealer set.
+//
 // Returns the agreed dealer set AND each submitter's on-chain commitment hash, so the
 // caller can verify each dealer's P2P-advertised (commitments, sourceVersion) against the
 // shared registry state (docs/013 Change 2).
@@ -1157,9 +1271,13 @@ func (n *Node) deriveAgreedDealerSet(
 	ctx context.Context,
 	operators []*peering.OperatorSetPeer,
 	epoch int64,
-	pinnedBlock int64,
+	triggerBlock int64,
 	expectedDealers []common.Address,
 ) ([]common.Address, map[common.Address][32]byte, error) {
+	// expectedDealers overrides the default when non-nil (the new-operator join path
+	// passes existingOperatorDealers(...) so a node with no active version scopes to the
+	// existing on-chain submitters, not the all-operators fallback expectedReshareDealers
+	// returns for activeVersion == nil).
 	expected := expectedDealers
 	if expected == nil {
 		expected = n.expectedReshareDealers(operators)
@@ -1168,43 +1286,42 @@ func (n *Node) deriveAgreedDealerSet(
 		return nil, nil, fmt.Errorf("no expected dealers for reshare")
 	}
 
-	deadline := time.Now().Add(config.GetProtocolTimeoutForChain(n.ChainID))
+	// Bound all retrying by the round's FINAL boundary (N + interval), NOT the protocol
+	// timeout: the cutoff block N + interval - buffer lands ~(interval - buffer) blocks
+	// after N, which on Sepolia (~96s) exceeds the 90s protocol timeout — bounding by that
+	// shorter value would abort every round before the cutoff block even exists. Budget one
+	// full interval of wall clock (block time with margin). This is a generous CEILING
+	// measured from finalize start (which is already well into the round, not block N), NOT a
+	// tight deadline: it is long enough (~130s on Sepolia) that the cutoff block is essentially
+	// guaranteed to exist by the time we resolve it, so resolution returns promptly and the
+	// ceiling is rarely approached.
+	// intervalBlocks is derived from the L1 chain (GetReshareBlockIntervalForChain on
+	// the L1 ChainID the scheduler polls), so measuring it at ~13s/block is correct by
+	// construction (L1 ~12s/block, +1s margin). This budget is only a generous CEILING
+	// on how long to keep retrying cutoff resolution — it is rarely approached (see the
+	// block-comment above) — so the hardcoded 13s/block is a safe, deliberate constant.
+	// Note: roundBudget is a ceiling for the cutoff-resolve + per-dealer retry loop
+	// measured from THIS finalize call, not from block N. On chains with large intervals
+	// it can nominally exceed GetProtocolTimeoutForChain (e.g. Mainnet intervalBlocks=50
+	// ⇒ ~650s vs the 8-min protocol timeout), which is harmless: finalize runs well into
+	// the round, so the cutoff block already exists by the time we resolve it and the loop
+	// returns promptly rather than actually spending the full budget.
+	intervalBlocks := config.GetReshareBlockIntervalForChain(n.ChainID)
+	roundBudget := time.Duration(intervalBlocks) * 13 * time.Second // ~13s/block gives margin over 12s
+	deadline := time.Now().Add(roundBudget)
 	pollInterval := 1 * time.Second
 
-	var submitted []common.Address
-	onChainHashes := make(map[common.Address][32]byte, len(expected))
+	// Resolve the deterministic L2 cutoff height, retrying until the chain has advanced far
+	// enough (bounded by the round's final-boundary deadline).
+	var cutoffL2 uint64
 	for {
-		submitted = submitted[:0]
-		for k := range onChainHashes {
-			delete(onChainHashes, k)
-		}
-		for _, dealer := range expected {
-			commitmentHash, _, _, err := n.baseContractCaller.GetCommitmentAt(
-				ctx, n.commitmentRegistryAddress, epoch, dealer, uint64(max(pinnedBlock, 0)),
-			)
-			if err != nil {
-				n.logger.Sugar().Debugw("registry read failed while deriving dealer set",
-					"operator_address", n.OperatorAddress.Hex(),
-					"dealer", dealer.Hex(), "error", err)
-				continue
-			}
-			if commitmentHash != ([32]byte{}) {
-				submitted = append(submitted, dealer)
-				onChainHashes[dealer] = commitmentHash
-			}
-		}
-
-		// Converged: every expected dealer has submitted on-chain.
-		if len(submitted) == len(expected) {
-			return submitted, onChainHashes, nil
+		h, err := n.resolveCutoffL2(ctx, triggerBlock)
+		if err == nil {
+			cutoffL2 = h
+			break
 		}
 		if time.Now().After(deadline) {
-			// Deadline reached: finalize on whoever submitted (uniform across nodes,
-			// since it's derived from the same registry). Caller enforces |D| >= threshold.
-			n.logger.Sugar().Infow("Dealer-set convergence deadline reached",
-				"operator_address", n.OperatorAddress.Hex(),
-				"submitted", len(submitted), "expected", len(expected))
-			return submitted, onChainHashes, nil
+			return nil, nil, fmt.Errorf("reshare aborted: L2 cutoff not resolvable before deadline: %w; will retry next interval", err)
 		}
 		select {
 		case <-ctx.Done():
@@ -1212,6 +1329,41 @@ func (n *Node) deriveAgreedDealerSet(
 		case <-time.After(pollInterval):
 		}
 	}
+
+	// Read every expected dealer's commitment pinned at cutoffL2. A transient read failure
+	// is RETRIED (never skipped); persistent failure by the deadline ABORTS the whole round.
+	submitted := make([]common.Address, 0, len(expected))
+	onChainHashes := make(map[common.Address][32]byte, len(expected))
+	for _, dealer := range expected {
+		var lastErr error
+		for {
+			commitmentHash, _, _, err := n.baseContractCaller.GetCommitmentAt(
+				ctx, n.commitmentRegistryAddress, epoch, dealer, cutoffL2,
+			)
+			if err == nil {
+				if commitmentHash != ([32]byte{}) {
+					submitted = append(submitted, dealer)
+					onChainHashes[dealer] = commitmentHash
+				}
+				break
+			}
+			lastErr = err
+			if time.Now().After(deadline) {
+				return nil, nil, fmt.Errorf("reshare aborted: dealer %s not readable at cutoff L2 block %d before deadline: %w; will retry next interval",
+					dealer.Hex(), cutoffL2, lastErr)
+			}
+			select {
+			case <-ctx.Done():
+				return nil, nil, ctx.Err()
+			case <-time.After(pollInterval):
+			}
+		}
+	}
+
+	n.logger.Sugar().Infow("Derived agreed dealer set at pinned L2 cutoff",
+		"operator_address", n.OperatorAddress.Hex(),
+		"cutoff_l2_block", cutoffL2, "submitted", len(submitted), "expected", len(expected))
+	return submitted, onChainHashes, nil
 }
 
 // fetchAndVerifyReshareShare obtains the share `dealer` generated for THIS node via the
@@ -2272,14 +2424,12 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 	// each node's local receipt timing: D = operators that submitted a commitment for
 	// this epoch in the registry. See docs/011_reshareDealerSetAgreement.md.
 	//
-	// We read at L2 HEAD (pinnedBlock = 0), NOT session.TriggerBlockNumber. The trigger
-	// block is an Ethereum L1 block number, but the commitment registry lives on Base
-	// (L2) — the two block-number spaces are unrelated, so pinning the L2 read to an L1
-	// height would query Base at a wildly wrong (years-old) height and return empty,
-	// aborting every reshare. Head reads + the convergence/abort-retry below give
-	// agreement without a pinned height. session.TriggerBlockNumber is retained for when
-	// a real L2 block feed is plumbed; until then it must NOT be used as the read height.
-	agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, 0, nil)
+	// The read is pinned at a DETERMINISTIC L2 cutoff height that deriveAgreedDealerSet
+	// resolves from triggerBlock (the L1 interval-boundary block, identical across nodes):
+	// the L1 deadline block's timestamp maps to the first L2 block at/after it. All honest
+	// nodes therefore read the append-only registry at the same height and observe an
+	// identical dealer set. triggerBlock is threaded from RunReshareAsExistingOperator.
+	agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, triggerBlock, nil)
 	if err != nil {
 		return fmt.Errorf("failed to derive agreed dealer set: %w", err)
 	}
@@ -2426,6 +2576,13 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 				"agreed_dealers", len(participantIDsForFinalize),
 				"new_version", newKeyVersion.Version,
 				"error", verr)
+			// Auto-heal: record this abort against our LOCAL active source version
+			// (sourceVersion, declared above = what we dealt FROM), majority-gated by the
+			// AGREED majority source version (srcVersion, from SelectMajoritySourceVersion).
+			// These are DISTINCT: an early roller on V-1
+			// (sourceVersion=V-1) must not count aborts the majority incurs on the
+			// still-poisoned V (srcVersion=V), or it would over-walk to V-2.
+			n.onMPKValidationAbort(sourceVersion, srcVersion)
 			return fmt.Errorf("reshare aborted: post-reshare MPK validation failed: %w; will retry next interval", verr)
 		}
 	}
@@ -2450,17 +2607,23 @@ func (n *Node) RunReshareAsExistingOperator(sessionTimestamp int64, triggerBlock
 	// Only add to keystore after successful persistence
 	n.keyStore.AddVersion(newKeyVersion)
 
+	// Auto-heal: this round passed MPK validation and persisted, so reset the abort
+	// counter and record the agreed majority source version (srcVersion) as
+	// last-known-good for future rollback targeting.
+	n.recordSuccessfulReshare(srcVersion)
+
 	n.logger.Sugar().Infow("Reshare completed", "operator_address", n.OperatorAddress.Hex(), "new_version", newKeyVersion.Version)
 
 	return nil
 }
 
 // RunReshareAsNewOperator executes reshare protocol as a new operator (no existing shares).
-func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
+func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64, triggerBlock int64) error {
 	ctx := context.Background()
 	n.logger.Sugar().Infow("Starting reshare as new operator (joining existing cluster)",
 		"operator_address", n.OperatorAddress.Hex(),
-		"session_timestamp", sessionTimestamp)
+		"session_timestamp", sessionTimestamp,
+		"trigger_block", triggerBlock)
 
 	// Fetch current operators from peering system
 	operators, err := n.fetchCurrentOperators(ctx, n.AVSAddress, n.OperatorSetId)
@@ -2645,7 +2808,21 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 	// all-operators fallback expectedReshareDealers would return for a node with no active
 	// version — otherwise convergence can never complete and every join waits the full
 	// protocol timeout (docs/013; PR #119 round 3, finding 2).
-	agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, 0,
+	//
+	// The join path threads the REAL trigger block (from the scheduler's block boundary), so
+	// resolveCutoffL2 maps it to the IDENTICAL deterministic L2 cutoff height every existing
+	// operator computes — the join and existing paths agree on the same dealer set by reading
+	// the append-only registry at the same height. The existingOperatorDealers override MUST
+	// be preserved regardless of triggerBlock.
+	//
+	// NOTE: the cutoff-height determinism does NOT extend to the join-path CANDIDATE set.
+	// existingOperatorDealers(operators, existingOpIDs) is bounded by existingOpIDs, which is
+	// derived from a per-node runtime /pubkey read at join time — so under a transient /pubkey
+	// failure the candidate universe can still differ per node (pre-existing behavior, unlike
+	// the now-deterministic cutoff height). This divergence is backstopped by MPK validation
+	// (and auto-heal): a node that finalizes on a divergent set fails MPK validation and retries
+	// next interval rather than silently poisoning the cluster.
+	agreedDealers, onChainHashes, err := n.deriveAgreedDealerSet(ctx, operators, session.SessionTimestamp, triggerBlock,
 		existingOperatorDealers(operators, existingOpIDs))
 	if err != nil {
 		return fmt.Errorf("failed to derive agreed dealer set (new operator): %w", err)
@@ -2745,6 +2922,14 @@ func (n *Node) RunReshareAsNewOperator(sessionTimestamp int64) error {
 
 	// Only add to keystore after successful persistence
 	n.keyStore.AddVersion(newKeyVersion)
+
+	// NOTE: we intentionally do NOT call recordSuccessfulReshare here. A newly
+	// joined operator has no prior last-known-good (LKG) source version to record
+	// — it dealt from nothing. Its NEXT reshare runs as an existing operator and
+	// will call recordSuccessfulReshare on success, setting LKG then. Until that
+	// happens LKG stays 0, and auto-heal's rollbackTarget correctly falls back to
+	// walk-back (the highest non-poisoned persisted version). This omission is
+	// deliberate, not a missing call.
 
 	n.logger.Sugar().Infow("Successfully joined cluster via reshare",
 		"operator_address", n.OperatorAddress.Hex(),

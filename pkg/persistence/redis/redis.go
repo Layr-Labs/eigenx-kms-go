@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strconv"
 	"sync"
 	"time"
 
@@ -29,6 +30,9 @@ const (
 	// Key set for listing operations (Redis doesn't support prefix iteration natively)
 	keySetKeyShares = "kms:keyshares:index"
 	keySetSessions  = "kms:sessions:index"
+
+	// Redis SET of poisoned key-share versions.
+	keyPrefixPoisoned = "kms:poisoned"
 )
 
 // RedisPersistence is a production-ready persistence implementation using Redis.
@@ -298,6 +302,44 @@ func (r *RedisPersistence) DeleteKeyShareVersion(timestamp int64) error {
 
 	_, err := pipe.Exec(ctx)
 	return err
+}
+
+// AddPoisonedVersion records a key-share version as poisoned. Idempotent.
+func (r *RedisPersistence) AddPoisonedVersion(version int64) error {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if r.closed {
+		return fmt.Errorf("persistence layer is closed")
+	}
+
+	return r.client.SAdd(context.Background(), r.prefixKey(keyPrefixPoisoned), version).Err()
+}
+
+// ListPoisonedVersions returns all recorded poisoned versions (unordered).
+func (r *RedisPersistence) ListPoisonedVersions() ([]int64, error) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+
+	if r.closed {
+		return nil, fmt.Errorf("persistence layer is closed")
+	}
+
+	vals, err := r.client.SMembers(context.Background(), r.prefixKey(keyPrefixPoisoned)).Result()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list poisoned versions: %w", err)
+	}
+
+	out := make([]int64, 0, len(vals))
+	for _, s := range vals {
+		v, perr := strconv.ParseInt(s, 10, 64)
+		if perr != nil {
+			r.logger.Sugar().Warnw("skipping non-integer poisoned version", "value", s)
+			continue
+		}
+		out = append(out, v)
+	}
+	return out, nil
 }
 
 // SetActiveVersionTimestamp stores the active version block timestamp
