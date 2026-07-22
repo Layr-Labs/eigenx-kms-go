@@ -58,6 +58,12 @@ library Env {
         return _envAddress("operatorOwner");
     }
 
+    /// ecloud-platform integration (v0.2.0+): the platform's internal gRPC endpoint
+    /// (host:port) that KMS operators discover on-chain via AvsConfig.platformRpcUrl.
+    function platformRpcUrl() internal view returns (string memory) {
+        return _envString("platformRpcUrl");
+    }
+
     /// Deployed contracts - proxies
     function eigenKMSRegistrar(DeployedProxy) internal view returns (EigenKMSRegistrar) {
         return EigenKMSRegistrar(_deployedProxy(type(EigenKMSRegistrar).name));
@@ -100,6 +106,10 @@ library Env {
 
     function _envU256(string memory key) private view returns (uint256) {
         return ZEnvHelpers.state().envU256(key);
+    }
+
+    function _envString(string memory key) private view returns (string memory) {
+        return ZEnvHelpers.state().envString(key);
     }
 
     address internal constant VM_ADDRESS = address(uint160(uint256(keccak256("hevm cheat code"))));
